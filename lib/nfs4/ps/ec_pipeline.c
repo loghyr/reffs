@@ -8,7 +8,7 @@
 /*
  * Erasure-coded I/O for the EC demo client.
  *
- * Combines the MDS session, layout, DS I/O, and Reed-Solomon codec
+ * Combines the MDS session, layout, DS I/O, and Reed-Solomon encoding
  * into high-level write/read/verify operations.
  *
  * Write path:
@@ -55,7 +55,7 @@ __attribute__((format(printf, 1, 2))) static void ec_log(const char *fmt, ...)
 /*
  * EC_SHARD_SIZE_DEFAULT is exported by ec_client.h so callers that
  * want the historical 4 KiB benchmark geometry have a named
- * constant.  ec_write_codec / ec_read_codec take shard_size as a
+ * constant.  ec_write_encoding / ec_read_encoding take shard_size as a
  * parameter; only the back-compat ec_write / ec_read wrappers
  * below pin to the default.
  *
@@ -90,7 +90,7 @@ struct ec_context {
 	 * binary-layout contract and the dedup rationale.
 	 */
 	struct mds_session **ctx_ds_sess;
-	struct ec_codec *ctx_codec;
+	struct ec_encoding *ctx_encoding;
 	uint32_t ctx_k;
 	uint32_t ctx_m;
 	/*
@@ -104,7 +104,7 @@ struct ec_context {
 	/*
 	 * Track 1b RMW-prefix-read guard capture (Option C full,
 	 * design/chunk-collision-validation.md).  When the RMW prefix
-	 * read in ec_write_codec_range captures per-shard chunk_owner4
+	 * read in ec_write_encoding_range captures per-shard chunk_owner4
 	 * values via ec_read_stripe_with_file, they land here.  The
 	 * matching ec_write_stripe_with_file picks them up and presents
 	 * each (co_guard) as a cwa_guard on the corresponding data-shard
@@ -429,7 +429,7 @@ int ec_chunk_read(struct ec_context *ctx, int mirror_idx, uint64_t block_offset,
 	 * TRUST_STATEID; -EAGAIN is a chunk-store-internal signal and
 	 * doesn't involve the MDS.
 	 *
-	 * Same per-attempt jitter shape as ec_write_codec_range's
+	 * Same per-attempt jitter shape as ec_write_encoding_range's
 	 * outer retry loop: 50ms * 2^attempt capped at 500ms plus
 	 * 0..63ms jitter, so two competing readers don't sync up.
 	 */
@@ -469,25 +469,25 @@ int ec_chunk_read(struct ec_context *ctx, int mirror_idx, uint64_t block_offset,
 	return -ESTALE;
 }
 
-static struct ec_codec *ec_create_codec(int k, int m,
-					enum ec_codec_type codec_type)
+static struct ec_encoding *ec_create_encoding(int k, int m,
+					enum ec_encoding_type encoding_type)
 {
-	switch (codec_type) {
-	case EC_CODEC_RS:
+	switch (encoding_type) {
+	case EC_ENCODING_RS:
 		return ec_rs_create(k, m);
-	case EC_CODEC_MOJETTE_SYS:
+	case EC_ENCODING_MOJETTE_SYS:
 		return ec_mojette_sys_create(k, m);
-	case EC_CODEC_MOJETTE_NONSYS:
+	case EC_ENCODING_MOJETTE_NONSYS:
 		return ec_mojette_nonsys_create(k, m);
-	case EC_CODEC_STRIPE:
+	case EC_ENCODING_STRIPE:
 		return ec_stripe_create(k);
-	case EC_CODEC_MIRROR:
+	case EC_ENCODING_MIRROR:
 		/*
 		 * Wire-side: FFV2_ENCODING_MIRRORED, N replicas, no
 		 * parity.  Encode replicates data[0] verbatim,
 		 * decode picks any present shard.  The pipeline
-		 * branches on codec_type == EC_CODEC_MIRROR in
-		 * ec_write_codec_with_file / ec_read_codec_with_file
+		 * branches on encoding_type == EC_ENCODING_MIRROR in
+		 * ec_write_encoding_with_file / ec_read_encoding_with_file
 		 * to lay every data_shards[i] at the same stripe
 		 * offset and to emit one shard's worth per stripe
 		 * on output.
@@ -499,15 +499,15 @@ static struct ec_codec *ec_create_codec(int k, int m,
 }
 
 /*
- * Return the write size for shard i.  For codecs with variable shard
+ * Return the write size for shard i.  For encodings with variable shard
  * sizes (Mojette non-systematic), parity shards may be larger than
  * data shards.
  */
-static size_t shard_write_size(struct ec_codec *codec, int shard_idx,
+static size_t shard_write_size(struct ec_encoding *encoding, int shard_idx,
 			       size_t data_shard_len)
 {
-	if (codec->ec_shard_size)
-		return codec->ec_shard_size(codec, shard_idx, data_shard_len);
+	if (encoding->ec_shard_size)
+		return encoding->ec_shard_size(encoding, shard_idx, data_shard_len);
 	return data_shard_len;
 }
 
@@ -808,9 +808,9 @@ static int ec_layout_refresh(struct ec_context *ctx, struct mds_session *ms,
 /* EC Write                                                            */
 /* ------------------------------------------------------------------ */
 
-int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
+int ec_write_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
 			     const uint8_t *data, size_t data_len, int k, int m,
-			     enum ec_codec_type codec_type,
+			     enum ec_encoding_type encoding_type,
 			     layouttype4 layout_type, size_t shard_size,
 			     const struct authunix_parms *creds,
 			     struct ps_listener_state *pls)
@@ -828,7 +828,7 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 		/*
 		 * Mojette grids index columns as uint64_t.  A non-multiple
 		 * of 8 leaves a fractional column at the tail and breaks
-		 * the codec.  RS uses bytes directly but the same
+		 * the encoding.  RS uses bytes directly but the same
 		 * constraint costs nothing.  The upper bound bounds
 		 * stripe_data = k * shard_size against (size_t) overflow
 		 * for caller-passed garbage.
@@ -843,9 +843,9 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	 * encoder (ec_mirror_create) is the no-op for the aliased-
 	 * buffer case; the actual replication is the per-mirror fan-
 	 * out loop below.  stripe_data and the data_shards stride
-	 * pick up the per-codec branch immediately below.
+	 * pick up the per-encoding branch immediately below.
 	 */
-	const bool is_mirror = (codec_type == EC_CODEC_MIRROR);
+	const bool is_mirror = (encoding_type == EC_ENCODING_MIRROR);
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.ctx_ms = ms;
@@ -854,15 +854,15 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	ctx.ctx_pls = pls;
 	ctx.ctx_file = *mf; /* caller owns the underlying mf; we shallow-copy */
 
-	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
-	if (!ctx.ctx_codec)
+	ctx.ctx_encoding = ec_create_encoding(k, m, encoding_type);
+	if (!ctx.ctx_encoding)
 		return -ENOMEM;
 
 	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW, layout_type,
 			     creds, &ctx.ctx_layout);
 	if (ret) {
 		ec_log("ec_write: LAYOUTGET failed: %d\n", ret);
-		goto out_codec;
+		goto out_encoding;
 	}
 
 	ec_log("ec_write: LAYOUTGET ok: %u mirrors, type=%u\n",
@@ -884,7 +884,7 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	ec_log("ec_write: resolved %u mirrors\n", ctx.ctx_layout.el_nmirrors);
 
 	/*
-	 * Pad data to a multiple of stripe_data.  For striping codecs
+	 * Pad data to a multiple of stripe_data.  For striping encodings
 	 * each stripe encodes k shards of shard_size bytes, so
 	 * stripe_data = k * shard_size.  For MIRROR each "stripe" is
 	 * one chunk's worth of bytes replicated to N data servers, so
@@ -914,7 +914,7 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	}
 
 	for (int i = 0; i < m; i++) {
-		size_t psz = shard_write_size(ctx.ctx_codec, k + i, shard_size);
+		size_t psz = shard_write_size(ctx.ctx_encoding, k + i, shard_size);
 
 		parity_shards[i] = calloc(1, psz);
 		if (!parity_shards[i]) {
@@ -929,10 +929,10 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	}
 
 	/*
-	 * For non-systematic codecs, encode overwrites data[].
+	 * For non-systematic encodings, encode overwrites data[].
 	 * Allocate separate buffers so we don't corrupt padded[].
 	 */
-	bool nonsys = (codec_type == EC_CODEC_MOJETTE_NONSYS);
+	bool nonsys = (encoding_type == EC_ENCODING_MOJETTE_NONSYS);
 	uint8_t **enc_data = data_shards;
 
 	if (nonsys) {
@@ -943,7 +943,7 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 		}
 		for (int i = 0; i < k; i++) {
 			size_t dsz =
-				shard_write_size(ctx.ctx_codec, i, shard_size);
+				shard_write_size(ctx.ctx_encoding, i, shard_size);
 
 			enc_data[i] = calloc(1, dsz);
 			if (!enc_data[i]) {
@@ -964,7 +964,7 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 		chunk_sz = (uint32_t)shard_size;
 
 	/*
-	 * DS file offset stride per stripe.  For codecs with variable
+	 * DS file offset stride per stripe.  For encodings with variable
 	 * shard sizes (Mojette non-systematic), the largest projection
 	 * determines the stride so that consecutive stripes don't
 	 * overlap on disk.
@@ -972,7 +972,7 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	size_t ds_stride = shard_size;
 
 	for (int i = 0; i < k + m; i++) {
-		size_t sz = shard_write_size(ctx.ctx_codec, i, shard_size);
+		size_t sz = shard_write_size(ctx.ctx_encoding, i, shard_size);
 
 		if (sz > ds_stride)
 			ds_stride = sz;
@@ -984,7 +984,7 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 retry_stripe:
 		/*
 		 * Point data shards into the padded buffer.  Striping
-		 * codecs (RS / Mojette / STRIPE) give each shard a
+		 * encodings (RS / Mojette / STRIPE) give each shard a
 		 * disjoint shard_size slice of the stripe.  MIRROR
 		 * points every shard at the same shard_size slice;
 		 * the replication happens when we fan out the writes
@@ -1000,7 +1000,7 @@ retry_stripe:
 				memcpy(enc_data[i], data_shards[i], shard_size);
 		}
 
-		ret = ctx.ctx_codec->ec_encode(ctx.ctx_codec,
+		ret = ctx.ctx_encoding->ec_encode(ctx.ctx_encoding,
 					       nonsys ? enc_data : data_shards,
 					       parity_shards, shard_size);
 		if (ret) {
@@ -1012,7 +1012,7 @@ retry_stripe:
 		for (int i = 0; i < k; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 			uint32_t wsz = (uint32_t)shard_write_size(
-				ctx.ctx_codec, i, shard_size);
+				ctx.ctx_encoding, i, shard_size);
 			uint8_t *src = nonsys ? enc_data[i] : data_shards[i];
 
 			ec_log("ec_write: stripe %zu data[%d] "
@@ -1061,7 +1061,7 @@ retry_stripe:
 			struct ec_mirror *em =
 				&ctx.ctx_layout.el_mirrors[k + i];
 			uint32_t wsz = (uint32_t)shard_write_size(
-				ctx.ctx_codec, k + i, shard_size);
+				ctx.ctx_encoding, k + i, shard_size);
 
 			ec_log("ec_write: stripe %zu parity[%d] "
 			       "fh_len=%u wsz=%u\n",
@@ -1156,8 +1156,8 @@ out_conns:
 out_layout:
 	mds_layout_return(ms, &ctx.ctx_file, creds, &ctx.ctx_layout);
 	ec_layout_free(&ctx.ctx_layout);
-out_codec:
-	ec_codec_destroy(ctx.ctx_codec);
+out_encoding:
+	ec_encoding_destroy(ctx.ctx_encoding);
 	return ret;
 }
 
@@ -1174,7 +1174,7 @@ out_codec:
  * Caller MUST pass exactly k * shard_size bytes in
  * stripe_bytes -- partial-stripe RMW is the next slice (4b.3) and
  * lives outside this primitive.  The structure intentionally
- * mirrors ec_write_codec_with_file's per-stripe inner loop body
+ * mirrors ec_write_encoding_with_file's per-stripe inner loop body
  * to keep the failure modes (encode error, DS write error,
  * NFS4ERR_BAD_STATEID retry via ec_chunk_write, ESTALE outer
  * retry via ec_layout_refresh) identical.  A refactor that
@@ -1184,17 +1184,17 @@ out_codec:
 int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			      uint64_t stripe_no, const uint8_t *stripe_bytes,
 			      size_t stripe_len, int k, int m,
-			      enum ec_codec_type codec_type,
+			      enum ec_encoding_type encoding_type,
 			      layouttype4 layout_type, size_t shard_size,
 			      const struct authunix_parms *creds,
 			      uint8_t mds_verf_out[8], bool *mds_verf_set_out,
 			      struct ps_listener_state *pls, void *ctx_in_out)
 {
 	/* Shared-ctx fast path (Track 1b second-mechanism fix): if the
-	 * caller passes a populated ctx, skip the per-call codec /
+	 * caller passes a populated ctx, skip the per-call encoding /
 	 * LAYOUTGET / ec_resolve_mirrors and the matching
 	 * ec_disconnect_all + LAYOUTRETURN.  Re-uses DS sessions across
-	 * stripes within one ec_write_codec_range call.  Local `ctx` is
+	 * stripes within one ec_write_encoding_range call.  Local `ctx` is
 	 * a working copy: we copy IN from the shared ctx (if any) at
 	 * the top and copy OUT to it (if any) at the bottom so any
 	 * mid-flight ec_layout_refresh propagates.
@@ -1221,7 +1221,7 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 	if (shard_size == 0 || (shard_size % sizeof(uint64_t)) != 0 ||
 	    shard_size > EC_SHARD_SIZE_MAX) {
 		/*
-		 * Same constraint as ec_write_codec_with_file: Mojette
+		 * Same constraint as ec_write_encoding_with_file: Mojette
 		 * grids index columns as uint64_t and the upper bound
 		 * defends against caller-passed garbage when computing
 		 * stripe_data = k * shard_size.
@@ -1252,15 +1252,15 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 		ctx.ctx_pls = pls;
 		ctx.ctx_file = *mf; /* shallow copy; caller owns mf */
 
-		ctx.ctx_codec = ec_create_codec(k, m, codec_type);
-		if (!ctx.ctx_codec)
+		ctx.ctx_encoding = ec_create_encoding(k, m, encoding_type);
+		if (!ctx.ctx_encoding)
 			return -ENOMEM;
 
 		ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW,
 				     layout_type, creds, &ctx.ctx_layout);
 		if (ret) {
 			ec_log("ec_write_stripe: LAYOUTGET failed: %d\n", ret);
-			goto out_codec;
+			goto out_encoding;
 		}
 
 		if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
@@ -1286,7 +1286,7 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 	}
 
 	for (int i = 0; i < m; i++) {
-		size_t psz = shard_write_size(ctx.ctx_codec, k + i, shard_size);
+		size_t psz = shard_write_size(ctx.ctx_encoding, k + i, shard_size);
 
 		parity_shards[i] = calloc(1, psz);
 		if (!parity_shards[i]) {
@@ -1295,7 +1295,7 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 		}
 	}
 
-	nonsys = (codec_type == EC_CODEC_MOJETTE_NONSYS);
+	nonsys = (encoding_type == EC_ENCODING_MOJETTE_NONSYS);
 	if (nonsys) {
 		enc_data = calloc(k, sizeof(uint8_t *));
 		if (!enc_data) {
@@ -1304,7 +1304,7 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 		}
 		for (int i = 0; i < k; i++) {
 			size_t dsz =
-				shard_write_size(ctx.ctx_codec, i, shard_size);
+				shard_write_size(ctx.ctx_encoding, i, shard_size);
 
 			enc_data[i] = calloc(1, dsz);
 			if (!enc_data[i]) {
@@ -1320,7 +1320,7 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 
 	ds_stride = shard_size;
 	for (int i = 0; i < k + m; i++) {
-		size_t sz = shard_write_size(ctx.ctx_codec, i, shard_size);
+		size_t sz = shard_write_size(ctx.ctx_encoding, i, shard_size);
 
 		if (sz > ds_stride)
 			ds_stride = sz;
@@ -1329,7 +1329,7 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 retry_stripe:
 	/* Point data shards into stripe_bytes (the encode call only
 	 * reads from data_shards; the nonsys copy below provides a
-	 * separate mutable buffer for codecs that overwrite their input).
+	 * separate mutable buffer for encodings that overwrite their input).
 	 */
 	for (int i = 0; i < k; i++)
 		data_shards[i] =
@@ -1340,7 +1340,7 @@ retry_stripe:
 			memcpy(enc_data[i], data_shards[i], shard_size);
 	}
 
-	ret = ctx.ctx_codec->ec_encode(ctx.ctx_codec,
+	ret = ctx.ctx_encoding->ec_encode(ctx.ctx_encoding,
 				       nonsys ? enc_data : data_shards,
 				       parity_shards, shard_size);
 	if (ret) {
@@ -1357,7 +1357,7 @@ retry_stripe:
 	 * the read with fresh state. */
 	for (int i = 0; i < k; i++) {
 		struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
-		uint32_t wsz = (uint32_t)shard_write_size(ctx.ctx_codec, i,
+		uint32_t wsz = (uint32_t)shard_write_size(ctx.ctx_encoding, i,
 							  shard_size);
 		uint8_t *src = nonsys ? enc_data[i] : data_shards[i];
 		const chunk_guard4 *guard = NULL;
@@ -1411,7 +1411,7 @@ retry_stripe:
 	 * and bails before its parity goes out). */
 	for (int i = 0; i < m; i++) {
 		struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[k + i];
-		uint32_t wsz = (uint32_t)shard_write_size(ctx.ctx_codec, k + i,
+		uint32_t wsz = (uint32_t)shard_write_size(ctx.ctx_encoding, k + i,
 							  shard_size);
 
 		if (ctx.ctx_ds_sess) {
@@ -1450,10 +1450,10 @@ retry_stripe:
 
 	/*
 	 * FINALIZE + COMMIT for just this stripe's blocks (v2 only).
-	 * blocks_per_stripe matches ec_write_codec_with_file's
+	 * blocks_per_stripe matches ec_write_encoding_with_file's
 	 * per-stripe block stride; the [base_block, base_block +
 	 * blocks_per_stripe) range covers the file space the parity-
-	 * largest shard occupies, with sparse codecs leaving holes
+	 * largest shard occupies, with sparse encodings leaving holes
 	 * that chunk_store_transition skips.
 	 */
 	if (ctx.ctx_ds_sess) {
@@ -1520,9 +1520,9 @@ out_layout:
 		mds_layout_return(ms, &ctx.ctx_file, creds, &ctx.ctx_layout);
 		ec_layout_free(&ctx.ctx_layout);
 	}
-out_codec:
+out_encoding:
 	if (!shared_ctx)
-		ec_codec_destroy(ctx.ctx_codec);
+		ec_encoding_destroy(ctx.ctx_encoding);
 	if (shared_ctx)
 		*shared_ctx = ctx; /* propagate any mid-flight changes
 				    * (e.g., ec_layout_refresh) */
@@ -1532,7 +1532,7 @@ out_codec:
 int ec_read_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			     uint64_t stripe_no, uint8_t *stripe_bytes,
 			     size_t stripe_len, int k, int m,
-			     enum ec_codec_type codec_type,
+			     enum ec_encoding_type encoding_type,
 			     layouttype4 layout_type, size_t shard_size,
 			     const struct authunix_parms *creds,
 			     struct ps_listener_state *pls, void *ctx_in_out)
@@ -1584,15 +1584,15 @@ int ec_read_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 		ctx.ctx_pls = pls;
 		ctx.ctx_file = *mf; /* shallow copy; caller owns mf */
 
-		ctx.ctx_codec = ec_create_codec(k, m, codec_type);
-		if (!ctx.ctx_codec)
+		ctx.ctx_encoding = ec_create_encoding(k, m, encoding_type);
+		if (!ctx.ctx_encoding)
 			return -ENOMEM;
 
 		ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_READ,
 				     layout_type, creds, &ctx.ctx_layout);
 		if (ret) {
 			ec_log("ec_read_stripe: LAYOUTGET failed: %d\n", ret);
-			goto out_codec;
+			goto out_encoding;
 		}
 
 		if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
@@ -1623,11 +1623,11 @@ int ec_read_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 	}
 
 	for (int i = 0; i < total; i++) {
-		size_t sz = shard_write_size(ctx.ctx_codec, i, shard_size);
+		size_t sz = shard_write_size(ctx.ctx_encoding, i, shard_size);
 
 		/*
 		 * v2 CHUNK reads return whole blocks; round up to a chunk
-		 * boundary like ec_read_codec_with_file does.
+		 * boundary like ec_read_encoding_with_file does.
 		 */
 		if (ctx.ctx_ds_sess)
 			sz = DIV_CEIL(sz, rd_chunk_sz) * rd_chunk_sz;
@@ -1642,7 +1642,7 @@ int ec_read_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 	/* DS offset stride matches the write side. */
 	ds_stride = shard_size;
 	for (int i = 0; i < total; i++) {
-		size_t sz = shard_write_size(ctx.ctx_codec, i, shard_size);
+		size_t sz = shard_write_size(ctx.ctx_encoding, i, shard_size);
 
 		if (sz > ds_stride)
 			ds_stride = sz;
@@ -1654,7 +1654,7 @@ retry_stripe_read: {
 	for (int i = 0; i < total; i++) {
 		struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 		uint32_t nread = 0;
-		uint32_t rsz = (uint32_t)shard_write_size(ctx.ctx_codec, i,
+		uint32_t rsz = (uint32_t)shard_write_size(ctx.ctx_encoding, i,
 							  shard_size);
 		uint32_t err_opnum = OP_READ;
 
@@ -1697,7 +1697,7 @@ retry_stripe_read: {
 			ec_report_ds_error(&ctx, i, err_opnum);
 	}
 
-	ret = ctx.ctx_codec->ec_decode(ctx.ctx_codec, shards, present,
+	ret = ctx.ctx_encoding->ec_decode(ctx.ctx_encoding, shards, present,
 				       shard_size);
 	if (ret && stale_seen && outer_retry < EC_OUTER_RETRY_MAX) {
 		outer_retry++;
@@ -1733,7 +1733,7 @@ retry_stripe_read: {
 	 * valid so the matching ec_write_stripe_with_file (shared-ctx
 	 * path) can present each shard's read-time version as a CAS
 	 * guard on the corresponding CHUNK_WRITE.  Only meaningful for
-	 * the shared-ctx caller (ec_write_codec_range RMW prefix read).
+	 * the shared-ctx caller (ec_write_encoding_range RMW prefix read).
 	 */
 	if (shared_ctx)
 		ctx.ctx_read_owners_valid = true;
@@ -1752,17 +1752,17 @@ out_layout:
 		mds_layout_return(ms, &ctx.ctx_file, creds, &ctx.ctx_layout);
 		ec_layout_free(&ctx.ctx_layout);
 	}
-out_codec:
+out_encoding:
 	if (!shared_ctx)
-		ec_codec_destroy(ctx.ctx_codec);
+		ec_encoding_destroy(ctx.ctx_encoding);
 	if (shared_ctx)
 		*shared_ctx = ctx; /* propagate any ec_layout_refresh */
 	return ret;
 }
 
-int ec_write_codec(struct mds_session *ms, const char *path,
+int ec_write_encoding(struct mds_session *ms, const char *path,
 		   const uint8_t *data, size_t data_len, int k, int m,
-		   enum ec_codec_type codec_type, layouttype4 layout_type,
+		   enum ec_encoding_type encoding_type, layouttype4 layout_type,
 		   size_t shard_size)
 {
 	struct mds_file mf;
@@ -1777,12 +1777,12 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 	/*
 	 * Back-compat wrapper for ec_demo / direct callers: no per-call
 	 * cred override, the session's default auth is used.  PS callers
-	 * go through ec_write_codec_with_file directly so they can pass
-	 * the end client's creds.  Mirror of ec_read_codec at the bottom
+	 * go through ec_write_encoding_with_file directly so they can pass
+	 * the end client's creds.  Mirror of ec_read_encoding at the bottom
 	 * of this file.
 	 */
-	ret = ec_write_codec_with_file(ms, &mf, data, data_len, k, m,
-				       codec_type, layout_type, shard_size,
+	ret = ec_write_encoding_with_file(ms, &mf, data, data_len, k, m,
+				       encoding_type, layout_type, shard_size,
 				       NULL, NULL);
 
 	mds_file_close(ms, &mf);
@@ -1793,9 +1793,9 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 /* Read                                                                */
 /* ------------------------------------------------------------------ */
 
-int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
+int ec_read_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
 			    uint8_t *buf, size_t buf_len, size_t *out_len,
-			    int k, int m, enum ec_codec_type codec_type,
+			    int k, int m, enum ec_encoding_type encoding_type,
 			    layouttype4 layout_type, uint64_t skip_ds_mask,
 			    size_t shard_size,
 			    const struct authunix_parms *creds,
@@ -1813,26 +1813,26 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	}
 
 	/*
-	 * Loss tolerance is codec-shaped:
+	 * Loss tolerance is encoding-shaped:
 	 *   - MIRROR replicates data[0] across all k mirrors; any single
 	 *     surviving shard reconstructs.  Tolerate up to k-1 losses.
-	 *   - Every other codec is erasure-coded (RS / Mojette / STRIPE)
+	 *   - Every other encoding is erasure-coded (RS / Mojette / STRIPE)
 	 *     and follows the usual "tolerate at most m losses" rule.
 	 * Using one rule for both shapes (the old `nskip > m` gate)
 	 * rejected legitimate degraded reads on MIRROR layouts where
 	 * m == 0 by construction.
 	 */
-	int max_loss = (codec_type == EC_CODEC_MIRROR) ? (k - 1) : m;
+	int max_loss = (encoding_type == EC_ENCODING_MIRROR) ? (k - 1) : m;
 
 	if (nskip > max_loss) {
 		ec_log("ec_read: skip_ds_mask has %d bits set, "
-		       "need <= %d for codec=%d (k=%d, m=%d)\n",
-		       nskip, max_loss, (int)codec_type, k, m);
+		       "need <= %d for encoding=%d (k=%d, m=%d)\n",
+		       nskip, max_loss, (int)encoding_type, k, m);
 		return -EINVAL;
 	}
 
-	ec_log("ec_read: codec=%d k=%d m=%d shard_size=%zu skip_mask=0x%llx nskip=%d\n",
-	       (int)codec_type, k, m, shard_size,
+	ec_log("ec_read: encoding=%d k=%d m=%d shard_size=%zu skip_mask=0x%llx nskip=%d\n",
+	       (int)encoding_type, k, m, shard_size,
 	       (unsigned long long)skip_ds_mask, nskip);
 
 	if (shard_size == 0 || (shard_size % sizeof(uint64_t)) != 0 ||
@@ -1847,7 +1847,7 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	 * downstream collapses the N identical shards to a single
 	 * stripe-sized run in `buf`.
 	 */
-	const bool is_mirror = (codec_type == EC_CODEC_MIRROR);
+	const bool is_mirror = (encoding_type == EC_ENCODING_MIRROR);
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.ctx_ms = ms;
@@ -1856,14 +1856,14 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	ctx.ctx_pls = pls;
 	ctx.ctx_file = *mf; /* caller owns the underlying mf; we shallow-copy */
 
-	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
-	if (!ctx.ctx_codec)
+	ctx.ctx_encoding = ec_create_encoding(k, m, encoding_type);
+	if (!ctx.ctx_encoding)
 		return -ENOMEM;
 
 	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_READ, layout_type,
 			     creds, &ctx.ctx_layout);
 	if (ret)
-		goto out_codec;
+		goto out_encoding;
 
 	if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
 		ret = -EINVAL;
@@ -1879,7 +1879,7 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	/*
 	 * We don't know the original data length, so we read as many
 	 * stripes as fit in buf_len (rounded up).  For MIRROR each
-	 * stripe is one chunk worth of bytes; for striping codecs
+	 * stripe is one chunk worth of bytes; for striping encodings
 	 * each stripe is k * shard_size bytes split across k shards.
 	 */
 	size_t nstripes = (buf_len + stripe_data - 1) / stripe_data;
@@ -1902,7 +1902,7 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	}
 
 	for (int i = 0; i < total; i++) {
-		size_t sz = shard_write_size(ctx.ctx_codec, i, shard_size);
+		size_t sz = shard_write_size(ctx.ctx_encoding, i, shard_size);
 
 		/*
 		 * For v2 CHUNK reads, the server returns whole blocks,
@@ -1928,7 +1928,7 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	size_t ds_stride = shard_size;
 
 	for (int i = 0; i < total; i++) {
-		size_t sz = shard_write_size(ctx.ctx_codec, i, shard_size);
+		size_t sz = shard_write_size(ctx.ctx_encoding, i, shard_size);
 
 		if (sz > ds_stride)
 			ds_stride = sz;
@@ -1945,7 +1945,7 @@ retry_stripe_read:
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 			uint32_t nread = 0;
 			uint32_t rsz = (uint32_t)shard_write_size(
-				ctx.ctx_codec, i, shard_size);
+				ctx.ctx_encoding, i, shard_size);
 
 			if (skip_ds_mask & (1ULL << i)) {
 				present[i] = false;
@@ -1958,7 +1958,7 @@ retry_stripe_read:
 				uint32_t nblk = DIV_CEIL(rsz, rd_chunk_sz);
 
 				err_opnum = OP_CHUNK_READ;
-				/* ec_read_codec_with_file is the whole-file
+				/* ec_read_encoding_with_file is the whole-file
 				 * read path; no RMW prefix, so no need to
 				 * capture chunk_owner4 for a guard. */
 				ret = ec_chunk_read(
@@ -1986,7 +1986,7 @@ retry_stripe_read:
 		}
 
 		/* RS-decode to reconstruct any missing shards. */
-		ret = ctx.ctx_codec->ec_decode(ctx.ctx_codec, shards, present,
+		ret = ctx.ctx_encoding->ec_decode(ctx.ctx_encoding, shards, present,
 					       shard_size);
 		ec_log("ec_read: stripe %zu ec_decode ret=%d\n", s, ret);
 		if (ret && stale_seen && outer_retry < EC_OUTER_RETRY_MAX) {
@@ -2046,14 +2046,14 @@ out_conns:
 out_layout:
 	mds_layout_return(ms, &ctx.ctx_file, creds, &ctx.ctx_layout);
 	ec_layout_free(&ctx.ctx_layout);
-out_codec:
-	ec_codec_destroy(ctx.ctx_codec);
+out_encoding:
+	ec_encoding_destroy(ctx.ctx_encoding);
 	return ret;
 }
 
-int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
+int ec_read_encoding(struct mds_session *ms, const char *path, uint8_t *buf,
 		  size_t buf_len, size_t *out_len, int k, int m,
-		  enum ec_codec_type codec_type, layouttype4 layout_type,
+		  enum ec_encoding_type encoding_type, layouttype4 layout_type,
 		  uint64_t skip_ds_mask, size_t shard_size)
 {
 	struct mds_file mf;
@@ -2066,11 +2066,11 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 	/*
 	 * Back-compat wrapper for ec_demo / direct callers: no per-call
 	 * cred override, the session's default auth is used.  PS callers
-	 * go through ec_read_codec_with_file directly so they can pass
+	 * go through ec_read_encoding_with_file directly so they can pass
 	 * the end client's creds.
 	 */
-	ret = ec_read_codec_with_file(ms, &mf, buf, buf_len, out_len, k, m,
-				      codec_type, layout_type, skip_ds_mask,
+	ret = ec_read_encoding_with_file(ms, &mf, buf, buf_len, out_len, k, m,
+				      encoding_type, layout_type, skip_ds_mask,
 				      shard_size, NULL, NULL);
 
 	mds_file_close(ms, &mf);
@@ -2106,9 +2106,9 @@ static void range_stripe_overlap(uint64_t s, size_t stripe_data,
 	*sub_len = (size_t)(sub_endx - sub_start);
 }
 
-int ec_write_codec_range(struct mds_session *ms, const char *path,
+int ec_write_encoding_range(struct mds_session *ms, const char *path,
 			 const uint8_t *data, size_t length, uint64_t offset,
-			 int k, int m, enum ec_codec_type codec_type,
+			 int k, int m, enum ec_encoding_type encoding_type,
 			 layouttype4 layout_type, size_t shard_size)
 {
 	struct mds_file mf;
@@ -2152,7 +2152,7 @@ int ec_write_codec_range(struct mds_session *ms, const char *path,
 
 	/*
 	 * Track 1b second-mechanism fix: build a single shared ctx
-	 * (codec + RW layout + ec_resolve_mirrors) ONCE at the top and
+	 * (encoding + RW layout + ec_resolve_mirrors) ONCE at the top and
 	 * thread it through every per-stripe call.  Without this, each
 	 * ec_read_stripe_with_file / ec_write_stripe_with_file call
 	 * built its own ctx and called ec_disconnect_all on the way out
@@ -2166,8 +2166,8 @@ int ec_write_codec_range(struct mds_session *ms, const char *path,
 	ctx.ctx_m = m;
 	ctx.ctx_file = mf;
 
-	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
-	if (!ctx.ctx_codec) {
+	ctx.ctx_encoding = ec_create_encoding(k, m, encoding_type);
+	if (!ctx.ctx_encoding) {
 		ret = -ENOMEM;
 		goto out_free;
 	}
@@ -2176,7 +2176,7 @@ int ec_write_codec_range(struct mds_session *ms, const char *path,
 			     NULL, &ctx.ctx_layout);
 	if (ret) {
 		ec_log("ec_write_range: LAYOUTGET failed: %d\n", ret);
-		goto out_codec;
+		goto out_encoding;
 	}
 
 	if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
@@ -2250,7 +2250,7 @@ rmw_retry:
 			ctx.ctx_read_owners_valid = false;
 			ret = ec_read_stripe_with_file(ms, &mf, s, scratch,
 						       stripe_data, k, m,
-						       codec_type, layout_type,
+						       encoding_type, layout_type,
 						       shard_size, NULL, NULL,
 						       &ctx);
 			if (ret) {
@@ -2265,7 +2265,7 @@ rmw_retry:
 		}
 
 		ret = ec_write_stripe_with_file(ms, &mf, s, write_payload,
-						stripe_data, k, m, codec_type,
+						stripe_data, k, m, encoding_type,
 						layout_type, shard_size, NULL,
 						NULL, NULL, NULL, &ctx);
 		/* Clear the guard flag whether we succeeded or not -- the
@@ -2315,8 +2315,8 @@ out_disconnect:
 out_layout:
 	mds_layout_return(ms, &ctx.ctx_file, NULL, &ctx.ctx_layout);
 	ec_layout_free(&ctx.ctx_layout);
-out_codec:
-	ec_codec_destroy(ctx.ctx_codec);
+out_encoding:
+	ec_encoding_destroy(ctx.ctx_encoding);
 out_free:
 	free(scratch);
 out_close:
@@ -2324,9 +2324,9 @@ out_close:
 	return ret;
 }
 
-int ec_read_codec_range(struct mds_session *ms, const char *path, uint8_t *buf,
+int ec_read_encoding_range(struct mds_session *ms, const char *path, uint8_t *buf,
 			size_t length, uint64_t offset, int k, int m,
-			enum ec_codec_type codec_type, layouttype4 layout_type,
+			enum ec_encoding_type encoding_type, layouttype4 layout_type,
 			size_t shard_size)
 {
 	struct mds_file mf;
@@ -2343,7 +2343,7 @@ int ec_read_codec_range(struct mds_session *ms, const char *path, uint8_t *buf,
 	 * skip_ds_mask is intentionally absent.  Track 1b's harness only
 	 * uses healthy reads to assert the post-write state of each
 	 * writer's range; degraded-read tolerance is the
-	 * full-file ec_read_codec's concern.
+	 * full-file ec_read_encoding's concern.
 	 * ec_read_stripe_with_file does not expose a per-stripe skip
 	 * mask, so adding one here would be misleading.
 	 */
@@ -2378,7 +2378,7 @@ int ec_read_codec_range(struct mds_session *ms, const char *path, uint8_t *buf,
 	}
 
 	/*
-	 * Same shared-ctx pattern ec_write_codec_range uses (Track 1b
+	 * Same shared-ctx pattern ec_write_encoding_range uses (Track 1b
 	 * second-mechanism fix, commit efaff665437b).  Without this,
 	 * each ec_read_stripe_with_file call did its own
 	 * ec_resolve_mirrors + ec_disconnect_all, sending DESTROY_SESSION
@@ -2393,8 +2393,8 @@ int ec_read_codec_range(struct mds_session *ms, const char *path, uint8_t *buf,
 	ctx.ctx_m = m;
 	ctx.ctx_file = mf;
 
-	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
-	if (!ctx.ctx_codec) {
+	ctx.ctx_encoding = ec_create_encoding(k, m, encoding_type);
+	if (!ctx.ctx_encoding) {
 		ret = -ENOMEM;
 		goto out_free;
 	}
@@ -2403,7 +2403,7 @@ int ec_read_codec_range(struct mds_session *ms, const char *path, uint8_t *buf,
 			     NULL, &ctx.ctx_layout);
 	if (ret) {
 		ec_log("ec_read_range: LAYOUTGET failed: %d\n", ret);
-		goto out_codec;
+		goto out_encoding;
 	}
 
 	if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
@@ -2436,7 +2436,7 @@ int ec_read_codec_range(struct mds_session *ms, const char *path, uint8_t *buf,
 		ctx.ctx_read_owners_valid = false;
 
 		ret = ec_read_stripe_with_file(ms, &mf, s, scratch, stripe_data,
-					       k, m, codec_type, layout_type,
+					       k, m, encoding_type, layout_type,
 					       shard_size, NULL, NULL, &ctx);
 		if (ret) {
 			ec_log("ec_read_range: read stripe %llu failed: "
@@ -2454,8 +2454,8 @@ out_disconnect:
 out_layout:
 	mds_layout_return(ms, &ctx.ctx_file, NULL, &ctx.ctx_layout);
 	ec_layout_free(&ctx.ctx_layout);
-out_codec:
-	ec_codec_destroy(ctx.ctx_codec);
+out_encoding:
+	ec_encoding_destroy(ctx.ctx_encoding);
 out_free:
 	free(scratch);
 out_close:
@@ -2470,13 +2470,13 @@ out_close:
 int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
 	     size_t data_len, int k, int m)
 {
-	return ec_write_codec(ms, path, data, data_len, k, m, EC_CODEC_RS,
+	return ec_write_encoding(ms, path, data, data_len, k, m, EC_ENCODING_RS,
 			      LAYOUT4_FLEX_FILES, EC_SHARD_SIZE_DEFAULT);
 }
 
 int ec_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	    size_t buf_len, size_t *out_len, int k, int m)
 {
-	return ec_read_codec(ms, path, buf, buf_len, out_len, k, m, EC_CODEC_RS,
+	return ec_read_encoding(ms, path, buf, buf_len, out_len, k, m, EC_ENCODING_RS,
 			     LAYOUT4_FLEX_FILES, 0, EC_SHARD_SIZE_DEFAULT);
 }

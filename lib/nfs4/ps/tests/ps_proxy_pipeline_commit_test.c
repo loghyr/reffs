@@ -10,15 +10,15 @@
 /*
  * Behaviour of ps_proxy_pipeline_commit (PS Phase 4a slice 4a.2c).
  *
- * The shim drives ec_write_codec_with_file -> mds_layout_get for
+ * The shim drives ec_write_encoding_with_file -> mds_layout_get for
  * the flush; mds_layout_get goes through mds_compound_send_with_auth
  * which we strong-override here to return -EIO.  This short-
- * circuits the codec before it touches DS state, so the tests can
+ * circuits the encoding before it touches DS state, so the tests can
  * verify the commit-side contract -- "did the flush attempt fire,
  * did the buffer stay around on failure, did no-op COMMIT return
  * the right verifier" -- without standing up a full mock MDS+DS.
  *
- * The happy-path success case (codec returns 0, buffer is dropped)
+ * The happy-path success case (encoding returns 0, buffer is dropped)
  * is exercised end-to-end by ec_demo against the bench docker-
  * compose; see scripts/ci_ps_phase4a_test.sh (slice 4a.5).
  */
@@ -56,7 +56,7 @@ int mds_compound_send_with_auth(struct mds_compound *mc __attribute__((unused)),
 {
 	g_send_call_count++;
 	g_captured_creds = creds;
-	return -EIO; /* bail the codec before any DS work */
+	return -EIO; /* bail the encoding before any DS work */
 }
 
 /* ------------------------------------------------------------------ */
@@ -165,7 +165,7 @@ START_TEST(test_commit_returns_same_verifier_as_writes)
 	 * The full-stripe WRITE marks the buffer fully-dirty for
 	 * stripe 0; the slice 4b.2 commit walk dispatches
 	 * ec_write_stripe_with_file -> mds_layout_get, the mock
-	 * returns -EIO, the codec bails before any DS work, and
+	 * returns -EIO, the encoding bails before any DS work, and
 	 * pipeline_commit returns -EIO to the caller.
 	 * reply.verifier is populated only on the success path;
 	 * fire a no-buffer COMMIT below to capture the listener

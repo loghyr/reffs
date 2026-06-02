@@ -236,10 +236,10 @@ static void bench_sparse(const char *label, int P, int k, int m,
 }
 
 /* ------------------------------------------------------------------ */
-/* Codec-level bench (RS vs Mojette-sys vs Mojette-nonsys, peel/gd)    */
+/* Encoding-level bench (RS vs Mojette-sys vs Mojette-nonsys, peel/gd)    */
 /* ------------------------------------------------------------------ */
 
-static void bench_codec(const char *label, struct ec_codec *codec, int k, int m,
+static void bench_encoding(const char *label, struct ec_encoding *encoding, int k, int m,
 			size_t shard_len, const int *missing, int n_missing,
 			bool force_gd)
 {
@@ -249,23 +249,23 @@ static void bench_codec(const char *label, struct ec_codec *codec, int k, int m,
 	uint8_t *shards[k + m];
 	bool present[k + m];
 
-	/* In non-systematic codecs the data buffers are overwritten with
+	/* In non-systematic encodings the data buffers are overwritten with
 	 * projections that may differ in size across shards; take max
 	 * over data shards and over parity shards.  NULL ec_shard_size
 	 * means uniform shards (= shard_len). */
 	size_t data_buf_len = shard_len;
 	size_t parity_buf_len = shard_len;
 
-	if (codec->ec_shard_size) {
+	if (encoding->ec_shard_size) {
 		for (int i = 0; i < k; i++) {
-			size_t s = codec->ec_shard_size(codec, i, shard_len);
+			size_t s = encoding->ec_shard_size(encoding, i, shard_len);
 
 			if (s > data_buf_len)
 				data_buf_len = s;
 		}
 		for (int i = 0; i < m; i++) {
 			size_t s =
-				codec->ec_shard_size(codec, k + i, shard_len);
+				encoding->ec_shard_size(encoding, k + i, shard_len);
 
 			if (s > parity_buf_len)
 				parity_buf_len = s;
@@ -300,7 +300,7 @@ static void bench_codec(const char *label, struct ec_codec *codec, int k, int m,
 
 		uint64_t t0 = now_ns();
 
-		codec->ec_encode(codec, data, parity, shard_len);
+		encoding->ec_encode(encoding, data, parity, shard_len);
 		uint64_t t1 = now_ns();
 
 		if (run >= WARMUP)
@@ -319,7 +319,7 @@ static void bench_codec(const char *label, struct ec_codec *codec, int k, int m,
 		}
 
 		t0 = now_ns();
-		int rd = codec->ec_decode(codec, shards, present, shard_len);
+		int rd = encoding->ec_decode(encoding, shards, present, shard_len);
 
 		t1 = now_ns();
 		if (run >= WARMUP)
@@ -358,34 +358,34 @@ static void bench_codec(const char *label, struct ec_codec *codec, int k, int m,
 		free(parity[i]);
 }
 
-static void bench_codec_set(int k, int m, size_t shard_len, const int *missing,
+static void bench_encoding_set(int k, int m, size_t shard_len, const int *missing,
 			    int n_missing, const char *miss_label)
 {
-	struct ec_codec *rs = ec_rs_create(k, m);
-	struct ec_codec *msys = ec_mojette_sys_create(k, m);
-	struct ec_codec *mns = ec_mojette_nonsys_create(k, m);
+	struct ec_encoding *rs = ec_rs_create(k, m);
+	struct ec_encoding *msys = ec_mojette_sys_create(k, m);
+	struct ec_encoding *mns = ec_mojette_nonsys_create(k, m);
 
 	char buf[64];
 
 	snprintf(buf, sizeof(buf), "RS %d+%d %s", k, m, miss_label);
-	bench_codec(buf, rs, k, m, shard_len, missing, n_missing, false);
+	bench_encoding(buf, rs, k, m, shard_len, missing, n_missing, false);
 
 	snprintf(buf, sizeof(buf), "Mojette-sys %d+%d %s peel", k, m,
 		 miss_label);
-	bench_codec(buf, msys, k, m, shard_len, missing, n_missing, false);
+	bench_encoding(buf, msys, k, m, shard_len, missing, n_missing, false);
 	snprintf(buf, sizeof(buf), "Mojette-sys %d+%d %s gd", k, m, miss_label);
-	bench_codec(buf, msys, k, m, shard_len, missing, n_missing, true);
+	bench_encoding(buf, msys, k, m, shard_len, missing, n_missing, true);
 
 	snprintf(buf, sizeof(buf), "Mojette-nonsys %d+%d %s peel", k, m,
 		 miss_label);
-	bench_codec(buf, mns, k, m, shard_len, missing, n_missing, false);
+	bench_encoding(buf, mns, k, m, shard_len, missing, n_missing, false);
 	snprintf(buf, sizeof(buf), "Mojette-nonsys %d+%d %s gd", k, m,
 		 miss_label);
-	bench_codec(buf, mns, k, m, shard_len, missing, n_missing, true);
+	bench_encoding(buf, mns, k, m, shard_len, missing, n_missing, true);
 
-	ec_codec_destroy(rs);
-	ec_codec_destroy(msys);
-	ec_codec_destroy(mns);
+	ec_encoding_destroy(rs);
+	ec_encoding_destroy(msys);
+	ec_encoding_destroy(mns);
 }
 
 int main(void)
@@ -411,7 +411,7 @@ int main(void)
 	bench_dense("dense 64x8", 64, 8, 8, d_8x8);
 	bench_dense("dense 512x8 (4K shard, k=8)", 512, 8, 8, d_8x8);
 	bench_dense("dense 4096x8 (32K shard, k=8)", 4096, 8, 8, d_8x8);
-	bench_dense("dense 3072x2 (24K codec demo)", 3072, 2, 2, d_2x2);
+	bench_dense("dense 3072x2 (24K encoding demo)", 3072, 2, 2, d_2x2);
 
 	printf("\n=== sparse (k=4, m=2, lose 2 data rows) ===\n");
 	struct moj_direction d_n6[] = { { -3, 1 }, { -2, 1 }, { -1, 1 },
@@ -438,7 +438,7 @@ int main(void)
 	bench_sparse("sys k=8 m=2 P=4096 lose{0,7}", 4096, 8, 2, d_n10, miss07,
 		     2);
 
-	printf("\n=== codec-level (full encode + decode, no NFS) ===\n");
+	printf("\n=== encoding-level (full encode + decode, no NFS) ===\n");
 	int miss_4_03[] = { 0, 3 };
 	int miss_4_12[] = { 1, 2 };
 	int miss_8_07[] = { 0, 7 };
@@ -446,22 +446,22 @@ int main(void)
 
 	/* 4 KB shard, k=4 m=2 (typical reffs ec_demo default). */
 	printf("\n-- 4+2, shard=4096 (default ec_demo), 1 data-shard loss --\n");
-	bench_codec_set(4, 2, 4096, miss_one, 1, "lose{0}");
+	bench_encoding_set(4, 2, 4096, miss_one, 1, "lose{0}");
 	printf("\n-- 4+2, shard=4096, 2 data-shard losses --\n");
-	bench_codec_set(4, 2, 4096, miss_4_03, 2, "lose{0,3}");
-	bench_codec_set(4, 2, 4096, miss_4_12, 2, "lose{1,2}");
+	bench_encoding_set(4, 2, 4096, miss_4_03, 2, "lose{0,3}");
+	bench_encoding_set(4, 2, 4096, miss_4_12, 2, "lose{1,2}");
 
 	/* 32 KB shard, k=4 m=2 (larger payload). */
 	printf("\n-- 4+2, shard=32768, 2 data-shard losses --\n");
-	bench_codec_set(4, 2, 32768, miss_4_03, 2, "lose{0,3}");
+	bench_encoding_set(4, 2, 32768, miss_4_03, 2, "lose{0,3}");
 
 	/* 4 KB shard, k=8 m=2. */
 	printf("\n-- 8+2, shard=4096, 2 data-shard losses --\n");
-	bench_codec_set(8, 2, 4096, miss_8_07, 2, "lose{0,7}");
+	bench_encoding_set(8, 2, 4096, miss_8_07, 2, "lose{0,7}");
 
 	/* 32 KB shard, k=8 m=2. */
 	printf("\n-- 8+2, shard=32768, 2 data-shard losses --\n");
-	bench_codec_set(8, 2, 32768, miss_8_07, 2, "lose{0,7}");
+	bench_encoding_set(8, 2, 32768, miss_8_07, 2, "lose{0,7}");
 
 	return 0;
 }

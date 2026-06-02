@@ -16,7 +16,7 @@
  * The 4b.6 tests cover the FILE_SYNC4 / DATA_SYNC4 path, which
  * calls into ec_*_stripe_with_file -> mds_compound_send_with_auth;
  * those tests use the strong-override below to short-circuit the
- * codec with -EIO so we can assert on attempt counts and post-
+ * encoding with -EIO so we can assert on attempt counts and post-
  * flush dirty state without standing up a full mock MDS+DS.
  *
  * Tests reach into struct ps_write_buffer directly (via the
@@ -59,7 +59,7 @@ int mds_compound_send_with_auth(struct mds_compound *mc __attribute__((unused)),
 				__attribute__((unused)))
 {
 	g_send_call_count++;
-	return -EIO; /* bail the codec before any DS work */
+	return -EIO; /* bail the encoding before any DS work */
 }
 
 /* ------------------------------------------------------------------ */

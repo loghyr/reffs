@@ -82,10 +82,10 @@ struct ps_write_buffer {
 	 * Latest stateid_seqid seen on a WRITE into this buffer.
 	 * COMMIT op doesn't carry a stateid; pipeline_commit uses
 	 * this stashed value when constructing the mds_file for
-	 * ec_write_codec_with_file's LAYOUTGET.  Updated under
+	 * ec_write_encoding_with_file's LAYOUTGET.  Updated under
 	 * pwb_mutex by every WRITE; a stale seqid would surface as
 	 * NFS4ERR_BAD_STATEID on the upstream LAYOUTGET, which the
-	 * codec returns to pipeline_commit verbatim.
+	 * encoding returns to pipeline_commit verbatim.
 	 */
 	uint32_t pwb_stateid_seqid;
 
@@ -166,7 +166,7 @@ struct ps_write_buffer {
  * .claude/design/proxy-server-phase4a.md.
  */
 extern _Atomic(void (*)(void)) ps_test_hook_pre_state_load;
-extern _Atomic(void (*)(void)) ps_test_hook_in_codec_flush;
+extern _Atomic(void (*)(void)) ps_test_hook_in_encoding_flush;
 extern _Atomic(uint64_t (*)(void)) ps_test_hook_clock_now_ns;
 
 /*

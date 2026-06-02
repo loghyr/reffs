@@ -2249,10 +2249,10 @@ out:
  * PS Phase 3: pipeline-driven read.
  *
  * Builds a struct mds_file from the caller-supplied upstream FH and
- * end-client open stateid, hands it to ec_read_codec_with_file, and
+ * end-client open stateid, hands it to ec_read_encoding_with_file, and
  * copies the requested byte range out of the decoded payload.
  *
- * Codec is hard-coded to RS 4+2 / FFV2 / 4 KiB shards for this slice.
+ * Encoding is hard-coded to RS 4+2 / FFV2 / 4 KiB shards for this slice.
  * See .claude/design/proxy-server-phase3.md Risk #1.
  */
 int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
@@ -2296,7 +2296,7 @@ int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
 	/*
 	 * mds_file is a {stateid, fh} tuple.  We construct it from the
 	 * end-client's open stateid (carried verbatim) and the upstream
-	 * FH discovered at PS startup.  ec_read_codec_with_file does
+	 * FH discovered at PS startup.  ec_read_encoding_with_file does
 	 * not take ownership; the local copy here is sufficient for the
 	 * duration of the call.
 	 */
@@ -2305,7 +2305,7 @@ int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
 	memcpy(mf.mf_stateid.other, stateid_other, sizeof(mf.mf_stateid.other));
 	/*
 	 * mf_fh.nfs_fh4_val is `char *` in the generated XDR; cast away
-	 * the const here -- ec_read_codec_with_file (and the LAYOUTGET
+	 * the const here -- ec_read_encoding_with_file (and the LAYOUTGET
 	 * primitive it calls) does not mutate the FH bytes.
 	 */
 	mf.mf_fh.nfs_fh4_val = (char *)upstream_fh;
@@ -2318,8 +2318,8 @@ int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
 	 * dispatch; reads still take the RPC path on every mirror
 	 * regardless of co-residency.
 	 */
-	ret = ec_read_codec_with_file(ms, &mf, whole_buf, whole_len, &out_len,
-				      /* k */ 4, /* m */ 2, EC_CODEC_RS,
+	ret = ec_read_encoding_with_file(ms, &mf, whole_buf, whole_len, &out_len,
+				      /* k */ 4, /* m */ 2, EC_ENCODING_RS,
 				      LAYOUT4_FLEX_FILES_V2,
 				      /* skip_ds_mask */ 0,
 				      /* shard_size */ 4096, creds,
@@ -2364,7 +2364,7 @@ int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
 /* This is the WRITE entry point op handlers route to on proxy SBs.   */
 /* It does not call upstream; it appends client bytes to the          */
 /* per-(stateid, fh) write buffer on the listener.  The COMMIT-time   */
-/* flush through ec_write_codec_with_file is slice 4a.2c.             */
+/* flush through ec_write_encoding_with_file is slice 4a.2c.             */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -2505,7 +2505,7 @@ static int pwb_flush_range_locked(struct ps_write_buffer *buf,
 
 	/*
 	 * Construct an mds_file from the buffer's stashed key.  The
-	 * codec only reads it; we don't take ownership of any upstream
+	 * encoding only reads it; we don't take ownership of any upstream
 	 * state.  stateid_seqid is whichever WRITE landed last under
 	 * pwb_mutex; stateid_other was set at alloc time and never
 	 * changes.
@@ -2607,7 +2607,7 @@ static int pwb_flush_range_locked(struct ps_write_buffer *buf,
 			ret = ec_read_stripe_with_file(
 				ms, &mf, (uint64_t)s, scratch, stripe_size,
 				(int)buf->pwb_geom.pwbg_k,
-				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
+				(int)buf->pwb_geom.pwbg_m, EC_ENCODING_RS,
 				LAYOUT4_FLEX_FILES_V2,
 				buf->pwb_geom.pwbg_shard_size, creds, pls,
 				NULL);
@@ -2641,7 +2641,7 @@ static int pwb_flush_range_locked(struct ps_write_buffer *buf,
 			ret = ec_write_stripe_with_file(
 				ms, &mf, (uint64_t)s, scratch, stripe_size,
 				(int)buf->pwb_geom.pwbg_k,
-				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
+				(int)buf->pwb_geom.pwbg_m, EC_ENCODING_RS,
 				LAYOUT4_FLEX_FILES_V2,
 				buf->pwb_geom.pwbg_shard_size, creds,
 				stripe_mds_verf, &stripe_mds_verf_set, pls,
@@ -2661,7 +2661,7 @@ static int pwb_flush_range_locked(struct ps_write_buffer *buf,
 			ret = ec_write_stripe_with_file(
 				ms, &mf, (uint64_t)s, buf->pwb_data + base,
 				stripe_size, (int)buf->pwb_geom.pwbg_k,
-				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
+				(int)buf->pwb_geom.pwbg_m, EC_ENCODING_RS,
 				LAYOUT4_FLEX_FILES_V2,
 				buf->pwb_geom.pwbg_shard_size, creds,
 				stripe_mds_verf, &stripe_mds_verf_set, pls,
@@ -3036,7 +3036,7 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 	 * Failure: keep the buffer with remaining dirty entries.  The
 	 * client retries COMMIT and the walk picks up where this one
 	 * left off.  Propagate the helper's ret verbatim (-EIO from a
-	 * per-stripe codec failure, -ENOMEM from a scratch / stripe_
+	 * per-stripe encoding failure, -ENOMEM from a scratch / stripe_
 	 * nos allocation failure) so the op handler can map errno to
 	 * the right wire status.
 	 */
@@ -3111,9 +3111,9 @@ int ps_proxy_pipeline_close(struct mds_session *ms, const uint8_t *upstream_fh,
 	 * counter the design's "ps-write-buffer-stats" probe op
 	 * exposes (slice 4a.4).
 	 */
-	ret = ec_write_codec_with_file(ms, &mf, buf->pwb_data,
+	ret = ec_write_encoding_with_file(ms, &mf, buf->pwb_data,
 				       buf->pwb_high_water, /* k */ 4,
-				       /* m */ 2, EC_CODEC_RS,
+				       /* m */ 2, EC_ENCODING_RS,
 				       LAYOUT4_FLEX_FILES_V2,
 				       /* shard_size */ 4096, creds, pls);
 	pthread_mutex_unlock(&buf->pwb_mutex);

@@ -1744,7 +1744,7 @@ uint32_t nfs4_op_read(struct compound *compound)
 		 * PS Phase 3: route proxy SB reads through the EC
 		 * pipeline (LAYOUTGET + CHUNK_READ + decode) instead of
 		 * the transparent forward to upstream MDS.  Same
-		 * signature so the call is a 1:1 swap; codec parameters
+		 * signature so the call is a 1:1 swap; encoding parameters
 		 * are pinned to RS 4+2 / FFV2 / 4 KiB inside the shim
 		 * for this slice (see proxy-server-phase3.md Risk #1).
 		 *

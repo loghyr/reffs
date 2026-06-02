@@ -6,9 +6,9 @@
 #endif
 
 /*
- * Mojette erasure codec -- systematic and non-systematic wrappers.
+ * Mojette erasure encoding -- systematic and non-systematic wrappers.
  *
- * Wraps the core Mojette transform (mojette.c) into the ec_codec
+ * Wraps the core Mojette transform (mojette.c) into the ec_encoding
  * interface for use by the EC demo client.
  *
  * Systematic: data shards are grid rows (verbatim), parity shards are
@@ -28,7 +28,7 @@
 
 #include "mojette.h"
 
-struct moj_codec_private {
+struct moj_encoding_private {
 	struct moj_direction *mcp_dirs; /* k+m directions */
 	int mcp_n; /* k + m */
 	bool mcp_systematic;
@@ -51,12 +51,12 @@ static int grid_P(size_t shard_len)
 /* Systematic encode / decode                                          */
 /* ------------------------------------------------------------------ */
 
-static int mojette_sys_encode(struct ec_codec *codec, uint8_t **data,
+static int mojette_sys_encode(struct ec_encoding *encoding, uint8_t **data,
 			      uint8_t **parity, size_t shard_len)
 {
-	struct moj_codec_private *mcp = codec->ec_private;
-	int k = codec->ec_k;
-	int m = codec->ec_m;
+	struct moj_encoding_private *mcp = encoding->ec_private;
+	int k = encoding->ec_k;
+	int m = encoding->ec_m;
 	int P = grid_P(shard_len);
 
 	/*
@@ -115,12 +115,12 @@ static int mojette_sys_encode(struct ec_codec *codec, uint8_t **data,
 	return 0;
 }
 
-static int mojette_sys_decode(struct ec_codec *codec, uint8_t **shards,
+static int mojette_sys_decode(struct ec_encoding *encoding, uint8_t **shards,
 			      const bool *present, size_t shard_len)
 {
-	struct moj_codec_private *mcp = codec->ec_private;
-	int k = codec->ec_k;
-	int m = codec->ec_m;
+	struct moj_encoding_private *mcp = encoding->ec_private;
+	int k = encoding->ec_k;
+	int m = encoding->ec_m;
 	int n = k + m;
 	int P = grid_P(shard_len);
 
@@ -143,7 +143,7 @@ static int mojette_sys_decode(struct ec_codec *codec, uint8_t **shards,
 		/* Only parity missing -- re-encode to regenerate. */
 		uint8_t **parity = shards + k;
 
-		return mojette_sys_encode(codec, shards, parity, shard_len);
+		return mojette_sys_encode(encoding, shards, parity, shard_len);
 	}
 
 	/*
@@ -239,12 +239,12 @@ out:
 /* Non-systematic encode / decode                                      */
 /* ------------------------------------------------------------------ */
 
-static int mojette_nonsys_encode(struct ec_codec *codec, uint8_t **data,
+static int mojette_nonsys_encode(struct ec_encoding *encoding, uint8_t **data,
 				 uint8_t **parity, size_t shard_len)
 {
-	struct moj_codec_private *mcp = codec->ec_private;
-	int k = codec->ec_k;
-	int m = codec->ec_m;
+	struct moj_encoding_private *mcp = encoding->ec_private;
+	int k = encoding->ec_k;
+	int m = encoding->ec_m;
 	int n = k + m;
 	int P = grid_P(shard_len);
 
@@ -307,12 +307,12 @@ static int mojette_nonsys_encode(struct ec_codec *codec, uint8_t **data,
 	return 0;
 }
 
-static int mojette_nonsys_decode(struct ec_codec *codec, uint8_t **shards,
+static int mojette_nonsys_decode(struct ec_encoding *encoding, uint8_t **shards,
 				 const bool *present, size_t shard_len)
 {
-	struct moj_codec_private *mcp = codec->ec_private;
-	int k = codec->ec_k;
-	int m = codec->ec_m;
+	struct moj_encoding_private *mcp = encoding->ec_private;
+	int k = encoding->ec_k;
+	int m = encoding->ec_m;
 	int n = k + m;
 	int P = grid_P(shard_len);
 
@@ -387,11 +387,11 @@ out:
 /* Shard size callback                                                 */
 /* ------------------------------------------------------------------ */
 
-static size_t mojette_shard_size(struct ec_codec *codec, int shard_idx,
+static size_t mojette_shard_size(struct ec_encoding *encoding, int shard_idx,
 				 size_t data_shard_len)
 {
-	struct moj_codec_private *mcp = codec->ec_private;
-	int k = codec->ec_k;
+	struct moj_encoding_private *mcp = encoding->ec_private;
+	int k = encoding->ec_k;
 	int P = grid_P(data_shard_len);
 	int dir_idx = shard_idx;
 
@@ -407,32 +407,32 @@ static size_t mojette_shard_size(struct ec_codec *codec, int shard_idx,
 /* Destroy                                                             */
 /* ------------------------------------------------------------------ */
 
-static void mojette_destroy(struct ec_codec *codec)
+static void mojette_destroy(struct ec_encoding *encoding)
 {
-	struct moj_codec_private *mcp = codec->ec_private;
+	struct moj_encoding_private *mcp = encoding->ec_private;
 
 	if (mcp) {
 		free(mcp->mcp_dirs);
 		free(mcp);
 	}
-	free(codec);
+	free(encoding);
 }
 
 /* ------------------------------------------------------------------ */
 /* Create                                                              */
 /* ------------------------------------------------------------------ */
 
-static struct ec_codec *mojette_create(int k, int m, bool systematic)
+static struct ec_encoding *mojette_create(int k, int m, bool systematic)
 {
-	struct ec_codec *codec = NULL;
-	struct moj_codec_private *mcp = NULL;
+	struct ec_encoding *encoding = NULL;
+	struct moj_encoding_private *mcp = NULL;
 	int n = k + m;
 
 	if (k < 1 || m < 1)
 		return NULL;
 
-	codec = calloc(1, sizeof(*codec));
-	if (!codec)
+	encoding = calloc(1, sizeof(*encoding));
+	if (!encoding)
 		return NULL;
 
 	mcp = calloc(1, sizeof(*mcp));
@@ -445,34 +445,34 @@ static struct ec_codec *mojette_create(int k, int m, bool systematic)
 	mcp->mcp_n = n;
 	mcp->mcp_systematic = systematic;
 
-	codec->ec_name = systematic ? "mojette-systematic" :
+	encoding->ec_name = systematic ? "mojette-systematic" :
 				      "mojette-non-systematic";
-	codec->ec_k = k;
-	codec->ec_m = m;
-	codec->ec_encode = systematic ? mojette_sys_encode :
+	encoding->ec_k = k;
+	encoding->ec_m = m;
+	encoding->ec_encode = systematic ? mojette_sys_encode :
 					mojette_nonsys_encode;
-	codec->ec_decode = systematic ? mojette_sys_decode :
+	encoding->ec_decode = systematic ? mojette_sys_decode :
 					mojette_nonsys_decode;
-	codec->ec_shard_size = mojette_shard_size;
-	codec->ec_destroy = mojette_destroy;
-	codec->ec_private = mcp;
+	encoding->ec_shard_size = mojette_shard_size;
+	encoding->ec_destroy = mojette_destroy;
+	encoding->ec_private = mcp;
 
-	return codec;
+	return encoding;
 
 fail:
 	if (mcp)
 		free(mcp->mcp_dirs);
 	free(mcp);
-	free(codec);
+	free(encoding);
 	return NULL;
 }
 
-struct ec_codec *ec_mojette_sys_create(int k, int m)
+struct ec_encoding *ec_mojette_sys_create(int k, int m)
 {
 	return mojette_create(k, m, true);
 }
 
-struct ec_codec *ec_mojette_nonsys_create(int k, int m)
+struct ec_encoding *ec_mojette_nonsys_create(int k, int m)
 {
 	return mojette_create(k, m, false);
 }

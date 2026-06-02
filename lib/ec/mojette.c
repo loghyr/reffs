@@ -650,7 +650,7 @@ out:
  *   DGCI 2006, LNCS 4245, pp. 122-133.
  *
  * Operates on a P*Q grid where every row is unknown (np == Q,
- * failures = {0, 1, ..., Q-1} dense).  Reffs's codec layer always
+ * failures = {0, 1, ..., Q-1} dense).  Reffs's encoding layer always
  * presents this dense-failures shape, so the sparse-failures
  * correction in the k_offsets recurrence collapses to zero and is
  * dropped.

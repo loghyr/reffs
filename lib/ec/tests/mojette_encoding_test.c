@@ -6,7 +6,7 @@
 #endif
 
 /*
- * Unit tests for Mojette erasure codec (systematic + non-systematic).
+ * Unit tests for Mojette erasure encoding (systematic + non-systematic).
  */
 
 #include <check.h>
@@ -83,20 +83,20 @@ static void free_bufs(uint8_t **bufs, int n)
 
 START_TEST(test_sys_init)
 {
-	struct ec_codec *c = ec_mojette_sys_create(TEST_K, TEST_M);
+	struct ec_encoding *c = ec_mojette_sys_create(TEST_K, TEST_M);
 
 	ck_assert_ptr_nonnull(c);
 	ck_assert_int_eq(c->ec_k, TEST_K);
 	ck_assert_int_eq(c->ec_m, TEST_M);
 	ck_assert_str_eq(c->ec_name, "mojette-systematic");
 	ck_assert(c->ec_shard_size != NULL);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_sys_encode_decode_no_loss)
 {
-	struct ec_codec *c = ec_mojette_sys_create(TEST_K, TEST_M);
+	struct ec_encoding *c = ec_mojette_sys_create(TEST_K, TEST_M);
 	uint8_t *data[TEST_K], *parity[TEST_M], *orig[TEST_K];
 
 	alloc_shards(data, parity, orig, TEST_K, TEST_M, SHARD_LEN, SHARD_LEN,
@@ -130,13 +130,13 @@ START_TEST(test_sys_encode_decode_no_loss)
 	free_bufs(data, TEST_K);
 	free_bufs(parity, TEST_M);
 	free_bufs(orig, TEST_K);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_sys_one_data_loss)
 {
-	struct ec_codec *c = ec_mojette_sys_create(TEST_K, TEST_M);
+	struct ec_encoding *c = ec_mojette_sys_create(TEST_K, TEST_M);
 	uint8_t *data[TEST_K], *parity[TEST_M], *orig[TEST_K];
 
 	alloc_shards(data, parity, orig, TEST_K, TEST_M, SHARD_LEN, SHARD_LEN,
@@ -166,13 +166,13 @@ START_TEST(test_sys_one_data_loss)
 	free_bufs(data, TEST_K);
 	free_bufs(parity, TEST_M);
 	free_bufs(orig, TEST_K);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_sys_two_data_loss)
 {
-	struct ec_codec *c = ec_mojette_sys_create(TEST_K, TEST_M);
+	struct ec_encoding *c = ec_mojette_sys_create(TEST_K, TEST_M);
 	uint8_t *data[TEST_K], *parity[TEST_M], *orig[TEST_K];
 
 	alloc_shards(data, parity, orig, TEST_K, TEST_M, SHARD_LEN, SHARD_LEN,
@@ -205,13 +205,13 @@ START_TEST(test_sys_two_data_loss)
 	free_bufs(data, TEST_K);
 	free_bufs(parity, TEST_M);
 	free_bufs(orig, TEST_K);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_sys_too_many_losses)
 {
-	struct ec_codec *c = ec_mojette_sys_create(TEST_K, TEST_M);
+	struct ec_encoding *c = ec_mojette_sys_create(TEST_K, TEST_M);
 	uint8_t *data[TEST_K], *parity[TEST_M], *orig[TEST_K];
 
 	alloc_shards(data, parity, orig, TEST_K, TEST_M, SHARD_LEN, SHARD_LEN,
@@ -241,21 +241,21 @@ START_TEST(test_sys_too_many_losses)
 	free_bufs(data, TEST_K);
 	free_bufs(parity, TEST_M);
 	free_bufs(orig, TEST_K);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 /*
  * 24 KiB-shard correctness.  Production sanity (run-sanity.sh)
  * fans 96 KiB out across k=4 mirrors at 24 KiB per data shard; the
- * codec must round-trip at that geometry, including under loss.
+ * encoding must round-trip at that geometry, including under loss.
  * BIG_P=3072 makes the inverse non-trivial -- the prior tests at
  * P=16 hide any large-grid regression in moj_inverse.
  */
 
 START_TEST(test_sys_24k_no_loss)
 {
-	struct ec_codec *c = ec_mojette_sys_create(BIG_K, BIG_M);
+	struct ec_encoding *c = ec_mojette_sys_create(BIG_K, BIG_M);
 	uint8_t *data[BIG_K], *parity[BIG_M], *orig[BIG_K];
 
 	/*
@@ -292,13 +292,13 @@ START_TEST(test_sys_24k_no_loss)
 	free_bufs(data, BIG_K);
 	free_bufs(parity, BIG_M);
 	free_bufs(orig, BIG_K);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_sys_24k_one_data_loss)
 {
-	struct ec_codec *c = ec_mojette_sys_create(BIG_K, BIG_M);
+	struct ec_encoding *c = ec_mojette_sys_create(BIG_K, BIG_M);
 	uint8_t *data[BIG_K], *parity[BIG_M], *orig[BIG_K];
 
 	alloc_shards(data, parity, orig, BIG_K, BIG_M, BIG_SHARD_LEN,
@@ -328,13 +328,13 @@ START_TEST(test_sys_24k_one_data_loss)
 	free_bufs(data, BIG_K);
 	free_bufs(parity, BIG_M);
 	free_bufs(orig, BIG_K);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_sys_24k_two_data_loss)
 {
-	struct ec_codec *c = ec_mojette_sys_create(BIG_K, BIG_M);
+	struct ec_encoding *c = ec_mojette_sys_create(BIG_K, BIG_M);
 	uint8_t *data[BIG_K], *parity[BIG_M], *orig[BIG_K];
 
 	alloc_shards(data, parity, orig, BIG_K, BIG_M, BIG_SHARD_LEN,
@@ -372,13 +372,13 @@ START_TEST(test_sys_24k_two_data_loss)
 	free_bufs(data, BIG_K);
 	free_bufs(parity, BIG_M);
 	free_bufs(orig, BIG_K);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_sys_24k_only_parity_loss)
 {
-	struct ec_codec *c = ec_mojette_sys_create(BIG_K, BIG_M);
+	struct ec_encoding *c = ec_mojette_sys_create(BIG_K, BIG_M);
 	uint8_t *data[BIG_K], *parity[BIG_M], *orig[BIG_K];
 
 	alloc_shards(data, parity, orig, BIG_K, BIG_M, BIG_SHARD_LEN,
@@ -431,13 +431,13 @@ START_TEST(test_sys_24k_only_parity_loss)
 	free_bufs(data, BIG_K);
 	free_bufs(parity, BIG_M);
 	free_bufs(orig, BIG_K);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_sys_24k_one_data_one_parity_loss)
 {
-	struct ec_codec *c = ec_mojette_sys_create(BIG_K, BIG_M);
+	struct ec_encoding *c = ec_mojette_sys_create(BIG_K, BIG_M);
 	uint8_t *data[BIG_K], *parity[BIG_M], *orig[BIG_K];
 
 	alloc_shards(data, parity, orig, BIG_K, BIG_M, BIG_SHARD_LEN,
@@ -475,7 +475,7 @@ START_TEST(test_sys_24k_one_data_one_parity_loss)
 	free_bufs(data, BIG_K);
 	free_bufs(parity, BIG_M);
 	free_bufs(orig, BIG_K);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
@@ -485,17 +485,17 @@ END_TEST
 
 START_TEST(test_nonsys_init)
 {
-	struct ec_codec *c = ec_mojette_nonsys_create(TEST_K, TEST_M);
+	struct ec_encoding *c = ec_mojette_nonsys_create(TEST_K, TEST_M);
 
 	ck_assert_ptr_nonnull(c);
 	ck_assert_str_eq(c->ec_name, "mojette-non-systematic");
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_nonsys_encode_decode_no_loss)
 {
-	struct ec_codec *c = ec_mojette_nonsys_create(TEST_K, TEST_M);
+	struct ec_encoding *c = ec_mojette_nonsys_create(TEST_K, TEST_M);
 	uint8_t *data[TEST_K], *parity[TEST_M], *orig[TEST_K];
 
 	alloc_shards(data, parity, orig, TEST_K, TEST_M, SHARD_LEN,
@@ -528,13 +528,13 @@ START_TEST(test_nonsys_encode_decode_no_loss)
 	free_bufs(data, TEST_K);
 	free_bufs(parity, TEST_M);
 	free_bufs(orig, TEST_K);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_nonsys_one_loss)
 {
-	struct ec_codec *c = ec_mojette_nonsys_create(TEST_K, TEST_M);
+	struct ec_encoding *c = ec_mojette_nonsys_create(TEST_K, TEST_M);
 	uint8_t *data[TEST_K], *parity[TEST_M], *orig[TEST_K];
 
 	alloc_shards(data, parity, orig, TEST_K, TEST_M, SHARD_LEN,
@@ -564,13 +564,13 @@ START_TEST(test_nonsys_one_loss)
 	free_bufs(data, TEST_K);
 	free_bufs(parity, TEST_M);
 	free_bufs(orig, TEST_K);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_nonsys_max_loss)
 {
-	struct ec_codec *c = ec_mojette_nonsys_create(TEST_K, TEST_M);
+	struct ec_encoding *c = ec_mojette_nonsys_create(TEST_K, TEST_M);
 	uint8_t *data[TEST_K], *parity[TEST_M], *orig[TEST_K];
 
 	alloc_shards(data, parity, orig, TEST_K, TEST_M, SHARD_LEN,
@@ -601,13 +601,13 @@ START_TEST(test_nonsys_max_loss)
 	free_bufs(data, TEST_K);
 	free_bufs(parity, TEST_M);
 	free_bufs(orig, TEST_K);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_nonsys_too_many_losses)
 {
-	struct ec_codec *c = ec_mojette_nonsys_create(TEST_K, TEST_M);
+	struct ec_encoding *c = ec_mojette_nonsys_create(TEST_K, TEST_M);
 	uint8_t *data[TEST_K], *parity[TEST_M], *orig[TEST_K];
 
 	alloc_shards(data, parity, orig, TEST_K, TEST_M, SHARD_LEN,
@@ -636,7 +636,7 @@ START_TEST(test_nonsys_too_many_losses)
 	free_bufs(data, TEST_K);
 	free_bufs(parity, TEST_M);
 	free_bufs(orig, TEST_K);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
@@ -645,27 +645,27 @@ END_TEST
 /* ------------------------------------------------------------------ */
 
 /*
- * gd parameterization: re-run a subset of the codec tests with
+ * gd parameterization: re-run a subset of the encoding tests with
  * moj_force_gd(true) to confirm the dispatcher routes to gd (and
  * gd-or-its-peel-fallback recovers correctly through both sys and
- * nonsys codec paths).  When gd is stubbed (-ENOSYS), the
+ * nonsys encoding paths).  When gd is stubbed (-ENOSYS), the
  * dispatcher transparently falls back to peel — so these tests
  * pass identically.  Once gd is implemented, the same tests
- * exercise gd via the codec.
+ * exercise gd via the encoding.
  */
-static void gd_codec_setup(void)
+static void gd_encoding_setup(void)
 {
 	moj_force_gd(true);
 }
 
-static void gd_codec_teardown(void)
+static void gd_encoding_teardown(void)
 {
 	moj_force_gd(false);
 }
 
-static Suite *mojette_codec_suite(void)
+static Suite *mojette_encoding_suite(void)
 {
-	Suite *s = suite_create("mojette_codec");
+	Suite *s = suite_create("mojette_encoding");
 
 	TCase *tc_sys = tcase_create("systematic");
 
@@ -690,9 +690,9 @@ static Suite *mojette_codec_suite(void)
 	tcase_add_test(tc_nonsys, test_nonsys_too_many_losses);
 	suite_add_tcase(s, tc_nonsys);
 
-	TCase *tc_gd = tcase_create("gd-codec");
+	TCase *tc_gd = tcase_create("gd-encoding");
 
-	tcase_add_checked_fixture(tc_gd, gd_codec_setup, gd_codec_teardown);
+	tcase_add_checked_fixture(tc_gd, gd_encoding_setup, gd_encoding_teardown);
 	tcase_add_test(tc_gd, test_sys_one_data_loss);
 	tcase_add_test(tc_gd, test_sys_two_data_loss);
 	tcase_add_test(tc_gd, test_sys_24k_two_data_loss);
@@ -705,7 +705,7 @@ static Suite *mojette_codec_suite(void)
 
 int main(void)
 {
-	Suite *s = mojette_codec_suite();
+	Suite *s = mojette_encoding_suite();
 	SRunner *sr = srunner_create(s);
 
 	srunner_run_all(sr, CK_NORMAL);

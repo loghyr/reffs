@@ -391,7 +391,7 @@ START_TEST(test_lookup_mount_cross_without_root_binding)
 
 	/*
 	 * Critical: do NOT call ps_sb_alloc_for_export(pls, "/", ...)
-	 * first.  This simulates the multi-codec deploy/sanity setup
+	 * first.  This simulates the multi-encoding deploy/sanity setup
 	 * where the upstream MDS exports only /ffv1-csm, /ffv1-stripes,
 	 * etc., and never advertises "/" -- which is the historical
 	 * #149 reproducer.

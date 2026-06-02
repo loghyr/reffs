@@ -6,7 +6,7 @@
 #endif
 
 /*
- * Reed-Solomon erasure codec over GF(2^8).
+ * Reed-Solomon erasure encoding over GF(2^8).
  *
  * Uses a Vandermonde encoding matrix normalized so that the top k rows
  * form the identity.  This makes encoding systematic: data shards pass
@@ -87,12 +87,12 @@ fail:
 	return enc;
 }
 
-static int rs_encode(struct ec_codec *codec, uint8_t **data, uint8_t **parity,
+static int rs_encode(struct ec_encoding *encoding, uint8_t **data, uint8_t **parity,
 		     size_t shard_len)
 {
-	struct rs_private *rsp = codec->ec_private;
-	int k = codec->ec_k;
-	int m = codec->ec_m;
+	struct rs_private *rsp = encoding->ec_private;
+	int k = encoding->ec_k;
+	int m = encoding->ec_m;
 
 	for (size_t p = 0; p < shard_len; p++) {
 		for (int i = 0; i < m; i++) {
@@ -111,12 +111,12 @@ static int rs_encode(struct ec_codec *codec, uint8_t **data, uint8_t **parity,
 	return 0;
 }
 
-static int rs_decode(struct ec_codec *codec, uint8_t **shards,
+static int rs_decode(struct ec_encoding *encoding, uint8_t **shards,
 		     const bool *present, size_t shard_len)
 {
-	struct rs_private *rsp = codec->ec_private;
-	int k = codec->ec_k;
-	int m = codec->ec_m;
+	struct rs_private *rsp = encoding->ec_private;
+	int k = encoding->ec_k;
+	int m = encoding->ec_m;
 	int n = k + m;
 	int ret = 0;
 
@@ -263,9 +263,9 @@ out:
 	return ret;
 }
 
-struct ec_codec *ec_rs_create(int k, int m)
+struct ec_encoding *ec_rs_create(int k, int m)
 {
-	struct ec_codec *codec = NULL;
+	struct ec_encoding *encoding = NULL;
 	struct rs_private *rsp = NULL;
 
 	if (k < 1 || m < 1 || k + m > 255)
@@ -273,8 +273,8 @@ struct ec_codec *ec_rs_create(int k, int m)
 
 	gf_init();
 
-	codec = calloc(1, sizeof(*codec));
-	if (!codec)
+	encoding = calloc(1, sizeof(*encoding));
+	if (!encoding)
 		return NULL;
 
 	rsp = calloc(1, sizeof(*rsp));
@@ -295,16 +295,16 @@ struct ec_codec *ec_rs_create(int k, int m)
 			gf_matrix_set(rsp->rsp_parity, r, c,
 				      gf_matrix_get(rsp->rsp_encode, k + r, c));
 
-	codec->ec_name = "reed-solomon";
-	codec->ec_k = k;
-	codec->ec_m = m;
-	codec->ec_encode = rs_encode;
-	codec->ec_decode = rs_decode;
-	codec->ec_shard_size = NULL; /* uniform shards */
-	codec->ec_destroy = NULL; /* use default free */
-	codec->ec_private = rsp;
+	encoding->ec_name = "reed-solomon";
+	encoding->ec_k = k;
+	encoding->ec_m = m;
+	encoding->ec_encode = rs_encode;
+	encoding->ec_decode = rs_decode;
+	encoding->ec_shard_size = NULL; /* uniform shards */
+	encoding->ec_destroy = NULL; /* use default free */
+	encoding->ec_private = rsp;
 
-	return codec;
+	return encoding;
 
 fail:
 	if (rsp) {
@@ -312,27 +312,27 @@ fail:
 		gf_matrix_destroy(rsp->rsp_parity);
 		free(rsp);
 	}
-	free(codec);
+	free(encoding);
 	return NULL;
 }
 
-void ec_codec_destroy(struct ec_codec *codec)
+void ec_encoding_destroy(struct ec_encoding *encoding)
 {
-	if (!codec)
+	if (!encoding)
 		return;
 
-	if (codec->ec_destroy) {
-		codec->ec_destroy(codec);
+	if (encoding->ec_destroy) {
+		encoding->ec_destroy(encoding);
 		return;
 	}
 
 	/* Default: RS cleanup. */
-	struct rs_private *rsp = codec->ec_private;
+	struct rs_private *rsp = encoding->ec_private;
 
 	if (rsp) {
 		gf_matrix_destroy(rsp->rsp_encode);
 		gf_matrix_destroy(rsp->rsp_parity);
 		free(rsp);
 	}
-	free(codec);
+	free(encoding);
 }

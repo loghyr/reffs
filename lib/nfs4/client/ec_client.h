@@ -757,12 +757,12 @@ int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
 /* EC I/O -- high-level erasure-coded write/read                        */
 /* ------------------------------------------------------------------ */
 
-enum ec_codec_type {
-	EC_CODEC_RS = 0, /* Reed-Solomon (default) */
-	EC_CODEC_MOJETTE_SYS = 1, /* Mojette systematic */
-	EC_CODEC_MOJETTE_NONSYS = 2, /* Mojette non-systematic */
-	EC_CODEC_STRIPE = 3, /* pure striping, no redundancy */
-	EC_CODEC_MIRROR = 4, /* N replicas via FFV2_ENCODING_MIRRORED */
+enum ec_encoding_type {
+	EC_ENCODING_RS = 0, /* Reed-Solomon (default) */
+	EC_ENCODING_MOJETTE_SYS = 1, /* Mojette systematic */
+	EC_ENCODING_MOJETTE_NONSYS = 2, /* Mojette non-systematic */
+	EC_ENCODING_STRIPE = 3, /* pure striping, no redundancy */
+	EC_ENCODING_MIRROR = 4, /* N replicas via FFV2_ENCODING_MIRRORED */
 };
 
 int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
@@ -776,15 +776,15 @@ int ec_read(struct mds_session *ms, const char *path, uint8_t *buf,
  * indexes columns as uint64_t).  Pass EC_SHARD_SIZE_DEFAULT for
  * the historical 4 KiB benchmark geometry; passing 24576 enables
  * the Mojette 24 KiB shard demo (96 KiB / k=4) without changing
- * the codec or the FINALIZE/COMMIT total_blocks math.
+ * the encoding or the FINALIZE/COMMIT total_blocks math.
  */
-int ec_write_codec(struct mds_session *ms, const char *path,
+int ec_write_encoding(struct mds_session *ms, const char *path,
 		   const uint8_t *data, size_t data_len, int k, int m,
-		   enum ec_codec_type codec_type, layouttype4 layout_type,
+		   enum ec_encoding_type encoding_type, layouttype4 layout_type,
 		   size_t shard_size);
-int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
+int ec_read_encoding(struct mds_session *ms, const char *path, uint8_t *buf,
 		  size_t buf_len, size_t *out_len, int k, int m,
-		  enum ec_codec_type codec_type, layouttype4 layout_type,
+		  enum ec_encoding_type encoding_type, layouttype4 layout_type,
 		  uint64_t skip_ds_mask, size_t shard_size);
 
 /*
@@ -801,22 +801,22 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
  * NOT exceed the existing file's logical size on the prefix /
  * suffix stripes that need RMW -- sparse RMW is the
  * per-stripe-primitive's NOT_NOW_BROWN_COW, so the harness
- * pre-fills the file with a full-file ec_write_codec before any
+ * pre-fills the file with a full-file ec_write_encoding before any
  * range writers start.  Each stripe is one LAYOUTGET /
  * FINALIZE / COMMIT / LAYOUTRETURN cycle; the demo client cost
  * model is correctness over throughput.
  */
-int ec_write_codec_range(struct mds_session *ms, const char *path,
+int ec_write_encoding_range(struct mds_session *ms, const char *path,
 			 const uint8_t *data, size_t length, uint64_t offset,
-			 int k, int m, enum ec_codec_type codec_type,
+			 int k, int m, enum ec_encoding_type encoding_type,
 			 layouttype4 layout_type, size_t shard_size);
-int ec_read_codec_range(struct mds_session *ms, const char *path, uint8_t *buf,
+int ec_read_encoding_range(struct mds_session *ms, const char *path, uint8_t *buf,
 			size_t length, uint64_t offset, int k, int m,
-			enum ec_codec_type codec_type, layouttype4 layout_type,
+			enum ec_encoding_type encoding_type, layouttype4 layout_type,
 			size_t shard_size);
 
 /*
- * FH-anchored variant of ec_read_codec.  Skips the OPEN-by-path
+ * FH-anchored variant of ec_read_encoding.  Skips the OPEN-by-path
  * dance (PUTROOTFH + LOOKUP* + OPEN + GETFH) and uses the caller-
  * provided mds_file directly.  The caller owns the mds_file's
  * lifecycle (the FH bytes and the open stateid).  This function
@@ -825,7 +825,7 @@ int ec_read_codec_range(struct mds_session *ms, const char *path, uint8_t *buf,
  * Used by the proxy-server subsystem to drive EC reads through the
  * pipeline without re-opening files it already discovered (PS
  * Phase 3 -- see .claude/design/proxy-server-phase3.md).
- * ec_read_codec() remains the caller-friendly form for ec_demo and
+ * ec_read_encoding() remains the caller-friendly form for ec_demo and
  * tests.
  *
  * Layout grant is acquired internally and returned via LAYOUTRETURN
@@ -845,17 +845,17 @@ int ec_read_codec_range(struct mds_session *ms, const char *path, uint8_t *buf,
  * are pooled across requests today and don't yet have a per-call
  * auth swap.  This call's `creds` only reaches the MDS hops.
  */
-int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
+int ec_read_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
 			    uint8_t *buf, size_t buf_len, size_t *out_len,
-			    int k, int m, enum ec_codec_type codec_type,
+			    int k, int m, enum ec_encoding_type encoding_type,
 			    layouttype4 layout_type, uint64_t skip_ds_mask,
 			    size_t shard_size,
 			    const struct authunix_parms *creds,
 			    struct ps_listener_state *pls);
 
 /*
- * FH-anchored variant of ec_write_codec.  Mirror of
- * ec_read_codec_with_file: caller provides a pre-opened mds_file
+ * FH-anchored variant of ec_write_encoding.  Mirror of
+ * ec_read_encoding_with_file: caller provides a pre-opened mds_file
  * and an optional AUTH_SYS override.  This function does NOT call
  * mds_file_open or mds_file_close.
  *
@@ -869,20 +869,20 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
  * compounds (LAYOUTGET / LAYOUTRETURN).  Pass NULL to use the
  * session's default auth (ec_demo, internal back-compat).  The
  * same NOT_NOW_BROWN_COW for DS-side cred forwarding documented
- * on ec_read_codec_with_file applies here -- CHUNK_WRITE /
+ * on ec_read_encoding_with_file applies here -- CHUNK_WRITE /
  * FINALIZE / COMMIT to DSes still use the DS session's pooled
  * auth, not `creds`.
  */
-int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
+int ec_write_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
 			     const uint8_t *data, size_t data_len, int k, int m,
-			     enum ec_codec_type codec_type,
+			     enum ec_encoding_type encoding_type,
 			     layouttype4 layout_type, size_t shard_size,
 			     const struct authunix_parms *creds,
 			     struct ps_listener_state *pls);
 
 /*
  * Per-stripe write primitive (PS Phase 4b).  Mirror of
- * ec_write_codec_with_file but encodes and writes exactly one
+ * ec_write_encoding_with_file but encodes and writes exactly one
  * stripe at file-level stripe number `stripe_no`, with its own
  * LAYOUTGET / FINALIZE / COMMIT / LAYOUTRETURN cycle.
  *
@@ -905,7 +905,7 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
  * success the function captures the writeverf from the first
  * mirror's CHUNK_COMMIT response into `mds_verf_out` and sets
  * `*mds_verf_set_out = true`.  Pass NULL for both to skip the
- * capture (ec_demo and the back-compat ec_write_codec callers do
+ * capture (ec_demo and the back-compat ec_write_encoding callers do
  * not need this).  On failure or NULL pass-through neither out-
  * param is touched.
  */
@@ -916,7 +916,7 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
  * does its work, then tears down (ec_disconnect_all + LAYOUTRETURN).
  * Pass a populated context to share DS sessions and the layout across
  * a batch of stripe calls -- the bulk RMW path
- * (`ec_write_codec_range`) uses this to avoid the per-stripe DS
+ * (`ec_write_encoding_range`) uses this to avoid the per-stripe DS
  * session create/destroy storm that pre-empts concurrent multi-writer
  * RMW workloads (Track 1b second-mechanism finding in
  * chunk-collision-validation.md).  Callers outside ec_pipeline.c must
@@ -925,7 +925,7 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			      uint64_t stripe_no, const uint8_t *stripe_bytes,
 			      size_t stripe_len, int k, int m,
-			      enum ec_codec_type codec_type,
+			      enum ec_encoding_type encoding_type,
 			      layouttype4 layout_type, size_t shard_size,
 			      const struct authunix_parms *creds,
 			      uint8_t mds_verf_out[8], bool *mds_verf_set_out,
@@ -935,7 +935,7 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
  * Per-stripe read primitive (PS Phase 4b slice 4b.3).  Mirror of
  * ec_write_stripe_with_file but for the RMW prefix: acquires a
  * READ layout, issues CHUNK_READ on each of the k+m mirrors for
- * exactly this stripe's blocks, decodes via the codec's
+ * exactly this stripe's blocks, decodes via the encoding's
  * `ec_decode` (k-of-(k+m) quorum), and copies the k reconstructed
  * data shards into `stripe_bytes`.  `stripe_bytes` MUST be exactly
  * `k * shard_size` bytes -- the caller (the partial-stripe RMW
@@ -957,7 +957,7 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
  * compounds (LAYOUTGET / LAYOUTRETURN).  Same forwarding contract
  * as ec_write_stripe_with_file; pass NULL to use the session's
  * default auth.  The same NOT_NOW_BROWN_COW for DS-side cred
- * forwarding documented on ec_read_codec_with_file applies.
+ * forwarding documented on ec_read_encoding_with_file applies.
  */
 /*
  * `ctx_in_out` -- same opaque-shared-ctx contract as
@@ -967,7 +967,7 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 int ec_read_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			     uint64_t stripe_no, uint8_t *stripe_bytes,
 			     size_t stripe_len, int k, int m,
-			     enum ec_codec_type codec_type,
+			     enum ec_encoding_type encoding_type,
 			     layouttype4 layout_type, size_t shard_size,
 			     const struct authunix_parms *creds,
 			     struct ps_listener_state *pls, void *ctx_in_out);
@@ -980,7 +980,7 @@ int ec_read_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 #define EC_SHARD_SIZE_DEFAULT (4 * 1024)
 
 /*
- * Upper bound on shard_size accepted by ec_write_codec / ec_read_codec.
+ * Upper bound on shard_size accepted by ec_write_encoding / ec_read_encoding.
  * 1 MiB is well above any geometry we care about (Mojette 24 KiB at
  * P=3072 is the largest case shipped; the next plausible step is
  * 32 KiB) and bounds the per-stripe allocation to a sane size:

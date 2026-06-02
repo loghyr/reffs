@@ -494,7 +494,7 @@ END_TEST
 
 /*
  * ps_proxy_pipeline_read carries the end-client AUTH_SYS creds
- * through ec_read_codec_with_file -> mds_layout_get -> the wire
+ * through ec_read_encoding_with_file -> mds_layout_get -> the wire
  * compound.  The mock above captures the creds pointer reaching
  * mds_compound_send_with_auth; the assertion is the same shape
  * as the per-forwarder tests above (-EIO short-circuits the
@@ -519,7 +519,7 @@ START_TEST(test_pipeline_read_propagates_creds)
 
 	/*
 	 * mds_compound_send_with_auth is mocked to return -EIO; the
-	 * pipeline's mds_layout_get path bails on that, the codec is
+	 * pipeline's mds_layout_get path bails on that, the encoding is
 	 * destroyed, and ps_proxy_pipeline_read returns the underlying
 	 * error verbatim.  -EIO is the wire-level errno the mock
 	 * returns; the pipeline's translation of "send failed" to
@@ -528,8 +528,8 @@ START_TEST(test_pipeline_read_propagates_creds)
 	ck_assert_int_eq(ret, -EIO);
 	/*
 	 * Exactly one send fires: mds_layout_get's LAYOUTGET compound,
-	 * which the mock fails with -EIO.  ec_read_codec_with_file's
-	 * error path takes `goto out_codec` directly (skipping
+	 * which the mock fails with -EIO.  ec_read_encoding_with_file's
+	 * error path takes `goto out_encoding` directly (skipping
 	 * out_layout) because there is no layout grant to return when
 	 * LAYOUTGET itself failed -- so mds_layout_return does not
 	 * run in this synthetic failure scenario.
@@ -585,20 +585,20 @@ START_TEST(test_pipeline_read_null_creds)
 END_TEST
 
 /*
- * ec_write_codec_with_file is the WRITE-side counterpart of
- * ec_read_codec_with_file -- introduced in PS Phase 4a step 1
+ * ec_write_encoding_with_file is the WRITE-side counterpart of
+ * ec_read_encoding_with_file -- introduced in PS Phase 4a step 1
  * (.claude/design/proxy-server-phase4a.md).  Same shape as
  * test_pipeline_read_propagates_creds: the mock fails LAYOUTGET
- * at the first mds_compound_send_with_auth call, so the codec
- * bails to its out_codec label before allocating any DS state.
+ * at the first mds_compound_send_with_auth call, so the encoding
+ * bails to its out_encoding label before allocating any DS state.
  *
- * Closes slice 4a.1: ec_write_codec_with_file factor-out + creds
+ * Closes slice 4a.1: ec_write_encoding_with_file factor-out + creds
  * threading.  The full smoke test (encode + CHUNK_WRITE +
  * FINALIZE + COMMIT round-trip) is exercised by ec_demo on the
  * bench, not here -- this test only verifies the cred propagation
  * to LAYOUTGET, which is what slice 4a.1 changed.
  */
-START_TEST(test_ec_write_codec_with_file_propagates_creds)
+START_TEST(test_ec_write_encoding_with_file_propagates_creds)
 {
 	struct mds_file mf;
 	uint8_t fh[] = { 0xCC, 0xDD };
@@ -610,17 +610,17 @@ START_TEST(test_ec_write_codec_with_file_propagates_creds)
 	memset(data, 0xA5, sizeof(data));
 	capture_reset();
 
-	int ret = ec_write_codec_with_file(test_session(), &mf, data,
+	int ret = ec_write_encoding_with_file(test_session(), &mf, data,
 					   sizeof(data), /* k */ 4, /* m */ 2,
-					   EC_CODEC_RS, LAYOUT4_FLEX_FILES_V2,
+					   EC_ENCODING_RS, LAYOUT4_FLEX_FILES_V2,
 					   /* shard_size */ 4096, &g_test_creds,
 					   /* pls */ NULL);
 
 	ck_assert_int_eq(ret, -EIO);
 	/*
 	 * Exactly one send fires: mds_layout_get's LAYOUTGET compound,
-	 * which the mock fails with -EIO.  ec_write_codec_with_file's
-	 * error path takes `goto out_codec` directly (skipping
+	 * which the mock fails with -EIO.  ec_write_encoding_with_file's
+	 * error path takes `goto out_encoding` directly (skipping
 	 * out_layout) because there is no layout grant to return when
 	 * LAYOUTGET itself failed -- mds_layout_return does not run
 	 * in this synthetic failure scenario.  Same rationale as the
@@ -633,7 +633,7 @@ START_TEST(test_ec_write_codec_with_file_propagates_creds)
 }
 END_TEST
 
-START_TEST(test_ec_write_codec_with_file_null_creds)
+START_TEST(test_ec_write_encoding_with_file_null_creds)
 {
 	struct mds_file mf;
 	uint8_t fh[] = { 0x55 };
@@ -645,9 +645,9 @@ START_TEST(test_ec_write_codec_with_file_null_creds)
 	memset(data, 0x5A, sizeof(data));
 	capture_reset();
 
-	int ret = ec_write_codec_with_file(test_session(), &mf, data,
+	int ret = ec_write_encoding_with_file(test_session(), &mf, data,
 					   sizeof(data), /* k */ 4, /* m */ 2,
-					   EC_CODEC_RS, LAYOUT4_FLEX_FILES_V2,
+					   EC_ENCODING_RS, LAYOUT4_FLEX_FILES_V2,
 					   /* shard_size */ 4096, NULL,
 					   /* pls */ NULL);
 
@@ -687,8 +687,8 @@ static Suite *ps_proxy_creds_forward_suite(void)
 	tcase_add_test(tc, test_forward_mknod_rejects_wrong_type);
 	tcase_add_test(tc, test_pipeline_read_propagates_creds);
 	tcase_add_test(tc, test_pipeline_read_null_creds);
-	tcase_add_test(tc, test_ec_write_codec_with_file_propagates_creds);
-	tcase_add_test(tc, test_ec_write_codec_with_file_null_creds);
+	tcase_add_test(tc, test_ec_write_encoding_with_file_propagates_creds);
+	tcase_add_test(tc, test_ec_write_encoding_with_file_null_creds);
 
 	suite_add_tcase(s, tc);
 	return s;

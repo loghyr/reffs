@@ -631,7 +631,7 @@ static int cmd_burst(const char *mds_host, int nsessions)
 
 static int cmd_write(const char *mds_host, const char *nfs_file,
 		     const char *local_file, int k, int m,
-		     enum ec_codec_type codec_type, layouttype4 layout_type,
+		     enum ec_encoding_type encoding_type, layouttype4 layout_type,
 		     size_t shard_size, uint64_t range_offset,
 		     size_t range_length)
 {
@@ -678,15 +678,15 @@ static int cmd_write(const char *mds_host, const char *nfs_file,
 			"(%d+%d, shard=%zu, range mode)\n",
 			range_length, nfs_file,
 			(unsigned long long)range_offset, k, m, shard_size);
-		ret = ec_write_codec_range(&ms, nfs_file, data, range_length,
-					   range_offset, k, m, codec_type,
+		ret = ec_write_encoding_range(&ms, nfs_file, data, range_length,
+					   range_offset, k, m, encoding_type,
 					   layout_type, shard_size);
 	} else {
 		fprintf(stderr,
 			"ec_demo: writing %zu bytes to %s (%d+%d, shard=%zu)\n",
 			data_len, nfs_file, k, m, shard_size);
-		ret = ec_write_codec(&ms, nfs_file, data, data_len, k, m,
-				     codec_type, layout_type, shard_size);
+		ret = ec_write_encoding(&ms, nfs_file, data, data_len, k, m,
+				     encoding_type, layout_type, shard_size);
 	}
 	if (ret)
 		fprintf(stderr, "ec_demo: write failed: %d\n", ret);
@@ -700,7 +700,7 @@ static int cmd_write(const char *mds_host, const char *nfs_file,
 
 static int cmd_read(const char *mds_host, const char *nfs_file,
 		    const char *local_file, int k, int m, size_t expected_len,
-		    enum ec_codec_type codec_type, layouttype4 layout_type,
+		    enum ec_encoding_type encoding_type, layouttype4 layout_type,
 		    uint64_t skip_ds_mask, size_t shard_size)
 {
 	struct mds_session ms;
@@ -724,8 +724,8 @@ static int cmd_read(const char *mds_host, const char *nfs_file,
 
 	fprintf(stderr, "ec_demo: reading %s (%d+%d, shard=%zu)\n", nfs_file, k,
 		m, shard_size);
-	ret = ec_read_codec(&ms, nfs_file, buf, buf_len, &out_len, k, m,
-			    codec_type, layout_type, skip_ds_mask, shard_size);
+	ret = ec_read_encoding(&ms, nfs_file, buf, buf_len, &out_len, k, m,
+			    encoding_type, layout_type, skip_ds_mask, shard_size);
 	if (ret) {
 		fprintf(stderr, "ec_demo: read failed: %d\n", ret);
 	} else {
@@ -743,7 +743,7 @@ static int cmd_read(const char *mds_host, const char *nfs_file,
 
 static int cmd_verify(const char *mds_host, const char *nfs_file,
 		      const char *local_file, int k, int m,
-		      enum ec_codec_type codec_type, layouttype4 layout_type,
+		      enum ec_encoding_type encoding_type, layouttype4 layout_type,
 		      uint64_t skip_ds_mask, size_t shard_size,
 		      uint64_t range_offset, size_t range_length)
 {
@@ -806,16 +806,16 @@ static int cmd_verify(const char *mds_host, const char *nfs_file,
 			"against %s (%d+%d, shard=%zu, range mode)\n",
 			nfs_file, (unsigned long long)range_offset, cmp_len,
 			local_file, k, m, shard_size);
-		ret = ec_read_codec_range(&ms, nfs_file, buf, cmp_len,
-					  range_offset, k, m, codec_type,
+		ret = ec_read_encoding_range(&ms, nfs_file, buf, cmp_len,
+					  range_offset, k, m, encoding_type,
 					  layout_type, shard_size);
 		out_len = ret ? 0 : cmp_len;
 	} else {
 		fprintf(stderr,
 			"ec_demo: verifying %s against %s (%d+%d, shard=%zu)\n",
 			nfs_file, local_file, k, m, shard_size);
-		ret = ec_read_codec(&ms, nfs_file, buf, cmp_len, &out_len, k, m,
-				    codec_type, layout_type, skip_ds_mask,
+		ret = ec_read_encoding(&ms, nfs_file, buf, cmp_len, &out_len, k, m,
+				    encoding_type, layout_type, skip_ds_mask,
 				    shard_size);
 	}
 	if (ret) {
@@ -866,7 +866,7 @@ static int cmd_verify(const char *mds_host, const char *nfs_file,
  */
 static int cmd_write_verify(const char *mds_host, const char *nfs_file,
 			    const char *local_file, int k, int m,
-			    enum ec_codec_type codec_type,
+			    enum ec_encoding_type encoding_type,
 			    layouttype4 layout_type, uint64_t skip_ds_mask,
 			    size_t shard_size, uint64_t range_offset,
 			    size_t range_length)
@@ -912,15 +912,15 @@ static int cmd_write_verify(const char *mds_host, const char *nfs_file,
 			"(%d+%d, shard=%zu, range mode)\n",
 			cmp_len, nfs_file, (unsigned long long)range_offset, k,
 			m, shard_size);
-		ret = ec_write_codec_range(&ms, nfs_file, orig, cmp_len,
-					   range_offset, k, m, codec_type,
+		ret = ec_write_encoding_range(&ms, nfs_file, orig, cmp_len,
+					   range_offset, k, m, encoding_type,
 					   layout_type, shard_size);
 	} else {
 		fprintf(stderr,
 			"ec_demo: writing %zu bytes to %s (%d+%d, shard=%zu)\n",
 			orig_len, nfs_file, k, m, shard_size);
-		ret = ec_write_codec(&ms, nfs_file, orig, orig_len, k, m,
-				     codec_type, layout_type, shard_size);
+		ret = ec_write_encoding(&ms, nfs_file, orig, orig_len, k, m,
+				     encoding_type, layout_type, shard_size);
 	}
 	if (ret) {
 		fprintf(stderr, "ec_demo: write failed: %d\n", ret);
@@ -943,16 +943,16 @@ static int cmd_write_verify(const char *mds_host, const char *nfs_file,
 			"against %s (%d+%d, shard=%zu, range mode)\n",
 			nfs_file, (unsigned long long)range_offset, cmp_len,
 			local_file, k, m, shard_size);
-		ret = ec_read_codec_range(&ms, nfs_file, buf, cmp_len,
-					  range_offset, k, m, codec_type,
+		ret = ec_read_encoding_range(&ms, nfs_file, buf, cmp_len,
+					  range_offset, k, m, encoding_type,
 					  layout_type, shard_size);
 		out_len = ret ? 0 : cmp_len;
 	} else {
 		fprintf(stderr,
 			"ec_demo: verifying %s against %s (%d+%d, shard=%zu)\n",
 			nfs_file, local_file, k, m, shard_size);
-		ret = ec_read_codec(&ms, nfs_file, buf, cmp_len, &out_len, k, m,
-				    codec_type, layout_type, skip_ds_mask,
+		ret = ec_read_encoding(&ms, nfs_file, buf, cmp_len, &out_len, k, m,
+				    encoding_type, layout_type, skip_ds_mask,
 				    shard_size);
 	}
 	if (ret) {
@@ -1443,7 +1443,7 @@ static void usage(void)
 		" (default: 1M)\n"
 		"  --delete-first   Remove file before bigfile write"
 		" (forces fresh inode)\n"
-		"  --codec TYPE     Codec: rs (default), mojette-sys,"
+		"  --encoding TYPE     Encoding: rs (default), mojette-sys,"
 		" mojette-nonsys, stripe, mirror\n"
 		"  --id ID          Client identity (default: PID)."
 		" Unique per concurrent instance.\n"
@@ -1544,7 +1544,7 @@ static struct option long_options[] = {
 	{ "size", required_argument, NULL, 's' },
 	{ "chunk", required_argument, NULL, 'C' },
 	{ "delete-first", no_argument, NULL, 'D' },
-	{ "codec", required_argument, NULL, 'c' },
+	{ "encoding", required_argument, NULL, 'c' },
 	{ "id", required_argument, NULL, 'd' },
 	{ "layout", required_argument, NULL, 'l' },
 	{ "skip-ds", required_argument, NULL, 'S' },
@@ -1579,7 +1579,7 @@ int main(int argc, char *argv[])
 	size_t read_size = 0;
 	size_t chunk_size = 1024 * 1024; /* 1 MB default for bigfile */
 	bool delete_first = false;
-	enum ec_codec_type codec_type = EC_CODEC_RS;
+	enum ec_encoding_type encoding_type = EC_ENCODING_RS;
 	layouttype4 layout_type = LAYOUT4_FLEX_FILES;
 	const char *client_id = NULL;
 	uint64_t skip_ds_mask = 0;
@@ -1653,17 +1653,17 @@ int main(int argc, char *argv[])
 			break;
 		case 'c':
 			if (strcmp(optarg, "rs") == 0)
-				codec_type = EC_CODEC_RS;
+				encoding_type = EC_ENCODING_RS;
 			else if (strcmp(optarg, "mojette-sys") == 0)
-				codec_type = EC_CODEC_MOJETTE_SYS;
+				encoding_type = EC_ENCODING_MOJETTE_SYS;
 			else if (strcmp(optarg, "mojette-nonsys") == 0)
-				codec_type = EC_CODEC_MOJETTE_NONSYS;
+				encoding_type = EC_ENCODING_MOJETTE_NONSYS;
 			else if (strcmp(optarg, "stripe") == 0)
-				codec_type = EC_CODEC_STRIPE;
+				encoding_type = EC_ENCODING_STRIPE;
 			else if (strcmp(optarg, "mirror") == 0)
-				codec_type = EC_CODEC_MIRROR;
+				encoding_type = EC_ENCODING_MIRROR;
 			else {
-				fprintf(stderr, "ec_demo: unknown codec '%s'\n",
+				fprintf(stderr, "ec_demo: unknown encoding '%s'\n",
 					optarg);
 				return 1;
 			}
@@ -1873,8 +1873,8 @@ int main(int argc, char *argv[])
 	}
 
 	/* EC commands need valid k/m.  Stripe and mirror allow m=0. */
-	int m_min = (codec_type == EC_CODEC_STRIPE ||
-		     codec_type == EC_CODEC_MIRROR) ?
+	int m_min = (encoding_type == EC_ENCODING_STRIPE ||
+		     encoding_type == EC_ENCODING_MIRROR) ?
 			    0 :
 			    1;
 
@@ -1889,7 +1889,7 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 		return cmd_write(mds_host, nfs_file, local_input, k, m,
-				 codec_type, layout_type, shard_size,
+				 encoding_type, layout_type, shard_size,
 				 range_offset, range_length);
 	}
 
@@ -1899,7 +1899,7 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 		return cmd_read(mds_host, nfs_file, local_output, k, m,
-				read_size, codec_type, layout_type,
+				read_size, encoding_type, layout_type,
 				skip_ds_mask, shard_size);
 	}
 
@@ -1909,7 +1909,7 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 		return cmd_verify(mds_host, nfs_file, local_input, k, m,
-				  codec_type, layout_type, skip_ds_mask,
+				  encoding_type, layout_type, skip_ds_mask,
 				  shard_size, range_offset, range_length);
 	}
 
@@ -1920,7 +1920,7 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 		return cmd_write_verify(mds_host, nfs_file, local_input, k, m,
-					codec_type, layout_type, skip_ds_mask,
+					encoding_type, layout_type, skip_ds_mask,
 					shard_size, range_offset, range_length);
 	}
 

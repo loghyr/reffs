@@ -10,7 +10,7 @@
  *
  * Each NFSv4 client (open stateid) accumulates WRITE bytes here per
  * upstream FH; ps_proxy_pipeline_commit (4a.2b) flushes the buffer
- * through ec_write_codec_with_file when the client COMMITs.
+ * through ec_write_encoding_with_file when the client COMMITs.
  *
  * See .claude/design/proxy-server-phase4a.md for the full quiesce +
  * Rule 6 lifecycle design.  This file ships the table machinery and
@@ -37,7 +37,7 @@
 /* ------------------------------------------------------------------ */
 
 _Atomic(void (*)(void)) ps_test_hook_pre_state_load = NULL;
-_Atomic(void (*)(void)) ps_test_hook_in_codec_flush = NULL;
+_Atomic(void (*)(void)) ps_test_hook_in_encoding_flush = NULL;
 _Atomic(uint64_t (*)(void)) ps_test_hook_clock_now_ns = NULL;
 
 /* ------------------------------------------------------------------ */

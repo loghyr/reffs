@@ -594,9 +594,9 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg, char **out_body,
 	/*
 	 * m == 0 emits FFV2_ENCODING_PASSTHROUGH; m > 0 emits
 	 * FFV2_ENCODING_RS_VANDERMONDE.  This is a stopgap: the MDS has
-	 * no per-file record of which codec the client actually uses.
+	 * no per-file record of which encoding the client actually uses.
 	 *
-	 * NOT_NOW_BROWN_COW: the codec-negotiation hint that would let
+	 * NOT_NOW_BROWN_COW: the encoding-negotiation hint that would let
 	 * the MDS emit the correct ffm_coding_type (MIRRORED, Mojette,
 	 * ...) was attempted as a loga_layouthint field on
 	 * LAYOUTGET4args and reverted -- RFC 8881 S18.43 has no such
@@ -604,7 +604,7 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg, char **out_body,
 	 * kernel NFS client (it over-reads the COMPOUND).  A correct
 	 * carrier is the fattr4_layout_hint SETATTR attribute
 	 * (RFC 8881 attribute 63) or a new draft op; until one lands,
-	 * ec_demo selects its codec from the --codec CLI flag and the
+	 * ec_demo selects its encoding from the --encoding CLI flag and the
 	 * wire ffm_coding_type is advisory only.
 	 */
 	if (seg->ls_m == 0)

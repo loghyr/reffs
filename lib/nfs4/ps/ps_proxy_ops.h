@@ -254,11 +254,11 @@ int ps_proxy_forward_read(struct mds_session *ms, const uint8_t *upstream_fh,
  * nfs4_op_read can swap them out 1:1.  PS Phase 3 -- see
  * .claude/design/proxy-server-phase3.md.
  *
- * Codec parameters for this slice are pinned to RS 4+2, layout
+ * Encoding parameters for this slice are pinned to RS 4+2, layout
  * type LAYOUT4_FLEX_FILES_V2, shard size 4096.  An incoming layout
  * whose shape differs would surface as a decode failure inside
  * ec_pipeline (logged, returns -EINVAL).  Parameter discovery
- * (read codec/k/m from the layout) is its own NOT_NOW_BROWN_COW.
+ * (read encoding/k/m from the layout) is its own NOT_NOW_BROWN_COW.
  *
  * The `creds` parameter is currently unused (Phase 3.5 wires
  * end-client cred forwarding through the pipeline).  Accepted in
@@ -495,7 +495,7 @@ int ps_proxy_forward_write(struct mds_session *ms, const uint8_t *upstream_fh,
 /*
  * PS Phase 4a: pipeline-driven WRITE through the per-listener
  * write-buffer table.  The bytes are buffered in PS RAM; the
- * COMMIT-time flush through ec_write_codec_with_file is slice
+ * COMMIT-time flush through ec_write_encoding_with_file is slice
  * 4a.2c.  See .claude/design/proxy-server-phase4a.md.
  *
  * Mirror of ps_proxy_pipeline_read for the write path.  Looks up
@@ -580,7 +580,7 @@ int ps_proxy_forward_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 
 /*
  * PS Phase 4a: pipeline-driven COMMIT.  Flushes the per-listener
- * write buffer for `upstream_fh` through ec_write_codec_with_file
+ * write buffer for `upstream_fh` through ec_write_encoding_with_file
  * (encode + per-DS CHUNK_WRITE + FINALIZE + COMMIT).  On success
  * the buffer is dropped from the table; on failure the buffer is
  * kept so a client retry can re-attempt the flush.
@@ -588,7 +588,7 @@ int ps_proxy_forward_commit(struct mds_session *ms, const uint8_t *upstream_fh,
  * The COMMIT op carries no stateid, so this entry looks the
  * buffer up by `upstream_fh` alone (linear scan; Phase 4a's
  * single-writer-per-FH model means at most one match).  The
- * codec's LAYOUTGET uses the stateid stashed by the latest
+ * encoding's LAYOUTGET uses the stateid stashed by the latest
  * WRITE on the same buffer.
  *
  * `offset` and `count` are accepted from the wire but ignored:
@@ -601,7 +601,7 @@ int ps_proxy_forward_commit(struct mds_session *ms, const uint8_t *upstream_fh,
  *   -E2BIG   upstream_fh_len > PS_MAX_FH_SIZE
  *   -EAGAIN  listener draining / stopped (transient)
  *   -ESTALE  listener boot generation changed under us
- *   -EIO     ec_write_codec_with_file failure; buffer retained for retry
+ *   -EIO     ec_write_encoding_with_file failure; buffer retained for retry
  *   -ENOENT  ms is not bound to a registered listener
  */
 int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
@@ -953,7 +953,7 @@ int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
  *
  * NOT_NOW_BROWN_COW: the design's watchdog-thread close-on-deadline
  * mechanism (REFFS_PS_FLUSH_TIMEOUT_NS) is deferred.  Today the
- * flush blocks for as long as ec_write_codec_with_file takes.  A
+ * flush blocks for as long as ec_write_encoding_with_file takes.  A
  * future slice will add the per-RPC budget + xprt-fd-close
  * watchdog (design's "Flush timeout interrupt mechanism" subsection).
  *
@@ -964,7 +964,7 @@ int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
  *   -E2BIG   upstream_fh_len > PS_MAX_FH_SIZE
  *   -EAGAIN  listener draining / stopped
  *   -ESTALE  listener boot generation changed under us
- *   -EIO     ec_write_codec_with_file failure; buffer dropped
+ *   -EIO     ec_write_encoding_with_file failure; buffer dropped
  *            anyway (CLOSE has no retry path); bytes lost
  *   -ENOENT  ms is not bound to a registered listener
  */
@@ -1037,7 +1037,7 @@ int ps_proxy_forward_readdir(struct mds_session *ms, const uint8_t *upstream_fh,
 void ps_proxy_readdir_reply_free(struct ps_proxy_readdir_reply *reply);
 
 /* ------------------------------------------------------------------ */
-/* Layout passthrough -- task #150 (codec demos through PS)           */
+/* Layout passthrough -- task #150 (encoding demos through PS)           */
 /* ------------------------------------------------------------------ */
 /*
  * The PS forwards layout-related ops verbatim to the upstream MDS

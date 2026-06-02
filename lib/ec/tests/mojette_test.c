@@ -795,7 +795,7 @@ START_TEST(test_gd_24k_geometry)
 	/*
 	 * Production geometry: P=3072, Q=2, n=2.  ~6144 cells, well
 	 * within the 2-second per-test budget.  Mirrors the existing
-	 * test_sys_24k codec scenarios.
+	 * test_sys_24k encoding scenarios.
 	 */
 	int P = 3072, Q = 2, n = 2;
 	struct moj_direction dirs[] = { { -1, 1 }, { 1, 1 } };
