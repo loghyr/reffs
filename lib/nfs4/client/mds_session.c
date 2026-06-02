@@ -952,36 +952,6 @@ static CLIENT *mds_session_clnt_open(const char *host)
 	}
 
 	/*
-	 * SO_REUSEADDR lets bindresvport bind over a reserved port
-	 * that is still in TIME_WAIT from a previous run.  This is
-	 * ONE HALF of what's needed for back-to-back stress runs
-	 * against the same MDS:
-	 *
-	 *   SO_REUSEADDR (here) covers the BIND side: without it
-	 *   bindresvport sees EADDRINUSE on every TIME_WAIT'd port
-	 *   and exhausts the reserved pool on the second run.
-	 *
-	 *   net.ipv4.tcp_tw_reuse=1 on the client (sysctl) covers
-	 *   the CONNECT side: without it the connect to the same
-	 *   destination (MDS) fails EADDRNOTAVAIL on a 4-tuple the
-	 *   kernel still holds in TIME_WAIT.
-	 *
-	 * Either alone produces a confusing failure; both together
-	 * matches the Linux kernel NFS client's behaviour (the
-	 * kernel client sets SO_REUSEADDR on rpc_xprt sockets and
-	 * deployments typically set tcp_tw_reuse=1 globally).
-	 *
-	 * When tcp_tw_reuse is NOT set on the client, this SO_REUSEADDR
-	 * makes the per-socket failure mode visible at connect rather
-	 * than bind -- still a back-to-back-run failure, just at a
-	 * different syscall.  The operator-facing fix is the same:
-	 * `sudo sysctl -w net.ipv4.tcp_tw_reuse=1`.
-	 */
-	int reuse = 1;
-
-	(void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-
-	/*
 	 * Best-effort: bind to a reserved source port (< 1024) before
 	 * connecting.  Some NFS servers -- notably Hammerspace Anvil
 	 * with `protod_config_nfs_strict_port_checking` enabled --
