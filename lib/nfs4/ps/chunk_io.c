@@ -306,10 +306,17 @@ int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 
 	ret = mds_compound_send(&mc, ds);
 	/* See ds_chunk_write: surface CHUNK_READ BAD_STATEID as -ESTALE
-	 * so the slice 1.6 retry path can recognise it.
+	 * so the slice 1.6 retry path can recognise it.  NFS4ERR_DELAY
+	 * is the Option C "in-flight write, retry shortly" signal --
+	 * map to -EAGAIN so the RMW retry can distinguish it from
+	 * fatal -EIO.
 	 */
-	if (ret == -EREMOTEIO && mc.mc_res.status == NFS4ERR_BAD_STATEID)
-		ret = -ESTALE;
+	if (ret == -EREMOTEIO) {
+		if (mc.mc_res.status == NFS4ERR_BAD_STATEID)
+			ret = -ESTALE;
+		else if (mc.mc_res.status == NFS4ERR_DELAY)
+			ret = -EAGAIN;
+	}
 	if (ret)
 		goto out;
 
@@ -323,7 +330,12 @@ int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	if (res_slot->nfs_resop4_u.opchunk_read.crr_status != NFS4_OK) {
 		nfsstat4 st = res_slot->nfs_resop4_u.opchunk_read.crr_status;
 
-		ret = (st == NFS4ERR_BAD_STATEID) ? -ESTALE : -EIO;
+		if (st == NFS4ERR_BAD_STATEID)
+			ret = -ESTALE;
+		else if (st == NFS4ERR_DELAY)
+			ret = -EAGAIN;
+		else
+			ret = -EIO;
 		goto out;
 	}
 

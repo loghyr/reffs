@@ -419,19 +419,39 @@ int ec_chunk_read(struct ec_context *ctx, int mirror_idx, uint64_t block_offset,
 						    em->em_gid, stid);
 	}
 
-	for (int attempt = 0; attempt < 3; attempt++) {
+	/*
+	 * Three attempts on -ESTALE (BAD_STATEID -- trust entry expired
+	 * or revoked) AND on -EAGAIN (Option C "PENDING from another
+	 * writer, wait for it to commit").  The two failure modes share
+	 * a retry budget because both are transient -- the writer just
+	 * needs to back off and re-try the same op.  -ESTALE reports to
+	 * the MDS via mds_layout_error so it can re-issue
+	 * TRUST_STATEID; -EAGAIN is a chunk-store-internal signal and
+	 * doesn't involve the MDS.
+	 *
+	 * Same per-attempt jitter shape as ec_write_codec_range's
+	 * outer retry loop: 50ms * 2^attempt capped at 500ms plus
+	 * 0..63ms jitter, so two competing readers don't sync up.
+	 */
+	for (int attempt = 0; attempt < 5; attempt++) {
 		int ret;
 
 		ret = ds_chunk_read(ctx->ctx_ds_sess[mirror_idx], em->em_fh,
 				    em->em_fh_len, block_offset, nblk, shard,
 				    rd_chunk_sz, nread, stid, out_owners);
-		if (ret != -ESTALE)
+		if (ret != -ESTALE && ret != -EAGAIN)
 			return ret;
 
-		mds_layout_error(ctx->ctx_ms, &ctx->ctx_file, &ctx->ctx_layout,
-				 (uint32_t)mirror_idx, NFS4ERR_BAD_STATEID,
-				 OP_CHUNK_READ);
-		struct timespec delay = { 0, (long)(50 * 1000000) << attempt };
+		if (ret == -ESTALE)
+			mds_layout_error(ctx->ctx_ms, &ctx->ctx_file,
+					 &ctx->ctx_layout, (uint32_t)mirror_idx,
+					 NFS4ERR_BAD_STATEID, OP_CHUNK_READ);
+
+		long base_ms = 50L << attempt;
+		if (base_ms > 500)
+			base_ms = 500;
+		long sleep_ms = base_ms + (rand() & 0x3f);
+		struct timespec delay = { 0, sleep_ms * 1000000L };
 
 #ifdef __APPLE__
 		/* Darwin lacks clock_nanosleep(3).  For a relative sleep
@@ -442,6 +462,10 @@ int ec_chunk_read(struct ec_context *ctx, int mirror_idx, uint64_t block_offset,
 #endif
 	}
 
+	/* Out of retries.  Surface the LAST observed failure mode --
+	 * preserve -EAGAIN if that was the last (so the outer RMW retry
+	 * can keep trying); -ESTALE otherwise (to drive layout
+	 * refresh). */
 	return -ESTALE;
 }
 

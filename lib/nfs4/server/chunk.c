@@ -659,22 +659,55 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 		return 0;
 	}
 
-	/* Determine how many blocks are available. */
+	/*
+	 * Determine how many blocks are available.  A block that is
+	 * PENDING (in-flight write) requires special handling for
+	 * cross-writer RMW correctness (Track 1b Option C full):
+	 *
+	 *   - PENDING block from a DIFFERENT owner: the prior COMMITTED
+	 *     bytes have already been overwritten on disk by the PENDING
+	 *     writer's CHUNK_WRITE (data_block_write happens at write
+	 *     time, not at FINALIZE).  Returning NFS4ERR_NOENT would be
+	 *     wrong twice over: the block DOES exist, and the data the
+	 *     reader can see (the PENDING bytes) isn't visible-to-all
+	 *     yet.  Return NFS4ERR_DELAY so the client retries after
+	 *     the PENDING writer finalizes + commits.
+	 *
+	 *   - PENDING block from the SAME owner: the writer is reading
+	 *     its own in-flight bytes; allowed.  (Doesn't apply to the
+	 *     read-block-zero loop here because cb_state < FINALIZED
+	 *     is excluded; this comment captures intent for future
+	 *     edits.)
+	 *
+	 *   - EMPTY or never-written block: NOENT, unchanged.
+	 *
+	 * Pre-Option-C, PENDING-from-different-owner returned NOENT,
+	 * which read as "no data" to the client and aborted the RMW.
+	 * Subchunk's two writers on the same 4 KiB block hit this
+	 * race on roughly 15% of runs (one writer's CHUNK_WRITE
+	 * arrived between the other writer's CHUNK_READ start and the
+	 * pending-writer's FINALIZE).
+	 */
 	uint32_t avail = 0;
+	bool pending_seen = false;
 
 	for (uint32_t i = 0; i < count; i++) {
 		struct chunk_block *blk =
 			chunk_store_lookup(cs, args->cra_offset + i);
 
-		if (blk && blk->cb_state >= CHUNK_STATE_FINALIZED)
+		if (blk && blk->cb_state >= CHUNK_STATE_FINALIZED) {
 			avail++;
-		else
+		} else if (blk && blk->cb_state == CHUNK_STATE_PENDING) {
+			pending_seen = true;
 			break;
+		} else {
+			break;
+		}
 	}
 
 	if (avail == 0) {
 		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
-		*status = NFS4ERR_NOENT;
+		*status = pending_seen ? NFS4ERR_DELAY : NFS4ERR_NOENT;
 		return 0;
 	}
 
