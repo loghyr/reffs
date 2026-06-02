@@ -363,6 +363,56 @@ int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 			out_owners[i] = rc->cr_owner;
 
 		/*
+		 * Test-only fault-injection hook (experiment 14, bit-flip-
+		 * on-wire row).  When EC_DEMO_INJECT_WIRE_FLIP is set in the
+		 * environment, XOR the byte at the configured offset within
+		 * each returned chunk BEFORE the CRC verify below runs.
+		 * The verify should then catch the flip and return -EIO,
+		 * which is exactly what the deck claim about client-side
+		 * CRC32 catching wire corruption needs to demonstrate.
+		 *
+		 * Two recognised values:
+		 *   EC_DEMO_INJECT_WIRE_FLIP=1            flip byte 0 (default)
+		 *   EC_DEMO_INJECT_WIRE_FLIP=<int N>      flip byte N
+		 *
+		 * Production builds never have this set; deliberately
+		 * env-gated so an accidentally-shipped binary can't
+		 * silently corrupt reads.  Drops out of every flow when the
+		 * env var is absent.
+		 */
+		{
+			const char *flip = getenv("EC_DEMO_INJECT_WIRE_FLIP");
+
+			if (flip && *flip && copy > 0) {
+				long off = atol(flip);
+				if (off < 0)
+					off = 0;
+				if ((uint32_t)off < copy) {
+					/*
+					 * Mutate the wire payload, NOT the
+					 * output buffer.  The verify below
+					 * recomputes CRC over rc->cr_chunk;
+					 * the flip has to land there for the
+					 * detection path to fire.  We also
+					 * patch out_data so the caller sees
+					 * the same corrupted bytes if -EIO
+					 * weren't returned (defensive: today
+					 * the verify returns -EIO and the
+					 * caller never reads out_data for
+					 * this block).
+					 */
+					rc->cr_chunk.cr_chunk_val[off] ^= 0x01;
+					((uint8_t *)out_data +
+					 (size_t)i * chunk_size)[off] ^= 0x01;
+					fprintf(stderr,
+						"ds_chunk_read: TEST wire-flip "
+						"block %u byte %ld\n",
+						i, off);
+				}
+			}
+		}
+
+		/*
 		 * Verify the server-supplied checksum against the received
 		 * data.  Detects network corruption on the read path.
 		 *
