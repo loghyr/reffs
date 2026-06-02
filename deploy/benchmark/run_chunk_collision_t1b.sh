@@ -385,7 +385,7 @@ if [[ "${MODE}" == "overlap" ]]; then
 		--codec "${CODEC}" --layout "${LAYOUT}" \
 		--shard-size "${SHARD_SIZE}" \
 		--id "verify-anyof" \
-		--length "${FILE_SIZE}" \
+		--size "${FILE_SIZE}" \
 		>"${WORKDIR}/verify-overlap.log" 2>&1; then
 		# Build the set of allowed stamps for the inside-range
 		# check, plus 0x00 for outside-any-range bytes.  Comma-
