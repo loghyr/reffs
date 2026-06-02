@@ -1501,12 +1501,15 @@ START_TEST(test_multi_ps_overlap_stripe_increments_displaced)
 	cm_reset_slot(cm, 0);
 
 	/*
-	 * PS-B writes to block 0 with a different owner triple.  The
-	 * existing PENDING block was from owner A, so the new write
-	 * sees the prior PENDING is owned by someone else and bumps
-	 * cs_pending_displaced before overriding (last-writer-wins
-	 * matches POSIX behaviour; the counter just records that
-	 * contention happened).
+	 * PS-B writes to block 0 with a different owner triple.  Per
+	 * Option C (commit 03d91554a34c, design/chunk-collision-
+	 * validation.md), the chunk-store gate rejects this write with
+	 * NFS4ERR_DELAY: PS-B's owner triple does not match the PENDING
+	 * block PS-A still holds.  PS-B's client is expected to retry
+	 * the whole RMW after PS-A's FINALIZE+COMMIT.  The counter
+	 * cs_chunk_busy_delay (which replaced the observational
+	 * cs_pending_displaced for the post-Option-C call sites) records
+	 * the rejection.
 	 */
 	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL, 0);
 	set_owner(cm, /* gen_id */ 2, /* client_id */ 0xB2, /* owner_id */ 20);
@@ -1515,19 +1518,21 @@ START_TEST(test_multi_ps_overlap_stripe_increments_displaced)
 		CHUNK_WRITE4res *res =
 			&cm->compound->c_res->resarray.resarray_val[0]
 				 .nfs_resop4_u.opchunk_write;
-		ck_assert_int_eq(res->cwr_status, NFS4_OK);
+		ck_assert_int_eq(res->cwr_status, NFS4ERR_DELAY);
 	}
 	free_write_res(cm);
 
 	/*
-	 * Counter must have incremented at least once for the
-	 * single overlapping block.  "At least once" rather than
-	 * "exactly once" mirrors the design wording: the counter is
-	 * observational, not protective, and a future slice that
-	 * adds redundant detection sites must not break this test.
+	 * cs_chunk_busy_delay must have incremented for the rejected
+	 * second write.  cs_pending_displaced stays at zero -- the
+	 * Option C gate fires BEFORE the older displaced-counting code
+	 * runs, and the displaced-counting code is dead in the new
+	 * path (it counted a state -- "PENDING block overwritten by a
+	 * different owner" -- that no longer exists, the gate prevents
+	 * the overwrite).
 	 */
 	ck_assert_uint_ge(
-		atomic_load_explicit(&g_sb->sb_chunk_stats.cs_pending_displaced,
+		atomic_load_explicit(&g_sb->sb_chunk_stats.cs_chunk_busy_delay,
 				     memory_order_relaxed),
 		1);
 
@@ -1665,10 +1670,24 @@ START_TEST(test_inv1_overwrite_counted)
 	free_write_res(cm);
 	cm_reset_slot(cm, 0);
 
-	/* PS-B write to same offset -> PENDING prior, overwrite. */
+	/*
+	 * PS-B write to same offset.  Per Option C
+	 * (design/chunk-collision-validation.md), the chunk-store
+	 * rejects cross-owner overwrite of a PENDING block: PS-B gets
+	 * NFS4ERR_DELAY.  The cs_blocks_overwrite counter is therefore
+	 * NOT incremented (the metadata-recording loop runs only on
+	 * the accept path), and cs_chunk_busy_delay records the
+	 * rejection instead.
+	 */
 	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL, 0);
 	set_owner(cm, /* gen_id */ 2, /* client_id */ 0xB2, /* owner_id */ 20);
 	nfs4_op_chunk_write(cm->compound);
+	{
+		CHUNK_WRITE4res *res =
+			&cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_write;
+		ck_assert_int_eq(res->cwr_status, NFS4ERR_DELAY);
+	}
 	free_write_res(cm);
 
 	struct reffs_chunk_stats *st = &g_sb->sb_chunk_stats;
@@ -1676,11 +1695,13 @@ START_TEST(test_inv1_overwrite_counted)
 	ck_assert_uint_eq(atomic_load_explicit(&st->cs_blocks_first_write,
 					       memory_order_relaxed),
 			  1);
+	/* No overwrite happened -- the gate rejected before the
+	 * metadata loop ran. */
 	ck_assert_uint_eq(atomic_load_explicit(&st->cs_blocks_overwrite,
 					       memory_order_relaxed),
-			  1);
-	/* Existing pending-displaced counter must also have moved. */
-	ck_assert_uint_eq(atomic_load_explicit(&st->cs_pending_displaced,
+			  0);
+	/* Gate fired -- this is the post-Option-C contention signal. */
+	ck_assert_uint_eq(atomic_load_explicit(&st->cs_chunk_busy_delay,
 					       memory_order_relaxed),
 			  1);
 
