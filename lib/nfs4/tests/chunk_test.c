@@ -1207,7 +1207,19 @@ END_TEST
  * CHUNK_READ on a PENDING block (not yet FINALIZED) must return
  * NFS4ERR_NOENT because PENDING blocks are not visible to readers.
  */
-START_TEST(test_chunk_read_pending_not_visible)
+/*
+ * Track 1b Option C (commit 5b20efae8509,
+ * design/chunk-collision-validation.md): CHUNK_READ on a PENDING
+ * block returns NFS4ERR_DELAY -- "in-flight write, retry shortly"
+ * -- not NFS4ERR_NOENT.  Pre-Option-C this returned NOENT, which
+ * the client read as 'no data' and aborted the RMW; the new code
+ * lets the client retry until the pending writer finalizes.
+ *
+ * EMPTY blocks (never written) still return NFS4ERR_NOENT below
+ * in a separate test if/when needed; the chunk_store distinguishes
+ * "block exists, write in flight" from "block never written."
+ */
+START_TEST(test_chunk_read_pending_returns_delay)
 {
 	static char buf[CHUNK_SZ];
 	struct cm_ctx *cm = cm_alloc(1);
@@ -1236,7 +1248,7 @@ START_TEST(test_chunk_read_pending_not_visible)
 
 	CHUNK_READ4res *res = &cm->compound->c_res->resarray.resarray_val[0]
 				       .nfs_resop4_u.opchunk_read;
-	ck_assert_int_eq(res->crr_status, NFS4ERR_NOENT);
+	ck_assert_int_eq(res->crr_status, NFS4ERR_DELAY);
 
 	cm_free(cm);
 }
@@ -1867,7 +1879,7 @@ static Suite *chunk_suite(void)
 	tcase_add_checked_fixture(tc_e, chunk_setup, chunk_teardown);
 	tcase_add_test(tc_e, test_chunk_read_no_store);
 	tcase_add_test(tc_e, test_chunk_read_count_zero);
-	tcase_add_test(tc_e, test_chunk_read_pending_not_visible);
+	tcase_add_test(tc_e, test_chunk_read_pending_returns_delay);
 	suite_add_tcase(s, tc_e);
 
 	TCase *tc_f = tcase_create("full_cycle");
