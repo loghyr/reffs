@@ -1904,3 +1904,28 @@ SO_REUSEADDR + rapid-retry behaviour from earlier
 `db80db6179af` cuts the rate but doesn't eliminate it; this is
 host infrastructure noise the chunk-collision validation doesn't
 own.
+
+## cs_pending_displaced cleanup
+
+Commit `f5aa8d11d468` drops the dead `cs_pending_displaced`
+atomic_fetch_add from chunk.c.  The increment lived in the
+per-block metadata loop on the CHUNK_WRITE accept path; the
+Option C gate above that loop rejects cross-writer PENDING
+overwrite (the only case that would have bumped the counter)
+with NFS4ERR_DELAY, so the counter could never increment in a
+post-Option-C build.
+
+`cs_chunk_busy_delay` is the post-Option-C counter for the same
+contention pattern, with reject-semantics instead of
+observe-then-allow.
+
+The `cs_pending_displaced` FIELD stays in
+`struct reffs_chunk_stats` and the matching probe1 wire field
+(`probe_chunk_stats1.pcs_pending_displaced`) for backward compat
+with deployed probe clients -- they'll read zero in any
+post-Option-C build (which is the truthful new value).
+
+The chunk_test Group G header comment block updated to reflect
+the migration so future readers see the design shift in-place.
+
+`make check`: 0 FAIL across 153 tests.
