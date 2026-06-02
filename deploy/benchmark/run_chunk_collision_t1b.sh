@@ -180,14 +180,22 @@ case "${MODE}" in
 	overlap)
 		N=4
 		# Three stripes, each writer covers 2 of them with
-		# a 1-stripe overlap with the next rank.
+		# a 1-stripe overlap with the next rank.  Verify is
+		# "every byte matches SOME writer's stamp" (any-of
+		# semantics, see the Per-writer verify loop) -- the
+		# overlap regions can be any rank's bytes, depending
+		# on which writer's CHUNK_FINALIZE landed last on the
+		# overlapped stripe.  With Option C's cwa_guard CAS
+		# the cross-writer overwrites serialise correctly;
+		# pre-fill 0x00 outside any writer's range is also
+		# legal (no writer wrote there).
 		FILE_SIZE=$((4 * STRIPE_DATA))
 		RANK_OFFSET=(0 $((STRIPE_DATA)) $((2 * STRIPE_DATA)) \
 			     $((3 * STRIPE_DATA - STRIPE_DATA / 2)))
 		RANK_LENGTH=($((2 * STRIPE_DATA)) $((2 * STRIPE_DATA)) \
 			     $((STRIPE_DATA + STRIPE_DATA / 2)) \
 			     $((STRIPE_DATA / 2 + STRIPE_DATA)))
-		EXPECT_DETERMINISTIC=0
+		EXPECT_DETERMINISTIC=1
 		;;
 	subchunk)
 		N=2
@@ -355,27 +363,126 @@ inv1_snapshot "${WORKDIR}/inv1.after"
 # ----------------------------------------------------------------------
 # Per-writer verify
 # ----------------------------------------------------------------------
+# For overlap mode, per-writer verify is meaningless: writers'
+# ranges overlap by design, and later writers legitimately
+# replace earlier writers' bytes in the overlap region.  The
+# correct property for overlap is "every byte matches SOME
+# writer's stamp" (cooperative serialisation -- not silent
+# corruption).  Run that instead, then skip the per-writer pass.
 echo ">>> Per-writer verify"
 VERIFY_FAIL=0
-for i in $(seq 0 $((N - 1))); do
-	OFF=${RANK_OFFSET[$i]}
-	LEN=${RANK_LENGTH[$i]}
-	src="${WORKDIR}/writer-${i}.bin"
-	if "${EC_DEMO}" verify \
+if [[ "${MODE}" == "overlap" ]]; then
+	# Dump the post-write file via the read path that already
+	# exercises the same code as a writer's RMW prefix read.
+	# rank 0..N-1 stamps live in RANK_STAMPS[0..N-1].  pre-fill
+	# is 0x00 -- legal only OUTSIDE any writer's range (no
+	# writer wrote there).  Inside any writer's range, the byte
+	# must equal one of the per-rank stamps.
+	out="${WORKDIR}/overlap.dump"
+	if "${EC_DEMO}" read \
 		--mds "${MDS}" --file "${NFS_FILE}" \
-		--input "${src}" --k "${K}" --m "${M}" \
+		--output "${out}" --k "${K}" --m "${M}" \
 		--codec "${CODEC}" --layout "${LAYOUT}" \
 		--shard-size "${SHARD_SIZE}" \
-		--id "verify${i}" \
-		--offset "${OFF}" --length "${LEN}" \
-		>"${WORKDIR}/verify-${i}.log" 2>&1; then
-		echo "  writer-${i} verify PASS"
+		--id "verify-anyof" \
+		--length "${FILE_SIZE}" \
+		>"${WORKDIR}/verify-overlap.log" 2>&1; then
+		# Build the set of allowed stamps for the inside-range
+		# check, plus 0x00 for outside-any-range bytes.  Comma-
+		# join for awk.
+		stamps_csv=""
+		for s in "${RANK_STAMPS[@]:0:${N}}"; do
+			stamps_csv="${stamps_csv}${stamps_csv:+,}$((s))"
+		done
+		# Find the union of all writer ranges (any byte in ANY
+		# range is "stamped"; outside any range is "pre-fill"
+		# 0x00).  Encoded as bash arrays mirroring the launch
+		# loop above.  awk reads the byte stream from od and
+		# enforces:
+		#   inside any range: byte in {stamps_csv}
+		#   outside all ranges: byte == 0
+		off_args=""
+		len_args=""
+		for i in $(seq 0 $((N - 1))); do
+			off_args="${off_args}${off_args:+,}${RANK_OFFSET[$i]}"
+			len_args="${len_args}${len_args:+,}${RANK_LENGTH[$i]}"
+		done
+		if od -An -tu1 -w1 -v "${out}" |
+			awk -v stamps="${stamps_csv}" \
+			    -v offs="${off_args}" \
+			    -v lens="${len_args}" '
+			BEGIN {
+				n = split(stamps, sarr, ",")
+				for (i = 1; i <= n; i++) allowed[sarr[i]+0] = 1
+				m = split(offs, oarr, ",")
+				split(lens, larr, ",")
+				bad = 0
+				addr = 0
+			}
+			{
+				b = $1 + 0
+				inside = 0
+				for (i = 1; i <= m; i++) {
+					if (addr >= oarr[i]+0 &&
+					    addr < (oarr[i]+0) + (larr[i]+0)) {
+						inside = 1
+						break
+					}
+				}
+				if (inside) {
+					if (!(b in allowed)) {
+						if (bad < 8)
+							printf "any-of: byte %d at offset %d not in stamp set\n", b, addr
+						bad++
+					}
+				} else {
+					if (b != 0) {
+						if (bad < 8)
+							printf "any-of: byte %d at offset %d (pre-fill range) not 0x00\n", b, addr
+						bad++
+					}
+				}
+				addr++
+			}
+			END {
+				if (bad > 0) {
+					printf "any-of: %d bad bytes total\n", bad
+					exit 1
+				}
+				printf "any-of: %d bytes all in stamp/prefill sets\n", addr
+				exit 0
+			}'; then
+			echo "  overlap any-of verify PASS"
+		else
+			echo "  overlap any-of verify FAIL"
+			VERIFY_FAIL=1
+		fi
 	else
-		echo "  writer-${i} verify FAIL"
-		VERIFY_FAIL=$((VERIFY_FAIL + 1))
-		tail -5 "${WORKDIR}/verify-${i}.log" || true
+		echo "  overlap any-of verify FAIL (read failed)"
+		VERIFY_FAIL=1
+		tail -5 "${WORKDIR}/verify-overlap.log" || true
 	fi
-done
+else
+	for i in $(seq 0 $((N - 1))); do
+		OFF=${RANK_OFFSET[$i]}
+		LEN=${RANK_LENGTH[$i]}
+		src="${WORKDIR}/writer-${i}.bin"
+		if "${EC_DEMO}" verify \
+			--mds "${MDS}" --file "${NFS_FILE}" \
+			--input "${src}" --k "${K}" --m "${M}" \
+			--codec "${CODEC}" --layout "${LAYOUT}" \
+			--shard-size "${SHARD_SIZE}" \
+			--id "verify${i}" \
+			--offset "${OFF}" --length "${LEN}" \
+			>"${WORKDIR}/verify-${i}.log" 2>&1; then
+			echo "  writer-${i} verify PASS"
+		else
+			echo "  writer-${i} verify FAIL"
+			VERIFY_FAIL=$((VERIFY_FAIL + 1))
+			tail -5 "${WORKDIR}/verify-${i}.log" || true
+		fi
+	done
+fi
 
 if [[ "${INV1_REPORT}" -eq 1 ]]; then
 	echo
