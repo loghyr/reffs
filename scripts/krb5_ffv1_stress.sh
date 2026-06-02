@@ -250,26 +250,26 @@ path_dir=${path_dir%/}  # strip trailing slash, if any
 
 declare -a pids
 # ec_demo's `verify` subcommand only reads and compares -- it does
-# not write first.  So each worker WRITES the file, then VERIFIES
-# the readback against the same local input.  Both invocations run
-# against the per-worker krb5 ccache so the round-trip exercises
-# write + read against the FFv1 server under one identity.
+# Each worker runs ec_demo's combined write_verify subcommand:
+# write the file, then read it back and compare to the same local
+# input, all on ONE mds_session.  Both phases share the per-worker
+# krb5 ccache so the round-trip exercises write + read against the
+# FFv1 server under one identity.
+#
+# Why write_verify (rather than separate write + verify processes):
+# bindresvport's usable reserved-port pool under 1024 is roughly
+# 350-400 ports after well-known service exclusions.  Separate
+# write + verify processes consume clients x nconnect x 2 reserved
+# ports per worker; at clients=33 nconnect=8 that's 528 ports per
+# run, which exceeds the pool and produces a mix of EADDRINUSE
+# (bindresvport) and NFS4ERR_PERM (strict-port server rejecting
+# the ephemeral-port fallback).  One session across both phases
+# halves the footprint to clients x nconnect (264 ports), well
+# inside the pool.
 for ((i = 0; i < clients; i++)); do
 	(
 		export KRB5CCNAME=$cc_dir/cc_$i
-		set -e
-		"$ec_demo" write \
-			--mds "$server" \
-			--file "$path_dir/krb5stress_$i" \
-			--input "$local_input" \
-			--sec "$sec" \
-			--layout v1 \
-			--codec "$codec" \
-			--k "$k" \
-			--m "$m" \
-			--nconnect "$nconnect" \
-			--id "krb5stress_$i"
-		exec "$ec_demo" verify \
+		exec "$ec_demo" write_verify \
 			--mds "$server" \
 			--file "$path_dir/krb5stress_$i" \
 			--input "$local_input" \

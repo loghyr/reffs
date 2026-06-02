@@ -9,9 +9,10 @@
  * EC demo client -- command-line tool for erasure-coded pNFS I/O.
  *
  * Usage:
- *   ec_demo write  --mds HOST --file NAME --input FILE  [--k K] [--m M]
- *   ec_demo read   --mds HOST --file NAME --output FILE [--k K] [--m M]
- *   ec_demo verify --mds HOST --file NAME --input FILE  [--k K] [--m M]
+ *   ec_demo write        --mds HOST --file NAME --input FILE  [--k K] [--m M]
+ *   ec_demo read         --mds HOST --file NAME --output FILE [--k K] [--m M]
+ *   ec_demo verify       --mds HOST --file NAME --input FILE  [--k K] [--m M]
+ *   ec_demo write_verify --mds HOST --file NAME --input FILE  [--k K] [--m M]
  *
  * Connects to the MDS via NFSv4.2, gets a Flex Files layout, resolves
  * data servers via GETDEVICEINFO, then does RS-encoded I/O directly
@@ -847,6 +848,143 @@ static int cmd_verify(const char *mds_host, const char *nfs_file,
 	return ret ? 1 : 0;
 }
 
+/*
+ * cmd_write_verify -- write then verify against the SAME session.
+ *
+ * Equivalent in semantics to `ec_demo write ... && ec_demo verify ...`
+ * but reuses one mds_session across both phases.  Cuts reserved-port
+ * consumption in half for the stress-driver shape (33 workers x 8
+ * transports x 2 phases = 528 ports vs 264) by holding the 8
+ * transports across the full lifetime instead of tearing them down
+ * between write and verify.
+ *
+ * The arithmetic matters: bindresvport's usable reserved-port pool
+ * is roughly 350-400 ports under 1024 after well-known service
+ * exclusions, so a separate-process write+verify pair at this
+ * worker x nconnect shape exceeds the pool on a single run.  Holding
+ * one session keeps the per-run footprint at clients x nconnect.
+ */
+static int cmd_write_verify(const char *mds_host, const char *nfs_file,
+			    const char *local_file, int k, int m,
+			    enum ec_codec_type codec_type,
+			    layouttype4 layout_type, uint64_t skip_ds_mask,
+			    size_t shard_size, uint64_t range_offset,
+			    size_t range_length)
+{
+	struct mds_session ms;
+	size_t orig_len;
+	uint8_t *buf = NULL;
+	int ret;
+	bool range_mode = (range_offset != 0 || range_length != 0);
+	size_t cmp_len;
+
+	uint8_t *orig = read_local_file(local_file, &orig_len);
+
+	if (!orig)
+		return 1;
+
+	if (range_mode) {
+		if (range_length == 0)
+			range_length = orig_len;
+		if (range_length > orig_len) {
+			fprintf(stderr,
+				"ec_demo: --length %zu exceeds input size %zu\n",
+				range_length, orig_len);
+			free(orig);
+			return 1;
+		}
+		cmp_len = range_length;
+	} else {
+		cmp_len = orig_len;
+	}
+
+	ret = session_open(&ms, mds_host);
+	if (ret) {
+		fprintf(stderr, "ec_demo: session create failed: %d\n", ret);
+		free(orig);
+		return 1;
+	}
+
+	/* Write phase. */
+	if (range_mode) {
+		fprintf(stderr,
+			"ec_demo: writing %zu bytes to %s at offset %llu "
+			"(%d+%d, shard=%zu, range mode)\n",
+			cmp_len, nfs_file, (unsigned long long)range_offset, k,
+			m, shard_size);
+		ret = ec_write_codec_range(&ms, nfs_file, orig, cmp_len,
+					   range_offset, k, m, codec_type,
+					   layout_type, shard_size);
+	} else {
+		fprintf(stderr,
+			"ec_demo: writing %zu bytes to %s (%d+%d, shard=%zu)\n",
+			orig_len, nfs_file, k, m, shard_size);
+		ret = ec_write_codec(&ms, nfs_file, orig, orig_len, k, m,
+				     codec_type, layout_type, shard_size);
+	}
+	if (ret) {
+		fprintf(stderr, "ec_demo: write failed: %d\n", ret);
+		goto out;
+	}
+	fprintf(stderr, "ec_demo: write OK\n");
+
+	/* Verify phase, same session. */
+	buf = calloc(1, cmp_len);
+	if (!buf) {
+		ret = -1;
+		goto out;
+	}
+
+	size_t out_len = 0;
+
+	if (range_mode) {
+		fprintf(stderr,
+			"ec_demo: verifying %s at offset %llu len %zu "
+			"against %s (%d+%d, shard=%zu, range mode)\n",
+			nfs_file, (unsigned long long)range_offset, cmp_len,
+			local_file, k, m, shard_size);
+		ret = ec_read_codec_range(&ms, nfs_file, buf, cmp_len,
+					  range_offset, k, m, codec_type,
+					  layout_type, shard_size);
+		out_len = ret ? 0 : cmp_len;
+	} else {
+		fprintf(stderr,
+			"ec_demo: verifying %s against %s (%d+%d, shard=%zu)\n",
+			nfs_file, local_file, k, m, shard_size);
+		ret = ec_read_codec(&ms, nfs_file, buf, cmp_len, &out_len, k, m,
+				    codec_type, layout_type, skip_ds_mask,
+				    shard_size);
+	}
+	if (ret) {
+		fprintf(stderr, "ec_demo: read failed: %d\n", ret);
+	} else if (out_len < cmp_len) {
+		fprintf(stderr,
+			"ec_demo: MISMATCH: read %zu bytes, expected %zu\n",
+			out_len, cmp_len);
+		ret = -1;
+	} else if (memcmp(orig, buf, cmp_len) != 0) {
+		for (size_t i = 0; i < cmp_len; i++) {
+			if (orig[i] != buf[i]) {
+				fprintf(stderr,
+					"ec_demo: MISMATCH at offset %zu: "
+					"expected 0x%02x, got 0x%02x\n",
+					i, orig[i], buf[i]);
+				break;
+			}
+		}
+		ret = -1;
+	} else {
+		fprintf(stderr, "ec_demo: VERIFY OK (%zu bytes match)\n",
+			cmp_len);
+	}
+
+out:
+	free(buf);
+	free(orig);
+	mds_session_destroy(&ms);
+	return ret ? 1 : 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Plain (non-EC) commands                                             */
 /* ------------------------------------------------------------------ */
@@ -1278,12 +1416,19 @@ static void usage(void)
 		" [--size N] [--chunk N] [--delete-first]\n"
 		"\n"
 		"  Erasure-coded:\n"
-		"  ec_demo write  --mds HOST --file NAME --input FILE"
+		"  ec_demo write        --mds HOST --file NAME --input FILE"
 		" [--k K] [--m M]\n"
-		"  ec_demo read   --mds HOST --file NAME --output FILE"
+		"  ec_demo read         --mds HOST --file NAME --output FILE"
 		" [--k K] [--m M] [--size N]\n"
-		"  ec_demo verify --mds HOST --file NAME --input FILE"
+		"  ec_demo verify       --mds HOST --file NAME --input FILE"
 		" [--k K] [--m M]\n"
+		"  ec_demo write_verify --mds HOST --file NAME --input FILE"
+		" [--k K] [--m M]\n"
+		"                       (write then verify on ONE session;\n"
+		"                       half the reserved-port footprint of\n"
+		"                       running write + verify as separate\n"
+		"                       processes -- intended for stress\n"
+		"                       drivers against strict-port servers.)\n"
 		"\n"
 		"Options:\n"
 		"  --mds HOST       MDS hostname or IP\n"
@@ -1766,6 +1911,17 @@ int main(int argc, char *argv[])
 		return cmd_verify(mds_host, nfs_file, local_input, k, m,
 				  codec_type, layout_type, skip_ds_mask,
 				  shard_size, range_offset, range_length);
+	}
+
+	if (strcmp(cmd, "write_verify") == 0) {
+		if (!local_input) {
+			fprintf(stderr,
+				"ec_demo: write_verify requires --input\n");
+			return 1;
+		}
+		return cmd_write_verify(mds_host, nfs_file, local_input, k, m,
+					codec_type, layout_type, skip_ds_mask,
+					shard_size, range_offset, range_length);
 	}
 
 	if (strcmp(cmd, "burst") == 0)
