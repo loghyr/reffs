@@ -482,29 +482,29 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		       sizeof(blk.cb_checksum_value));
 
 		/*
-		 * INV-1 / chunk-collision detection: peek at the prior
-		 * block before overwriting.  Two axes:
-		 *   - cs_pending_displaced: prior PENDING from a
-		 *     different owner -- proof of actual contention,
-		 *     harness assertion for chunk-collision validation.
+		 * INV-1 / chunk-collision instrumentation: peek at the
+		 * prior block before overwriting.  Two axes:
 		 *   - cs_blocks_first_write / cs_blocks_overwrite:
 		 *     EMPTY vs non-EMPTY prior state -- INV-1's RMW
 		 *     ratio answering Hellwig msg 5 (in-place update).
 		 *   - cs_blocks_full / cs_blocks_partial: blk_size
 		 *     vs chunk_size -- INV-1's full vs partial write
 		 *     ratio answering Hellwig msg 9 (NFS block size).
+		 *
+		 * cs_pending_displaced (cross-writer PENDING overwrite)
+		 * used to bump here, but the Option C gate above
+		 * (commit d8a09448671b) rejects exactly that case
+		 * before this loop runs.  cs_chunk_busy_delay is the
+		 * post-Option-C counter that records the same shape of
+		 * contention.  The cs_pending_displaced wire field
+		 * stays in probe1's response struct for backward compat
+		 * with deployed probe clients; it reports zero in any
+		 * post-Option-C build (callers should read
+		 * cs_chunk_busy_delay instead).
 		 */
 		if (cstats) {
 			struct chunk_block *prev =
 				chunk_store_lookup(cs, args->cwa_offset + i);
-
-			if (prev && prev->cb_state == CHUNK_STATE_PENDING &&
-			    (prev->cb_gen_id != blk.cb_gen_id ||
-			     prev->cb_client_id != blk.cb_client_id ||
-			     prev->cb_owner_id != blk.cb_owner_id))
-				atomic_fetch_add_explicit(
-					&cstats->cs_pending_displaced, 1,
-					memory_order_relaxed);
 
 			/*
 			 * chunk_store_lookup returns NULL for EMPTY (and for

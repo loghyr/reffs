@@ -1860,3 +1860,47 @@ The chunk-collision validation work, including all five follow-up
 slices (whitebox-header sync, INV-1 test flip, retry tuning,
 ec_read_codec_range refactor, CHUNK_READ DELAY-on-PENDING, and
 this final test rename), is complete and stable.
+
+## Overlap mode flips to deterministic via any-of verify
+
+Commit `c6fb5914cc07` adds an any-of verify mode for the overlap
+test.  Per-writer verify is meaningless for overlap because
+writers' ranges overlap by design; the right correctness property
+is "every byte matches SOME writer's stamp" (cooperative
+serialisation -- not silent corruption).
+
+Implementation:
+
+1. ec_demo read dumps the post-write file via the same code path
+   a writer's RMW prefix read uses.  `--size FILE_SIZE` bounds
+   the read buffer (the underlying ec_read_codec defaults to
+   16 MiB otherwise and tries to read padded stripes past
+   file_size, returning NFS4ERR_NOENT on the unwritten stripes
+   -- fixed in `b80bba97d743`).
+2. od -An -tu1 streams every byte to awk.
+3. awk asserts each byte is either in the per-rank stamp set
+   {RANK_STAMPS[0..N-1]} (when inside SOME writer's range) or
+   0x00 (pre-fill, outside all ranges).
+4. Up to 8 bad-byte locations printed; total bad-byte count
+   drives PASS/FAIL.
+
+EXPECT_DETERMINISTIC flips 0 -> 1 for overlap.  All four modes
+now use deterministic pass/fail; informational mode is dead.
+
+Stress run on shadow (10 runs each mode, 40 total):
+
+| Mode | PASS / total | flake mode |
+|------|--------------|------------|
+| disjoint | 9/10 | 1 ephemeral-port exhaustion |
+| chunk-split | 10/10 | -- |
+| overlap | 9/10 | 1 ephemeral-port exhaustion |
+| subchunk | 9/10 | 1 ephemeral-port exhaustion |
+
+All 3 failures were transport-level `mds_session_clnt_open:
+connect(127.0.0.1:2049) failed: Cannot assign requested address`
+(host ephemeral-port exhaustion from rapid back-to-back ec_demo
+invocations).  No chunk-collision-level failures.  The harness's
+SO_REUSEADDR + rapid-retry behaviour from earlier
+`db80db6179af` cuts the rate but doesn't eliminate it; this is
+host infrastructure noise the chunk-collision validation doesn't
+own.

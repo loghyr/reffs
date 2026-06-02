@@ -1414,14 +1414,17 @@ END_TEST
 /* ------------------------------------------------------------------ */
 /* Group G: chunk-collision counter observability (Phase 4b.7)         */
 /*                                                                     */
-/* The cs_pending_displaced counter increments when a CHUNK_WRITE      */
-/* lands at an offset whose previous PENDING block came from a         */
-/* different writer (cb_gen_id / cb_client_id / cb_owner_id differs).  */
-/* The PS-pipeline framing in the design document ("two simulated PS   */
-/* clientids") is conceptual; the actual contract under test is the   */
-/* per-sb chunk-stats increment logic, which the design's chunk-       */
-/* collision validation slice (BLOCKER 2) shipped just before this    */
-/* slice.  Group E in proxy-server-phase4b.md.                         */
+/* Pre-Option-C, cs_pending_displaced incremented when a CHUNK_WRITE   */
+/* landed at an offset whose previous PENDING block came from a        */
+/* different writer.  Post-Option-C (chunk-collision-validation.md     */
+/* 'Triage: chunk-store sub-stripe atomicity'), the CHUNK_WRITE gate   */
+/* rejects that case BEFORE the displaced-counting code runs;          */
+/* cs_chunk_busy_delay is the new counter that records the same        */
+/* contention pattern with reject-semantics instead of                 */
+/* observe-then-allow.  The tests in this group still drive the same   */
+/* two-distinct-writers scenario, but the assertion target moves to    */
+/* cs_chunk_busy_delay and the second writer's CHUNK_WRITE is          */
+/* expected to return NFS4ERR_DELAY (not NFS4_OK with a side-effect). */
 /* ------------------------------------------------------------------ */
 
 /*
