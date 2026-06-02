@@ -2287,11 +2287,13 @@ int ec_read_codec_range(struct mds_session *ms, const char *path, uint8_t *buf,
 			size_t shard_size)
 {
 	struct mds_file mf;
+	struct ec_context ctx;
 	uint8_t *scratch = NULL;
 	size_t stripe_data;
 	uint64_t end;
 	uint64_t first_stripe;
 	uint64_t last_stripe;
+	bool ctx_built = false;
 	int ret;
 
 	/*
@@ -2332,6 +2334,49 @@ int ec_read_codec_range(struct mds_session *ms, const char *path, uint8_t *buf,
 		goto out_close;
 	}
 
+	/*
+	 * Same shared-ctx pattern ec_write_codec_range uses (Track 1b
+	 * second-mechanism fix, commit efaff665437b).  Without this,
+	 * each ec_read_stripe_with_file call did its own
+	 * ec_resolve_mirrors + ec_disconnect_all, sending DESTROY_SESSION
+	 * to every DS between stripes.  In overlap mode (4 verify
+	 * workers each reading a multi-stripe range) the per-stripe
+	 * session churn manifested as the BADSESSION cascade we'd
+	 * already debugged out of the WRITE path.
+	 */
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.ctx_ms = ms;
+	ctx.ctx_k = k;
+	ctx.ctx_m = m;
+	ctx.ctx_file = mf;
+
+	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
+	if (!ctx.ctx_codec) {
+		ret = -ENOMEM;
+		goto out_free;
+	}
+
+	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_READ, layout_type,
+			     NULL, &ctx.ctx_layout);
+	if (ret) {
+		ec_log("ec_read_range: LAYOUTGET failed: %d\n", ret);
+		goto out_codec;
+	}
+
+	if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
+		ec_log("ec_read_range: need %d mirrors, got %u\n", k + m,
+		       ctx.ctx_layout.el_nmirrors);
+		ret = -EINVAL;
+		goto out_layout;
+	}
+
+	ret = ec_resolve_mirrors(&ctx);
+	if (ret) {
+		ec_log("ec_read_range: resolve_mirrors failed: %d\n", ret);
+		goto out_layout;
+	}
+	ctx_built = true;
+
 	for (uint64_t s = first_stripe; s <= last_stripe; s++) {
 		size_t sub_off_stripe;
 		size_t sub_off_data;
@@ -2340,19 +2385,34 @@ int ec_read_codec_range(struct mds_session *ms, const char *path, uint8_t *buf,
 		range_stripe_overlap(s, stripe_data, offset, length,
 				     &sub_off_stripe, &sub_off_data, &sub_len);
 
+		/* Reader path doesn't need per-shard owner capture --
+		 * subsequent CHUNK_WRITEs from this caller aren't a
+		 * thing.  Clear the flag to be safe so the shared-ctx
+		 * pattern doesn't carry stale guards across read-only
+		 * loop iterations. */
+		ctx.ctx_read_owners_valid = false;
+
 		ret = ec_read_stripe_with_file(ms, &mf, s, scratch, stripe_data,
 					       k, m, codec_type, layout_type,
-					       shard_size, NULL, NULL, NULL);
+					       shard_size, NULL, NULL, &ctx);
 		if (ret) {
 			ec_log("ec_read_range: read stripe %llu failed: "
 			       "%d\n",
 			       (unsigned long long)s, ret);
-			goto out_free;
+			goto out_disconnect;
 		}
 
 		memcpy(buf + sub_off_data, scratch + sub_off_stripe, sub_len);
 	}
 
+out_disconnect:
+	if (ctx_built)
+		ec_disconnect_all(&ctx);
+out_layout:
+	mds_layout_return(ms, &ctx.ctx_file, NULL, &ctx.ctx_layout);
+	ec_layout_free(&ctx.ctx_layout);
+out_codec:
+	ec_codec_destroy(ctx.ctx_codec);
 out_free:
 	free(scratch);
 out_close:
