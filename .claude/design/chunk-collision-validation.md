@@ -1837,3 +1837,26 @@ The fundamental Track 1b chunk-collision validation is DONE:
   as informational rather than a bug.
 
 Unit tests (`make check`): all 153 pass on shadow.
+
+## Post-merge unit test catch + 30-run stability
+
+Direct `./chunk_test` revealed `test_chunk_read_pending_not_visible`
+was hitting an asserttion failure I missed in the earlier
+`make check | grep FAIL` filter (the filter dropped the
+`FAIL: chunk_test [1.2s]` line).  The test's intent ("PENDING
+blocks are invisible to readers") was the pre-Option-C semantic;
+the new behaviour returns NFS4ERR_DELAY ("in-flight write, retry
+shortly").  Test renamed to `test_chunk_read_pending_returns_delay`
++ assertion flipped in commit `4a7bc3286c7e`.
+
+Post-fix stability:
+
+- `make check`: zero FAIL across all suites (153 tests)
+- 30/30 subchunk runs PASS (was 29/30 with a transport-level
+  ephemeral-port flake earlier; this stress hit zero
+  transport-level flakes too)
+
+The chunk-collision validation work, including all five follow-up
+slices (whitebox-header sync, INV-1 test flip, retry tuning,
+ec_read_codec_range refactor, CHUNK_READ DELAY-on-PENDING, and
+this final test rename), is complete and stable.
