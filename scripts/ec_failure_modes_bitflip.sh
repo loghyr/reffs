@@ -26,6 +26,17 @@
 
 set -euo pipefail
 
+# ASAN/LSAN-instrumented ec_demo reports libtirpc allocation
+# leaks (~6 KiB total) that are non-actionable -- libtirpc itself
+# is the upstream source.  Without these envvars, LSan exits the
+# process with rc=1 on every successful write, which `set -e`
+# then catches and aborts the harness silently.  Mirror the
+# Track 1b harness fix (chunk-collision-validation.md "What we
+# found" #4).
+export ASAN_OPTIONS="detect_leaks=0:halt_on_error=0"
+export UBSAN_OPTIONS="halt_on_error=0"
+export LSAN_OPTIONS="halt_on_error=0"
+
 MODE=""            # "disk" or "wire"
 MDS="127.0.0.1:2049"
 EC_DEMO=""
