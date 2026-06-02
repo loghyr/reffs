@@ -2171,19 +2171,27 @@ int ec_write_codec_range(struct mds_session *ms, const char *path,
 
 	/*
 	 * Per-stripe RMW with CAS-guard retry (Track 1b Option C full).
-	 * EC_RMW_RETRY_MAX bounds the retry budget; backoff is 50/100/
-	 * 200/400/800 ms with linear ramp.  -EAGAIN bubbles up from
+	 * EC_RMW_RETRY_MAX bounds the retry budget; backoff is
+	 * 50ms * 2^attempt with per-attempt jitter (0..63ms) so that
+	 * two simultaneously-rejected writers don't sync up on the same
+	 * wake-up boundary and re-collide.  -EAGAIN bubbles up from
 	 * ec_write_stripe_with_file when the server returns NFS4ERR_
 	 * DELAY because the cwa_guard CAS-check failed -- meaning a
 	 * concurrent writer modified the block between this writer's
 	 * RMW prefix read and CHUNK_WRITE.  Re-do the read so we pick
 	 * up the concurrent writer's bytes, re-encode against the new
-	 * state, and re-issue the write with a fresh guard.  After
+	 * state, and re-issue the write with a fresh guard.
+	 *
+	 * Budget sized so the subchunk smoke (two writers on the same
+	 * 4 KiB block) converges deterministically across runs.
+	 * EC_RMW_RETRY_MAX=5 was occasionally short under 2-way
+	 * contention -- one writer exhausted its budget while the
+	 * other was still racing on the SAME stripe.  After
 	 * EC_RMW_RETRY_MAX failures, surface -EAGAIN to the caller so
 	 * the harness sees a loud "could not converge under contention"
 	 * signal rather than silent corruption.
 	 */
-#define EC_RMW_RETRY_MAX 5
+#define EC_RMW_RETRY_MAX 10
 
 	for (uint64_t s = first_stripe; s <= last_stripe; s++) {
 		size_t sub_off_stripe;
@@ -2243,13 +2251,24 @@ rmw_retry:
 		ctx.ctx_read_owners_valid = false;
 
 		if (ret == -EAGAIN && rmw_attempt < EC_RMW_RETRY_MAX) {
-			struct timespec delay = { 0, (long)(50 * 1000000)
-							     << rmw_attempt };
+			/* Exponential backoff 50ms * 2^attempt capped at
+			 * 500ms, plus per-attempt jitter (0..63 ms) so
+			 * concurrent writers don't sync up.  rand() is fine
+			 * here -- this is timing-jitter, not crypto.  Single-
+			 * threaded ec_demo's rand() state is per-process so
+			 * each writer naturally diverges. */
+			long base_ms = 50L << rmw_attempt;
+			if (base_ms > 500)
+				base_ms = 500;
+			long jitter_ms = rand() & 0x3f;
+			long sleep_ms = base_ms + jitter_ms;
+			struct timespec delay = { 0, sleep_ms * 1000000L };
+
 			rmw_attempt++;
 			ec_log("ec_write_range: stripe %llu CAS-miss, "
-			       "RMW retry %d/%d\n",
+			       "RMW retry %d/%d (sleep %ldms)\n",
 			       (unsigned long long)s, rmw_attempt,
-			       EC_RMW_RETRY_MAX);
+			       EC_RMW_RETRY_MAX, sleep_ms);
 #ifdef __APPLE__
 			nanosleep(&delay, NULL);
 #else
