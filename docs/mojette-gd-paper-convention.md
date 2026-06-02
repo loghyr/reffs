@@ -14,15 +14,15 @@ Three coordinated changes to `lib/ec/`:
 3. **Inverse**: corner-peeling stays as the default; geometry-driven
    reconstruction (Normand-Kingston-Evenou, DGCI 2006) is added as
    `moj_inverse_gd` plus a sparse-failures variant
-   `moj_inverse_gd_sparse` that the codec uses on the full grid.
+   `moj_inverse_gd_sparse` that the encoding uses on the full grid.
 
-Plus the matching SIMD simplification, codec rewrite, dispatcher,
+Plus the matching SIMD simplification, encoding rewrite, dispatcher,
 ec_demo `--force-gd` flag, benchmark axis, and a new microbenchmark
 tool (`tools/moj_bench`).
 
-The end result is a Mojette codec that, with `gd` enabled, decodes
+The end result is a Mojette encoding that, with `gd` enabled, decodes
 **40-1144x faster than corner-peeling** at the algorithm level and
-beats Reed-Solomon by **9-52x** at the codec level on this hardware.
+beats Reed-Solomon by **9-52x** at the encoding level on this hardware.
 Through the full NFS stack the wall-clock improvement on
 Mojette-nonsys reads is **17-27%**, large enough that the existing
 "Mojette-nonsys is unsuitable for read-heavy workloads above 64 KiB"
@@ -60,10 +60,10 @@ group-translation.
 |---|---|
 | `lib/ec/mojette.h` | Bin formula; `moj_bin_offset` returns the offset to **subtract** (negative-or-zero, HCF convention); `moj_projection_size` swaps P/Q in the multipliers; new prototypes for `moj_inverse_peel`, `moj_inverse_peel_sparse`, `moj_inverse_gd`, `moj_inverse_gd_sparse`, `moj_inverse_sparse`, `moj_force_gd`. |
 | `lib/ec/mojette.c` | XOR algebra throughout (`+=` -> `^=`, ADD intrinsics -> XOR intrinsics); paper bin formula in forward + peel; SIMD collapsed from six helpers (p1 / pm1 x NEON / SSE2 / AVX2) to three (one ascending-bins helper per ISA); `moj_inverse_gd` ported as a near-direct adaptation of HCF's `inverse()`; `moj_inverse_peel_sparse` and `moj_inverse_gd_sparse` added; `moj_inverse` and `moj_inverse_sparse` dispatchers gated by `moj_force_gd`. |
-| `lib/ec/mojette_codec.c` | Bin formula updated.  `mojette_sys_decode` rewritten to use `moj_inverse_sparse` on the **full** P x k grid with known data rows pre-filled, replacing the prior reduce-to-smaller-grid trick (the old approach was unsound under paper convention because lines for `|p| >= 2` can put multiple missing-row pixels on the same full bin, e.g. for k=4 losing rows 0 and 3 with p=2, line `const = 6` contains both (0,6) and (3,0)). |
+| `lib/ec/mojette_encoding.c` | Bin formula updated.  `mojette_sys_decode` rewritten to use `moj_inverse_sparse` on the **full** P x k grid with known data rows pre-filled, replacing the prior reduce-to-smaller-grid trick (the old approach was unsound under paper convention because lines for `|p| >= 2` can put multiple missing-row pixels on the same full bin, e.g. for k=4 losing rows 0 and 3 with p=2, line `const = 6` contains both (0,6) and (3,0)). |
 | `lib/ec/tests/mojette_test.c` | `test_wrapping_arithmetic` reframed as `test_xor_identity`.  New `gd` tcase with 9 tests (4x3, 6x4, Q=1, Q=2, n!=Q rejection, zero grid, p==0 column-parity, 24K geometry, peel-vs-gd parity).  SIMD bin-value tests recomputed for paper convention. |
-| `lib/ec/tests/mojette_codec_test.c` | New `gd-codec` tcase parameterising 5 sys+nonsys tests on `moj_force_gd`. |
-| `tools/moj_bench.c` | New algorithm-level microbenchmark.  Two halves: raw inverse (peel vs gd, dense and sparse, P from 16 to 4096) and codec-level (RS vs Mojette-sys peel/gd vs Mojette-nonsys peel/gd at 4 KB and 32 KB shards, 4+2 and 8+2 with 1- and 2-shard losses). |
+| `lib/ec/tests/mojette_encoding_test.c` | New `gd-encoding` tcase parameterising 5 sys+nonsys tests on `moj_force_gd`. |
+| `tools/moj_bench.c` | New algorithm-level microbenchmark.  Two halves: raw inverse (peel vs gd, dense and sparse, P from 16 to 4096) and encoding-level (RS vs Mojette-sys peel/gd vs Mojette-nonsys peel/gd at 4 KB and 32 KB shards, 4+2 and 8+2 with 1- and 2-shard losses). |
 | `tools/Makefile.am` | Wire `moj_bench` as a `bin_PROGRAM`; links only against `libreffs_ec.la`, no NFS dependencies. |
 | `tools/ec_demo.c` | `--force-gd` CLI flag (parallel to `--force-scalar`). |
 | `scripts/ec_benchmark.sh` | `--force-gd` flag plumbing; new `inverse=peel\|gd` and `shard_size` CSV columns; `RUN_BASELINES` gating so plain/RS aren't re-run in gd-only phases. |
@@ -84,7 +84,7 @@ to CI):
 | suite | tests |
 |---|---|
 | `mojette_test` | 25 (forward, peel inverse, SIMD parity, XOR identity, gd: 4x3, 6x4, Q=1, Q=2, n!=Q rejection, zero grid, p==0 parity, 24K geometry, peel-vs-gd parity) |
-| `mojette_codec_test` | 20 (5 systematic + 5 non-systematic + 5 gd-codec parameterised + 5 24K extras), all paths peel + gd |
+| `mojette_encoding_test` | 20 (5 systematic + 5 non-systematic + 5 gd-encoding parameterised + 5 24K extras), all paths peel + gd |
 | `rs_test` | 9 |
 | `matrix_test` | 5 |
 
@@ -130,13 +130,13 @@ Times in microseconds, median of 20 runs after 3 warmups.
 | P=512 lose{0,7} | 255 us | 6.4 us | 40x |
 | P=4096 lose{0,7} | 13 720 us | 54.5 us | 252x |
 
-### Codec-level (`tools/moj_bench`, full encode + decode, no NFS)
+### Encoding-level (`tools/moj_bench`, full encode + decode, no NFS)
 
 Times in microseconds, median of 20 runs.
 
 #### 4+2, shard=4096 bytes (default ec_demo), lose 2 data shards
 
-| Codec | encode | decode |
+| Encoding | encode | decode |
 |---|---|---|
 | RS | 50 us | 96-102 us |
 | Mojette-sys peel | 1.3 us | 267-323 us |
@@ -146,7 +146,7 @@ Times in microseconds, median of 20 runs.
 
 #### 8+2, shard=4096 bytes, lose 2 data shards
 
-| Codec | encode | decode |
+| Encoding | encode | decode |
 |---|---|---|
 | RS | 94 us | 360 us |
 | Mojette-sys peel | 2.8 us | 257 us |
@@ -156,7 +156,7 @@ Times in microseconds, median of 20 runs.
 
 #### 8+2, shard=32768 bytes, lose 2 data shards
 
-| Codec | encode | decode |
+| Encoding | encode | decode |
 |---|---|---|
 | RS | 757 us | 2859 us |
 | Mojette-sys peel | 27 us | 13 656 us |
@@ -172,7 +172,7 @@ milliseconds.
 
 #### Healthy reads, 1 MB
 
-| Codec / geometry | peel | gd | vs peel |
+| Encoding / geometry | peel | gd | vs peel |
 |---|---|---|---|
 | Mojette-sys 4+2 | 2659 ms | 2660 ms | 0% |
 | Mojette-sys 8+2 | 2240 ms | 2223 ms | -0.8% |
@@ -185,7 +185,7 @@ With gd, Mojette-nonsys is competitive with RS (matches RS 4+2 at
 
 #### Degraded-1 reads, 1 MB
 
-| Codec / geometry | peel | gd | vs peel |
+| Encoding / geometry | peel | gd | vs peel |
 |---|---|---|---|
 | Mojette-sys 4+2 | 2253 ms | 2291 ms | +1.7% (noise) |
 | Mojette-sys 8+2 | 2074 ms | 2024 ms | -2.4% |
@@ -199,9 +199,9 @@ Mojette-nonsys gd 4+2 (2211 ms) beats RS 4+2; Mojette-nonsys gd 8+2
 ### Why end-to-end gain is smaller than algorithm-level
 
 NFS RTT and shard transfer dominate the ~2-second 1 MB read.  The
-codec runs many small inverse calls per file (e.g., 64 stripes per
+encoding runs many small inverse calls per file (e.g., 64 stripes per
 1 MB at the default 4 KB shard size); each call saves ~1.2 ms with
-gd, and the total codec time saving is hundreds of ms but is masked
+gd, and the total encoding time saving is hundreds of ms but is masked
 by ~2 s of network/RPC.
 
 For Mojette-sys the difference disappears almost entirely because
@@ -214,7 +214,7 @@ shard availability, so the per-stripe saving accumulates to a
 visible 17-27% wall-clock improvement.
 
 Larger shard sizes (`--shard-size 32768`) and larger file sizes
-(>4 MB) shift more wall-clock fraction into the codec layer, which
+(>4 MB) shift more wall-clock fraction into the encoding layer, which
 is where gd's algorithmic advantage compounds further.  Not in this
 benchmark run; the headline test stays at 4 KB shards / 1 MB files
 to be directly comparable to the existing FFv2 progress report.
@@ -244,8 +244,8 @@ to be directly comparable to the existing FFv2 progress report.
 4. **Mojette-sys is unchanged at the user level.**  Healthy reads
    bypass the inverse via the systematic shortcut; degraded reads
    recover one shard with sub-millisecond inverse cost.  gd is a
-   safety-net win (and a substantial codec-level win) but not a
-   user-visible NFS-level win for the systematic codec.
+   safety-net win (and a substantial encoding-level win) but not a
+   user-visible NFS-level win for the systematic encoding.
 
 5. **The XOR algebra switch is a "while-we're-here" simplification**
    that broadens SIMD coverage from `|p| = 1` only to all directions
@@ -267,7 +267,7 @@ End-to-end (reffsd + Docker, ~30-60 minutes for full 8-phase matrix):
 ```
 make -f Makefile.reffs run-benchmark
 # Results in logs/benchmark/results.csv with columns:
-#   codec, geometry, size_bytes, run, write_ms, read_ms, verify,
+#   encoding, geometry, size_bytes, run, write_ms, read_ms, verify,
 #   mode, layout, arch, cpu, kernel, simd, inverse, shard_size
 make -f Makefile.reffs stop-benchmark
 ```

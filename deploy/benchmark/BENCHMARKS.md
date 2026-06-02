@@ -130,7 +130,7 @@ collision/investigation work is `.claude/design/experiments.md`.
 
 ### Track 1 -- multiple ec_demo instances
 
-`run_chunk_collision.sh` launches N concurrent codec-aware
+`run_chunk_collision.sh` launches N concurrent encoding-aware
 `ec_demo write/verify` instances, each with a distinct `--id`, all
 targeting one MDS file.  N distinct clientids contend on every
 chunk; the verify phase asserts the surviving file is *some*
@@ -140,7 +140,7 @@ writer's complete encoding, not a frankenstein of partial writes.
 cd deploy/benchmark
 docker compose --profile collision up bench-collision
 # or directly:
-./run_chunk_collision.sh --n 4 --codec rs --layout v2 --iterations 20
+./run_chunk_collision.sh --n 4 --encoding rs --layout v2 --iterations 20
 ```
 
 ### Track 2 -- IOR via N Proxy Servers
@@ -191,7 +191,7 @@ result plus an ASAN/UBSAN scan of every container log.
 ### CSV output format
 
 ```
-codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,layout,arch,cpu,kernel,simd
+encoding,geometry,size_bytes,run,write_ms,read_ms,verify,mode,layout,arch,cpu,kernel,simd
 ```
 
 `verify` is `OK` or `FAIL`.  `mode` is `healthy` or `degraded-N`.
@@ -199,9 +199,9 @@ codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,layout,arch,cpu,kerne
 `arch` is `x86_64` or `aarch64`.  `simd` is `neon`, `sse2`, `avx2`,
 `scalar`, or `scalar(forced)` (when `--force-scalar` is used).
 
-### Codecs tested
+### Encodings tested
 
-| Codec | Description |
+| Encoding | Description |
 |-------|-------------|
 | `plain` | Single-mirror write/read (no EC, no striping) |
 | `stripe` | Pure striping across all DSes, no redundancy |
@@ -217,7 +217,7 @@ All results below are 5-run means in milliseconds.  2 warmup runs were
 discarded.  Shard size is 4 KB (required by the io_uring workaround; see
 Known Limitations).
 
-### Suite 1 — Codec comparison, 4+2, Fedora 43 aarch64 (Tier 2)
+### Suite 1 — Encoding comparison, 4+2, Fedora 43 aarch64 (Tier 2)
 
 Platform: dreamer — Fedora 43 VM (VMware Fusion on Apple M4 MacBook),
 Linux 6.19.8-200.fc43.aarch64, Docker bridge network,
@@ -340,11 +340,11 @@ Platform: same as Suite 1 (dreamer, aarch64, NEON), Docker bridge network,
 
 ### 1. EC overhead is within operational tolerance at small sizes
 
-At 4–64 KB, all three EC codecs (RS, Mojette-sys, Mojette-nonsys) add
+At 4–64 KB, all three EC encodings (RS, Mojette-sys, Mojette-nonsys) add
 14–21% write overhead over plain.  This is within the noise of real-network
 variance and within the tolerance of most interactive workloads.
 
-### 2. Reconstruction is essentially free for systematic codecs
+### 2. Reconstruction is essentially free for systematic encodings
 
 At 4+2 and 8+2, degraded reads with RS or Mojette-sys add 1–5% latency
 over healthy reads.  The I/O savings from reading one fewer shard partially
@@ -358,7 +358,7 @@ Mojette non-systematic requires a full inverse transform on every read
 it is 2.7× slower to read than RS at 4+2 and 5.5× slower at 8+2.  Use
 only for write-once / archive workloads or benchmarking contrast.
 
-### 4. 8+2 is faster than 4+2 for systematic codecs
+### 4. 8+2 is faster than 4+2 for systematic encodings
 
 With the same m=2 parity overhead, 8+2 spreads data into smaller shards
 across more DSes.  RS 8+2 at 1 MB: write 96 ms vs 103 ms (4+2), read
@@ -384,7 +384,7 @@ across hardware.
 
 | Use case | Recommended | Rationale |
 |----------|-------------|-----------|
-| Interactive workloads (< 64 KB) | Any systematic codec | All within 15–20% of plain |
+| Interactive workloads (< 64 KB) | Any systematic encoding | All within 15–20% of plain |
 | Large file I/O, many DSes (8+) | RS 8+2 or Mojette-sys 8+2 | Write overhead same as 4+2; healthy reads faster |
 | High resilience (2 DS failures) | RS 8+2 | Proven reconstruction; single-failure degraded adds 54% |
 | Low reconstruction cost | Mojette-sys 8+2 | Degraded-1 adds 4%; sweet spot for live storage |
@@ -455,7 +455,7 @@ bottleneck (not network) dominates at large sizes.
 Quick analysis with common tools:
 
 ```bash
-# Mean write latency per codec at 1 MB (healthy runs only)
+# Mean write latency per encoding at 1 MB (healthy runs only)
 awk -F, '$3==1048576 && $8=="healthy" {sum[$1]+=$5; cnt[$1]++}
          END {for (c in sum) printf "%s: %.1f ms\n", c, sum[c]/cnt[c]}' results.csv
 

@@ -330,7 +330,7 @@ ffv1-stress: image
 # Stands up a combined-mode reffsd with N loopback dstores so the
 # MDS allocates N mirrors per layout, then runs ec_demo
 # `write` + `verify` (+ a degraded `verify` with one mirror
-# skipped) against it with --codec mirror --k N --m 0.  Asserts
+# skipped) against it with --encoding mirror --k N --m 0.  Asserts
 # every invocation exits 0 -- the data fans out via CHUNK_WRITE
 # to N replicas, is readable back via CHUNK_READ from any present
 # replica, and byte-compares identical to the input.

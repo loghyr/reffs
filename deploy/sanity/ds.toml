@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# DS config for the multi-codec sanity test (deploy/sanity).
+# DS config for the multi-encoding sanity test (deploy/sanity).
 # Shared across all 6 DSes; each DS instance creates its own state
 # dirs from the docker-compose command-line.
 

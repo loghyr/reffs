@@ -261,16 +261,16 @@ ssize_t proxy_db_read(struct data_block *db, void *buf, size_t len,
     uint32_t up_fh_len;
     ps_inode_get_upstream_fh(inode, &up_fh, &up_fh_len);
 
-    /* Resolve a path string for ec_pipeline.  ec_read_codec takes
+    /* Resolve a path string for ec_pipeline.  ec_read_encoding takes
      * a path; the existing PS code already maintains a string
      * representation per inode for forwarder use. */
     const char *path = ps_inode_path(inode);
 
     size_t out_len = 0;
-    int ret = ec_read_codec(pls->pls_session, path, buf, len,
+    int ret = ec_read_encoding(pls->pls_session, path, buf, len,
                             &out_len, /* k */ 4, /* m */ 2,
-                            EC_CODEC_RS,    /* read codec from
-                                             * pre-computed sb_ec_codec
+                            EC_ENCODING_RS,    /* read encoding from
+                                             * pre-computed sb_ec_encoding
                                              * (set at SB discovery) */
                             LAYOUT4_FLEX_FILES_V2,
                             /* skip_ds_mask */ 0,
@@ -283,21 +283,21 @@ ssize_t proxy_db_read(struct data_block *db, void *buf, size_t len,
 ```
 
 Open issues for Step 3 to resolve in implementation:
-- `ec_read_codec` takes `(k, m, codec, layout, shard_size)`.
+- `ec_read_encoding` takes `(k, m, encoding, layout, shard_size)`.
   These are file-level properties.  Phase 2 discovery does NOT
-  yet record k/m/codec on the proxy SB or inode.  Either:
+  yet record k/m/encoding on the proxy SB or inode.  Either:
   (a) Derive at first read by issuing a LAYOUTGET-only-no-data
-  to inspect the layout's `ffl_stripe_unit` and codec fields, OR
+  to inspect the layout's `ffl_stripe_unit` and encoding fields, OR
   (b) Hard-code RS 4+2 v2 at 4096-byte shards for Phase 3 and
   push the parameter discovery to a follow-up.
   The plan picks (b) -- it's a Phase 3 vs file-attribute-cache
   scope split.
-- Forwarded creds: `ec_read_codec` doesn't take a `creds`
+- Forwarded creds: `ec_read_encoding` doesn't take a `creds`
   parameter today.  It uses the session's default AUTH_SYS auth.
   For end-client cred forwarding, the pipeline needs a
   per-compound auth override (similar to
   `mds_compound_send_with_auth`).  Either:
-  (a) Add a `creds` parameter to `ec_read_codec` and thread it
+  (a) Add a `creds` parameter to `ec_read_encoding` and thread it
   to all internal `mds_compound_send_with_auth` calls, OR
   (b) Set the session's default auth to the forwarded creds for
   the duration of the call (single-threaded session today, so
@@ -364,7 +364,7 @@ fret = ps_proxy_pipeline_read(
 
 Where `ps_proxy_pipeline_read()` is a new thin wrapper in
 `lib/nfs4/ps/ps_proxy_ops.c` that translates the op-handler-
-shaped call into an `ec_read_codec()` call with the hard-coded
+shaped call into an `ec_read_encoding()` call with the hard-coded
 RS 4+2 v2 4096-byte parameters (see Risk #1 below).
 
 The `db_read` side of `proxy_data_ops` is wired but is NOT
@@ -454,10 +454,10 @@ Per rule 10 UUID stability: no new long-lived objects.
    Decision for this slice: explicitly pin the Phase 3 test matrix
    to RS 4+2 v2 4096 only.  The `ps_proxy_pipeline_read()` shim
    passes those constants verbatim.  An incoming layout whose
-   parameters differ (k != 4, m != 2, codec != RS) returns
+   parameters differ (k != 4, m != 2, encoding != RS) returns
    NFS4ERR_NOTSUPP with a `LOG()` line citing the mismatch.
 
-   Parameter discovery (read codec/k/m from the layout's first
+   Parameter discovery (read encoding/k/m from the layout's first
    LAYOUTGET response and cache on inode) is its own slice -- it
    cuts across PS, ec_pipeline, and the inode-attribute cache,
    and shouldn't be wedged into Phase 3.  Tracked as a
@@ -490,7 +490,7 @@ Per rule 10 UUID stability: no new long-lived objects.
    This is a deviation from proxy-server.md "PS forwards
    end-client credentials" for the EC-decode path.  Tracked as
    a NOT_NOW_BROWN_COW: Phase 3.5 will add a `creds` parameter
-   to `ec_read_codec` and thread it through the helpers.  Spec
+   to `ec_read_encoding` and thread it through the helpers.  Spec
    compliance for non-trust-stateid DSes lands then.
 3. **`super_block_alloc()` signature change** -- avoided via
    the post-alloc hook approach in Step 4.  No callers outside

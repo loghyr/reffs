@@ -46,12 +46,12 @@ These use pNFS Flex Files: the MDS issues a layout describing k+m data
 server targets; the client stripes encoded data across them.
 
 ```
-ec_demo write  --mds HOST --file NAME --input FILE  [--k K] [--m M] [--codec TYPE] [--layout TYPE]
-ec_demo read   --mds HOST --file NAME --output FILE [--k K] [--m M] [--size N]    [--codec TYPE] [--layout TYPE] [--skip-ds LIST]
-ec_demo verify --mds HOST --file NAME --input FILE  [--k K] [--m M] [--codec TYPE] [--layout TYPE] [--skip-ds LIST]
+ec_demo write  --mds HOST --file NAME --input FILE  [--k K] [--m M] [--encoding TYPE] [--layout TYPE]
+ec_demo read   --mds HOST --file NAME --output FILE [--k K] [--m M] [--size N]    [--encoding TYPE] [--layout TYPE] [--skip-ds LIST]
+ec_demo verify --mds HOST --file NAME --input FILE  [--k K] [--m M] [--encoding TYPE] [--layout TYPE] [--skip-ds LIST]
 ```
 
-`write` encodes the local `FILE` with the chosen codec and writes the
+`write` encodes the local `FILE` with the chosen encoding and writes the
 shards to the data servers.
 `read` reads shards from the data servers, decodes, and writes the
 result to the local `FILE`.
@@ -81,16 +81,16 @@ ec_demo setowner  --mds HOST --file NAME --input OWNER
 | `--k K` | 4 | Number of data shards |
 | `--m M` | 2 | Number of parity shards |
 | `--size N` | 16777216 | Expected read size in bytes |
-| `--codec TYPE` | `rs` | Codec: `rs`, `mojette-sys`, `mojette-nonsys`, `stripe` |
+| `--encoding TYPE` | `rs` | Encoding: `rs`, `mojette-sys`, `mojette-nonsys`, `stripe` |
 | `--layout TYPE` | `v1` | Layout type: `v1` (NFSv3 DS), `v2` (CHUNK ops) |
 | `--skip-ds LIST` | — | Comma-separated DS indices to skip (degraded read) |
 | `--force-scalar` | off | Disable SIMD in Mojette transforms |
 | `--id ID` | PID | Client owner string; must be unique per concurrent instance |
 | `--sec FLAVOR` | `sys` | RPC security flavor: `sys`, `krb5`, `krb5i`, `krb5p` |
 
-## Codecs
+## Encodings
 
-| Codec | Description |
+| Encoding | Description |
 |-------|-------------|
 | `rs` | Reed-Solomon (Vandermonde, GF(2^8), scalar) |
 | `mojette-sys` | Mojette systematic (best read latency) |
@@ -117,10 +117,10 @@ write is CRC32-verified and persisted atomically on the DS.
 dd if=/dev/urandom of=/tmp/test.bin bs=1M count=1
 
 ec_demo write --mds 192.168.2.128 --file test.bin \
-              --input /tmp/test.bin --k 4 --m 2 --codec rs
+              --input /tmp/test.bin --k 4 --m 2 --encoding rs
 
 ec_demo read  --mds 192.168.2.128 --file test.bin \
-              --output /tmp/out.bin --k 4 --m 2 --codec rs \
+              --output /tmp/out.bin --k 4 --m 2 --encoding rs \
               --size 1048576
 
 diff /tmp/test.bin /tmp/out.bin
@@ -139,11 +139,11 @@ ec_demo read --mds 192.168.2.128 --file test.bin \
 ```bash
 ec_demo write --mds 192.168.2.128 --file test.bin \
               --input /tmp/test.bin --k 4 --m 2 \
-              --codec rs --layout v2
+              --encoding rs --layout v2
 
 ec_demo read  --mds 192.168.2.128 --file test.bin \
               --output /tmp/out.bin --k 4 --m 2 \
-              --codec rs --layout v2 --size 1048576
+              --encoding rs --layout v2 --size 1048576
 ```
 
 ### Plain put/get (no layouts, no EC)
@@ -167,5 +167,5 @@ wait
 - `tools/ec_demo.c` — source
 - `lib/nfs4/client/` — client library (`mds_*`, `ec_*`, `ds_*` functions)
 - `docs/er_demo.md` — atomic file update tool using EXCHANGE_RANGE
-- `.claude/goals.md` — benchmark results and codec comparison
+- `.claude/goals.md` — benchmark results and encoding comparison
 - `.claude/design/mds.md` — MDS architecture and Flex Files design

@@ -221,7 +221,7 @@ Readers don't need a new wire shape:
   the block has in-flight deltas from a writer that hasn't yet
   FINALIZED, the read returns DELAY and the client retries.
 
-## Codec coverage
+## Encoding coverage
 
 **Systematic Reed-Solomon (RS 4+2, RS 8+2, etc.)**:
 straightforward.  The Vandermonde coefficient row per parity
@@ -243,7 +243,7 @@ writes are absolute by construction; no parity to merge.
 
 The minimum-viable first revision of Option B can ship
 systematic-RS only, gate `CHUNK_WRITE_FLAGS_DELTA_PAYLOAD` on a
-codec match in the LAYOUTGET response, and add Mojette delta as
+encoding match in the LAYOUTGET response, and add Mojette delta as
 a follow-on once the math is reviewed.
 
 ## Where this lands in the draft
@@ -254,7 +254,7 @@ a follow-on once the math is reviewed.
 - `sec-chunk-dirty-range` — `chunk_dirty_range4`, the
   parallel-array semantics, the legal-range MUSTs.
 - `sec-delta-parity` — `CHUNK_WRITE_FLAGS_DELTA_PAYLOAD`, the
-  XOR-merge math, systematic-RS worked example, the codec
+  XOR-merge math, systematic-RS worked example, the encoding
   restriction.
 - `sec-EXCHANGE_ID` MUST gain a capability flag for the
   feature (or text saying servers reject unknown flag bits with
@@ -278,7 +278,7 @@ If green-lighted:
    before commit" -- XDR / wire-format changes are BLOCKER-bait.
 3. **Server**: extend `chunk_store_write` and the per-block
    state machine for the choice-A bookkeeping; add the
-   XOR-delta path; reject delta flag bits when the codec
+   XOR-delta path; reject delta flag bits when the encoding
    doesn't support them.
 4. **Client (ec_demo + ec_pipeline)**: at encode time, compute
    per-parity-shard delta = `alpha_ij * (D_i' XOR D_i)`; emit
@@ -324,5 +324,5 @@ The decision to start is gated on:
   measured bench target)
 - Draft author capacity (FFv2 draft revision is the
   load-bearing serialised cost)
-- Codec coverage choice (systematic-RS only first, or wait for
+- Encoding coverage choice (systematic-RS only first, or wait for
   the Mojette delta math)

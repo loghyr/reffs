@@ -64,8 +64,8 @@ The interesting bug surfaces:
    PENDING entry?  After how long?  Is there a leak across the chunk
    metadata file?
 
-7. **Codec divergence under contention**.  Two writers using the same
-   codec encoding produce different parity for the same data.  Which
+7. **Encoding divergence under contention**.  Two writers using the same
+   encoding encoding produce different parity for the same data.  Which
    parity ends up on disk?  If a degraded read later needs to
    reconstruct, does it pick the right shard set?
 
@@ -109,8 +109,8 @@ Three execution tracks, depending on what is shipped:
 
 Each ec_demo instance does its own EXCHANGE_ID with a unique
 `--id` value.  N instances target the same MDS file via concurrent
-`write` operations (codec-aware -- not `put`, which is the plain
-mirrored subcommand and silently ignores `--codec`).  The
+`write` operations (encoding-aware -- not `put`, which is the plain
+mirrored subcommand and silently ignores `--encoding`).  The
 whole-file rewrite produces N writers on every chunk
 simultaneously.  Last-FINALIZE-wins per chunk; verify phase
 checks the surviving payload is *some* writer's complete encoding
@@ -250,8 +250,8 @@ Pass criteria:
 
 | Test | Configuration | Pass criteria |
 |------|--------------|---------------|
-| `coll_t1_basic` | 4 ec_demo `write`, same file, same codec (RS 4+2) | verify after settle: passes against any writer's payload |
-| `coll_t1_codec_mix` | 4 ec_demo `write`, same file, mixed codecs | The MDS picks the codec from each LAYOUTGET's k/m, NOT from a per-file property (lib/nfs4/server/layout.c). Two clients with different codecs against the same file produce silent shard-format divergence. **Pass criteria: this MUST be detected by the MDS or surface as visible corruption -- silent acceptance is a BLOCKER outcome.** |
+| `coll_t1_basic` | 4 ec_demo `write`, same file, same encoding (RS 4+2) | verify after settle: passes against any writer's payload |
+| `coll_t1_encoding_mix` | 4 ec_demo `write`, same file, mixed encodings | The MDS picks the encoding from each LAYOUTGET's k/m, NOT from a per-file property (lib/nfs4/server/layout.c). Two clients with different encodings against the same file produce silent shard-format divergence. **Pass criteria: this MUST be detected by the MDS or surface as visible corruption -- silent acceptance is a BLOCKER outcome.** |
 | `coll_t1_layout_v1v2_mix` | 2 ec_demo with `--layout v1`, 2 with `--layout v2` | similar -- layout type is per-LAYOUTGET, not per-file; mismatched layout types should fail-loud or detect on verify |
 | `coll_t1_id_collision` | 4 ec_demo, all with same `--id "stress"` | All 4 writers produce the same `co_ownerid`; nfs4_client_alloc_or_find Case 2 returns the existing clientid; each ec_demo creates its own session, so the 4 writers get distinct sessions on the same client.  Expected protocol behavior; chunk-level race semantics are unchanged. |
 | `coll_t1_long_soak` | 8 ec_demo, 30-minute loop of write-then-verify | zero verify failures over 30 min |
@@ -273,7 +273,7 @@ Pass criteria:
 | `coll_t2_ior_basic` | `mpirun -np 4 ior -F 0 -w -r -W -R -e -k` via 4 PSes | IOR reports zero verify mismatches |
 | `coll_t2_ior_reorder` | adds `-C` reorderTasks | IOR reports zero verify mismatches; cross-rank read pairs all clean |
 | `coll_t2_ior_scaled` | scales up to 16 ranks / 16 PSes | same as above; signal that the architecture scales to a typical HPC fan-in |
-| `coll_t2_ps_codec_translate` | mixed-codec target file; one PS does the translation in-flight | IOR sees consistent bytes even as the target file's codec shifts |
+| `coll_t2_ps_encoding_translate` | mixed-encoding target file; one PS does the translation in-flight | IOR sees consistent bytes even as the target file's encoding shifts |
 
 ### Track 3: Linux NFS baseline (no EC conflict, sanity only)
 
@@ -945,9 +945,9 @@ x (RMW = 2 calls) x N mirrors = 2*N full DS-session lifecycle
 events per writer per stripe.  Under concurrent N writers,
 the storm produces the BADSESSION cascade.
 
-`ec_write_codec_with_file` (whole-file path) already does the
+`ec_write_encoding_with_file` (whole-file path) already does the
 right thing -- one ctx, one resolve_mirrors, loop over stripes.
-`ec_write_codec_range` (the partial-range RMW added for
+`ec_write_encoding_range` (the partial-range RMW added for
 Track 1b) does NOT -- it calls the per-stripe wrappers in a
 loop, each with its own setup/teardown.
 
@@ -963,10 +963,10 @@ naive bypass is not viable.
 Proper fix is the `ec_pipeline.c` **refactor**: factor the
 per-stripe inner loops so a caller can supply a pre-populated
 ctx and share DS sessions across stripes.
-`ec_write_codec_range` and `ec_read_codec_range` then do ONE
+`ec_write_encoding_range` and `ec_read_encoding_range` then do ONE
 setup at the top, ONE teardown at the bottom, with the inner
 loop reusing the ctx -- exactly the structure
-`ec_write_codec_with_file` already uses for the whole-file
+`ec_write_encoding_with_file` already uses for the whole-file
 path.  Scope: ~480 lines of complex existing code to refactor
 without regressing the whole-file and PS-proxy callers,
 including the BAD_STATEID retry and layout-refresh paths.
@@ -1107,15 +1107,15 @@ load-bearing piece; everything else is resolved.
 
 ### BLOCKERs
 
-1. **RESOLVED:** **`ec_demo put` ignored `--codec`.**
+1. **RESOLVED:** **`ec_demo put` ignored `--encoding`.**
    `tools/ec_demo.c:280-309` shows `cmd_put` calls `plain_write`,
-   not `ec_write_codec`.  The `--codec` flag is consumed only by
+   not `ec_write_encoding`.  The `--encoding` flag is consumed only by
    `write` / `read` / `verify` subcommands.  As originally written,
    Track 1 exercised plain (mirrored) writes regardless of
-   `--codec rs` -- it did NOT race the RS / Mojette CHUNK paths.
+   `--encoding rs` -- it did NOT race the RS / Mojette CHUNK paths.
 
    Fix applied: harness switched to `ec_demo write` / `verify`
-   (codec-aware).  First N=4 RS/v2 sweep at 1 MiB surfaced
+   (encoding-aware).  First N=4 RS/v2 sweep at 1 MiB surfaced
    chunk-level frankenstein in 4/5 iterations -- two writers
    completed cleanly, neither input matched the verified file --
    exactly the bug surface this slice is supposed to find.
@@ -1176,11 +1176,11 @@ load-bearing piece; everything else is resolved.
 
 ### WARNINGs
 
-3. **RESOLVED.** **`coll_t1_codec_mix` claim was incorrect.**  Plan
-   originally said "file's codec is set at first write".  In fact
-   `lib/nfs4/server/layout.c` picks the codec from the segment's
+3. **RESOLVED.** **`coll_t1_encoding_mix` claim was incorrect.**  Plan
+   originally said "file's encoding is set at first write".  In fact
+   `lib/nfs4/server/layout.c` picks the encoding from the segment's
    k/m, not from a per-file persisted property.  Re-framed in the
-   test inventory: mismatched-codec writers MUST be detected by
+   test inventory: mismatched-encoding writers MUST be detected by
    the MDS or surface as visible corruption -- silent acceptance
    is a BLOCKER outcome.
 
@@ -1239,11 +1239,11 @@ load-bearing piece; everything else is resolved.
     each ec_demo gets its own session on that shared client.
 
 13. **RESOLVED.**  Harness filename now includes `$$`:
-    `coll_${CODEC}_${LAYOUT}_$(date +%s)_$$.dat`.
+    `coll_${ENCODING}_${LAYOUT}_$(date +%s)_$$.dat`.
 
 ### Adjacent finding
 
-Running the codec-aware harness for the first time exposed a
+Running the encoding-aware harness for the first time exposed a
 race in `lib/backends/server_persist.c`: the temp-file path was
 the fixed `<dir>/server_state.tmp`, so two concurrent
 EXCHANGE_IDs (each calling `server_alloc_client_slot` ->
@@ -1275,7 +1275,7 @@ Status as of review #1 follow-up:
    `server_state` where appropriate), expose via the existing
    `nfs4-op-stats` probe op or a new `chunk-stats` op.  Optional:
    `chunk-store-dump <ino>` probe op for diagnostic depth.
-3. WARNINGs 3, 5: **DONE** inline (codec-mix re-framed;
+3. WARNINGs 3, 5: **DONE** inline (encoding-mix re-framed;
    verification methodology now counter-first with log scraping
    as fallback).
 4. WARNINGs 6, 7, 8: **DONE** inline.
@@ -1295,19 +1295,19 @@ Status as of review #1 follow-up:
 chunk-split / overlap / subchunk modes.**
 
 Commit `efaff665437b` on main:
-`nfs4/ps/ec_pipeline: ec_write_codec_range shares ctx across stripes`.
+`nfs4/ps/ec_pipeline: ec_write_encoding_range shares ctx across stripes`.
 
 Pattern shipped:
 
 - New optional `void *ctx_in_out` last parameter on
   `ec_write_stripe_with_file` and `ec_read_stripe_with_file`.
   NULL preserves today's setup/teardown semantics (PS-proxy
-  callers, `ec_read_codec_range`).  Non-NULL points at a caller-
+  callers, `ec_read_encoding_range`).  Non-NULL points at a caller-
   owned `struct ec_context`: the per-stripe function copies state
   in, skips `ec_resolve_mirrors` / `ec_disconnect_all` /
   LAYOUTGET / LAYOUTRETURN, does I/O, copies state back out.
-- `ec_write_codec_range` rewritten: build one shared ctx at the
-  top (codec + LAYOUTGET(RW) + ec_resolve_mirrors), thread it
+- `ec_write_encoding_range` rewritten: build one shared ctx at the
+  top (encoding + LAYOUTGET(RW) + ec_resolve_mirrors), thread it
   through every per-stripe call, tear down once at the bottom.
   ASAN/UBSAN-clean build via shadow's docker builder.
 
@@ -1366,7 +1366,7 @@ Remaining hypotheses:
    pattern -- the FIRST writer's RECLAIM_COMPLETE would hit
    BADSESSION the moment the SECOND writer's CREATE_SESSION
    completes.
-3. Per-stripe `LAYOUTGET(RW)` issued by `ec_write_codec_range`
+3. Per-stripe `LAYOUTGET(RW)` issued by `ec_write_encoding_range`
    on each writer still racing with the OTHER writer's
    LAYOUTGET, and some non-conflict-check path is triggered
    under multi-client OPEN-on-same-file.
@@ -1418,7 +1418,7 @@ After that rebuild, the chunk-split run produced:
 The BADSESSION cascade is **gone**.  All the
 session-lifecycle and trust-table triage on the previous slice
 was chasing a phantom: the ec_pipeline.c refactor (commit
-`efaff665437b`, "ec_write_codec_range shares ctx across stripes")
+`efaff665437b`, "ec_write_encoding_range shares ctx across stripes")
 was committed and on shadow's source tree, but the DEPLOYED
 binary `/home/loghyr/reffs/build/tools/ec_demo` was built on
 2026-05-31 and never picked up the refactor.
@@ -1738,7 +1738,7 @@ deterministic-correct cases flipped from EXPECT_DETERMINISTIC=0
 `cs_chunk_busy_delay` counter shows 0 events on the DSes -- the
 writers naturally serialise enough that the CAS gate rarely needs
 to fire in this two-writer workload.  When it DOES fire (rare),
-the ec_write_codec_range retry loop catches the -EAGAIN and re-
+the ec_write_encoding_range retry loop catches the -EAGAIN and re-
 does the RMW with a fresh read.
 
 The on-wire shape now matches the protocol-correct semantics
@@ -1818,8 +1818,8 @@ to land the last 5% of the case:
   new NFS4ERR_DELAY + cs_chunk_busy_delay semantics.
 - `c4bb91d0ed4e` -- EC_RMW_RETRY_MAX 5 -> 10 + jitter on write
   path; cap exponential backoff at 500 ms.
-- `a4e5ffad5f74` -- ec_read_codec_range shares ctx across stripes
-  (matching the earlier ec_write_codec_range refactor; fixes
+- `a4e5ffad5f74` -- ec_read_encoding_range shares ctx across stripes
+  (matching the earlier ec_write_encoding_range refactor; fixes
   overlap-mode verify session churn).
 - `5b20efae8509` -- CHUNK_READ returns NFS4ERR_DELAY (not NOENT)
   for PENDING-from-different-owner; ds_chunk_read maps to
@@ -1858,7 +1858,7 @@ Post-fix stability:
 
 The chunk-collision validation work, including all five follow-up
 slices (whitebox-header sync, INV-1 test flip, retry tuning,
-ec_read_codec_range refactor, CHUNK_READ DELAY-on-PENDING, and
+ec_read_encoding_range refactor, CHUNK_READ DELAY-on-PENDING, and
 this final test rename), is complete and stable.
 
 ## Overlap mode flips to deterministic via any-of verify
@@ -1873,7 +1873,7 @@ Implementation:
 
 1. ec_demo read dumps the post-write file via the same code path
    a writer's RMW prefix read uses.  `--size FILE_SIZE` bounds
-   the read buffer (the underlying ec_read_codec defaults to
+   the read buffer (the underlying ec_read_encoding defaults to
    16 MiB otherwise and tries to read padded stripes past
    file_size, returning NFS4ERR_NOENT on the unwritten stripes
    -- fixed in `b80bba97d743`).

@@ -290,7 +290,7 @@ failure it keeps its run directory and dumps each failing worker's
 log tail to stderr.
 
 Useful options: `--size <bytes>` (default 10 MB), `--k <K> --m <M>`
-(EC geometry; default 4+2), `--codec rs|mojette-sys|mojette-nonsys|stripe`,
+(EC geometry; default 4+2), `--encoding rs|mojette-sys|mojette-nonsys|stripe`,
 `--ec-demo <path>` if your build is elsewhere.  `--help` lists the
 full set.
 

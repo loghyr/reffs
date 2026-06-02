@@ -40,7 +40,7 @@ The work is therefore a thin shell driver, not a new tool.
                         --principals <file>
                         [--ec-demo <path>] [--input <file>]
                         [--size <bytes>] [--k <K> --m <M>]
-                        [--codec rs|mojette-sys|mojette-nonsys|stripe]
+                        [--encoding rs|mojette-sys|mojette-nonsys|stripe]
                         [--sec krb5|krb5i|krb5p]
 
 Flow:
@@ -61,7 +61,7 @@ Flow:
     *   `KRB5CCNAME=<run-dir>/ccaches/cc_<i>`
     *   `ec_demo write --mds <server>
         --file <path>/krb5stress_<i> --input <input>
-        --sec <sec> --layout v1 --codec <codec> --k <K> --m <M>
+        --sec <sec> --layout v1 --encoding <encoding> --k <K> --m <M>
         --id krb5stress_<i>`
     *   then `exec ec_demo verify ...` (same args) to read back
         and compare.

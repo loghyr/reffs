@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Multi-codec sanity test: 1 MDS + 6 DSes + 2 PSes + 1 client on a
+# Multi-encoding sanity test: 1 MDS + 6 DSes + 2 PSes + 1 client on a
 # Docker bridge.
 #
 # A builder container compiles once into a shared volume.  All other
@@ -195,7 +195,7 @@ services:
     profiles:
       - ps-demo
       - ps-demo-kmount
-      - ps-demo-codecs
+      - ps-demo-encodings
 
   ps-a:
     image: reffs-dev
@@ -228,7 +228,7 @@ services:
     profiles:
       - ps-demo
       - ps-demo-kmount
-      - ps-demo-codecs
+      - ps-demo-encodings
 
   ps-b:
     image: reffs-dev
@@ -261,7 +261,7 @@ services:
     profiles:
       - ps-demo
       - ps-demo-kmount
-      - ps-demo-codecs
+      - ps-demo-encodings
 
   ps-demo:
     container_name: reffs-sanity-ps-client
@@ -285,8 +285,8 @@ services:
     profiles:
       - ps-demo
 
-  ps-demo-codecs:
-    container_name: reffs-sanity-ps-codec-client
+  ps-demo-encodings:
+    container_name: reffs-sanity-ps-encoding-client
     image: reffs-dev
     privileged: true
     depends_on:
@@ -299,10 +299,10 @@ services:
     volumes:
       - sanity-build-vol:/shared:ro,z
       - ../../:/reffs:ro,z
-    # Cross-PS multi-codec test via ec_demo (no kernel mount).  PS
+    # Cross-PS multi-encoding test via ec_demo (no kernel mount).  PS
     # forwards LAYOUTGET / GETDEVICEINFO / LAYOUTRETURN to MDS; ec_demo
     # dials upstream DSes directly.  Configure root SB before the test
-    # runs so it has codec-friendly layout-types/dstores/stripe.
+    # runs so it has encoding-friendly layout-types/dstores/stripe.
     command: >
       /bin/bash -c "
         /shared/build/scripts/reffs-probe.py --host reffs-mds sb-set-layout-types --id 1 --layout-types ffv1 ffv2 ;
@@ -311,7 +311,7 @@ services:
         /reffs/deploy/sanity/run-ps-demo-encodings.sh /shared/build/tools/ec_demo reffs-ps-a reffs-ps-b
       "
     profiles:
-      - ps-demo-codecs
+      - ps-demo-encodings
 
   ps-demo-kmount:
     container_name: reffs-sanity-ps-kclient
@@ -335,7 +335,7 @@ services:
       - ../../:/reffs:ro,z
     # The reffs-dev image is Fedora-based and ships nfs-utils; if not,
     # `dnf -y install nfs-utils` here.  Pivots away from ec_demo /
-    # codecs to plain dd through the kernel client -- exercises the
+    # encodings to plain dd through the kernel client -- exercises the
     # ps_proxy_forward_{read,write,getattr,lookup,open,close} chain
     # that has been wired and tested via scripts/local_ps_test.sh.
     command: >

@@ -13,7 +13,7 @@ incorporated in PR #58 (https://github.com/loghyr/reffs/pull/58):
     I, Pierre Evenou, am the copyright holder of mojette
     (https://github.com/0x9dhcf/mojette).
 
-    I grant permission for the Mojette codec logic copied from
+    I grant permission for the Mojette encoding logic copied from
     mojette into reffs PR #58 to be relicensed under
      AGPL-3.0-or-later.
 
@@ -23,7 +23,7 @@ incorporated in PR #58 (https://github.com/loghyr/reffs/pull/58):
 Files in reffs derived in part from mojette:
   - lib/ec/mojette.c
   - lib/ec/mojette.h
-  - lib/ec/mojette_codec.c
+  - lib/ec/mojette_encoding.c
   - tools/moj_bench.c
 
 The geometry-driven inverse algorithm and paper bin convention come

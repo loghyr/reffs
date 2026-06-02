@@ -9,8 +9,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 [`draft-haynes-nfsv4-flexfiles-v2-proxy-server`](https://datatracker.ietf.org/doc/draft-haynes-nfsv4-flexfiles-v2-proxy-server/) defines a Proxy Server
 role: a peer of the MDS and DSes that carries out whole-file
-operations (move, repair) and codec translation on behalf of clients
-that cannot speak the file's native codec.  The protocol surface is
+operations (move, repair) and encoding translation on behalf of clients
+that cannot speak the file's native encoding.  The protocol surface is
 four new callback ops (`CB_PROXY_MOVE`, `CB_PROXY_REPAIR`,
 `CB_PROXY_STATUS`, `CB_PROXY_CANCEL`), two new fore-channel ops
 (`PROXY_REGISTRATION`, `PROXY_PROGRESS`), a new layout flag
@@ -18,7 +18,7 @@ four new callback ops (`CB_PROXY_MOVE`, `CB_PROXY_REPAIR`,
 
 This document plans the reffs implementation.  The client library
 half of the PS already exists in `ec_demo`: MDS session, COMPOUND
-builder, layout decode, CHUNK I/O, and codecs.  The new work is the
+builder, layout decode, CHUNK I/O, and encodings.  The new work is the
 server surface that wraps that library and the registration
 mechanism that binds it to an MDS.
 
@@ -103,7 +103,7 @@ A proxy SB is composed as `md = RAM` + `data = PROXY`:
   in RAM as a cache of values pulled from the MDS.
 - Data ops (`db_read`, `db_write`) redirect into the `ec_pipeline`
   library (see the refactor section below) which does LAYOUTGET +
-  CHUNK I/O + codec transform.
+  CHUNK I/O + encoding transform.
 
 This slots into the existing `reffs_backend_compose()` scaffold.
 No new discriminant in `reffs_storage_type` on the wire; a proxy
@@ -231,7 +231,7 @@ GETDEVICEINFO.  If the resolved address matches one of the PS's
 own bound addresses (maintained as a small set in the PS's
 runtime state), the PS bypasses RPC entirely and calls the local
 DS SB's `sb_ops->db_read` / `db_write` directly via the local
-inode.  No loopback RPC, no codec round-trip beyond the codec
+inode.  No loopback RPC, no encoding round-trip beyond the encoding
 transform itself.
 
 **The short-circuit MUST NOT skip the per-request authorization
@@ -265,14 +265,14 @@ networking.
 3. Proxy data path looks up (or acquires) a layout for the file
    via LAYOUTGET on the PS's MDS session, carrying the forwarded
    client credentials.
-4. Codec layer encodes the payload using the layout's coding type
+4. Encoding layer encodes the payload using the layout's coding type
    (from `ec_pipeline`).
 5. For each mirror in the layout, the proxy data path fans out
    CHUNK_WRITE (and CHUNK_FINALIZE / CHUNK_COMMIT as the layout
    requires) to the real DSes.
 6. If the layout points at a DS that resolves to a local address,
    use the short-circuit VFS path for that mirror.
-7. On success, PS returns NFS4_OK to the client; on codec error,
+7. On success, PS returns NFS4_OK to the client; on encoding error,
    LAYOUTERROR to the MDS and NFS4ERR_IO to the client.
 
 ### Client READ on a proxied file
@@ -281,7 +281,7 @@ networking.
 2. PS acquires layout (cached from a prior LAYOUTGET or fresh).
 3. PS issues CHUNK_READ to sufficient DSes to reconstruct the
    requested byte range.
-4. Codec decodes to plaintext.
+4. Encoding decodes to plaintext.
 5. PS returns plaintext in the READ reply.
 
 ### Client GETATTR on a proxied file
@@ -373,11 +373,11 @@ container-internal network.
 ## `ec_demo` refactor
 
 Phase 2 (below) requires a callable library for the MDS-session +
-CHUNK-io + codec pipeline.  Two refactor depths:
+CHUNK-io + encoding pipeline.  Two refactor depths:
 
 - **(a) Minimal: extract the glue.** Move ec_demo's orchestration
   (MDS session setup, compound chaining, layout resolve, CHUNK
-  fan-out, codec transform) into `lib/nfs4/ps/ec_pipeline.c` with
+  fan-out, encoding transform) into `lib/nfs4/ps/ec_pipeline.c` with
   a clean entry API.  ec_demo becomes a thin CLI that configures
   ec_pipeline and calls it.  Leaves the underlying modules in
   `lib/nfs4/client/` alone.
@@ -409,9 +409,9 @@ require `ci-full` to pass before moving on.
 | `test_pipeline_mds_session_create` | Pipeline opens an MDS session; teardown closes cleanly |
 | `test_pipeline_layoutget_decode` | LAYOUTGET returns an `ffv2_layout4`; pipeline decodes to per-mirror DS lists |
 | `test_pipeline_write_roundtrip` | Pipeline writes a buffer, reads it back, bytes match (against a combined MDS+DS reffs instance) |
-| `test_pipeline_read_plain_codec` | FFV2_ENCODING_PASSTHROUGH roundtrip |
-| `test_pipeline_read_rs_codec` | FFV2_ENCODING_RS_VANDERMONDE roundtrip |
-| `test_pipeline_read_mojette_sys_codec` | FFV2_ENCODING_MOJETTE_SYSTEMATIC roundtrip |
+| `test_pipeline_read_plain_encoding` | FFV2_ENCODING_PASSTHROUGH roundtrip |
+| `test_pipeline_read_rs_encoding` | FFV2_ENCODING_RS_VANDERMONDE roundtrip |
+| `test_pipeline_read_mojette_sys_encoding` | FFV2_ENCODING_MOJETTE_SYSTEMATIC roundtrip |
 
 **Functional test**: ec_demo still passes all its existing tests
 after the refactor.  No behavioural regression.
@@ -504,7 +504,7 @@ Measure latency and throughput as a baseline.
 
 Split into two slices.  **Phase 4a** ships the wiring -- WRITE on a
 proxy-SB file is buffered in PS RAM per (open stateid, upstream FH)
-and flushed through `ec_write_codec_with_file` on COMMIT (or on
+and flushed through `ec_write_encoding_with_file` on COMMIT (or on
 CLOSE-side best-effort flush).  Phase 4a is **DONE** as of 2026-05-12;
 see `.claude/design/proxy-server-phase4a.md` for the shipped-slice
 table.
@@ -535,7 +535,7 @@ encodes --> CHUNK_WRITE to DSes; client reads back --> PS decodes.
 `diff largefile <(cat PS-mount/file)` on the client.
 
 **CI**: extend benchmark harness with a PS-write variant; compare
-against direct-to-MDS throughput as the "codec-translation cost"
+against direct-to-MDS throughput as the "encoding-translation cost"
 number for the draft.
 
 ### Phase 5: Short-circuit for co-resident DS
@@ -654,7 +654,7 @@ set of always-on systematic checks:
 ### Fuzz testing
 
 The PS's `:4098` listener is the one end of the reffs surface
-facing potentially-hostile NFSv4 clients (codec-ignorant clients
+facing potentially-hostile NFSv4 clients (encoding-ignorant clients
 that the PS is translating for).  Add a fuzzer for the NFSv4.2
 compound parser on the PS side.  Harness follows the
 `lib/rpc/tests/rpc_fuzz.c` pattern (if exists; else create).
@@ -710,9 +710,9 @@ verifier behaviour, same chunk-store metadata on disk.  Any
 divergence is a bug in the short-circuit path's auth / lock /
 FINALIZE handling.
 
-### Cross-codec correctness
+### Cross-encoding correctness
 
-For every codec in the draft (mirrored, RS, mojette-sys,
+For every encoding in the draft (mirrored, RS, mojette-sys,
 mojette-nonsys), the PS's client-visible bytes must match the
 bytes written via ec_demo-direct-to-MDS.  Matrix coverage in a
 dedicated test script that runs every phase 3+4 is declared
@@ -782,7 +782,7 @@ reused with PS enabled.
   Depends on this PS plan in two places:
   - **Action item 1** (`lib/nfs4/client` refactor + extract
     `lib/nfs4/ps/ec_pipeline.h` callable API) gates mirror-
-    lifecycle's slice F (`INODE_LAYOUT_CHANGE_CODEC`) and the
+    lifecycle's slice F (`INODE_LAYOUT_CHANGE_ENCODING`) and the
     RS-reconstruct path of slice G2b
     (`INODE_LAYOUT_REPAIR_MIRROR` for RS layouts).
   - **Phase 8** (`CB_PROXY_MOVE` / `CB_PROXY_REPAIR`) is the PS

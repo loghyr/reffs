@@ -46,7 +46,7 @@ This plan is mostly *composition*, not new machinery:
 Note: `ec_demo` was the first candidate, but `nfs_krb5_test` is the
 better base -- it is already the krb5-focused single-client tool.
 `ec_demo` is the pNFS / erasure-coding workload client; its extra
-machinery (layouts, codecs, DS fan-out) is noise for a krb5
+machinery (layouts, encodings, DS fan-out) is noise for a krb5
 client-table stress test.
 
 ## Architecture

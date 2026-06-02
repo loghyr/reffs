@@ -13,7 +13,7 @@ libreffs_ec_la_SOURCES = gf.c matrix.c mirror.c mojette.c mojette_encoding.c rs.
 mojette.lo: AM_CFLAGS += @AVX2_CFLAGS@
 
 # --enable-noscalar-vec applies -fno-tree-vectorize -fno-slp-vectorize
-# to the codec source files so the "scalar" path used by the
+# to the encoding source files so the "scalar" path used by the
 # SIMD-vs-scalar honest comparison cannot be auto-vectorized by the
 # compiler.  When the flag is absent NOSCALAR_VEC_CFLAGS is empty so
 # this is a no-op for normal builds.  Used by the

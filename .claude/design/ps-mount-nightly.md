@@ -86,9 +86,9 @@ The PS path also exercises:
 
 ## What this does NOT cover
 
-- Codec correctness (the underlying ec_pipeline tests cover that).
+- Encoding correctness (the underlying ec_pipeline tests cover that).
 - DS failover / degraded reads (separate slice).
-- Cross-codec interoperability (separate slice).
+- Cross-encoding interoperability (separate slice).
 - True multi-host topologies (still requires the docker bench).
 
 ## Prerequisites

@@ -110,7 +110,7 @@ table below) -- that flip is the 4b acceptance criterion.
 | Test | Intent |
 |------|--------|
 | `test_listener_verf_combines_mds_and_pls` | `nfs4_write_verf()` (or the new `ps_compose_write_verf`) folds the MDS-returned verifier byte-string into the PS-listener verifier; both halves contribute to the output 8 bytes. |
-| `test_listener_verf_change_on_mds_restart` | First COMMIT captures MDS-verifier V1; simulate MDS restart (capture V2 ≠ V1) on the next codec invocation; the composed verifier returned for subsequent WRITEs changes. |
+| `test_listener_verf_change_on_mds_restart` | First COMMIT captures MDS-verifier V1; simulate MDS restart (capture V2 ≠ V1) on the next encoding invocation; the composed verifier returned for subsequent WRITEs changes. |
 | `test_commit_returns_listener_verf_v1_then_v2` | Sequenced flush across an MDS-verifier change: first flush returns composed(listener, V1); second flush returns composed(listener, V2); a client comparing the two sees a mismatch and rewrites. |
 | `test_listener_verf_mds_unknown_falls_back` | If the MDS reply does not carry a verifier (legacy or error path), the composed verf is `(listener || zero_mds)` -- documented; deterministic; does NOT block the response. |
 
@@ -164,7 +164,7 @@ struct ps_write_buffer_geom {
     uint32_t pwbg_shard_size;   /* bytes per data shard */
     uint32_t pwbg_stripe_size;  /* k * shard_size */
     layouttype4 pwbg_layout_type; /* LAYOUT4_FLEX_FILES_V2 today */
-    ec_codec_type_t pwbg_codec; /* EC_CODEC_RS today */
+    ec_encoding_type_t pwbg_encoding; /* EC_ENCODING_RS today */
 };
 
 /* Per-stripe dirty state.  Allocated lazily as stripes are touched.
@@ -243,7 +243,7 @@ Per `draft-haynes-nfsv4-flexfiles-v2-proxy-server` and RFC 8881:
   range, the PS reads the existing stripe shards via CHUNK_READ
   with the same layout stateid the WRITE-side flush will use,
   decodes to recover the stripe's plaintext, merges in the new
-  bytes by shard, encodes via the registered codec, and writes
+  bytes by shard, encodes via the registered encoding, and writes
   back via CHUNK_WRITE+FINALIZE+COMMIT.  This matches the
   draft's section on partial writes.  When all `k` data shards are
   fully dirty the read step is skipped (encode-from-buffer).
@@ -322,7 +322,7 @@ flush_stripe(buffer, stripe_no, stripe_geom, layout, creds):
                 /* Read this shard's data from the DS via
                  * CHUNK_READ on the existing layout.  Quorum:
                  * k-of-(k+m) shards readable; reconstruct if
-                 * needed via the codec's decode. */
+                 * needed via the encoding's decode. */
                 ret = ec_read_stripe_shard(ms, mf,
                                            stripe_no, shard,
                                            encode_input +
@@ -338,7 +338,7 @@ flush_stripe(buffer, stripe_no, stripe_geom, layout, creds):
     ret = ec_write_stripe_with_file(ms, mf, stripe_no,
                                     encode_input,
                                     stripe_geom.k, stripe_geom.m,
-                                    stripe_geom.codec,
+                                    stripe_geom.encoding,
                                     stripe_geom.layout_type,
                                     stripe_geom.shard_size,
                                     creds,
@@ -576,9 +576,9 @@ Tests unblocked: `test_commit_only_full_stripes_no_chunk_read`,
 `test_commit_keeps_dirty_bits_on_partial_failure`.
 
 - Add `ec_write_stripe_with_file(ms, mf, stripe_no, stripe_bytes,
-  k, m, codec, layout_type, shard_size, creds, *mds_verf_out)`
+  k, m, encoding, layout_type, shard_size, creds, *mds_verf_out)`
   in `lib/nfs4/ps/ec_pipeline.c`.  Sibling to 4a's
-  `ec_write_codec_with_file`, but takes a single stripe and
+  `ec_write_encoding_with_file`, but takes a single stripe and
   returns the MDS verifier.
 - Replace the body of `ps_proxy_pipeline_commit` with: walk the
   dirty hash table, call `ec_write_stripe_with_file` per dirty
@@ -596,7 +596,7 @@ Tests unblocked: `test_commit_partial_stripe_reads_existing`,
 
 - Add `ec_read_stripe_shard(ms, mf, stripe_no, shard, dst,
   creds)` in `ec_pipeline.c`.  Reads the shard via CHUNK_READ
-  from the layout's resolved mirrors; decodes via the codec's
+  from the layout's resolved mirrors; decodes via the encoding's
   `decode` if quorum is below all-shards-readable.
 - In `flush_stripe()`, when `pds_partial_mask != NULL`, allocate
   a stripe-sized scratch buffer, populate dirty shards from the
@@ -676,7 +676,7 @@ Tests unblocked: Group E.
 | `lib/nfs4/ps/ps_write_buffer.c` | Add `pwb_dirty_ht`, `ps_dirty_stripe`, partial-mask helpers, `ps_compose_write_verf` |
 | `lib/nfs4/ps/ps_write_buffer_internal.h` | Whitebox surface for Group A + Group B + Group C tests |
 | `lib/nfs4/ps/ps_proxy_ops.c` | WRITE-time dirty marking, FILE_SYNC4 inline flush, per-stripe flush walk in `ps_proxy_pipeline_commit` |
-| `lib/nfs4/ps/ec_pipeline.c` | `ec_write_stripe_with_file`, `ec_read_stripe_shard`; refactor 4a's `ec_write_codec_with_file` to be a thin caller of the per-stripe primitive |
+| `lib/nfs4/ps/ec_pipeline.c` | `ec_write_stripe_with_file`, `ec_read_stripe_shard`; refactor 4a's `ec_write_encoding_with_file` to be a thin caller of the per-stripe primitive |
 | `lib/nfs4/client/ec_client.h` | Declare new per-stripe primitives |
 | `lib/nfs4/ps/tests/ps_write_buffer_rmw_test.c` | NEW -- Groups A + B + C |
 | `lib/nfs4/ps/tests/ps_proxy_pipeline_rmw_test.c` | NEW -- Groups D + E |
@@ -815,7 +815,7 @@ arc**, not just the wrap-up.
   `.claude/design/chunk-collision-validation.md` Track 1 + Track 2
   (Track 2 is gated on this slice landing)
 - Per-stripe encode prior art: `lib/nfs4/ps/ec_pipeline.c`
-  `ec_write_codec_with_file` (4a) -- 4b factors the per-stripe
+  `ec_write_encoding_with_file` (4a) -- 4b factors the per-stripe
   inner loop out and exposes it as a primitive
 - DS-side per-block state: `lib/nfs4/server/chunk.c` (`cb_state`,
   `cb_gen_id`, `cb_client_id`, `cb_owner_id`, `cs_pending_displaced`)

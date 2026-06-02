@@ -89,7 +89,7 @@ MDS inode
 └── layout_segments[]              ← supports continuations
     ├── byte_range (offset, length)    ← LAYOUT4_ALL_FILE for demo
     ├── stripe_unit                    ← full file for demo
-    ├── stripe_type (k, m, codec)      ← e.g., RS(4,2)
+    ├── stripe_type (k, m, encoding)      ← e.g., RS(4,2)
     └── data_files[]               ← per-stripe-index DS mapping
         ├── dstore_id              ← index into dstore table
         ├── ds_fh                  ← NFSv3 filehandle (opaque)

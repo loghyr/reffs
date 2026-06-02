@@ -18,7 +18,7 @@ RPC-over-TLS with mutual authentication on the MDS<->PS session,
 explicitly forbidding AUTH_SYS over plain TCP.
 
 The deploy/sanity demo logs the rejection and continues without the
-registered-PS privilege, which is acceptable for the codec smoke
+registered-PS privilege, which is acceptable for the encoding smoke
 matrix but blocks every downstream feature gated on registration:
 the PS cannot consult `SB_GET_CLIENT_RULES`, cannot bypass export
 filters during discovery LOOKUP, and cannot receive future
@@ -199,7 +199,7 @@ into the docker volume.
   `NFS4ERR_PERM` rejection.
 - MDS log shows `PROXY_REGISTRATION accepted from
   tls_fingerprint=<hash>`.
-- Cross-PS demo still PASSes the codec matrix unchanged.
+- Cross-PS demo still PASSes the encoding matrix unchanged.
 
 ## Test impact analysis
 
