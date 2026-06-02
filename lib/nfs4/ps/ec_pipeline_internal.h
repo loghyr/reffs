@@ -44,6 +44,11 @@
  * pointer-to-struct references by name + binary layout.  Field
  * order / alignment must match exactly.
  */
+/* Mirror of EC_CTX_MAX_MIRRORS in ec_pipeline.c -- field-layout
+ * lock-step.  See the comment block above and the chunk-collision-
+ * validation design doc for the cwa_guard CAS plumbing rationale. */
+#define EC_CTX_MAX_MIRRORS 16
+
 struct ec_context {
 	struct mds_session *ctx_ms;
 	struct mds_file ctx_file;
@@ -67,6 +72,16 @@ struct ec_context {
 	uint32_t ctx_k;
 	uint32_t ctx_m;
 	struct ps_listener_state *ctx_pls;
+	/*
+	 * Track 1b Option C cwa_guard CAS plumbing -- see
+	 * ec_pipeline.c's matching declaration.  Tests don't drive
+	 * this surface today (the dispatch test passes NULL guards),
+	 * but the layout must match exactly because pointer-to-struct
+	 * references across this whitebox/internal boundary are
+	 * resolved by binary layout, not C nominal typing.
+	 */
+	chunk_owner4 ctx_read_owners[EC_CTX_MAX_MIRRORS];
+	bool ctx_read_owners_valid;
 };
 
 /*
@@ -84,15 +99,17 @@ struct ec_context {
  */
 int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
 		   uint64_t block_offset, uint32_t chunk_sz, const uint8_t *src,
-		   uint32_t wsz, uint32_t owner_id);
+		   uint32_t wsz, uint32_t owner_id, const chunk_guard4 *guard);
 
 /*
  * Per-mirror CHUNK_READ.  Mirrors ec_chunk_write -- same
  * dispatch hook at the top, same fall-through to ds_chunk_read
- * on the RPC path.
+ * on the RPC path.  out_owners (optional, NULL = skip) lets
+ * the caller capture each returned block's chunk_owner4 for
+ * later cwa_guard CAS-checks on the matching write path.
  */
 int ec_chunk_read(struct ec_context *ctx, int mirror_idx, uint64_t block_offset,
 		  uint32_t nblk, uint8_t *shard, uint32_t rd_chunk_sz,
-		  uint32_t *nread);
+		  uint32_t *nread, chunk_owner4 *out_owners);
 
 #endif /* EC_PIPELINE_INTERNAL_H */
