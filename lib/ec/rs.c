@@ -87,8 +87,8 @@ fail:
 	return enc;
 }
 
-static int rs_encode(struct ec_encoding *encoding, uint8_t **data, uint8_t **parity,
-		     size_t shard_len)
+static int rs_encode(struct ec_encoding *encoding, uint8_t **data,
+		     uint8_t **parity, size_t shard_len)
 {
 	struct rs_private *rsp = encoding->ec_private;
 	int k = encoding->ec_k;

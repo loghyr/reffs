@@ -18,7 +18,7 @@
 #
 # Output: a CSV row per cell appended to the file passed in via
 # --out, schema:
-#   codec,geometry,loss_pattern,iteration,result_code,
+#   encoding,geometry,loss_pattern,iteration,result_code,
 #   read_latency_ms,bytes_match,ds_log_crc_mismatch,wire_eio,note
 #
 # Bench: existing deploy/benchmark docker compose.  Driver assumes
@@ -81,16 +81,16 @@ mkdir -p "${RUNDIR}"
 
 # Write CSV header if file doesn't exist.
 if [[ ! -f "${OUT}" ]]; then
-	echo "codec,geometry,loss_pattern,iteration,result_code,read_latency_ms,bytes_match,ds_log_crc_mismatch,wire_eio,note" \
+	echo "encoding,geometry,loss_pattern,iteration,result_code,read_latency_ms,bytes_match,ds_log_crc_mismatch,wire_eio,note" \
 		>"${OUT}"
 fi
 
 run_one() {
-	local codec="$1" k="$2" m="$3" iter="$4"
+	local encoding="$1" k="$2" m="$3" iter="$4"
 	local geom="${k}:${m}"
-	local nfs_file="exp14_${MODE}_${codec}_${k}_${m}_$$_${iter}.dat"
+	local nfs_file="exp14_${MODE}_${encoding}_${k}_${m}_$$_${iter}.dat"
 	local input="${RUNDIR}/exp14_input_${SIZE}.bin"
-	local output="${RUNDIR}/exp14_out_${codec}_${k}_${m}_${iter}.bin"
+	local output="${RUNDIR}/exp14_out_${encoding}_${k}_${m}_${iter}.bin"
 
 	# Generate a stable random input file (once per RUNDIR).
 	if [[ ! -f "${input}" ]]; then
@@ -111,7 +111,7 @@ run_one() {
 		"${EC_DEMO}" write \
 			--mds "${MDS}" --file "${nfs_file}" \
 			--input "${input}" --k "${k}" --m "${m}" \
-			--codec "${codec}" --layout v2 \
+			--encoding "${encoding}" --layout v2 \
 			--shard-size "${SHARD}" \
 			>"${RUNDIR}/write.log" 2>&1
 	fi
@@ -156,7 +156,7 @@ run_one() {
 	if "${EC_DEMO}" read \
 		--mds "${MDS}" --file "${nfs_file}" \
 		--output "${output}" --k "${k}" --m "${m}" \
-		--codec "${codec}" --layout v2 \
+		--encoding "${encoding}" --layout v2 \
 		--shard-size "${SHARD}" \
 		--size "${SIZE}" \
 		>"${RUNDIR}/read.log" 2>&1; then
@@ -201,27 +201,27 @@ run_one() {
 		fi
 	fi
 
-	echo "${codec},${geom},bitflip_${MODE},${iter},${result_code},${latency_ms},${bytes_match},${ds_log_fired},${wire_eio},${note}" \
+	echo "${encoding},${geom},bitflip_${MODE},${iter},${result_code},${latency_ms},${bytes_match},${ds_log_fired},${wire_eio},${note}" \
 		>>"${OUT}"
 }
 
-# Codec × geometry matrix.  Start with RS 4+2 only as the
+# Encoding × geometry matrix.  Start with RS 4+2 only as the
 # representative cell; expand once the mechanism is confirmed.
-# Bit-flip detection is codec-independent (CRC32 acts on the byte
-# stream, not the codec output), so one cell per mode validates
+# Bit-flip detection is encoding-independent (CRC32 acts on the byte
+# stream, not the encoding output), so one cell per mode validates
 # the mechanism; the full 2x2 matrix is nice-to-have.
-CODECS=(rs)
+ENCODINGS=(rs)
 GEOMS=("4 2")
 
-for codec in "${CODECS[@]}"; do
+for encoding in "${ENCODINGS[@]}"; do
 	for geom in "${GEOMS[@]}"; do
 		read -r k m <<<"${geom}"
 		for iter in $(seq 1 "${ITERS}"); do
-			run_one "${codec}" "${k}" "${m}" "${iter}"
+			run_one "${encoding}" "${k}" "${m}" "${iter}"
 		done
 	done
 done
 
-echo "exp14 ${MODE}: ${ITERS} iterations × ${#CODECS[@]} codec(s) × ${#GEOMS[@]} geom(s) done"
+echo "exp14 ${MODE}: ${ITERS} iterations × ${#ENCODINGS[@]} encoding(s) × ${#GEOMS[@]} geom(s) done"
 echo "results: ${OUT}"
 echo "scratch: ${RUNDIR}"

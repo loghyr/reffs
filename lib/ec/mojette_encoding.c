@@ -446,13 +446,13 @@ static struct ec_encoding *mojette_create(int k, int m, bool systematic)
 	mcp->mcp_systematic = systematic;
 
 	encoding->ec_name = systematic ? "mojette-systematic" :
-				      "mojette-non-systematic";
+					 "mojette-non-systematic";
 	encoding->ec_k = k;
 	encoding->ec_m = m;
 	encoding->ec_encode = systematic ? mojette_sys_encode :
-					mojette_nonsys_encode;
+					   mojette_nonsys_encode;
 	encoding->ec_decode = systematic ? mojette_sys_decode :
-					mojette_nonsys_decode;
+					   mojette_nonsys_decode;
 	encoding->ec_shard_size = mojette_shard_size;
 	encoding->ec_destroy = mojette_destroy;
 	encoding->ec_private = mcp;

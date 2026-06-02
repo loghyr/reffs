@@ -469,8 +469,8 @@ int ec_chunk_read(struct ec_context *ctx, int mirror_idx, uint64_t block_offset,
 	return -ESTALE;
 }
 
-static struct ec_encoding *ec_create_encoding(int k, int m,
-					enum ec_encoding_type encoding_type)
+static struct ec_encoding *
+ec_create_encoding(int k, int m, enum ec_encoding_type encoding_type)
 {
 	switch (encoding_type) {
 	case EC_ENCODING_RS:
@@ -507,7 +507,8 @@ static size_t shard_write_size(struct ec_encoding *encoding, int shard_idx,
 			       size_t data_shard_len)
 {
 	if (encoding->ec_shard_size)
-		return encoding->ec_shard_size(encoding, shard_idx, data_shard_len);
+		return encoding->ec_shard_size(encoding, shard_idx,
+					       data_shard_len);
 	return data_shard_len;
 }
 
@@ -809,11 +810,11 @@ static int ec_layout_refresh(struct ec_context *ctx, struct mds_session *ms,
 /* ------------------------------------------------------------------ */
 
 int ec_write_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
-			     const uint8_t *data, size_t data_len, int k, int m,
-			     enum ec_encoding_type encoding_type,
-			     layouttype4 layout_type, size_t shard_size,
-			     const struct authunix_parms *creds,
-			     struct ps_listener_state *pls)
+				const uint8_t *data, size_t data_len, int k,
+				int m, enum ec_encoding_type encoding_type,
+				layouttype4 layout_type, size_t shard_size,
+				const struct authunix_parms *creds,
+				struct ps_listener_state *pls)
 {
 	struct ec_context ctx;
 	int ret;
@@ -914,7 +915,8 @@ int ec_write_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
 	}
 
 	for (int i = 0; i < m; i++) {
-		size_t psz = shard_write_size(ctx.ctx_encoding, k + i, shard_size);
+		size_t psz =
+			shard_write_size(ctx.ctx_encoding, k + i, shard_size);
 
 		parity_shards[i] = calloc(1, psz);
 		if (!parity_shards[i]) {
@@ -942,8 +944,8 @@ int ec_write_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
 			goto out_parity;
 		}
 		for (int i = 0; i < k; i++) {
-			size_t dsz =
-				shard_write_size(ctx.ctx_encoding, i, shard_size);
+			size_t dsz = shard_write_size(ctx.ctx_encoding, i,
+						      shard_size);
 
 			enc_data[i] = calloc(1, dsz);
 			if (!enc_data[i]) {
@@ -1000,9 +1002,9 @@ retry_stripe:
 				memcpy(enc_data[i], data_shards[i], shard_size);
 		}
 
-		ret = ctx.ctx_encoding->ec_encode(ctx.ctx_encoding,
-					       nonsys ? enc_data : data_shards,
-					       parity_shards, shard_size);
+		ret = ctx.ctx_encoding->ec_encode(
+			ctx.ctx_encoding, nonsys ? enc_data : data_shards,
+			parity_shards, shard_size);
 		if (ret) {
 			ec_log("ec_write: encode failed: %d\n", ret);
 			break;
@@ -1286,7 +1288,8 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 	}
 
 	for (int i = 0; i < m; i++) {
-		size_t psz = shard_write_size(ctx.ctx_encoding, k + i, shard_size);
+		size_t psz =
+			shard_write_size(ctx.ctx_encoding, k + i, shard_size);
 
 		parity_shards[i] = calloc(1, psz);
 		if (!parity_shards[i]) {
@@ -1303,8 +1306,8 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			goto out_shards;
 		}
 		for (int i = 0; i < k; i++) {
-			size_t dsz =
-				shard_write_size(ctx.ctx_encoding, i, shard_size);
+			size_t dsz = shard_write_size(ctx.ctx_encoding, i,
+						      shard_size);
 
 			enc_data[i] = calloc(1, dsz);
 			if (!enc_data[i]) {
@@ -1341,8 +1344,8 @@ retry_stripe:
 	}
 
 	ret = ctx.ctx_encoding->ec_encode(ctx.ctx_encoding,
-				       nonsys ? enc_data : data_shards,
-				       parity_shards, shard_size);
+					  nonsys ? enc_data : data_shards,
+					  parity_shards, shard_size);
 	if (ret) {
 		ec_log("ec_write_stripe: encode failed: %d\n", ret);
 		goto out_shards;
@@ -1411,8 +1414,8 @@ retry_stripe:
 	 * and bails before its parity goes out). */
 	for (int i = 0; i < m; i++) {
 		struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[k + i];
-		uint32_t wsz = (uint32_t)shard_write_size(ctx.ctx_encoding, k + i,
-							  shard_size);
+		uint32_t wsz = (uint32_t)shard_write_size(ctx.ctx_encoding,
+							  k + i, shard_size);
 
 		if (ctx.ctx_ds_sess) {
 			ret = ec_chunk_write(
@@ -1698,7 +1701,7 @@ retry_stripe_read: {
 	}
 
 	ret = ctx.ctx_encoding->ec_decode(ctx.ctx_encoding, shards, present,
-				       shard_size);
+					  shard_size);
 	if (ret && stale_seen && outer_retry < EC_OUTER_RETRY_MAX) {
 		outer_retry++;
 		ec_log("ec_read_stripe: stripe %llu decode failed "
@@ -1761,9 +1764,9 @@ out_encoding:
 }
 
 int ec_write_encoding(struct mds_session *ms, const char *path,
-		   const uint8_t *data, size_t data_len, int k, int m,
-		   enum ec_encoding_type encoding_type, layouttype4 layout_type,
-		   size_t shard_size)
+		      const uint8_t *data, size_t data_len, int k, int m,
+		      enum ec_encoding_type encoding_type,
+		      layouttype4 layout_type, size_t shard_size)
 {
 	struct mds_file mf;
 	int ret;
@@ -1782,8 +1785,8 @@ int ec_write_encoding(struct mds_session *ms, const char *path,
 	 * of this file.
 	 */
 	ret = ec_write_encoding_with_file(ms, &mf, data, data_len, k, m,
-				       encoding_type, layout_type, shard_size,
-				       NULL, NULL);
+					  encoding_type, layout_type,
+					  shard_size, NULL, NULL);
 
 	mds_file_close(ms, &mf);
 	return ret;
@@ -1794,12 +1797,13 @@ int ec_write_encoding(struct mds_session *ms, const char *path,
 /* ------------------------------------------------------------------ */
 
 int ec_read_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
-			    uint8_t *buf, size_t buf_len, size_t *out_len,
-			    int k, int m, enum ec_encoding_type encoding_type,
-			    layouttype4 layout_type, uint64_t skip_ds_mask,
-			    size_t shard_size,
-			    const struct authunix_parms *creds,
-			    struct ps_listener_state *pls)
+			       uint8_t *buf, size_t buf_len, size_t *out_len,
+			       int k, int m,
+			       enum ec_encoding_type encoding_type,
+			       layouttype4 layout_type, uint64_t skip_ds_mask,
+			       size_t shard_size,
+			       const struct authunix_parms *creds,
+			       struct ps_listener_state *pls)
 {
 	struct ec_context ctx;
 	int ret;
@@ -1986,8 +1990,8 @@ retry_stripe_read:
 		}
 
 		/* RS-decode to reconstruct any missing shards. */
-		ret = ctx.ctx_encoding->ec_decode(ctx.ctx_encoding, shards, present,
-					       shard_size);
+		ret = ctx.ctx_encoding->ec_decode(ctx.ctx_encoding, shards,
+						  present, shard_size);
 		ec_log("ec_read: stripe %zu ec_decode ret=%d\n", s, ret);
 		if (ret && stale_seen && outer_retry < EC_OUTER_RETRY_MAX) {
 			outer_retry++;
@@ -2052,9 +2056,10 @@ out_encoding:
 }
 
 int ec_read_encoding(struct mds_session *ms, const char *path, uint8_t *buf,
-		  size_t buf_len, size_t *out_len, int k, int m,
-		  enum ec_encoding_type encoding_type, layouttype4 layout_type,
-		  uint64_t skip_ds_mask, size_t shard_size)
+		     size_t buf_len, size_t *out_len, int k, int m,
+		     enum ec_encoding_type encoding_type,
+		     layouttype4 layout_type, uint64_t skip_ds_mask,
+		     size_t shard_size)
 {
 	struct mds_file mf;
 	int ret;
@@ -2070,8 +2075,8 @@ int ec_read_encoding(struct mds_session *ms, const char *path, uint8_t *buf,
 	 * the end client's creds.
 	 */
 	ret = ec_read_encoding_with_file(ms, &mf, buf, buf_len, out_len, k, m,
-				      encoding_type, layout_type, skip_ds_mask,
-				      shard_size, NULL, NULL);
+					 encoding_type, layout_type,
+					 skip_ds_mask, shard_size, NULL, NULL);
 
 	mds_file_close(ms, &mf);
 	return ret;
@@ -2107,9 +2112,9 @@ static void range_stripe_overlap(uint64_t s, size_t stripe_data,
 }
 
 int ec_write_encoding_range(struct mds_session *ms, const char *path,
-			 const uint8_t *data, size_t length, uint64_t offset,
-			 int k, int m, enum ec_encoding_type encoding_type,
-			 layouttype4 layout_type, size_t shard_size)
+			    const uint8_t *data, size_t length, uint64_t offset,
+			    int k, int m, enum ec_encoding_type encoding_type,
+			    layouttype4 layout_type, size_t shard_size)
 {
 	struct mds_file mf;
 	struct ec_context ctx;
@@ -2250,9 +2255,9 @@ rmw_retry:
 			ctx.ctx_read_owners_valid = false;
 			ret = ec_read_stripe_with_file(ms, &mf, s, scratch,
 						       stripe_data, k, m,
-						       encoding_type, layout_type,
-						       shard_size, NULL, NULL,
-						       &ctx);
+						       encoding_type,
+						       layout_type, shard_size,
+						       NULL, NULL, &ctx);
 			if (ret) {
 				ec_log("ec_write_range: RMW read stripe "
 				       "%llu failed: %d\n",
@@ -2265,9 +2270,10 @@ rmw_retry:
 		}
 
 		ret = ec_write_stripe_with_file(ms, &mf, s, write_payload,
-						stripe_data, k, m, encoding_type,
-						layout_type, shard_size, NULL,
-						NULL, NULL, NULL, &ctx);
+						stripe_data, k, m,
+						encoding_type, layout_type,
+						shard_size, NULL, NULL, NULL,
+						NULL, &ctx);
 		/* Clear the guard flag whether we succeeded or not -- the
 		 * write consumed (or attempted to consume) the captured
 		 * versions.  A retry below will re-capture via a fresh
@@ -2324,10 +2330,10 @@ out_close:
 	return ret;
 }
 
-int ec_read_encoding_range(struct mds_session *ms, const char *path, uint8_t *buf,
-			size_t length, uint64_t offset, int k, int m,
-			enum ec_encoding_type encoding_type, layouttype4 layout_type,
-			size_t shard_size)
+int ec_read_encoding_range(struct mds_session *ms, const char *path,
+			   uint8_t *buf, size_t length, uint64_t offset, int k,
+			   int m, enum ec_encoding_type encoding_type,
+			   layouttype4 layout_type, size_t shard_size)
 {
 	struct mds_file mf;
 	struct ec_context ctx;
@@ -2471,12 +2477,13 @@ int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
 	     size_t data_len, int k, int m)
 {
 	return ec_write_encoding(ms, path, data, data_len, k, m, EC_ENCODING_RS,
-			      LAYOUT4_FLEX_FILES, EC_SHARD_SIZE_DEFAULT);
+				 LAYOUT4_FLEX_FILES, EC_SHARD_SIZE_DEFAULT);
 }
 
 int ec_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	    size_t buf_len, size_t *out_len, int k, int m)
 {
-	return ec_read_encoding(ms, path, buf, buf_len, out_len, k, m, EC_ENCODING_RS,
-			     LAYOUT4_FLEX_FILES, 0, EC_SHARD_SIZE_DEFAULT);
+	return ec_read_encoding(ms, path, buf, buf_len, out_len, k, m,
+				EC_ENCODING_RS, LAYOUT4_FLEX_FILES, 0,
+				EC_SHARD_SIZE_DEFAULT);
 }

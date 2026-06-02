@@ -2,13 +2,13 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Cross-PS multi-codec demo: ec_demo writes a codec-encoded file via
+# Cross-PS multi-encoding demo: ec_demo writes a encoding-encoded file via
 # PS-A, ec_demo reads it via PS-B, byte-exact diff.  The PS forwards
 # LAYOUTGET / GETDEVICEINFO / LAYOUTRETURN to the upstream MDS
 # (task #150 layout passthrough); ec_demo dials the upstream DSes
 # directly using deviceids in the forwarded layout.
 #
-# Codecs tested:
+# Encodings tested:
 #   /ffv1-csm/      v1 plain mirror across all 6 DSes
 #   /ffv1-stripes/  v1 striped k=6 m=0 (no parity)
 #   /ffv2-csm/      v2 plain mirror via CHUNK ops
@@ -17,7 +17,7 @@
 #                   after task #147's variable-shard ds_stride
 #                   ceiling-divide fix)
 #
-# Per-SB paths -- each codec lands on its own SB so the matrix
+# Per-SB paths -- each encoding lands on its own SB so the matrix
 # exercises the listener mount-crossing path through PS instead of
 # the root-SB sidestep that the early matrix used.  setup-sbs.sh
 # configures each SB with the right layout-types / dstores /
@@ -26,7 +26,7 @@
 # test_lookup_mount_cross_without_root_binding (task #149's
 # regression test).
 #
-# Usage: run-ps-demo-codecs.sh <ec_demo_path> <ps_a_host> <ps_b_host>
+# Usage: run-ps-demo-encodings.sh <ec_demo_path> <ps_a_host> <ps_b_host>
 
 set -u
 
@@ -38,9 +38,9 @@ PS_A="${2:-reffs-ps-a}:2049"
 PS_B="${3:-reffs-ps-b}:2049"
 
 PAYLOAD_SIZE=$((96 * 1024))
-PAYLOAD="/tmp/codec_payload.bin"
+PAYLOAD="/tmp/encoding_payload.bin"
 
-# Mojette runs at the same 96 KiB payload as the other codecs by
+# Mojette runs at the same 96 KiB payload as the other encodings by
 # routing through ec_demo --shard-size 24576 (k=4 -> 24 KiB per
 # data shard, one stripe per file).  See
 # .claude/design/mojette-24k-shards.md.  Slice A
@@ -54,7 +54,7 @@ dd if=/dev/urandom of="$PAYLOAD" bs="$PAYLOAD_SIZE" count=1 status=none
 declare -A RESULTS
 declare -a ORDER
 
-run_codec() {
+run_encoding() {
     local label="$1"
     local sb_path="$2"
     local layout="$3"
@@ -64,7 +64,7 @@ run_codec() {
     shift 6
     local args=( "$@" )
 
-    local fname="${sb_path}/codec_${label}.bin"
+    local fname="${sb_path}/encoding_${label}.bin"
     local out="/tmp/out_${label}.bin"
     local logw="/tmp/logw_${label}.txt"
     local logr="/tmp/logr_${label}.txt"
@@ -120,22 +120,22 @@ run_codec() {
 }
 
 main() {
-    echo "=== PS multi-codec demo: write via $PS_A, read via $PS_B (payload=${PAYLOAD_SIZE}) ==="
+    echo "=== PS multi-encoding demo: write via $PS_A, read via $PS_B (payload=${PAYLOAD_SIZE}) ==="
 
-    run_codec ffv1-plain    /ffv1-csm     v1   put \
+    run_encoding ffv1-plain    /ffv1-csm     v1   put \
               "$PAYLOAD"    "$PAYLOAD_SIZE"
-    run_codec ffv1-stripe   /ffv1-stripes v1   write \
-              "$PAYLOAD"    "$PAYLOAD_SIZE" --codec stripe --k 6 --m 0
-    run_codec ffv2-plain    /ffv2-csm     v2   put \
+    run_encoding ffv1-stripe   /ffv1-stripes v1   write \
+              "$PAYLOAD"    "$PAYLOAD_SIZE" --encoding stripe --k 6 --m 0
+    run_encoding ffv2-plain    /ffv2-csm     v2   put \
               "$PAYLOAD"    "$PAYLOAD_SIZE"
-    run_codec ffv2-rs       /ffv2-rs      v2   write \
-              "$PAYLOAD"    "$PAYLOAD_SIZE" --codec rs --k 4 --m 2
-    run_codec ffv2-mj       /ffv2-mj      v2   write \
-              "$PAYLOAD"    "$PAYLOAD_SIZE" --codec mojette-sys \
+    run_encoding ffv2-rs       /ffv2-rs      v2   write \
+              "$PAYLOAD"    "$PAYLOAD_SIZE" --encoding rs --k 4 --m 2
+    run_encoding ffv2-mj       /ffv2-mj      v2   write \
+              "$PAYLOAD"    "$PAYLOAD_SIZE" --encoding mojette-sys \
               --k 4 --m 2 --shard-size "$MJ_SHARD_SIZE"
 
     echo
-    echo "=== PS-demo codecs result matrix ==="
+    echo "=== PS-demo encodings result matrix ==="
     local fails=0
     for c in "${ORDER[@]}"; do
         printf "  %-18s %s\n" "$c" "${RESULTS[$c]}"
@@ -148,7 +148,7 @@ main() {
         echo "ALL PASS"
         exit 0
     else
-        echo "$fails codec(s) FAILED"
+        echo "$fails encoding(s) FAILED"
         exit 1
     fi
 }

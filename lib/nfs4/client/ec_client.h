@@ -779,13 +779,14 @@ int ec_read(struct mds_session *ms, const char *path, uint8_t *buf,
  * the encoding or the FINALIZE/COMMIT total_blocks math.
  */
 int ec_write_encoding(struct mds_session *ms, const char *path,
-		   const uint8_t *data, size_t data_len, int k, int m,
-		   enum ec_encoding_type encoding_type, layouttype4 layout_type,
-		   size_t shard_size);
+		      const uint8_t *data, size_t data_len, int k, int m,
+		      enum ec_encoding_type encoding_type,
+		      layouttype4 layout_type, size_t shard_size);
 int ec_read_encoding(struct mds_session *ms, const char *path, uint8_t *buf,
-		  size_t buf_len, size_t *out_len, int k, int m,
-		  enum ec_encoding_type encoding_type, layouttype4 layout_type,
-		  uint64_t skip_ds_mask, size_t shard_size);
+		     size_t buf_len, size_t *out_len, int k, int m,
+		     enum ec_encoding_type encoding_type,
+		     layouttype4 layout_type, uint64_t skip_ds_mask,
+		     size_t shard_size);
 
 /*
  * Partial-range variants -- chunk-collision Track 1b
@@ -807,13 +808,13 @@ int ec_read_encoding(struct mds_session *ms, const char *path, uint8_t *buf,
  * model is correctness over throughput.
  */
 int ec_write_encoding_range(struct mds_session *ms, const char *path,
-			 const uint8_t *data, size_t length, uint64_t offset,
-			 int k, int m, enum ec_encoding_type encoding_type,
-			 layouttype4 layout_type, size_t shard_size);
-int ec_read_encoding_range(struct mds_session *ms, const char *path, uint8_t *buf,
-			size_t length, uint64_t offset, int k, int m,
-			enum ec_encoding_type encoding_type, layouttype4 layout_type,
-			size_t shard_size);
+			    const uint8_t *data, size_t length, uint64_t offset,
+			    int k, int m, enum ec_encoding_type encoding_type,
+			    layouttype4 layout_type, size_t shard_size);
+int ec_read_encoding_range(struct mds_session *ms, const char *path,
+			   uint8_t *buf, size_t length, uint64_t offset, int k,
+			   int m, enum ec_encoding_type encoding_type,
+			   layouttype4 layout_type, size_t shard_size);
 
 /*
  * FH-anchored variant of ec_read_encoding.  Skips the OPEN-by-path
@@ -846,12 +847,13 @@ int ec_read_encoding_range(struct mds_session *ms, const char *path, uint8_t *bu
  * auth swap.  This call's `creds` only reaches the MDS hops.
  */
 int ec_read_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
-			    uint8_t *buf, size_t buf_len, size_t *out_len,
-			    int k, int m, enum ec_encoding_type encoding_type,
-			    layouttype4 layout_type, uint64_t skip_ds_mask,
-			    size_t shard_size,
-			    const struct authunix_parms *creds,
-			    struct ps_listener_state *pls);
+			       uint8_t *buf, size_t buf_len, size_t *out_len,
+			       int k, int m,
+			       enum ec_encoding_type encoding_type,
+			       layouttype4 layout_type, uint64_t skip_ds_mask,
+			       size_t shard_size,
+			       const struct authunix_parms *creds,
+			       struct ps_listener_state *pls);
 
 /*
  * FH-anchored variant of ec_write_encoding.  Mirror of
@@ -874,11 +876,11 @@ int ec_read_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
  * auth, not `creds`.
  */
 int ec_write_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
-			     const uint8_t *data, size_t data_len, int k, int m,
-			     enum ec_encoding_type encoding_type,
-			     layouttype4 layout_type, size_t shard_size,
-			     const struct authunix_parms *creds,
-			     struct ps_listener_state *pls);
+				const uint8_t *data, size_t data_len, int k,
+				int m, enum ec_encoding_type encoding_type,
+				layouttype4 layout_type, size_t shard_size,
+				const struct authunix_parms *creds,
+				struct ps_listener_state *pls);
 
 /*
  * Per-stripe write primitive (PS Phase 4b).  Mirror of

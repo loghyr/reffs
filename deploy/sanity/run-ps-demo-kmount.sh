@@ -6,7 +6,7 @@
 #
 # Mounts PS-A and PS-B as separate NFSv4.2 mounts, writes a file
 # through PS-A, syncs, reads the same file through PS-B, byte-exact
-# cmp.  No codecs / no LAYOUTGET in this path -- the kernel client
+# cmp.  No encodings / no LAYOUTGET in this path -- the kernel client
 # speaks plain READ/WRITE which the existing ps_proxy_forward_*
 # chain handles.  This is the workaround for tasks #149 + #150
 # (multi-SB mount-crossing + layout passthrough) so the user can see

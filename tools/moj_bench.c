@@ -239,9 +239,9 @@ static void bench_sparse(const char *label, int P, int k, int m,
 /* Encoding-level bench (RS vs Mojette-sys vs Mojette-nonsys, peel/gd)    */
 /* ------------------------------------------------------------------ */
 
-static void bench_encoding(const char *label, struct ec_encoding *encoding, int k, int m,
-			size_t shard_len, const int *missing, int n_missing,
-			bool force_gd)
+static void bench_encoding(const char *label, struct ec_encoding *encoding,
+			   int k, int m, size_t shard_len, const int *missing,
+			   int n_missing, bool force_gd)
 {
 	uint8_t *data[k];
 	uint8_t *parity[m];
@@ -258,14 +258,15 @@ static void bench_encoding(const char *label, struct ec_encoding *encoding, int 
 
 	if (encoding->ec_shard_size) {
 		for (int i = 0; i < k; i++) {
-			size_t s = encoding->ec_shard_size(encoding, i, shard_len);
+			size_t s =
+				encoding->ec_shard_size(encoding, i, shard_len);
 
 			if (s > data_buf_len)
 				data_buf_len = s;
 		}
 		for (int i = 0; i < m; i++) {
-			size_t s =
-				encoding->ec_shard_size(encoding, k + i, shard_len);
+			size_t s = encoding->ec_shard_size(encoding, k + i,
+							   shard_len);
 
 			if (s > parity_buf_len)
 				parity_buf_len = s;
@@ -319,7 +320,8 @@ static void bench_encoding(const char *label, struct ec_encoding *encoding, int 
 		}
 
 		t0 = now_ns();
-		int rd = encoding->ec_decode(encoding, shards, present, shard_len);
+		int rd = encoding->ec_decode(encoding, shards, present,
+					     shard_len);
 
 		t1 = now_ns();
 		if (run >= WARMUP)
@@ -358,8 +360,9 @@ static void bench_encoding(const char *label, struct ec_encoding *encoding, int 
 		free(parity[i]);
 }
 
-static void bench_encoding_set(int k, int m, size_t shard_len, const int *missing,
-			    int n_missing, const char *miss_label)
+static void bench_encoding_set(int k, int m, size_t shard_len,
+			       const int *missing, int n_missing,
+			       const char *miss_label)
 {
 	struct ec_encoding *rs = ec_rs_create(k, m);
 	struct ec_encoding *msys = ec_mojette_sys_create(k, m);

@@ -73,7 +73,7 @@ help:
 	@echo "  stop-ps-demo    - Stop PS-demo containers"
 	@echo "  run-ps-demo-kmount - PS demo via Linux NFSv4.2 kernel mount (workaround; needs SYS_ADMIN)"
 	@echo "  stop-ps-demo-kmount - Stop kernel-mount PS-demo containers"
-	@echo "  run-ps-demo-codecs - PS multi-codec demo via ec_demo (write via PS-A, read via PS-B)"
+	@echo "  run-ps-demo-encodings - PS multi-codec demo via ec_demo (write via PS-A, read via PS-B)"
 	@echo "  stop-ps-demo-codecs - Stop multi-codec PS-demo containers"
 
 # --- Build targets ---
@@ -447,7 +447,7 @@ stop-ps-demo-kmount:
 # Multi-codec demo: ec_demo writes codec-encoded files via PS-A,
 # reads via PS-B.  Exercises the layout-passthrough path (#150).
 
-run-ps-demo-codecs: image
+run-ps-demo-encodings: image
 	@mkdir -p $(SANITY_LOGS)
 	@echo "Building reffs in builder container..."
 	$(DOCKER) compose -f $(SANITY_COMPOSE) run --rm builder
@@ -468,4 +468,4 @@ run-ps-demo-codecs: image
 stop-ps-demo-codecs:
 	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile ps-demo-codecs down -v 2>/dev/null || true
 
-.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined stop-combined clean-combined run-pnfs test-pnfs stop-pnfs logs-pnfs run-benchmark stop-benchmark run-larger-shards stop-larger-shards run-sanity stop-sanity run-ps-demo stop-ps-demo run-ps-demo-kmount stop-ps-demo-kmount run-ps-demo-codecs stop-ps-demo-codecs
+.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined stop-combined clean-combined run-pnfs test-pnfs stop-pnfs logs-pnfs run-benchmark stop-benchmark run-larger-shards stop-larger-shards run-sanity stop-sanity run-ps-demo stop-ps-demo run-ps-demo-kmount stop-ps-demo-kmount run-ps-demo-encodings stop-ps-demo-codecs

@@ -631,9 +631,9 @@ static int cmd_burst(const char *mds_host, int nsessions)
 
 static int cmd_write(const char *mds_host, const char *nfs_file,
 		     const char *local_file, int k, int m,
-		     enum ec_encoding_type encoding_type, layouttype4 layout_type,
-		     size_t shard_size, uint64_t range_offset,
-		     size_t range_length)
+		     enum ec_encoding_type encoding_type,
+		     layouttype4 layout_type, size_t shard_size,
+		     uint64_t range_offset, size_t range_length)
 {
 	struct mds_session ms;
 	size_t data_len;
@@ -679,14 +679,14 @@ static int cmd_write(const char *mds_host, const char *nfs_file,
 			range_length, nfs_file,
 			(unsigned long long)range_offset, k, m, shard_size);
 		ret = ec_write_encoding_range(&ms, nfs_file, data, range_length,
-					   range_offset, k, m, encoding_type,
-					   layout_type, shard_size);
+					      range_offset, k, m, encoding_type,
+					      layout_type, shard_size);
 	} else {
 		fprintf(stderr,
 			"ec_demo: writing %zu bytes to %s (%d+%d, shard=%zu)\n",
 			data_len, nfs_file, k, m, shard_size);
 		ret = ec_write_encoding(&ms, nfs_file, data, data_len, k, m,
-				     encoding_type, layout_type, shard_size);
+					encoding_type, layout_type, shard_size);
 	}
 	if (ret)
 		fprintf(stderr, "ec_demo: write failed: %d\n", ret);
@@ -700,8 +700,9 @@ static int cmd_write(const char *mds_host, const char *nfs_file,
 
 static int cmd_read(const char *mds_host, const char *nfs_file,
 		    const char *local_file, int k, int m, size_t expected_len,
-		    enum ec_encoding_type encoding_type, layouttype4 layout_type,
-		    uint64_t skip_ds_mask, size_t shard_size)
+		    enum ec_encoding_type encoding_type,
+		    layouttype4 layout_type, uint64_t skip_ds_mask,
+		    size_t shard_size)
 {
 	struct mds_session ms;
 	int ret;
@@ -725,7 +726,8 @@ static int cmd_read(const char *mds_host, const char *nfs_file,
 	fprintf(stderr, "ec_demo: reading %s (%d+%d, shard=%zu)\n", nfs_file, k,
 		m, shard_size);
 	ret = ec_read_encoding(&ms, nfs_file, buf, buf_len, &out_len, k, m,
-			    encoding_type, layout_type, skip_ds_mask, shard_size);
+			       encoding_type, layout_type, skip_ds_mask,
+			       shard_size);
 	if (ret) {
 		fprintf(stderr, "ec_demo: read failed: %d\n", ret);
 	} else {
@@ -743,9 +745,10 @@ static int cmd_read(const char *mds_host, const char *nfs_file,
 
 static int cmd_verify(const char *mds_host, const char *nfs_file,
 		      const char *local_file, int k, int m,
-		      enum ec_encoding_type encoding_type, layouttype4 layout_type,
-		      uint64_t skip_ds_mask, size_t shard_size,
-		      uint64_t range_offset, size_t range_length)
+		      enum ec_encoding_type encoding_type,
+		      layouttype4 layout_type, uint64_t skip_ds_mask,
+		      size_t shard_size, uint64_t range_offset,
+		      size_t range_length)
 {
 	struct mds_session ms;
 	size_t orig_len;
@@ -807,16 +810,16 @@ static int cmd_verify(const char *mds_host, const char *nfs_file,
 			nfs_file, (unsigned long long)range_offset, cmp_len,
 			local_file, k, m, shard_size);
 		ret = ec_read_encoding_range(&ms, nfs_file, buf, cmp_len,
-					  range_offset, k, m, encoding_type,
-					  layout_type, shard_size);
+					     range_offset, k, m, encoding_type,
+					     layout_type, shard_size);
 		out_len = ret ? 0 : cmp_len;
 	} else {
 		fprintf(stderr,
 			"ec_demo: verifying %s against %s (%d+%d, shard=%zu)\n",
 			nfs_file, local_file, k, m, shard_size);
-		ret = ec_read_encoding(&ms, nfs_file, buf, cmp_len, &out_len, k, m,
-				    encoding_type, layout_type, skip_ds_mask,
-				    shard_size);
+		ret = ec_read_encoding(&ms, nfs_file, buf, cmp_len, &out_len, k,
+				       m, encoding_type, layout_type,
+				       skip_ds_mask, shard_size);
 	}
 	if (ret) {
 		fprintf(stderr, "ec_demo: read failed: %d\n", ret);
@@ -913,14 +916,14 @@ static int cmd_write_verify(const char *mds_host, const char *nfs_file,
 			cmp_len, nfs_file, (unsigned long long)range_offset, k,
 			m, shard_size);
 		ret = ec_write_encoding_range(&ms, nfs_file, orig, cmp_len,
-					   range_offset, k, m, encoding_type,
-					   layout_type, shard_size);
+					      range_offset, k, m, encoding_type,
+					      layout_type, shard_size);
 	} else {
 		fprintf(stderr,
 			"ec_demo: writing %zu bytes to %s (%d+%d, shard=%zu)\n",
 			orig_len, nfs_file, k, m, shard_size);
 		ret = ec_write_encoding(&ms, nfs_file, orig, orig_len, k, m,
-				     encoding_type, layout_type, shard_size);
+					encoding_type, layout_type, shard_size);
 	}
 	if (ret) {
 		fprintf(stderr, "ec_demo: write failed: %d\n", ret);
@@ -944,16 +947,16 @@ static int cmd_write_verify(const char *mds_host, const char *nfs_file,
 			nfs_file, (unsigned long long)range_offset, cmp_len,
 			local_file, k, m, shard_size);
 		ret = ec_read_encoding_range(&ms, nfs_file, buf, cmp_len,
-					  range_offset, k, m, encoding_type,
-					  layout_type, shard_size);
+					     range_offset, k, m, encoding_type,
+					     layout_type, shard_size);
 		out_len = ret ? 0 : cmp_len;
 	} else {
 		fprintf(stderr,
 			"ec_demo: verifying %s against %s (%d+%d, shard=%zu)\n",
 			nfs_file, local_file, k, m, shard_size);
-		ret = ec_read_encoding(&ms, nfs_file, buf, cmp_len, &out_len, k, m,
-				    encoding_type, layout_type, skip_ds_mask,
-				    shard_size);
+		ret = ec_read_encoding(&ms, nfs_file, buf, cmp_len, &out_len, k,
+				       m, encoding_type, layout_type,
+				       skip_ds_mask, shard_size);
 	}
 	if (ret) {
 		fprintf(stderr, "ec_demo: read failed: %d\n", ret);
@@ -1663,7 +1666,8 @@ int main(int argc, char *argv[])
 			else if (strcmp(optarg, "mirror") == 0)
 				encoding_type = EC_ENCODING_MIRROR;
 			else {
-				fprintf(stderr, "ec_demo: unknown encoding '%s'\n",
+				fprintf(stderr,
+					"ec_demo: unknown encoding '%s'\n",
 					optarg);
 				return 1;
 			}
@@ -1920,8 +1924,9 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 		return cmd_write_verify(mds_host, nfs_file, local_input, k, m,
-					encoding_type, layout_type, skip_ds_mask,
-					shard_size, range_offset, range_length);
+					encoding_type, layout_type,
+					skip_ds_mask, shard_size, range_offset,
+					range_length);
 	}
 
 	if (strcmp(cmd, "burst") == 0)

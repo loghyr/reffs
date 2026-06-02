@@ -8,7 +8,7 @@
 # shard sizes and emit a single merged CSV.
 #
 # Matrix:
-#   codecs        : rs, mojette-sys (set via ec_benchmark.sh's loop)
+#   encodings        : rs, mojette-sys (set via ec_benchmark.sh's loop)
 #   geometries    : 4+2, 8+2 (set via ec_benchmark.sh's GEOMETRIES)
 #   file sizes    : 64 KiB, 256 KiB, 1 MiB, 4 MiB, 16 MiB
 #   shard sizes   : 4 KiB, 16 KiB, 64 KiB, 256 KiB
@@ -16,7 +16,7 @@
 #                   "scalar" = --enable-noscalar-vec build + --force-scalar
 #   runs per cell : 5
 #
-# Total cells per host: 2 codecs * 2 geom * 5 file * 4 shard * 2 simd = 160
+# Total cells per host: 2 encodings * 2 geom * 5 file * 4 shard * 2 simd = 160
 # At 5 runs each, 800 measurement runs per host.  Plain path adds
 # baseline runs without the matrix expansion.
 #
@@ -32,7 +32,7 @@
 #
 # Prereqs:
 #   - SIMD binary: built normally (auto-vectorization enabled)
-#   - Scalar binary: built with --enable-noscalar-vec (so the codec
+#   - Scalar binary: built with --enable-noscalar-vec (so the encoding
 #     scalar path cannot be auto-vectorized).  Run with
 #     --force-scalar to take the scalar code path at runtime.
 #   - MDS reachable at the specified address with HS-35556 topology.
@@ -97,7 +97,7 @@ INNER="$(dirname "$0")/ec_benchmark.sh"
 
 # --- CSV header to stdout ------------------------------------------
 
-echo "codec,geom,file_size,run,write_ms,read_ms,verify,mode,layout,cpu,shard_size,simd_mode"
+echo "encoding,geom,file_size,run,write_ms,read_ms,verify,mode,layout,cpu,shard_size,simd_mode"
 
 # --- run matrix -----------------------------------------------------
 

@@ -2318,12 +2318,13 @@ int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
 	 * dispatch; reads still take the RPC path on every mirror
 	 * regardless of co-residency.
 	 */
-	ret = ec_read_encoding_with_file(ms, &mf, whole_buf, whole_len, &out_len,
-				      /* k */ 4, /* m */ 2, EC_ENCODING_RS,
-				      LAYOUT4_FLEX_FILES_V2,
-				      /* skip_ds_mask */ 0,
-				      /* shard_size */ 4096, creds,
-				      /* pls */ NULL);
+	ret = ec_read_encoding_with_file(ms, &mf, whole_buf, whole_len,
+					 &out_len,
+					 /* k */ 4, /* m */ 2, EC_ENCODING_RS,
+					 LAYOUT4_FLEX_FILES_V2,
+					 /* skip_ds_mask */ 0,
+					 /* shard_size */ 4096, creds,
+					 /* pls */ NULL);
 	if (ret) {
 		free(whole_buf);
 		return ret;
@@ -3112,10 +3113,10 @@ int ps_proxy_pipeline_close(struct mds_session *ms, const uint8_t *upstream_fh,
 	 * exposes (slice 4a.4).
 	 */
 	ret = ec_write_encoding_with_file(ms, &mf, buf->pwb_data,
-				       buf->pwb_high_water, /* k */ 4,
-				       /* m */ 2, EC_ENCODING_RS,
-				       LAYOUT4_FLEX_FILES_V2,
-				       /* shard_size */ 4096, creds, pls);
+					  buf->pwb_high_water, /* k */ 4,
+					  /* m */ 2, EC_ENCODING_RS,
+					  LAYOUT4_FLEX_FILES_V2,
+					  /* shard_size */ 4096, creds, pls);
 	pthread_mutex_unlock(&buf->pwb_mutex);
 
 	ps_write_buffer_drop(buf, pls);

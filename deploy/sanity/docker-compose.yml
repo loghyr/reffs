@@ -308,7 +308,7 @@ services:
         /shared/build/scripts/reffs-probe.py --host reffs-mds sb-set-layout-types --id 1 --layout-types ffv1 ffv2 ;
         /shared/build/scripts/reffs-probe.py --host reffs-mds sb-set-dstores --id 1 --dstores 1 2 3 4 5 6 ;
         /shared/build/scripts/reffs-probe.py --host reffs-mds sb-set-stripe-unit --id 1 --stripe-unit 4096 ;
-        /reffs/deploy/sanity/run-ps-demo-codecs.sh /shared/build/tools/ec_demo reffs-ps-a reffs-ps-b
+        /reffs/deploy/sanity/run-ps-demo-encodings.sh /shared/build/tools/ec_demo reffs-ps-a reffs-ps-b
       "
     profiles:
       - ps-demo-codecs

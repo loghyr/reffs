@@ -692,7 +692,8 @@ static Suite *mojette_encoding_suite(void)
 
 	TCase *tc_gd = tcase_create("gd-encoding");
 
-	tcase_add_checked_fixture(tc_gd, gd_encoding_setup, gd_encoding_teardown);
+	tcase_add_checked_fixture(tc_gd, gd_encoding_setup,
+				  gd_encoding_teardown);
 	tcase_add_test(tc_gd, test_sys_one_data_loss);
 	tcase_add_test(tc_gd, test_sys_two_data_loss);
 	tcase_add_test(tc_gd, test_sys_24k_two_data_loss);
