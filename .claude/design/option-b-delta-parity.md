@@ -317,6 +317,8 @@ validated correctness story (Track 1b 30/30 stable on shadow).
 Option B unblocks the parallel-write throughput story for HPC
 `IOR -F 0` once that workload becomes a measured priority.
 
+Tracking: <https://github.com/loghyr/reffs/issues/62>
+
 The decision to start is gated on:
 - Workload priority (IOR `-F 0` parallel throughput becoming a
   measured bench target)
