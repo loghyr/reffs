@@ -238,15 +238,66 @@ This was the predicted MVP limitation (see the scoping
 decision above) and it hit on the first run.  Variant B in
 this dataset is "PS proxy of plain layout," not "PS EC."
 
-### Take 2: the PS proxy hop costs essentially nothing for plain layouts
+### Take 2: on single-host loopback, the PS hop is invisible (with caveats)
 
-Variant B ≈ variant C at every size means the PS hop adds
-no measurable latency to the no-EC path.  This is a real WG
-signal in its own right: the proxy is not a latency tax.
-The result generalises to "any path where the PS doesn't
-encode" -- mirror layouts, single-DS layouts, opaque-byte
-forwarding.  It does *not* answer "where should EC encoding
-live" because B does not encode.
+Variant B ≈ variant C at every size on this bench.  Before
+declaring "the PS hop is free," it is worth being precise
+about what the two variants actually do.
+
+**Variant C's data path:** kernel NFSv4.2 mount of MDS:2049
+-> kernel asks for a layout -> MDS advertises `layout_types
+= ["ffv1", "ffv2"]` -> Linux kernel supports FFv1 (RFC 8435)
+but not FFv2/CHUNK, so MDS issues an FFv1 layout -> kernel
+writes **via NFSv3 to the DSes**.  Bottleneck: per-DS fsync
+round-trip.
+
+**Variant B's data path:** kernel NFSv4.2 mount of PS:4098
+-> kernel writes to PS via NFSv4.2 -> PS does LAYOUTGET on
+the MDS, gets a PASSTHROUGH layout -> PS writes **via
+CHUNK_WRITE/FINALIZE/COMMIT to the DSes**.  Different
+protocol, same destination, same fsync bottleneck.
+
+Both variants end at the DSes paying the same per-DS fsync
+cost.  They're not measuring "PS hop overhead vs no PS hop"
+in any clean sense -- they're measuring "two different RPC
+front-ends to the same DS-bound write pipeline."
+
+**What the single-host topology hides:**
+
+| Cost | On-host (loopback) | Real network |
+|---|---|---|
+| kernel <-> PS RTT      | ~us | full RTT, every op |
+| PS <-> MDS LAYOUTGET   | ~us | RTT, +1 per layout fetch |
+| PS <-> DS CHUNK_WRITE  | ~us | RTT * (k+m) per stripe |
+| Compared to kernel direct <-> DS NFSv3 WRITE | ~us | RTT * (k+m) per stripe |
+
+On loopback every one of those is dominated by per-RPC
+fixed cost (XDR encode/decode, fsync, RPC dispatch).  The
+PS hop is "free" only in the sense that the extra
+loopback-latency hop is invisible at this scale.
+
+On a real network the PS path would pay:
+- Extra client <-> PS RTT (vs client <-> MDS RTT in C,
+  which the kernel may amortise across writes via cached
+  layouts)
+- Extra PS <-> MDS LAYOUTGET RTT (vs kernel doing its own
+  LAYOUTGET in C; both pay the LAYOUTGET, but B's path has
+  one more hop)
+- Possibly more PS <-> DS RTTs if the PS opens fresh DS
+  sessions vs kernel's persistent ones
+
+**Corrected claim from this data**: on a single-host docker
+bench, the PS proxy adds no measurable wall-clock latency
+over the direct kernel-mount-of-MDS path for plain-mirror
+layouts.  The "PS hop is free" framing is not earned by
+this data set -- it would need a real-network test (PS in a
+different host/rack from the MDS/DSes) to actually measure
+the hop cost.
+
+This is worth saying on the deck because the WG audience
+will ask exactly the question above; pre-empting the
+"single-host loopback hides everything" rebuttal is the
+honest move.
 
 ### Take 3: client-EC vs no-EC crossover at ~256 KB
 
