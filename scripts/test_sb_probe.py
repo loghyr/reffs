@@ -275,6 +275,74 @@ def test_sb_get_client_rules(client, sb_id):
     check(len(rules2) == 0, f"empty rule list after clear (got {len(rules2)})")
 
 
+def test_sb_default_coding(client, sb_id):
+    """SB_SET_DEFAULT_CODING + SB_GET_DEFAULT_CODING round-trip,
+    plus the unset / clear-policy sentinel.  See
+    .claude/design/per-export-default-coding.md step 9.
+
+    FFV2_ENCODING_* wire values used here:
+        4 = RS_VANDERMONDE
+        2 = MOJETTE_SYSTEMATIC
+    """
+    print(f"\n--- test_sb_default_coding (id={sb_id}) ---")
+
+    # 1) Set RS 4+2, read back via the dedicated GET op.
+    set_res = client.sb_set_default_coding(sb_id, 4, 4, 2)
+    check_status_ok(set_res, "sb_set_default_coding rs:4+2")
+
+    get_res = client.sb_get_default_coding(sb_id)
+    check_status_ok(get_res.sgda_status, "sb_get_default_coding status")
+    coding = get_res.sgda_resok.sgda_coding
+    check(coding.pcs_codec_type == 4,
+          f"rs:4+2 codec_type=4 (got {coding.pcs_codec_type})")
+    check(coding.pcs_k == 4, f"rs:4+2 k=4 (got {coding.pcs_k})")
+    check(coding.pcs_m == 2, f"rs:4+2 m=2 (got {coding.pcs_m})")
+
+    # 2) SB_GET embeds the same triple in probe_sb_info1.
+    info_res = client.sb_get(sb_id)
+    check_status_ok(info_res.sgr_status, "sb_get for default_coding")
+    info_coding = info_res.sgr_resok.psi_default_coding
+    check(info_coding.pcs_codec_type == 4 and info_coding.pcs_k == 4 and
+          info_coding.pcs_m == 2,
+          f"sb_get psi_default_coding matches set rs:4+2")
+
+    # 3) Switch to mojette-sys:8+2.
+    set_res2 = client.sb_set_default_coding(sb_id, 2, 8, 2)
+    check_status_ok(set_res2, "sb_set_default_coding mojette-sys:8+2")
+    get_res2 = client.sb_get_default_coding(sb_id)
+    coding2 = get_res2.sgda_resok.sgda_coding
+    check(coding2.pcs_codec_type == 2 and coding2.pcs_k == 8 and
+          coding2.pcs_m == 2,
+          f"sb_get_default_coding mojette-sys:8+2 round-trips")
+
+    # 4) Clear via the all-zero unset sentinel.
+    clear_res = client.sb_set_default_coding(sb_id, 0, 0, 0)
+    check_status_ok(clear_res, "sb_set_default_coding clear")
+    get_res3 = client.sb_get_default_coding(sb_id)
+    coding3 = get_res3.sgda_resok.sgda_coding
+    check(coding3.pcs_codec_type == 0 and coding3.pcs_k == 0 and
+          coding3.pcs_m == 0,
+          f"clear sentinel persists (all-zero spec)")
+
+    # 5) Validation rejections (server-side; expect non-OK status):
+    #    - k+m exceeds LAYOUT_SEG_MAX_FILES (32)
+    bad1 = client.sb_set_default_coding(sb_id, 4, 30, 4)  # 30+4 = 34
+    check(bad1 != 0,
+          f"k+m=34 rejected (status={bad1}, want non-zero)")
+    #    - PASSTHROUGH with m > 0 violates the setter invariant
+    bad2 = client.sb_set_default_coding(sb_id, 1, 4, 2)
+    check(bad2 != 0,
+          f"PASSTHROUGH with m=2 rejected (status={bad2}, want non-zero)")
+    #    - Unknown codec_type
+    bad3 = client.sb_set_default_coding(sb_id, 99, 4, 2)
+    check(bad3 != 0,
+          f"codec_type=99 rejected (status={bad3}, want non-zero)")
+
+    # 6) Restore clear-policy state for the rest of the test run.
+    clear_res2 = client.sb_set_default_coding(sb_id, 0, 0, 0)
+    check_status_ok(clear_res2, "sb_set_default_coding clear (final)")
+
+
 def test_sb_unmount(client, sb_id):
     """SB_UNMOUNT should transition to UNMOUNTED."""
     print(f"\n--- test_sb_unmount (id={sb_id}) ---")
@@ -322,6 +390,10 @@ def main():
     # Phase 3b: Set per-client rules before mount
     test_sb_set_client_rules(client, sb_id)
     test_sb_get_client_rules(client, sb_id)
+
+    # Phase 3c: Default-coding policy round-trip (step 9 of
+    # .claude/design/per-export-default-coding.md)
+    test_sb_default_coding(client, sb_id)
 
     # Phase 4: Mount
     test_sb_mount(client, sb_id, TEST_PATH)

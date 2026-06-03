@@ -831,6 +831,82 @@ def sb_set_checksum_algorithm_cmd(client, args):
         print(f"Superblock {args.id} checksum algorithm set to {name}")
 
 
+_CODING_NAMES = {
+    # FFV2_ENCODING_* wire values, matched to the TOML grammar in
+    # lib/config/config.c parse_coding_spec.
+    'passthrough': 1,
+    'mojette-sys': 2,
+    'mojette-nonsys': 3,
+    'rs': 4,
+    'mirrored': 5,
+}
+
+
+def _parse_coding_spec(arg):
+    """Parse a "<codec>:K+M" or "passthrough" / "unset" string.
+
+    Returns (codec_type, k, m).  "unset" or empty -> (0, 0, 0).
+    Mirrors the TOML grammar so admin output round-trips back
+    into config files; matches the C CLI in src/probe1_client.c.
+    """
+    if not arg or arg == 'unset':
+        return (0, 0, 0)
+    if ':' not in arg:
+        # Bare codec name -- only passthrough is valid in that form.
+        if arg != 'passthrough':
+            raise SystemExit(
+                f"default-coding: bare codec name only accepted for "
+                f"passthrough, got {arg!r}")
+        return (_CODING_NAMES['passthrough'], 0, 0)
+    name, geom = arg.split(':', 1)
+    if '+' not in geom:
+        raise SystemExit(
+            f"default-coding: expected '<codec>:K+M', got {arg!r}")
+    k_str, m_str = geom.split('+', 1)
+    try:
+        k = int(k_str)
+        m = int(m_str)
+    except ValueError:
+        raise SystemExit(
+            f"default-coding: k/m must be integers, got {arg!r}")
+    if name not in _CODING_NAMES:
+        valid = ', '.join(sorted(_CODING_NAMES))
+        raise SystemExit(
+            f"default-coding: unknown codec {name!r}; valid: {valid}")
+    return (_CODING_NAMES[name], k, m)
+
+
+def _coding_to_string(codec_type, k, m):
+    """Format a (codec, k, m) triple as the same string the parser
+    accepts.  Used by sb-get-default-coding and the sb-get summary
+    so admin output is copy-pasteable into a TOML config."""
+    if codec_type == 0 and k == 0 and m == 0:
+        return '<unset>'
+    name = next((n for n, v in _CODING_NAMES.items() if v == codec_type),
+                None)
+    if name is None:
+        return f"codec={codec_type} k={k} m={m} (unknown)"
+    if name == 'passthrough':
+        return 'passthrough'
+    return f"{name}:{k}+{m}"
+
+
+def sb_set_default_coding_cmd(client, args):
+    codec, k, m = _parse_coding_spec(args.default_coding)
+    res = client.sb_set_default_coding(args.id, codec, k, m)
+    probe_error_handler(res)
+    print(f"Superblock {args.id} default_coding set to "
+          f"{_coding_to_string(codec, k, m)}")
+
+
+def sb_get_default_coding_cmd(client, args):
+    res = client.sb_get_default_coding(args.id)
+    probe_error_handler(res)
+    coding = res.sgda_resok.sgda_coding
+    print(f"sb_id={args.id} default_coding="
+          f"{_coding_to_string(coding.pcs_codec_type, coding.pcs_k, coding.pcs_m)}")
+
+
 def inode_layout_list_cmd(client, args):
     res = client.inode_layout_list(args.sb_id, args.inum)
     probe_error_handler(res)
@@ -1301,6 +1377,25 @@ def parse_args():
         help='Algorithm: none, crc32 (default), crc32c, fletcher4, '
              'sha256, sha512, blake3 (or a numeric CHECKSUM_ALG_*)')
     p_sb_csum.set_defaults(func=sb_set_checksum_algorithm_cmd)
+
+    p_sb_set_dc = subparsers.add_parser(
+        'sb-set-default-coding',
+        help='Set per-export default erasure-coding policy')
+    p_sb_set_dc.add_argument('--id', type=int, required=True,
+                             help='Superblock ID')
+    p_sb_set_dc.add_argument(
+        '--default-coding', dest='default_coding', type=str, required=True,
+        metavar='SPEC',
+        help='Coding spec: "passthrough" | "rs:K+M" | "mojette-sys:K+M" | '
+             '"mojette-nonsys:K+M" | "unset" to clear the policy')
+    p_sb_set_dc.set_defaults(func=sb_set_default_coding_cmd)
+
+    p_sb_get_dc = subparsers.add_parser(
+        'sb-get-default-coding',
+        help='Get per-export default erasure-coding policy')
+    p_sb_get_dc.add_argument('--id', type=int, required=True,
+                             help='Superblock ID')
+    p_sb_get_dc.set_defaults(func=sb_get_default_coding_cmd)
 
     p_inode_layout_list = subparsers.add_parser(
         'inode-layout-list',

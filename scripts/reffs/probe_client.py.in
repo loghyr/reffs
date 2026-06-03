@@ -253,6 +253,51 @@ class Probe1Client(ProtocolClient):
         return self.proc(PROBEPROC1_SB_SET_CHECKSUM_ALGORITHM, args,
                          response_type='probe_stat1')
 
+    def sb_set_default_coding(self, sb_id, codec_type, k, m):
+        """Set per-export default erasure-coding policy.
+
+        See .claude/design/per-export-default-coding.md.  The
+        spec drives LAYOUTGET's (ls_k, ls_m, ffm_coding_type) at
+        layout-issue time, replacing the legacy "runway count
+        IS ls_k, ls_m = 0" heuristic for exports that have a
+        policy set.
+
+        `codec_type` is an FFV2_ENCODING_* wire constant:
+            1 = PASSTHROUGH (m must equal 0)
+            2 = MOJETTE_SYSTEMATIC
+            3 = MOJETTE_NON_SYSTEMATIC
+            4 = RS_VANDERMONDE
+            5 = MIRRORED
+        An all-zero spec (codec=0, k=0, m=0) clears the policy --
+        LAYOUTGET reverts to the legacy nfiles-driven path.
+
+        Server-side validation rejects: unknown codec_type, k=0
+        (unless clearing), k > 32, k+m > 32, PASSTHROUGH with
+        m > 0, non-PASSTHROUGH with m == 0, and any EC spec on a
+        superblock that advertises SB_LAYOUT_FILE (file layouts
+        require single-DS per per-export-dstore.md).
+        """
+        coding = probe_coding_spec1(codec_type, k, m)
+        args = SB_SET_DEFAULT_CODING1args(sb_id, coding)
+        return self.proc(PROBEPROC1_SB_SET_DEFAULT_CODING, args,
+                         response_type='probe_stat1')
+
+    def sb_get_default_coding(self, sb_id):
+        """Read the per-export default erasure-coding policy.
+
+        Returns SB_GET_DEFAULT_CODING1res; on success
+        sgda_resok.sgda_coding has the (pcs_codec_type, pcs_k,
+        pcs_m) triple.  An all-zero triple means no policy is
+        set; LAYOUTGET takes the legacy path for this export.
+        SB_GET (sb_get) returns the same triple embedded in
+        probe_sb_info1 -- this dedicated op is used by the
+        integration test to round-trip the value without paying
+        for the full sb-info encode.
+        """
+        args = SB_GET_DEFAULT_CODING1args(sb_id)
+        return self.proc(PROBEPROC1_SB_GET_DEFAULT_CODING, args,
+                         response_type='SB_GET_DEFAULT_CODING1res')
+
     def inode_layout_list(self, sb_id, inum):
         """Read-only enumeration of an inode's mirror set.
 
