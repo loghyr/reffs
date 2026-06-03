@@ -52,9 +52,24 @@ unimplemented upstream.  Two paths to a real (c) measurement:
    scope for this experiment; it is its own multi-year
    project.
 
-Variant (a) and (b) need NFSv3 service on the DSes.  The
-existing `ds.toml` has `minor_versions = [1, 2]` only --
-must be extended to advertise NFSv3 for this experiment.
+Variants (a) and (b) need the client to reach NFSv3 on the
+DSes.  **NFSv3 is already running on the bench DSes**
+(reffsd registers NFSv3 unconditionally; `ec_demo --layout
+v1` confirms the path works).  The reason variant C in the
+2026-06-02 single-host bench didn't engage pNFS is a network
+*reachability* artefact: the `--network=host` client
+container cannot resolve docker-compose service names that
+the MDS puts in FFv1 layouts (`reffs-ds0`, etc.).  On
+real-network topology (3 hosts or HS-lab VMs) the DSes have
+routable IPs and the kernel resolves them naturally; no
+ds.toml change is needed.
+
+A single-host stop-gap for kernel-pNFS tests is recorded in
+`[[reference_bench_ds_nfsv3_gap]]` (attach the client to
+both the docker-compose network and `--network=host`, or
+have the MDS issue IP-based deviceinfo instead of names);
+neither is necessary if the experiment runs on real
+hosts.
 
 Variant (d) is what variant B in the A/B/C harness was
 *supposed* to measure but couldn't because of the layout-
@@ -204,7 +219,7 @@ Items, in dependency order:
 
 | # | Item | Effort | Blocker for |
 |---|------|--------|-------------|
-| 1 | DS NFSv3 listener in `ds.toml` + bench `Dockerfile` (if NFSv3 isn't already linked into reffsd) | 1-2 days | variants a, b |
+| 1 | *(WITHDRAWN 2026-06-02)*  NFSv3 listener is already on; no DS-side work needed. | -- | -- |
 | 2 | Per-export `default_coding` TOML field (interim codec selector) | ~1 week | variant d |
 | 3 | Multi-host bringup script (option 1: 3-host) | 2-3 days | all variants on real network |
 | 4 | 4-variant harness script + CSV schema | 2-3 days | data collection |
@@ -213,8 +228,9 @@ Items, in dependency order:
 | 7 | Option 2: HS-lab VM provisioning | 1-3 days | follow-on validation |
 | 8 | Repeat sweep on option 2 topology | 1-2 hours | per-DS-storage check |
 
-Total to first slide-ready numbers from option 1: ~2 weeks.
-Total including option 2 validation: ~3 weeks.
+Total to first slide-ready numbers from option 1: **~10
+working days** (was ~2 weeks before item 1 was withdrawn).
+Total including option 2 validation: ~2.5 weeks.
 
 Items 1-2 are reffs server changes (XDR-adjacent for item 2;
 may need reviewer agent per CLAUDE.md gating rules); items

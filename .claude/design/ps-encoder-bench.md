@@ -244,22 +244,39 @@ Variant B ≈ variant C at every size on this bench.  Before
 declaring "the PS hop is free," it is worth being precise
 about what the two variants actually do.
 
-**Variant C's data path (confirmed via DS-side counters
-2026-06-02):** kernel NFSv4.2 mount of MDS:2049 -> kernel may
-request a layout from MDS -> bench DSes run with
-`minor_versions = [1, 2]` only (NFSv4.1/4.2; **no NFSv3
-listener**) -> any FFv1 layout the kernel got cannot be
-satisfied because FFv1 requires NFSv3 to the DSes -> kernel
-falls back to inband NFSv4.2 WRITE to MDS -> **MDS handles
-the WRITE on its own local backend**.
+**Variant C's data path (corrected 2026-06-02 after further
+investigation):** kernel NFSv4.2 mount of MDS:2049 -> kernel
+may request a layout from MDS -> MDS issues an FFv1 layout
+naming DS hostnames -> the `--network=host` client container
+cannot resolve docker-compose service names like
+`reffs-ds0` -> kernel either cannot fetch the layout or
+cannot reach the DSes through it -> kernel falls back to
+MDS-inband NFSv4.2 WRITE -> **MDS handles the WRITE on its
+own local backend**.
 
-Evidence: probing DS0 via `reffs_probe1_clnt --op nfs4ops`
-after the full sweep shows OP_CHUNK_WRITE=2220,
-OP_CHUNK_READ=1590, OP_CHUNK_FINALIZE=50, OP_CHUNK_COMMIT=50
-(from variants A and B), and **zero** regular OP_WRITE.  If
-variant C were doing pNFS to the DSes via any path, the DSes
-would show non-CHUNK write activity from the kernel client.
-They show none.
+The earlier framing in this section blamed "DSes don't
+speak NFSv3."  That framing was wrong and has been
+corrected.  `reffsd` registers NFSv3 unconditionally;
+`rpcinfo -p reffs-ds0` from inside the bench MDS container
+shows `100003 v3 tcp 2049 nfs` and `100005 v3 mountd` both
+present, and `ec_demo --layout v1` (which uses FFv1+NFSv3)
+writes successfully through the same DSes (DS0's
+`--op gather` count moves on each ec_demo v1 write).
+`ds.toml`'s `minor_versions = [1, 2]` constrains NFSv4
+minor versions only; NFSv3 is always on.
+
+Evidence the kernel still did inband rather than pNFS to
+DSes:
+- DS0 `--op gather` after the full 75-cell sweep:
+  NULL=1870, GETATTR=154, SETATTR=201, **0 NFSv3 WRITE**.
+  If the kernel had used the FFv1 layout, NFSv3 WRITE would
+  be non-zero (ec_demo v1 testing confirmed the path works
+  when the resolver is set up correctly).
+- `nfs_layout_flexfiles` kernel module is loaded on shadow
+  but use-count = 0 -- nothing engaged it during the bench.
+
+See `[[reference_bench_ds_nfsv3_gap]]` (memory note) for the
+full corrected story.
 
 **Variant B's data path:** kernel NFSv4.2 mount of PS:4098
 -> kernel writes to PS via NFSv4.2 -> PS does LAYOUTGET on
