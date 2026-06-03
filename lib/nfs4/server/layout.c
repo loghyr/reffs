@@ -1379,6 +1379,26 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 			&seg_codec);
 
 		if (code_rc == -EAGAIN) {
+			/*
+			 * NOT_NOW_BROWN_COW: the runway-pop loop above
+			 * already fenced (rotated synthetic uid/gid)
+			 * and chmod'd up to `nfiles` FHs on the DSes
+			 * before we discovered the geometry shortfall.
+			 * Returning NFS4ERR_LAYOUTUNAVAILABLE here
+			 * drops those FHs on the floor -- no
+			 * in-memory layout_segment owns them, the
+			 * runway has no return-to-pool API, and the DS
+			 * doesn't know to clean them up.  The
+			 * pre-fix code accepted the degraded geometry
+			 * so the FHs always got used; this slice
+			 * intentionally refuses the degraded path
+			 * (plan-review BLOCKER B2) which exposes the
+			 * leak.  Permanent fix: add
+			 * runway_return(ds, fh) or DS-side REMOVE
+			 * in this path.  Tracked alongside the
+			 * "Runway pool that pre-allocates k+m FHs per
+			 * default_coding" deferral in the design.
+			 */
 			free(files);
 			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 			TRACE("LAYOUTGET: runway short (nfiles=%u < target=%u) -- LAYOUTUNAVAILABLE",

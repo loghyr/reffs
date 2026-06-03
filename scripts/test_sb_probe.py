@@ -338,7 +338,42 @@ def test_sb_default_coding(client, sb_id):
     check(bad3 != 0,
           f"codec_type=99 rejected (status={bad3}, want non-zero)")
 
-    # 6) Restore clear-policy state for the rest of the test run.
+    # 6) Plan-review B3 cross-check: file-layout sb (SB_LAYOUT_FILE
+    #    = 1U << 0) must refuse any EC spec.  File layouts are
+    #    single-DS per per-export-dstore.md, so an EC default would
+    #    silently break LAYOUTGET.  Verify rs:4+2 and mojette-sys:8+2
+    #    are both rejected with non-zero status; then verify
+    #    PASSTHROUGH and the unset sentinel are still accepted on
+    #    the same sb.  Restore the original layout_types afterwards
+    #    so the rest of the test run is unaffected.
+    info_before = client.sb_get(sb_id)
+    check_status_ok(info_before.sgr_status, "sb_get before B3 test")
+    saved_layout_types = info_before.sgr_resok.psi_layout_types
+
+    set_ft = client.sb_set_layout_types(sb_id, 1)  # SB_LAYOUT_FILE
+    check_status_ok(set_ft, "sb_set_layout_types(SB_LAYOUT_FILE)")
+
+    b3_rs = client.sb_set_default_coding(sb_id, 4, 4, 2)
+    check(b3_rs != 0,
+          f"B3: rs:4+2 rejected on file-layout sb (status={b3_rs}, "
+          f"want non-zero)")
+    b3_moj = client.sb_set_default_coding(sb_id, 2, 8, 2)
+    check(b3_moj != 0,
+          f"B3: mojette-sys:8+2 rejected on file-layout sb "
+          f"(status={b3_moj}, want non-zero)")
+    b3_pt = client.sb_set_default_coding(sb_id, 1, 0, 0)  # PASSTHROUGH
+    check_status_ok(b3_pt,
+                    "B3: PASSTHROUGH still accepted on file-layout sb")
+    b3_clear = client.sb_set_default_coding(sb_id, 0, 0, 0)
+    check_status_ok(b3_clear,
+                    "B3: clear sentinel still accepted on file-layout sb")
+
+    # Restore layout types so the rest of the test sees what it
+    # would have without the B3 detour.
+    restore = client.sb_set_layout_types(sb_id, saved_layout_types)
+    check_status_ok(restore, "sb_set_layout_types restore")
+
+    # 7) Restore clear-policy state for the rest of the test run.
     clear_res2 = client.sb_set_default_coding(sb_id, 0, 0, 0)
     check_status_ok(clear_res2, "sb_set_default_coding clear (final)")
 
