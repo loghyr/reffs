@@ -41,6 +41,7 @@
 #include "reffs/identity_map.h"
 #include "reffs/probe1.h"
 #include "reffs/server.h"
+#include "reffs/coding_spec.h"
 #include "reffs/super_block.h"
 #include "reffs/sb_registry.h"
 #include "reffs/dstore.h"
@@ -899,6 +900,16 @@ static void fill_sb_info(probe_sb_info1 *psi, const struct super_block *sb)
 	}
 	psi->psi_stripe_unit = sb->sb_stripe_unit;
 	psi->psi_checksum_algorithm = sb->sb_checksum_algorithm;
+
+	/* Per-export default erasure-coding spec.  Unset (all zero)
+	 * is the legacy fallback sentinel; see
+	 * .claude/design/per-export-default-coding.md step 5. */
+	psi->psi_default_coding.pcs_codec_type =
+		(unsigned int)sb->sb_default_coding.cs_codec_type;
+	psi->psi_default_coding.pcs_k =
+		(unsigned int)sb->sb_default_coding.cs_k;
+	psi->psi_default_coding.pcs_m =
+		(unsigned int)sb->sb_default_coding.cs_m;
 
 	/* Chunk activity counters. */
 	const struct reffs_chunk_stats *cs = &sb->sb_chunk_stats;
@@ -2167,6 +2178,122 @@ static int probe1_op_sb_set_checksum_algorithm(struct rpc_trans *rt)
 	return 0;
 }
 
+/*
+ * SB_SET_DEFAULT_CODING (op 31) -- per-export erasure-coding
+ * policy used by LAYOUTGET dispatch (lib/nfs4/server/layout.c
+ * default_coding_resolve_*).  See
+ * .claude/design/per-export-default-coding.md step 7.
+ *
+ * Stamps the spec on super_block::sb_default_coding via the
+ * existing setter, which validates: codec_type known, k in
+ * [1, LAYOUT_SEG_MAX_FILES], k+m <= LAYOUT_SEG_MAX_FILES,
+ * PASSTHROUGH iff m == 0.  The "all-zero spec clears policy"
+ * shortcut is also handled by the setter.
+ *
+ * Adds one cross-validation the setter cannot do without
+ * knowing the sb's layout-types: if the sb advertises file
+ * layouts (SB_LAYOUT_FILE), only PASSTHROUGH with m == 0 is
+ * accepted -- file layouts are single-DS per
+ * per-export-dstore.md, an EC spec on a file-layout sb would
+ * silently break LAYOUTGET.  See plan-review BLOCKER B3 in
+ * the design doc.  This mirrors the existing pattern in
+ * probe1_op_sb_set_dstores (lines around 1897).
+ */
+static int probe1_op_sb_set_default_coding(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_SET_DEFAULT_CODING1args *args = ph->ph_args;
+	probe_stat1 *res = ph->ph_res;
+
+	struct super_block *sb = super_block_find(args->scda_id);
+
+	if (!sb) {
+		*res = PROBE1ERR_NOENT;
+		return *res;
+	}
+
+	struct reffs_coding_spec spec = {
+		.cs_codec_type =
+			(enum reffs_codec_type)args->scda_coding.pcs_codec_type,
+		.cs_k = (uint16_t)args->scda_coding.pcs_k,
+		.cs_m = (uint16_t)args->scda_coding.pcs_m,
+	};
+
+	/*
+	 * Plan-review B3 cross-check: file layouts require a single
+	 * DS per layout; an EC spec (m > 0) on a file-layout sb is a
+	 * silent breakage waiting to happen at LAYOUTGET time, so
+	 * refuse here at the admin boundary.  PASSTHROUGH + the unset
+	 * sentinel (all-zero) are both fine since both fall through
+	 * to the legacy nfiles-driven path.
+	 */
+	if ((sb->sb_layout_types & SB_LAYOUT_FILE) &&
+	    !reffs_coding_spec_is_unset(&spec) &&
+	    (spec.cs_codec_type != REFFS_CODEC_PASSTHROUGH || spec.cs_m != 0)) {
+		TRACE("sb-set-default-coding: sb %lu advertises file "
+		      "layouts; EC coding rejected (single-DS rule)",
+		      (unsigned long)sb->sb_id);
+		super_block_put(sb);
+		*res = PROBE1ERR_INVAL;
+		return *res;
+	}
+
+	int rc = super_block_set_default_coding(sb, &spec);
+
+	if (rc < 0) {
+		TRACE("sb-set-default-coding: sb %lu rejected spec "
+		      "(codec=%u k=%u m=%u): %d",
+		      (unsigned long)sb->sb_id, spec.cs_codec_type, spec.cs_k,
+		      spec.cs_m, rc);
+		super_block_put(sb);
+		*res = PROBE1ERR_INVAL;
+		return *res;
+	}
+
+	struct server_state *ss = server_state_find();
+
+	if (ss && ss->ss_persist_ops)
+		ss->ss_persist_ops->registry_save(ss->ss_persist_ctx);
+	server_state_put(ss);
+
+	super_block_put(sb);
+	return 0;
+}
+
+/*
+ * SB_GET_DEFAULT_CODING (op 32) -- read-side counterpart of
+ * SB_SET_DEFAULT_CODING.  Returns the matched sb's
+ * sb_default_coding verbatim.  SB_GET (op 18) returns the same
+ * spec embedded in probe_sb_info1 via psi_default_coding; this
+ * dedicated op lets the integration test in step 9 round-trip
+ * the value without paying for the full sb-info encode.
+ */
+static int probe1_op_sb_get_default_coding(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_GET_DEFAULT_CODING1args *args = ph->ph_args;
+	SB_GET_DEFAULT_CODING1res *res = ph->ph_res;
+
+	struct super_block *sb = super_block_find(args->sgda_id);
+
+	if (!sb) {
+		res->sgda_status = PROBE1ERR_NOENT;
+		return 0;
+	}
+
+	SB_GET_DEFAULT_CODING1resok *resok =
+		&res->SB_GET_DEFAULT_CODING1res_u.sgda_resok;
+
+	resok->sgda_coding.pcs_codec_type =
+		(unsigned int)sb->sb_default_coding.cs_codec_type;
+	resok->sgda_coding.pcs_k = (unsigned int)sb->sb_default_coding.cs_k;
+	resok->sgda_coding.pcs_m = (unsigned int)sb->sb_default_coding.cs_m;
+
+	res->sgda_status = PROBE1_OK;
+	super_block_put(sb);
+	return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Identity management ops                                            */
 /* ------------------------------------------------------------------ */
@@ -2399,6 +2526,15 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 			   xdr_SB_SET_CHECKSUM_ALGORITHM1args,
 			   SB_SET_CHECKSUM_ALGORITHM1args, xdr_probe_stat1,
 			   probe_stat1, probe1_op_sb_set_checksum_algorithm),
+	RPC_OPERATION_INIT(PROBEPROC1, SB_SET_DEFAULT_CODING,
+			   xdr_SB_SET_DEFAULT_CODING1args,
+			   SB_SET_DEFAULT_CODING1args, xdr_probe_stat1,
+			   probe_stat1, probe1_op_sb_set_default_coding),
+	RPC_OPERATION_INIT(
+		PROBEPROC1, SB_GET_DEFAULT_CODING,
+		xdr_SB_GET_DEFAULT_CODING1args, SB_GET_DEFAULT_CODING1args,
+		xdr_SB_GET_DEFAULT_CODING1res, SB_GET_DEFAULT_CODING1res,
+		probe1_op_sb_get_default_coding),
 };
 
 static struct rpc_program_handler *probe1_handler;
