@@ -20,6 +20,7 @@
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"
 #include "reffs/darwin_rpc_compat.h" /* xdr_sizeof shim on __APPLE__ */
+#include "reffs/coding_spec.h"
 #include "reffs/dstore.h"
 #include "dstore_fanout.h"
 #include "reffs/dstore_ops.h"
@@ -574,7 +575,103 @@ out_v1:
 	return ret;
 }
 
-static nfsstat4 layoutget_build_v2(struct layout_segment *seg, char **out_body,
+/*
+ * REFFS_CODEC_* values are designed to match FFV2_ENCODING_* on
+ * the wire so the sb->layout translation is the identity cast.
+ * Pin the alignment here -- this is the one place that includes
+ * both nfsv42_xdr.h and reffs/coding_spec.h, so a future XDR
+ * change to FFV2_ENCODING_* gets caught at compile time.
+ * Plan-review N2 of .claude/design/per-export-default-coding.md.
+ */
+_Static_assert((int)REFFS_CODEC_PASSTHROUGH == (int)FFV2_ENCODING_PASSTHROUGH,
+	       "REFFS_CODEC_PASSTHROUGH must match FFV2_ENCODING_PASSTHROUGH");
+_Static_assert(
+	(int)REFFS_CODEC_MOJETTE_SYSTEMATIC ==
+		(int)FFV2_ENCODING_MOJETTE_SYSTEMATIC,
+	"REFFS_CODEC_MOJETTE_SYSTEMATIC must match FFV2_ENCODING_MOJETTE_SYSTEMATIC");
+_Static_assert(
+	(int)REFFS_CODEC_MOJETTE_NON_SYSTEMATIC ==
+		(int)FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC,
+	"REFFS_CODEC_MOJETTE_NON_SYSTEMATIC must match FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC");
+_Static_assert(
+	(int)REFFS_CODEC_RS_VANDERMONDE == (int)FFV2_ENCODING_RS_VANDERMONDE,
+	"REFFS_CODEC_RS_VANDERMONDE must match FFV2_ENCODING_RS_VANDERMONDE");
+_Static_assert((int)REFFS_CODEC_MIRRORED == (int)FFV2_ENCODING_MIRRORED,
+	       "REFFS_CODEC_MIRRORED must match FFV2_ENCODING_MIRRORED");
+
+/*
+ * Resolve the target layout width from the sb's default_coding,
+ * the layout type, the available dstore count, and the server-
+ * wide layout_width fallback.
+ *
+ *   - File layouts: one FH per DS (no mirroring), target = nds.
+ *   - Flex files with explicit default_coding: target = k + m
+ *     -- the configured codec geometry dictates how many DSes
+ *     the layout needs (plan-review B2).
+ *   - Flex files with unset default_coding: legacy behaviour --
+ *     target = ss_layout_width (server-wide knob), falling back
+ *     to REFFS_LAYOUT_WIDTH_DEFAULT if zero.
+ *
+ * Pure function -- no globals, no I/O.  Unit-tested in
+ * lib/nfs4/tests/default_coding_dispatch_test.c.
+ */
+uint32_t default_coding_resolve_target(const struct reffs_coding_spec *coding,
+				       layouttype4 layout_type, uint32_t nds,
+				       uint32_t ss_layout_width)
+{
+	if (layout_type == LAYOUT4_NFSV4_1_FILES)
+		return nds;
+	if (coding && !reffs_coding_spec_is_unset(coding))
+		return (uint32_t)coding->cs_k + (uint32_t)coding->cs_m;
+	return ss_layout_width ? ss_layout_width : REFFS_LAYOUT_WIDTH_DEFAULT;
+}
+
+/*
+ * Decide the layout segment's (k, m, ffm_coding_type) from the
+ * sb's default_coding and the runway-popped nfiles.
+ *
+ *   - Explicit default_coding: ls_k/ls_m come from the spec (NOT
+ *     from nfiles -- plan-review B2 bug-fix).  If nfiles is short
+ *     of k+m, return -EAGAIN; the caller maps to
+ *     NFS4ERR_LAYOUTUNAVAILABLE rather than silently emitting a
+ *     degraded geometry.
+ *   - Unset default_coding: legacy behaviour -- ls_k = nfiles,
+ *     ls_m = 0, codec = PASSTHROUGH (driven from the ls_m == 0
+ *     branch of the original layoutget_build_v2 dispatch).
+ *
+ * Pure function -- no globals, no I/O.  Unit-tested in
+ * lib/nfs4/tests/default_coding_dispatch_test.c.
+ */
+int default_coding_resolve_segment(const struct reffs_coding_spec *coding,
+				   uint32_t nfiles, uint16_t *out_k,
+				   uint16_t *out_m, uint32_t *out_codec_type)
+{
+	if (!out_k || !out_m || !out_codec_type)
+		return -EINVAL;
+
+	if (coding && !reffs_coding_spec_is_unset(coding)) {
+		uint32_t target =
+			(uint32_t)coding->cs_k + (uint32_t)coding->cs_m;
+
+		if (nfiles < target)
+			return -EAGAIN;
+		*out_k = coding->cs_k;
+		*out_m = coding->cs_m;
+		*out_codec_type = (uint32_t)coding->cs_codec_type;
+		return 0;
+	}
+
+	/* Legacy / unset path: ls_k = nfiles, ls_m = 0, PASSTHROUGH. */
+	if (nfiles > UINT16_MAX)
+		nfiles = UINT16_MAX;
+	*out_k = (uint16_t)nfiles;
+	*out_m = 0;
+	*out_codec_type = (uint32_t)REFFS_CODEC_PASSTHROUGH;
+	return 0;
+}
+
+static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
+				   uint32_t ffm_coding_type, char **out_body,
 				   u_long *out_size)
 {
 	ffv2_layout4 ffl;
@@ -592,25 +689,19 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg, char **out_body,
 	ffv2_mirror4 *mirror = &ffl.ffl_mirrors.ffl_mirrors_val[0];
 
 	/*
-	 * m == 0 emits FFV2_ENCODING_PASSTHROUGH; m > 0 emits
-	 * FFV2_ENCODING_RS_VANDERMONDE.  This is a stopgap: the MDS has
-	 * no per-file record of which codec the client actually uses.
+	 * ffm_coding_type is supplied by the caller, computed by
+	 * default_coding_resolve_segment() from the sb's
+	 * sb_default_coding (per-export-default-coding step 5).
+	 * When the export has no default_coding set, the caller
+	 * passes FFV2_ENCODING_PASSTHROUGH -- preserving the old
+	 * "ls_m == 0 -> PASSTHROUGH" behaviour as the legacy path.
 	 *
-	 * NOT_NOW_BROWN_COW: the codec-negotiation hint that would let
-	 * the MDS emit the correct ffm_coding_type (MIRRORED, Mojette,
-	 * ...) was attempted as a loga_layouthint field on
-	 * LAYOUTGET4args and reverted -- RFC 8881 S18.43 has no such
-	 * field, so a fixed struct field there breaks every stock
-	 * kernel NFS client (it over-reads the COMPOUND).  A correct
-	 * carrier is the fattr4_layout_hint SETATTR attribute
-	 * (RFC 8881 attribute 63) or a new draft op; until one lands,
-	 * ec_demo selects its codec from the --codec CLI flag and the
-	 * wire ffm_coding_type is advisory only.
+	 * NOT_NOW_BROWN_COW: fattr4_layout_hint SETATTR attribute
+	 * (RFC 8881 attribute 63) is the per-file mechanism that
+	 * supersedes the per-export default.  See the design's
+	 * Deferred section.
 	 */
-	if (seg->ls_m == 0)
-		mirror->ffm_coding_type = FFV2_ENCODING_PASSTHROUGH;
-	else
-		mirror->ffm_coding_type = FFV2_ENCODING_RS_VANDERMONDE;
+	mirror->ffm_coding_type = ffm_coding_type;
 	mirror->ffm_protection.fdp_data = seg->ls_k;
 	mirror->ffm_protection.fdp_parity = seg->ls_m;
 
@@ -1181,18 +1272,20 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		 * multiple data files (each with its own runway FH).
 		 */
 		struct server_state *ss = compound->c_server_state;
+		struct super_block *layout_sb = compound->c_inode->i_sb;
 		uint32_t target;
 
 		/*
-		 * File layouts: one FH per DS (no mirroring).
-		 * Flex files: mirror across multiple FHs per layout_width.
+		 * Per-export default_coding (step 5 of
+		 * .claude/design/per-export-default-coding.md):
+		 * if the export has a non-PASSTHROUGH default, target
+		 * = k + m from the spec.  Otherwise the legacy server-
+		 * wide ss_layout_width drives target.  File layouts
+		 * always get one FH per DS.
 		 */
-		if (layout_type == LAYOUT4_NFSV4_1_FILES)
-			target = nds;
-		else
-			target = ss->ss_layout_width ?
-					 ss->ss_layout_width :
-					 REFFS_LAYOUT_WIDTH_DEFAULT;
+		target = default_coding_resolve_target(
+			&layout_sb->sb_default_coding, layout_type, nds,
+			ss->ss_layout_width);
 		uint32_t fence_min = ss->ss_fence_uid_min;
 		uint32_t fence_max = ss->ss_fence_uid_max;
 
@@ -1258,13 +1351,38 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		if (seg_alg == LAYOUT_CHECKSUM_ALG_NONE)
 			seg_alg = LAYOUT_CHECKSUM_ALG_CRC32;
 
+		/*
+		 * Resolve ls_k / ls_m / ffm_coding_type from the sb's
+		 * default_coding and the runway-popped nfiles (step 5
+		 * plan-review B2 fix): when default_coding is set, the
+		 * codec geometry comes from config, not from nfiles;
+		 * if nfiles is short of k+m, we surface
+		 * NFS4ERR_LAYOUTUNAVAILABLE rather than silently
+		 * shipping a degraded layout.
+		 */
+		uint16_t seg_k = 0;
+		uint16_t seg_m = 0;
+		uint32_t seg_codec = (uint32_t)REFFS_CODEC_PASSTHROUGH;
+		int code_rc = default_coding_resolve_segment(
+			&layout_sb->sb_default_coding, nfiles, &seg_k, &seg_m,
+			&seg_codec);
+
+		if (code_rc == -EAGAIN) {
+			free(files);
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			TRACE("LAYOUTGET: runway short (nfiles=%u < target=%u) -- LAYOUTUNAVAILABLE",
+			      nfiles, target);
+			*status = NFS4ERR_LAYOUTUNAVAILABLE;
+			return 0;
+		}
+
 		struct layout_segment seg = {
 			.ls_offset = 0,
 			.ls_length = 0, /* entire file */
 			.ls_stripe_unit =
 				compound->c_inode->i_sb->sb_stripe_unit,
-			.ls_k = (uint16_t)nfiles,
-			.ls_m = 0,
+			.ls_k = seg_k,
+			.ls_m = seg_m,
 			.ls_nfiles = nfiles,
 			.ls_layout_type = layout_type,
 			.ls_checksum_algorithm = seg_alg,
@@ -1400,12 +1518,32 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	char *body = NULL;
 	u_long xdr_size = 0;
 
-	if (build_seg->ls_layout_type == LAYOUT4_NFSV4_1_FILES)
+	if (build_seg->ls_layout_type == LAYOUT4_NFSV4_1_FILES) {
 		*status = layoutget_build_file(build_seg, &body, &xdr_size);
-	else if (build_seg->ls_layout_type == LAYOUT4_FLEX_FILES_V2)
-		*status = layoutget_build_v2(build_seg, &body, &xdr_size);
-	else
+	} else if (build_seg->ls_layout_type == LAYOUT4_FLEX_FILES_V2) {
+		/*
+		 * Drive ffm_coding_type from the sb's
+		 * sb_default_coding when set, else fall back to the
+		 * legacy ls_m==0 -> PASSTHROUGH heuristic (step 5).
+		 * No persistence touch on layout_segment.
+		 */
+		uint32_t coding_type;
+		struct super_block *build_sb = compound->c_inode->i_sb;
+
+		if (build_sb &&
+		    !reffs_coding_spec_is_unset(&build_sb->sb_default_coding)) {
+			coding_type = (uint32_t)build_sb->sb_default_coding
+					      .cs_codec_type;
+		} else if (build_seg->ls_m == 0) {
+			coding_type = (uint32_t)FFV2_ENCODING_PASSTHROUGH;
+		} else {
+			coding_type = (uint32_t)FFV2_ENCODING_RS_VANDERMONDE;
+		}
+		*status = layoutget_build_v2(build_seg, coding_type, &body,
+					     &xdr_size);
+	} else {
 		*status = layoutget_build_v1(build_seg, &body, &xdr_size);
+	}
 
 	if (*status != NFS4_OK) {
 		migration_release_view(&view);

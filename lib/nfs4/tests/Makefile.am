@@ -199,6 +199,7 @@ TESTS = \
 	cb_pending \
 	chunk_test \
 	compound_async \
+	default_coding_dispatch_test \
 	delegation_lifecycle \
 	errors \
 	file_ops \
