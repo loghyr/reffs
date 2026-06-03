@@ -294,6 +294,116 @@ START_TEST(test_registry_uuid_stable_across_restarts)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Per-export default_coding round-trip                                */
+/*                                                                      */
+/* See .claude/design/per-export-default-coding.md step 4.             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Intent: a non-trivial default_coding (RS 4+2) survives a
+ * save/destroy/load cycle byte-for-byte.
+ */
+START_TEST(test_registry_default_coding_persisted)
+{
+	ck_assert_int_eq(reffs_fs_mkdir("/coding_a", 0755), 0);
+
+	struct super_block *child = super_block_alloc(20, (char *)"/coding_a",
+						      REFFS_STORAGE_RAM, NULL);
+	ck_assert_ptr_nonnull(child);
+	uuid_generate(child->sb_uuid);
+
+	struct reffs_coding_spec spec = {
+		.cs_codec_type = REFFS_CODEC_RS_VANDERMONDE,
+		.cs_k = 4,
+		.cs_m = 2,
+	};
+	ck_assert_int_eq(super_block_set_default_coding(child, &spec), 0);
+
+	ck_assert_int_eq(super_block_dirent_create(child, NULL,
+						   reffs_life_action_birth),
+			 0);
+	ck_assert_int_eq(super_block_mount(child, "/coding_a"), 0);
+
+	ck_assert_int_eq(sb_registry_save(state_dir), 0);
+	super_block_unmount(child);
+	super_block_destroy(child);
+	super_block_release_dirents(child);
+	super_block_put(child);
+
+	ck_assert_int_eq(sb_registry_load(state_dir), 0);
+
+	struct super_block *reloaded = super_block_find(20);
+	ck_assert_ptr_nonnull(reloaded);
+
+	ck_assert_int_eq(reloaded->sb_default_coding.cs_codec_type,
+			 REFFS_CODEC_RS_VANDERMONDE);
+	ck_assert_uint_eq(reloaded->sb_default_coding.cs_k, 4);
+	ck_assert_uint_eq(reloaded->sb_default_coding.cs_m, 2);
+
+	super_block_unmount(reloaded);
+	super_block_destroy(reloaded);
+	super_block_release_dirents(reloaded);
+	super_block_put(reloaded);
+	ck_assert_int_eq(reffs_fs_rmdir("/coding_a"), 0);
+}
+END_TEST
+
+/*
+ * Intent: a sb with no default_coding (legacy / pre-slice entry
+ * shape) loads as reffs_coding_spec_is_unset() == true.  Also
+ * asserts srh_version remains 1 -- the per-export-default-coding
+ * slice does NOT bump the on-disk version (per CLAUDE.md
+ * no-deployed-storage rule and plan-review W5).
+ */
+START_TEST(test_registry_default_coding_absent_legacy)
+{
+	ck_assert_int_eq(reffs_fs_mkdir("/coding_b", 0755), 0);
+
+	struct super_block *child = super_block_alloc(21, (char *)"/coding_b",
+						      REFFS_STORAGE_RAM, NULL);
+	ck_assert_ptr_nonnull(child);
+	uuid_generate(child->sb_uuid);
+	/* DO NOT call super_block_set_default_coding -- field stays zero,
+	 * exercising the legacy / pre-slice path. */
+
+	ck_assert_int_eq(super_block_dirent_create(child, NULL,
+						   reffs_life_action_birth),
+			 0);
+	ck_assert_int_eq(super_block_mount(child, "/coding_b"), 0);
+
+	ck_assert_int_eq(sb_registry_save(state_dir), 0);
+	super_block_unmount(child);
+	super_block_destroy(child);
+	super_block_release_dirents(child);
+	super_block_put(child);
+
+	/* Read raw header bytes to verify srh_version stayed at 1. */
+	char registry_path[256];
+	snprintf(registry_path, sizeof(registry_path), "%s/%s", state_dir,
+		 SB_REGISTRY_FILE);
+	FILE *fp = fopen(registry_path, "rb");
+	ck_assert_ptr_nonnull(fp);
+	struct sb_registry_header hdr;
+	ck_assert_int_eq(fread(&hdr, sizeof(hdr), 1, fp), 1);
+	fclose(fp);
+	ck_assert_uint_eq(hdr.srh_magic, SB_REGISTRY_MAGIC);
+	ck_assert_uint_eq(hdr.srh_version, 1);
+
+	ck_assert_int_eq(sb_registry_load(state_dir), 0);
+
+	struct super_block *reloaded = super_block_find(21);
+	ck_assert_ptr_nonnull(reloaded);
+	ck_assert(reffs_coding_spec_is_unset(&reloaded->sb_default_coding));
+
+	super_block_unmount(reloaded);
+	super_block_destroy(reloaded);
+	super_block_release_dirents(reloaded);
+	super_block_put(reloaded);
+	ck_assert_int_eq(reffs_fs_rmdir("/coding_b"), 0);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Persistent ID counter                                               */
 /* ------------------------------------------------------------------ */
 
@@ -533,6 +643,12 @@ static Suite *sb_persistence_suite(void)
 	tcase_add_checked_fixture(tc, persist_setup, persist_teardown);
 	tcase_add_test(tc, test_registry_uuid_persisted);
 	tcase_add_test(tc, test_registry_uuid_stable_across_restarts);
+	suite_add_tcase(s, tc);
+
+	tc = tcase_create("default_coding");
+	tcase_add_checked_fixture(tc, persist_setup, persist_teardown);
+	tcase_add_test(tc, test_registry_default_coding_persisted);
+	tcase_add_test(tc, test_registry_default_coding_absent_legacy);
 	suite_add_tcase(s, tc);
 
 	tc = tcase_create("alloc_id");

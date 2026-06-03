@@ -9,6 +9,8 @@
 #include <stdint.h>
 #include <uuid/uuid.h>
 
+#include "reffs/coding_spec.h"
+
 /*
  * Superblock registry -- persists the set of superblocks and their
  * lifecycle state across server restarts.
@@ -86,6 +88,20 @@ struct sb_registry_entry {
 	 * means "no policy set", treated as CRC32 at LAYOUTGET time.
 	 */
 	uint32_t sre_checksum_algorithm;
+	/*
+	 * Per-export default codec.  Mirrors sb->sb_default_coding.
+	 * Zero-initialised entries (legacy / never-set) load as
+	 * reffs_coding_spec_is_unset() == true and the LAYOUTGET
+	 * dispatch routes to the ss_layout_width PASSTHROUGH
+	 * fallback.  Step 4 of
+	 * .claude/design/per-export-default-coding.md.
+	 *
+	 * Stored as a fixed-size struct (uint32 + 2x uint16 = 8
+	 * bytes) so the entry's binary layout stays stable for
+	 * round-trip persistence; no version bump needed per
+	 * CLAUDE.md "Deployment Status" no-deployed-storage rule.
+	 */
+	struct reffs_coding_spec sre_default_coding;
 	char sre_path[SB_REGISTRY_MAX_PATH];
 	char sre_backend_path[SB_REGISTRY_MAX_PATH];
 };

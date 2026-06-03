@@ -123,6 +123,7 @@ int sb_registry_save(const char *state_dir)
 			entries[i].sre_stripe_unit = sb->sb_stripe_unit;
 			entries[i].sre_checksum_algorithm =
 				sb->sb_checksum_algorithm;
+			entries[i].sre_default_coding = sb->sb_default_coding;
 			i++;
 		}
 		rcu_read_unlock();
@@ -340,6 +341,7 @@ int sb_registry_load(const char *state_dir)
 		}
 		sb->sb_stripe_unit = e->sre_stripe_unit;
 		sb->sb_checksum_algorithm = e->sre_checksum_algorithm;
+		sb->sb_default_coding = e->sre_default_coding;
 
 		ret = super_block_dirent_create(sb, NULL,
 						reffs_life_action_birth);
