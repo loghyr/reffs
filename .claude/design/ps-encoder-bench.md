@@ -238,18 +238,28 @@ This was the predicted MVP limitation (see the scoping
 decision above) and it hit on the first run.  Variant B in
 this dataset is "PS proxy of plain layout," not "PS EC."
 
-### Take 2: on single-host loopback, the PS hop is invisible (with caveats)
+### Take 2: on single-host loopback, B == C measures fsync-parallelism not PS overhead
 
 Variant B ≈ variant C at every size on this bench.  Before
 declaring "the PS hop is free," it is worth being precise
 about what the two variants actually do.
 
-**Variant C's data path:** kernel NFSv4.2 mount of MDS:2049
--> kernel asks for a layout -> MDS advertises `layout_types
-= ["ffv1", "ffv2"]` -> Linux kernel supports FFv1 (RFC 8435)
-but not FFv2/CHUNK, so MDS issues an FFv1 layout -> kernel
-writes **via NFSv3 to the DSes**.  Bottleneck: per-DS fsync
-round-trip.
+**Variant C's data path (confirmed via DS-side counters
+2026-06-02):** kernel NFSv4.2 mount of MDS:2049 -> kernel may
+request a layout from MDS -> bench DSes run with
+`minor_versions = [1, 2]` only (NFSv4.1/4.2; **no NFSv3
+listener**) -> any FFv1 layout the kernel got cannot be
+satisfied because FFv1 requires NFSv3 to the DSes -> kernel
+falls back to inband NFSv4.2 WRITE to MDS -> **MDS handles
+the WRITE on its own local backend**.
+
+Evidence: probing DS0 via `reffs_probe1_clnt --op nfs4ops`
+after the full sweep shows OP_CHUNK_WRITE=2220,
+OP_CHUNK_READ=1590, OP_CHUNK_FINALIZE=50, OP_CHUNK_COMMIT=50
+(from variants A and B), and **zero** regular OP_WRITE.  If
+variant C were doing pNFS to the DSes via any path, the DSes
+would show non-CHUNK write activity from the kernel client.
+They show none.
 
 **Variant B's data path:** kernel NFSv4.2 mount of PS:4098
 -> kernel writes to PS via NFSv4.2 -> PS does LAYOUTGET on
@@ -287,15 +297,31 @@ On a real network the PS path would pay:
   sessions vs kernel's persistent ones
 
 **Corrected claim from this data**: on a single-host docker
-bench, the PS proxy adds no measurable wall-clock latency
-over the direct kernel-mount-of-MDS path for plain-mirror
-layouts.  The "PS hop is free" framing is not earned by
-this data set -- it would need a real-network test (PS in a
-different host/rack from the MDS/DSes) to actually measure
-the hop cost.
+bench, variants B and C produce equal wall-clocks for plain-
+mirror layouts.  This data set cannot distinguish "the PS
+hop costs nothing" from "the PS hop costs something but is
+hidden inside the fsync wait that dominates both paths."
+The two paths are not even doing the same disk work:
+
+| Variant | Total disk bytes / cell |  Concurrent fsyncs |
+|---|---|---|
+| C inband (MDS-local POSIX) | 1 MB     | 1  (MDS file)         |
+| B PASSTHROUGH layout_width=10 | ~10 MB | up to 10 (parallel DSes) |
+
+B does ~10x the disk bytes; the equal wall-clocks mean B's
+fsync parallelism roughly matches C's single-fsync latency
+on the same physical disk.  Today's number measures fsync
+parallelism on shared storage, not PS overhead.
+
+The "PS hop is free" framing is not earned by this data.  A
+real-network test (PS in a different host from MDS/DSes,
+DSes on distinct storage) would expose the PS-side latency
+that loopback hides AND separate the per-DS fsync waits
+from each other.  This is the motivation for the queued
+4-variant experiment plan below.
 
 This is worth saying on the deck because the WG audience
-will ask exactly the question above; pre-empting the
+will ask exactly the questions above; pre-empting the
 "single-host loopback hides everything" rebuttal is the
 honest move.
 
