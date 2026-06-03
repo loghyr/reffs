@@ -953,15 +953,37 @@ int super_block_set_default_coding(struct super_block *sb,
 		return -EINVAL;
 	}
 
+	/*
+	 * Explicit PASSTHROUGH carries no codec geometry of its own
+	 * (the runway-pop count IS ls_k at LAYOUTGET time -- see
+	 * default_coding_resolve_segment) so k and m both stay zero,
+	 * which would fail the k >= 1 bound below.  The TOML parser
+	 * produces {PASSTHROUGH, 0, 0} for default_coding =
+	 * "passthrough"; the probe op accepts the same shape from
+	 * admin.  Store it as-is so sb_get_default_coding can
+	 * distinguish "admin chose passthrough" from "no policy
+	 * (unset)" -- both share the legacy resolve path but the
+	 * intent surfaces differently in audit / TOML round-trip.
+	 */
+	if (spec->cs_codec_type == REFFS_CODEC_PASSTHROUGH) {
+		if (spec->cs_m != 0)
+			return -EINVAL; /* PASSTHROUGH carries no parity */
+		if (spec->cs_k > LAYOUT_SEG_MAX_FILES)
+			return -EINVAL; /* k may be 0 (TOML default) */
+		sb->sb_default_coding = *spec;
+		return 0;
+	}
+
 	if (spec->cs_k < 1 || spec->cs_k > LAYOUT_SEG_MAX_FILES)
 		return -EINVAL;
 	if (spec->cs_m > LAYOUT_SEG_MAX_FILES - spec->cs_k)
 		return -EINVAL;
 
-	/* m == 0 IFF PASSTHROUGH. */
-	bool is_passthrough = (spec->cs_codec_type == REFFS_CODEC_PASSTHROUGH);
-
-	if (is_passthrough != (spec->cs_m == 0))
+	/* Non-PASSTHROUGH codecs all require m > 0 (otherwise they
+	 * collapse to the legacy path which is what PASSTHROUGH is
+	 * for).  Reject the degenerate "rs:4+0" / "mojette-sys:8+0"
+	 * shape at the admin boundary. */
+	if (spec->cs_m == 0)
 		return -EINVAL;
 
 	sb->sb_default_coding = *spec;
