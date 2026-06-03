@@ -259,11 +259,13 @@ END_TEST
 /*
  * Explicit PASSTHROUGH spec (k=anything, m=0) -- distinct from
  * the unset case in intent (admin explicitly chose
- * "passthrough" via TOML).  Same observed behaviour as unset:
- * the runway count drives ls_k and codec is PASSTHROUGH.
- * Today the parser rejects "passthrough:K+M" so PASSTHROUGH
- * always carries k=m=0, hence the spec passes
- * reffs_coding_spec_is_unset(); the test pins that contract.
+ * "passthrough" via TOML so cs_codec_type is non-zero).  The
+ * spec is therefore NOT formally "unset", but
+ * default_coding_resolve_segment must observe the same legacy
+ * behaviour: the runway count drives ls_k, ls_m = 0,
+ * codec = PASSTHROUGH.  The helper keys off cs_m == 0 (which
+ * the setter invariant ties to PASSTHROUGH) so the explicit
+ * and unset paths converge cleanly.
  */
 START_TEST(test_segment_explicit_passthrough_equals_unset)
 {
@@ -275,7 +277,10 @@ START_TEST(test_segment_explicit_passthrough_equals_unset)
 	uint16_t k = 0, m = 0;
 	uint32_t codec = 0;
 
-	ck_assert(reffs_coding_spec_is_unset(&pt));
+	/* Explicit PASSTHROUGH carries a non-zero codec_type, so it
+	 * is NOT the all-zero "unset" sentinel even though m == 0. */
+	ck_assert(!reffs_coding_spec_is_unset(&pt));
+
 	int rc = default_coding_resolve_segment(&pt, 4, &k, &m, &codec);
 
 	ck_assert_int_eq(rc, 0);

@@ -649,7 +649,17 @@ int default_coding_resolve_segment(const struct reffs_coding_spec *coding,
 	if (!out_k || !out_m || !out_codec_type)
 		return -EINVAL;
 
-	if (coding && !reffs_coding_spec_is_unset(coding)) {
+	/*
+	 * The "explicit coding wants more shards than runway has"
+	 * trap fires only for m > 0 specs.  PASSTHROUGH (m == 0)
+	 * means "ship the bytes plain across nfiles DSes" -- the
+	 * runway count IS the ls_k, exactly like the unset path.
+	 * The setter invariant ties (m == 0) to (codec ==
+	 * PASSTHROUGH), so this single branch covers both the
+	 * "unset" and "explicit passthrough" cases without an
+	 * extra is_unset() probe.
+	 */
+	if (coding && coding->cs_m > 0) {
 		uint32_t target =
 			(uint32_t)coding->cs_k + (uint32_t)coding->cs_m;
 
@@ -661,7 +671,8 @@ int default_coding_resolve_segment(const struct reffs_coding_spec *coding,
 		return 0;
 	}
 
-	/* Legacy / unset path: ls_k = nfiles, ls_m = 0, PASSTHROUGH. */
+	/* Legacy / explicit-PASSTHROUGH path: ls_k = nfiles, ls_m = 0,
+	 * codec = PASSTHROUGH. */
 	if (nfiles > UINT16_MAX)
 		nfiles = UINT16_MAX;
 	*out_k = (uint16_t)nfiles;
