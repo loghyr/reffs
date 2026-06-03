@@ -204,3 +204,119 @@ end-to-end:
 3. **Full matrix** (manual orchestration, outer loop sweeps
    codec/geometry): 325 rows.  Reserved for the actual
    bench-data-collection slice, not for the scaffold delivery.
+
+## Findings from the 2026-06-02 smoke + single-codec sweep on shadow
+
+CSV: `~/Documents/reffs-docs/experiments/ps_vs_client_bench-shadow-2026-06-02.csv`
+(75 cells, 5 sizes × 5 iters × 3 variants, codec=rs, k=4 m=2,
+0 FAIL).
+
+Write / read medians (ms) per (variant, size):
+
+| Size   | A w | A r | B w | B r | C w | C r |
+|--------|----:|----:|----:|----:|----:|----:|
+| 4 KB   | 441 | 259 | 736 | 497 | 721 | 490 |
+| 16 KB  | 441 | 250 | 746 | 496 | 734 | 493 |
+| 64 KB  | 508 | 268 | 747 | 519 | 745 | 506 |
+| 256 KB | 574 | 370 | 739 | 525 | 736 | 501 |
+| 1 MB   |1267 | 707 | 714 | 513 | 734 | 510 |
+
+### Take 1: variant B's MVP limitation hit on the first run
+
+Variant B is within ±3% of variant C at every size (write
+medians 736 vs 721, 746 vs 734, 747 vs 745, 739 vs 736, 714
+vs 734).  Investigation: `lib/nfs4/server/layout.c:610-613`
+chooses the layout's coding type purely from `ls_m`: `m == 0
+-> FFV2_ENCODING_PASSTHROUGH`, `m > 0 ->
+FFV2_ENCODING_RS_VANDERMONDE`.  Files created over a kernel
+NFSv4.2 mount have `ls_m == 0` because the MDS has no
+per-file mechanism to ask for parity, so the layout the PS
+gets is plain mirror, so the PS does no encoding -- it
+proxies the bytes through unchanged.
+
+This was the predicted MVP limitation (see the scoping
+decision above) and it hit on the first run.  Variant B in
+this dataset is "PS proxy of plain layout," not "PS EC."
+
+### Take 2: the PS proxy hop costs essentially nothing for plain layouts
+
+Variant B ≈ variant C at every size means the PS hop adds
+no measurable latency to the no-EC path.  This is a real WG
+signal in its own right: the proxy is not a latency tax.
+The result generalises to "any path where the PS doesn't
+encode" -- mirror layouts, single-DS layouts, opaque-byte
+forwarding.  It does *not* answer "where should EC encoding
+live" because B does not encode.
+
+### Take 3: client-EC vs no-EC crossover at ~256 KB
+
+Variant A (client EC via ec_demo) shows the opposite shape
+from B and C:
+
+| Size   | A vs C write |
+|--------|-------------:|
+| 4 KB   | A = 0.61 * C |
+| 16 KB  | A = 0.60 * C |
+| 64 KB  | A = 0.68 * C |
+| 256 KB | A = 0.78 * C |
+| 1 MB   | A = 1.73 * C |
+
+Up to 256 KB, ec_demo's userspace COMPOUND beats the kernel
+NFS client's mount + open + write + fsync + close (less
+syscall overhead, no dcache, no per-op security check).  At
+1 MB the RS encoding compute crosses over and A becomes
+substantially slower than C.
+
+This is not the apples-to-apples comparison we want -- A does
+EC, C does not -- but it bounds the absolute cost of the
+client-EC path on this hardware (1 MB RS 4+2 v2 NEON shadow
+docker: 1267 ms wall-clock).  When variant B is unblocked
+(see next-slice note) we will be able to compare it directly
+to A at the same encoding.
+
+### Next slice: unblock variant B
+
+To get the WG-relevant comparison (client-EC vs PS-EC at
+matched codec/geometry), the MDS needs a path to issue an
+EC layout for the test file.  Two paths the layout.c
+NOT_NOW_BROWN_COW at line 599-608 already identifies:
+
+1. `fattr4_layout_hint` SETATTR (RFC 8881 attribute 63).
+   Standard attribute, no protocol extension.  Client opens
+   the file, SETATTR sets the hint, subsequent LAYOUTGET on
+   the file returns a layout with the hinted codec.  The PS
+   path would honour this transparently because the PS does
+   LAYOUTGET on behalf of the kernel client and gets the
+   hint-derived layout.
+2. A new draft op (per the layout.c comment).  Heavier;
+   defer to (1).
+
+Both options require server-side wiring of "remember the
+hint per inode + use it at LAYOUTGET time."  Estimate: one
+slice (~1 week), gated on standards-side fattr4_layout_hint
+support in reffs's fattr machinery, which currently does
+not enumerate attribute 63 as supported.  Tracked
+separately.
+
+In the meantime, a low-effort interim: configure-time
+default codec at the MDS level (per-export TOML field
+`default_coding = "rs:4+2"`).  Sets `ls_m` to the configured
+parity count at runway pool-file creation.  Bench can then
+toggle between B-with-plain (today) and B-with-EC by
+restarting the MDS with different defaults.  Not the
+long-term answer but cheap; ~50 LOC, no XDR change.
+
+### Status
+
+- Scaffold (this design + the harness script): **shipped**
+  (reffs commit `f16fff1cda26`).
+- Smoke + single-codec sweep on shadow: **shipped**
+  (CSV persisted to reffs-docs).
+- Variant B as "PS EC" measurement: **blocked on MDS
+  codec selection mechanism** -- see Next slice above.
+- Bucket 2 slide 22 on the deck: leave the placeholder
+  ("Slide upgrades to live medians once the dreamer / garbo
+  run completes") as-is; the data this slice produced is
+  "PS proxy is free, client-EC has a 1 MB crossover with
+  no-EC," not the head-to-head A/B comparison the slide is
+  set up to present.
