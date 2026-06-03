@@ -64,12 +64,14 @@ real-network topology (3 hosts or HS-lab VMs) the DSes have
 routable IPs and the kernel resolves them naturally; no
 ds.toml change is needed.
 
-A single-host stop-gap for kernel-pNFS tests is recorded in
-`[[reference_bench_ds_nfsv3_gap]]` (attach the client to
-both the docker-compose network and `--network=host`, or
-have the MDS issue IP-based deviceinfo instead of names);
-neither is necessary if the experiment runs on real
-hosts.
+A single-host stop-gap for kernel-pNFS tests was tried
+2026-06-03 (DS-IP injection into client `/etc/hosts`; reffs
+commit `f0443b6b28df`).  Resolution and reachability work
+fine but kernel pNFS still does not engage -- there is at
+least one more single-host artefact beyond DNS that we have
+not isolated.  See `[[reference_bench_ds_nfsv3_gap]]` for
+the full investigation log.  Real-host topology dodges all
+of these by construction.
 
 Variant (d) is what variant B in the A/B/C harness was
 *supposed* to measure but couldn't because of the layout-
