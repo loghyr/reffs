@@ -26,6 +26,7 @@
 #include <rpc/auth.h>
 
 #include "nfsv3_xdr.h"
+#include "nfsv3_names.h"
 #include "ec_client.h"
 
 #define DS_RPC_TIMEOUT_SEC 30
@@ -132,15 +133,18 @@ int ds_write(struct ds_conn *dc, const uint8_t *fh, uint32_t fh_len,
 			     (xdrproc_t)xdr_WRITE3res, (caddr_t)&res, tv);
 
 	if (rpc_stat != RPC_SUCCESS) {
-		fprintf(stderr, "ds_write: clnt_call failed: rpc_stat=%d\n",
-			rpc_stat);
+		fprintf(stderr,
+			"ds_write: clnt_call failed: rpc_stat=%d (%s)\n",
+			rpc_stat, clnt_sperrno(rpc_stat));
 		xdr_free((xdrproc_t)xdr_WRITE3res, (caddr_t)&res);
 		return -EIO;
 	}
 
 	if (res.status != NFS3_OK) {
-		fprintf(stderr, "ds_write: NFS3 error: status=%d\n",
-			res.status);
+		const char *name = nfs3_err_name(res.status);
+
+		fprintf(stderr, "ds_write: NFS3 error: status=%d (%s)\n",
+			res.status, name ? name : "unknown");
 		xdr_free((xdrproc_t)xdr_WRITE3res, (caddr_t)&res);
 		return -EIO;
 	}
@@ -173,11 +177,17 @@ int ds_read(struct ds_conn *dc, const uint8_t *fh, uint32_t fh_len,
 			     (xdrproc_t)xdr_READ3res, (caddr_t)&res, tv);
 
 	if (rpc_stat != RPC_SUCCESS) {
+		fprintf(stderr, "ds_read: clnt_call failed: rpc_stat=%d (%s)\n",
+			rpc_stat, clnt_sperrno(rpc_stat));
 		xdr_free((xdrproc_t)xdr_READ3res, (caddr_t)&res);
 		return -EIO;
 	}
 
 	if (res.status != NFS3_OK) {
+		const char *name = nfs3_err_name(res.status);
+
+		fprintf(stderr, "ds_read: NFS3 error: status=%d (%s)\n",
+			res.status, name ? name : "unknown");
 		xdr_free((xdrproc_t)xdr_READ3res, (caddr_t)&res);
 		return -EIO;
 	}

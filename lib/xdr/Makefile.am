@@ -32,6 +32,8 @@ GEN_SOURCES = \
 	sm_inter.c		\
 	probe1_xdr.h		\
 	probe1_xdr.c		\
+	nfsv3_names.h		\
+	nfsv3_names.c		\
 	nfsv42_names.h		\
 	nfsv42_names.c
 
@@ -89,3 +91,17 @@ nfsv42_names.c: nfsv42_names.stamp
 	@test -f $@ || ($(MAKE) $(AM_MAKEFLAGS) nfsv42_names.stamp && test -f $@)
 
 CLEANFILES += nfsv42_names.stamp
+
+# Mirror of the nfsv42 stanza for nfsv3.  Generates nfs3_err_name().
+nfsv3_names.stamp: nfsv3_xdr.x
+	$(XDR_PARSER) --names --lang c --prefix nfsv3 \
+		--output-dir $(builddir) $(srcdir)/nfsv3_xdr.x
+	touch $@
+
+nfsv3_names.h: nfsv3_names.stamp
+	@test -f $@ || ($(MAKE) $(AM_MAKEFLAGS) nfsv3_names.stamp && test -f $@)
+
+nfsv3_names.c: nfsv3_names.stamp
+	@test -f $@ || ($(MAKE) $(AM_MAKEFLAGS) nfsv3_names.stamp && test -f $@)
+
+CLEANFILES += nfsv3_names.stamp
