@@ -17,7 +17,9 @@
 #include <unistd.h>
 #include "reffs/rcu.h"
 #include "reffs/backend.h"
+#include "reffs/coding_spec.h"
 #include "reffs/dirent.h"
+#include "reffs/layout_segment.h"
 #include "reffs/fs.h"
 #include "reffs/inode.h"
 #include "reffs/log.h"
@@ -924,6 +926,46 @@ void super_block_set_flavors(struct super_block *sb,
 	rule.scr_nflavors = n;
 
 	super_block_set_client_rules(sb, &rule, n > 0 ? 1 : 0);
+}
+
+int super_block_set_default_coding(struct super_block *sb,
+				   const struct reffs_coding_spec *spec)
+{
+	if (!sb || !spec)
+		return -EINVAL;
+
+	/* Zero spec -- explicit "clear / use ss_layout_width fallback". */
+	if (reffs_coding_spec_is_unset(spec)) {
+		memset(&sb->sb_default_coding, 0,
+		       sizeof(sb->sb_default_coding));
+		return 0;
+	}
+
+	/* cs_codec_type must be a known REFFS_CODEC_* value. */
+	switch (spec->cs_codec_type) {
+	case REFFS_CODEC_PASSTHROUGH:
+	case REFFS_CODEC_MOJETTE_SYSTEMATIC:
+	case REFFS_CODEC_MOJETTE_NON_SYSTEMATIC:
+	case REFFS_CODEC_RS_VANDERMONDE:
+	case REFFS_CODEC_MIRRORED:
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (spec->cs_k < 1 || spec->cs_k > LAYOUT_SEG_MAX_FILES)
+		return -EINVAL;
+	if (spec->cs_m > LAYOUT_SEG_MAX_FILES - spec->cs_k)
+		return -EINVAL;
+
+	/* m == 0 IFF PASSTHROUGH. */
+	bool is_passthrough = (spec->cs_codec_type == REFFS_CODEC_PASSTHROUGH);
+
+	if (is_passthrough != (spec->cs_m == 0))
+		return -EINVAL;
+
+	sb->sb_default_coding = *spec;
+	return 0;
 }
 
 int super_block_lint_flavors(void)
