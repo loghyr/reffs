@@ -143,7 +143,11 @@ Three admin paths:
    `[[export]]`-is-root-only rule).  Non-root sbs come from
    probe.
 
-2. **Probe op `SB_SET_DEFAULT_CODING`** (new op 28):
+2. **Probe op `SB_SET_DEFAULT_CODING`** (new op 31 -- op
+   numbers 28-30 are occupied by INODE_LAYOUT_LIST,
+   SB_GET_CLIENT_RULES, and PS_LISTENER_LIST landed on main
+   between this design's first reviewer pass and step 6
+   implementation):
 
    ```
    struct SB_SET_DEFAULT_CODING1args {
@@ -168,11 +172,13 @@ Three admin paths:
      rule "file layouts = single DS per export".  Return
      `PROBE1ERR_INVAL`.
 
-3. **Probe op `SB_GET_DEFAULT_CODING`** (new op 29): takes
+3. **Probe op `SB_GET_DEFAULT_CODING`** (new op 32): takes
    `sb_id`, returns `probe_coding_spec1`.  Symmetric with the
    existing `SB_SET_STRIPE_UNIT` / `SB_SET_CHECKSUM_ALGORITHM`
    shape in `probe1_server.c`.  Integration test in step 9
    uses this directly rather than walking `sb-get` output.
+   (Was op 29 in the original design before SB_GET_CLIENT_RULES
+   claimed it.)
 
 4. **Probe `SB_GET` / `SB_LIST`**: extend `probe_sb_info1`
    with `psi_default_coding` so admins can inspect current

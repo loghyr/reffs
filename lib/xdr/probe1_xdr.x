@@ -277,6 +277,22 @@ struct probe_client_rule1 {
 };
 
 /*
+ * Per-export default erasure-coding spec -- mirrors
+ * struct reffs_coding_spec in lib/include/reffs/coding_spec.h.
+ * pcs_codec_type values are the FFV2_ENCODING_* wire constants
+ * (PASSTHROUGH=1, MOJETTE_SYS=2, MOJETTE_NONSYS=3, RS_VANDERMONDE=4,
+ * MIRRORED=5).  An all-zero spec (cs_codec_type == 0) is the
+ * "unset" sentinel: LAYOUTGET falls back to the legacy
+ * ls_k = nfiles, ls_m = 0 path.  See
+ * .claude/design/per-export-default-coding.md.
+ */
+struct probe_coding_spec1 {
+	unsigned int	pcs_codec_type;
+	unsigned int	pcs_k;
+	unsigned int	pcs_m;
+};
+
+/*
  * Chunk activity counters (per-sb).  See
  * .claude/design/chunk-collision-validation.md (BLOCKER 2):
  * harness reads these before/after a sweep and asserts on
@@ -333,6 +349,13 @@ struct probe_sb_info1 {
 	 * Appended for wire compat.
 	 */
 	unsigned int		psi_checksum_algorithm;
+	/*
+	 * Per-export default erasure-coding spec (step 6 of
+	 * .claude/design/per-export-default-coding.md).  An all-zero
+	 * spec is the "unset" sentinel -- LAYOUTGET falls back to the
+	 * legacy nfiles-driven path.  Appended for wire compat.
+	 */
+	probe_coding_spec1	psi_default_coding;
 };
 
 /* SB_LIST (op 13) */
@@ -459,6 +482,58 @@ struct SB_SET_STRIPE_UNIT1args {
 struct SB_SET_CHECKSUM_ALGORITHM1args {
 	unsigned hyper		sca_id;
 	unsigned int		sca_checksum_algorithm;
+};
+
+/*
+ * SB_SET_DEFAULT_CODING (op 31) -- per-export default
+ * erasure-coding policy.  Step 6 of
+ * .claude/design/per-export-default-coding.md.
+ *
+ * The MDS stores this on the super_block and consults it from
+ * LAYOUTGET (lib/nfs4/server/layout.c
+ * default_coding_resolve_target / _resolve_segment) to drive the
+ * issued layout's (ls_k, ls_m, ffm_coding_type) without using
+ * the runway-pop count as the codec geometry.
+ *
+ * Validation in the handler (see step 7 in the design doc):
+ *   - scda_coding.pcs_codec_type must be a known
+ *     FFV2_ENCODING_* value
+ *   - pcs_k >= 1, pcs_k <= LAYOUT_SEG_MAX_FILES (32)
+ *   - pcs_k + pcs_m <= LAYOUT_SEG_MAX_FILES
+ *   - PASSTHROUGH iff pcs_m == 0 (setter invariant)
+ *   - File-layout cross-check (plan-review B3): if the sb's
+ *     sb_layout_types includes SB_LAYOUT_FILE, only PASSTHROUGH
+ *     with pcs_m == 0 is accepted -- file layouts require a
+ *     single DS per per-export-dstore.md.
+ *
+ * Setting an all-zero spec (pcs_codec_type == 0, k == 0,
+ * m == 0) clears the policy: LAYOUTGET falls back to the legacy
+ * nfiles-driven path.  Returns probe_stat1 directly.
+ */
+struct SB_SET_DEFAULT_CODING1args {
+	unsigned hyper		scda_id;
+	probe_coding_spec1	scda_coding;
+};
+
+/*
+ * SB_GET_DEFAULT_CODING (op 32) -- read-side counterpart of
+ * SB_SET_DEFAULT_CODING.  Returns the matched sb's
+ * sb_default_coding verbatim.  SB_GET (op 18) returns the same
+ * spec embedded in probe_sb_info1 via psi_default_coding; this
+ * dedicated op lets the integration test in step 9 round-trip
+ * the value without walking the full sb summary.
+ */
+struct SB_GET_DEFAULT_CODING1args {
+	unsigned hyper		sgda_id;
+};
+struct SB_GET_DEFAULT_CODING1resok {
+	probe_coding_spec1	sgda_coding;
+};
+union SB_GET_DEFAULT_CODING1res switch (probe_stat1 sgda_status) {
+	case PROBE1_OK:
+		SB_GET_DEFAULT_CODING1resok	sgda_resok;
+	default:
+		void;
 };
 
 /*
@@ -946,5 +1021,18 @@ program PROBE_PROGRAM {
 		 * (Pending Change 6 step 6) */
 		probe_stat1 PROBEPROC1_SB_SET_CHECKSUM_ALGORITHM(
 			SB_SET_CHECKSUM_ALGORITHM1args) = 38;
+
+		/* Per-SB default erasure-coding policy for MDS layouts
+		 * (.claude/design/per-export-default-coding.md step 6).
+		 * The design originally called for ops 28 + 29; those
+		 * numbers were taken by INODE_LAYOUT_LIST and
+		 * SB_GET_CLIENT_RULES between the first review pass and
+		 * this slice landing, so the implementation uses
+		 * 31 (set) and 32 (get). */
+		probe_stat1 PROBEPROC1_SB_SET_DEFAULT_CODING(
+			SB_SET_DEFAULT_CODING1args) = 31;
+		SB_GET_DEFAULT_CODING1res
+		PROBEPROC1_SB_GET_DEFAULT_CODING(
+			SB_GET_DEFAULT_CODING1args) = 32;
 	} = 1;
 } = 211768;
