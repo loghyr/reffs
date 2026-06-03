@@ -15,6 +15,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "reffs/coding_spec.h"
+
 #define REFFS_CONFIG_MAX_PATH 4096
 #define REFFS_CONFIG_MAX_BIND 64
 #define REFFS_CONFIG_MAX_EXPORTS 64
@@ -111,6 +113,14 @@ struct reffs_export_config {
 	/* Dstore IDs to bind to this export (0 = use global pool). */
 	uint32_t dstores[REFFS_CONFIG_MAX_DSTORES];
 	unsigned int ndstores;
+	/*
+	 * Per-export default codec for LAYOUTGET.  Parsed from TOML
+	 * `default_coding = "rs:K+M"` etc.  Zero-initialised means
+	 * no explicit default -- LAYOUTGET falls back to PASSTHROUGH
+	 * with k = ss_layout_width (server-wide).  See
+	 * .claude/design/per-export-default-coding.md.
+	 */
+	struct reffs_coding_spec default_coding;
 };
 
 /*

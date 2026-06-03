@@ -480,6 +480,242 @@ START_TEST(test_load_export_multi_rule)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* load -- default_coding (per-export codec selection)                  */
+/*                                                                      */
+/* See .claude/design/per-export-default-coding.md.                     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Absent default_coding -> spec is zero-initialised, which the
+ * LAYOUTGET dispatch interprets as PASSTHROUGH with k = ss_layout_width.
+ * This pins today's behaviour (no per-export codec config required).
+ */
+START_TEST(test_config_default_coding_absent)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[export]]\n"
+				"path = \"/no-coding\"\n"
+				"\n"
+				"    [[export.clients]]\n"
+				"    match = \"*\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.nexports, 1);
+	ck_assert(reffs_coding_spec_is_unset(&cfg.exports[0].default_coding));
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+/*
+ * "passthrough" (no :K+M) -> PASSTHROUGH codec, k = m = 0.
+ * Explicit form of the absent-field default.
+ */
+START_TEST(test_config_default_coding_passthrough)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[export]]\n"
+				"path = \"/pt\"\n"
+				"default_coding = \"passthrough\"\n"
+				"\n"
+				"    [[export.clients]]\n"
+				"    match = \"*\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_int_eq(cfg.exports[0].default_coding.cs_codec_type,
+			 REFFS_CODEC_PASSTHROUGH);
+	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_k, 0);
+	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_m, 0);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+/*
+ * "rs:4+2" -> REFFS_CODEC_RS_VANDERMONDE, k=4, m=2.
+ * The canonical Bucket 2 bench setting.
+ */
+START_TEST(test_config_default_coding_rs_4_2)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[export]]\n"
+				"path = \"/rs42\"\n"
+				"default_coding = \"rs:4+2\"\n"
+				"\n"
+				"    [[export.clients]]\n"
+				"    match = \"*\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_int_eq(cfg.exports[0].default_coding.cs_codec_type,
+			 REFFS_CODEC_RS_VANDERMONDE);
+	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_k, 4);
+	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_m, 2);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+/*
+ * "mojette-sys:8+2" -> REFFS_CODEC_MOJETTE_SYSTEMATIC, k=8, m=2.
+ * Wider geometry recommended for storage-efficient deployments
+ * (per ec_benchmark_full_report.md S8 conclusion 6).
+ */
+START_TEST(test_config_default_coding_mojette_sys_8_2)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[export]]\n"
+				"path = \"/moj82\"\n"
+				"default_coding = \"mojette-sys:8+2\"\n"
+				"\n"
+				"    [[export.clients]]\n"
+				"    match = \"*\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_int_eq(cfg.exports[0].default_coding.cs_codec_type,
+			 REFFS_CODEC_MOJETTE_SYSTEMATIC);
+	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_k, 8);
+	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_m, 2);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+/*
+ * Invalid codec name -> spec stays zero (TRACE, no parse failure).
+ * Forgiving parser per existing TOML pattern (layout_types,
+ * dstores all skip unknown values rather than abort).
+ */
+START_TEST(test_config_default_coding_invalid_codec)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[export]]\n"
+				"path = \"/bad\"\n"
+				"default_coding = \"bogus:4+2\"\n"
+				"\n"
+				"    [[export.clients]]\n"
+				"    match = \"*\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert(reffs_coding_spec_is_unset(&cfg.exports[0].default_coding));
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+/*
+ * Malformed format ("rs" missing :K+M, "rs:4" missing +M,
+ * "rs:0+2" k=0 invalid) -> all leave spec zero (TRACE).
+ * Three sub-cases packed into one test to keep total count <= 7.
+ */
+START_TEST(test_config_default_coding_invalid_format)
+{
+	struct reffs_config cfg;
+	char *path;
+
+	/* "rs" -- no colon, codec is not passthrough */
+	reffs_config_defaults(&cfg);
+	path = write_toml("[[export]]\n"
+			  "path = \"/m1\"\n"
+			  "default_coding = \"rs\"\n");
+	ck_assert_ptr_nonnull(path);
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert(reffs_coding_spec_is_unset(&cfg.exports[0].default_coding));
+	unlink(path);
+	free(path);
+
+	/* "rs:4" -- missing +M */
+	reffs_config_defaults(&cfg);
+	path = write_toml("[[export]]\n"
+			  "path = \"/m2\"\n"
+			  "default_coding = \"rs:4\"\n");
+	ck_assert_ptr_nonnull(path);
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert(reffs_coding_spec_is_unset(&cfg.exports[0].default_coding));
+	unlink(path);
+	free(path);
+
+	/* "rs:0+2" -- k=0 invalid */
+	reffs_config_defaults(&cfg);
+	path = write_toml("[[export]]\n"
+			  "path = \"/m3\"\n"
+			  "default_coding = \"rs:0+2\"\n");
+	ck_assert_ptr_nonnull(path);
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert(reffs_coding_spec_is_unset(&cfg.exports[0].default_coding));
+	unlink(path);
+	free(path);
+
+	/* "passthrough:4+2" -- PASSTHROUGH with m > 0 invalid */
+	reffs_config_defaults(&cfg);
+	path = write_toml("[[export]]\n"
+			  "path = \"/m4\"\n"
+			  "default_coding = \"passthrough:4+2\"\n");
+	ck_assert_ptr_nonnull(path);
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert(reffs_coding_spec_is_unset(&cfg.exports[0].default_coding));
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+/*
+ * k + m exceeds LAYOUT_SEG_MAX_FILES (32) -> spec stays zero.
+ * Plan-review B1 corrected the cap from 16 to 32; this test
+ * pins the right boundary.  Try k+m = 33 (one over the cap).
+ */
+START_TEST(test_config_default_coding_max_k_m)
+{
+	struct reffs_config cfg;
+	char *path;
+
+	/* k=31 m=2 -> k+m=33 over LAYOUT_SEG_MAX_FILES=32 */
+	reffs_config_defaults(&cfg);
+	path = write_toml("[[export]]\n"
+			  "path = \"/big\"\n"
+			  "default_coding = \"rs:31+2\"\n");
+	ck_assert_ptr_nonnull(path);
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert(reffs_coding_spec_is_unset(&cfg.exports[0].default_coding));
+	unlink(path);
+	free(path);
+
+	/* k=30 m=2 -> k+m=32 == cap, should succeed */
+	reffs_config_defaults(&cfg);
+	path = write_toml("[[export]]\n"
+			  "path = \"/edge\"\n"
+			  "default_coding = \"rs:30+2\"\n");
+	ck_assert_ptr_nonnull(path);
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_int_eq(cfg.exports[0].default_coding.cs_codec_type,
+			 REFFS_CODEC_RS_VANDERMONDE);
+	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_k, 30);
+	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_m, 2);
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* load -- [[data_server]] entries                                      */
 /* ------------------------------------------------------------------ */
 
@@ -1074,6 +1310,13 @@ Suite *config_suite(void)
 	tcase_add_test(tc_load, test_load_export_basic);
 	tcase_add_test(tc_load, test_load_export_multiple_flavors);
 	tcase_add_test(tc_load, test_load_export_multi_rule);
+	tcase_add_test(tc_load, test_config_default_coding_absent);
+	tcase_add_test(tc_load, test_config_default_coding_passthrough);
+	tcase_add_test(tc_load, test_config_default_coding_rs_4_2);
+	tcase_add_test(tc_load, test_config_default_coding_mojette_sys_8_2);
+	tcase_add_test(tc_load, test_config_default_coding_invalid_codec);
+	tcase_add_test(tc_load, test_config_default_coding_invalid_format);
+	tcase_add_test(tc_load, test_config_default_coding_max_k_m);
 	tcase_add_test(tc_load, test_load_data_server_single);
 	tcase_add_test(tc_load, test_load_data_server_multiple);
 	tcase_add_test(tc_load, test_load_data_server_none);
