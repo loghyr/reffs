@@ -217,6 +217,26 @@ start_client_container() {
 	    'command -v fio >/dev/null 2>&1 && command -v mount.nfs >/dev/null 2>&1' \
 	    || sudo docker exec "${CLIENT_CONTAINER}" \
 	        dnf -y -q install fio nfs-utils >/dev/null
+
+	# Inject DS bridge IPs into the client's /etc/hosts so the
+	# kernel can resolve `reffs-bench-ds0..9` (the docker-compose
+	# service names the MDS puts in FFv1 layout deviceinfo).  The
+	# --network=host client container shares the host network
+	# namespace and otherwise cannot reach docker-compose DNS; the
+	# kernel would fail layout fetch and fall back to MDS-inband.
+	# See reference_bench_ds_nfsv3_gap memory note for the full
+	# story.  Net effect: variant C becomes a real kernel-FFv1+
+	# NFSv3 pNFS measurement instead of inband.
+	for ds in $(seq 0 9); do
+		ip=$(sudo docker inspect -f \
+		    '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
+		    "reffs-bench-ds${ds}" 2>/dev/null)
+		if [ -n "${ip}" ]; then
+			sudo docker exec "${CLIENT_CONTAINER}" sh -c \
+			    "grep -q 'reffs-bench-ds${ds}$' /etc/hosts || \
+			     echo '${ip} reffs-bench-ds${ds}' >>/etc/hosts"
+		fi
+	done
 }
 
 stop_client_container() {
