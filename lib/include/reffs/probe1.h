@@ -45,6 +45,17 @@ struct rpc_trans *probe1_client_op_sb_set_dstores(uint64_t id,
 struct rpc_trans *probe1_client_op_sb_set_stripe_unit(uint64_t id,
 						      uint32_t stripe_unit);
 
+/*
+ * Per-export default erasure-coding policy (step 8 of
+ * .claude/design/per-export-default-coding.md).  An all-zero
+ * spec (codec_type == 0, k == 0, m == 0) clears the policy.
+ */
+struct rpc_trans *probe1_client_op_sb_set_default_coding(uint64_t id,
+							 uint32_t codec_type,
+							 uint32_t k,
+							 uint32_t m);
+struct rpc_trans *probe1_client_op_sb_get_default_coding(uint64_t id);
+
 struct rpc_trans *probe1_client_op_inode_layout_list(uint64_t sb_id,
 						     uint64_t inum);
 

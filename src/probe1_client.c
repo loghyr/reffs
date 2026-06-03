@@ -17,6 +17,7 @@
 
 #include "probe1_xdr.h"
 #include "reffs/log.h"
+#include "reffs/coding_spec.h"
 #include "reffs/io.h"
 #include "reffs/log.h"
 #include "reffs/probe1.h"
@@ -63,6 +64,8 @@ static void usage(const char *prog)
 	printf("                                     sb-set-flavors - Set sb security flavors\n");
 	printf("                                     sb-set-dstores - Bind DSes to superblock\n");
 	printf("                                     sb-set-stripe-unit - Set FFv1 stripe unit\n");
+	printf("                                     sb-set-default-coding - Set per-export default coding (use --default-coding)\n");
+	printf("                                     sb-get-default-coding - Get per-export default coding\n");
 	printf("                                     ps-listener-list - List PS upstream listeners + reconnect state\n");
 	printf("                                     ps-write-buffer-stats - Per-listener Phase 4a write-buffer counters\n");
 	printf("  -I  --sb-id=ID               Superblock ID for sb-* operations\n");
@@ -71,6 +74,9 @@ static void usage(const char *prog)
 	printf("  -F  --flavors=LIST           Comma-separated: sys,krb5,krb5i,krb5p,tls\n");
 	printf("  -D  --dstores=LIST           Comma-separated dstore IDs (sb-set-dstores)\n");
 	printf("  -U  --stripe-unit=N          Stripe unit in bytes, power of 2 (sb-set-stripe-unit)\n");
+	printf("  -C  --default-coding=SPEC    Codec spec: \"passthrough\" | \"rs:K+M\" | "
+	       "\"mojette-sys:K+M\" | \"mojette-nonsys:K+M\" (sb-set-default-coding); "
+	       "\"unset\" or omit to clear\n");
 	printf("  -g  --program=pgm            Probe this program \"pgm\"\n");
 	printf("  -v  --version=v              Probe this program version \"vers\"\n");
 	printf("  -p  --port=port              Connect to server at the \"port\"\n");
@@ -102,6 +108,7 @@ static struct option long_opts[] = {
 	{ "flavors", required_argument, 0, 'F' },
 	{ "dstores", required_argument, 0, 'D' },
 	{ "stripe-unit", required_argument, 0, 'U' },
+	{ "default-coding", required_argument, 0, 'C' },
 	{ "inum", required_argument, 0, 'N' },
 	{ "dstore-id", required_argument, 0, 'S' },
 	{ NULL, 0, NULL, 0 },
@@ -125,6 +132,18 @@ uint64_t cli_inum = 0;
 uint32_t cli_dstore_id = 0;
 
 /*
+ * Parsed --default-coding spec.  cli_coding_set means the user
+ * passed a flag (including --default-coding=unset, which is the
+ * all-zero clear sentinel).  Defaults stay zero so an admin that
+ * omits the flag for sb-set-default-coding gets an explicit
+ * error from the dispatch step rather than silently clearing.
+ */
+bool cli_coding_set = false;
+uint32_t cli_coding_codec = 0;
+uint32_t cli_coding_k = 0;
+uint32_t cli_coding_m = 0;
+
+/*
  * Parse a comma-separated dstore ID list: "1,2,3"
  */
 static void parse_dstores(const char *arg)
@@ -140,6 +159,66 @@ static void parse_dstores(const char *arg)
 	     tok = strtok_r(NULL, ",", &saveptr))
 		cli_dstores[cli_ndstores++] = (uint32_t)strtoul(tok, NULL, 10);
 	free(buf);
+}
+
+/*
+ * Parse a --default-coding=SPEC argument using the same grammar
+ * as the TOML parser in lib/config/config.c parse_coding_spec():
+ *   "passthrough"          -> {PASSTHROUGH, 0, 0}
+ *   "rs:K+M"               -> {RS_VANDERMONDE, K, M}
+ *   "mojette-sys:K+M"      -> {MOJETTE_SYSTEMATIC, K, M}
+ *   "mojette-nonsys:K+M"   -> {MOJETTE_NON_SYSTEMATIC, K, M}
+ *   "unset" or ""          -> all-zero clear sentinel
+ * Sets the cli_coding_* globals; LOG and leave zeroed on
+ * malformed input so the dispatch step can still detect the flag
+ * was passed but ill-formed.
+ */
+static void parse_default_coding(const char *arg)
+{
+	cli_coding_set = true;
+	cli_coding_codec = 0;
+	cli_coding_k = 0;
+	cli_coding_m = 0;
+
+	if (!arg || arg[0] == '\0' || strcmp(arg, "unset") == 0)
+		return;
+
+	char codec_name[32];
+	unsigned int k = 0;
+	unsigned int m = 0;
+	int n = sscanf(arg, "%31[^:]:%u+%u", codec_name, &k, &m);
+
+	if (n == 1) {
+		if (strcmp(codec_name, "passthrough") == 0) {
+			cli_coding_codec = REFFS_CODEC_PASSTHROUGH;
+			return;
+		}
+		LOG("default-coding: bare codec name only accepted for "
+		    "passthrough, got %s",
+		    codec_name);
+		cli_coding_set = false;
+		return;
+	}
+	if (n != 3) {
+		LOG("default-coding: expected \"<codec>:K+M\", got %s", arg);
+		cli_coding_set = false;
+		return;
+	}
+
+	if (strcmp(codec_name, "rs") == 0)
+		cli_coding_codec = REFFS_CODEC_RS_VANDERMONDE;
+	else if (strcmp(codec_name, "mojette-sys") == 0)
+		cli_coding_codec = REFFS_CODEC_MOJETTE_SYSTEMATIC;
+	else if (strcmp(codec_name, "mojette-nonsys") == 0)
+		cli_coding_codec = REFFS_CODEC_MOJETTE_NON_SYSTEMATIC;
+	else {
+		LOG("default-coding: unknown codec name %s", codec_name);
+		cli_coding_set = false;
+		return;
+	}
+
+	cli_coding_k = k;
+	cli_coding_m = m;
 }
 
 /*
@@ -193,7 +272,7 @@ int main(int argc, char *argv[])
 	// Initialize userspace RCU
 	rcu_init();
 
-	char *opts = "hc:f:p:o:s:g:v:HI:P:T:F:D:U:N:S:";
+	char *opts = "hc:f:p:o:s:g:v:HI:P:T:F:D:U:C:N:S:";
 
 	while ((opt = getopt_long(argc, argv, opts, long_opts, NULL)) != -1) {
 		switch (opt) {
@@ -245,6 +324,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'U':
 			cli_stripe_unit = (uint32_t)strtoul(optarg, NULL, 0);
+			break;
+		case 'C':
+			parse_default_coding(optarg);
 			break;
 		case 'N':
 			cli_inum = (uint64_t)strtoull(optarg, NULL, 0);
@@ -343,6 +425,18 @@ int main(int argc, char *argv[])
 	} else if (!strcmp(op, "sb-set-stripe-unit")) {
 		rt = probe1_client_op_sb_set_stripe_unit(sb_id,
 							 cli_stripe_unit);
+	} else if (!strcmp(op, "sb-set-default-coding")) {
+		if (!cli_coding_set) {
+			LOG("sb-set-default-coding requires --default-coding "
+			    "(e.g., --default-coding=rs:4+2, or "
+			    "--default-coding=unset to clear)");
+		} else {
+			rt = probe1_client_op_sb_set_default_coding(
+				sb_id, cli_coding_codec, cli_coding_k,
+				cli_coding_m);
+		}
+	} else if (!strcmp(op, "sb-get-default-coding")) {
+		rt = probe1_client_op_sb_get_default_coding(sb_id);
 	} else if (!strcmp(op, "inode-layout-list")) {
 		rt = probe1_client_op_inode_layout_list(sb_id, cli_inum);
 	} else if (!strcmp(op, "ps-listener-list")) {
