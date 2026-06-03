@@ -245,48 +245,53 @@ mount_in_client() {
 
 # Run one fio cell inside the client container.  Prints
 # "write_ms read_ms verify note" on stdout.
+#
+# Timing model: wall-clock measured by date(1) around the fio
+# call, matching how variant A measures wall-clock around
+# ec_demo.  fio's internal lat_ns.mean is only the write()
+# syscall latency and excludes the close + (for PS Phase 4b)
+# the COMMIT round-trip that actually flushes the bytes -- the
+# smoke run on shadow 2026-06-02 showed 1 ms write timings via
+# that metric, which is meaningless.  --end_fsync=1 forces
+# the close to wait for fsync, but we still measure outside
+# fio so the timing is fully comparable to variant A.
 fio_cell() {
 	local mount_tag="$1" size="$2" cell_id="$3"
 	local fname="/mnt/${mount_tag}/ps_bench_${cell_id}.dat"
-	local write_json="/tmp/ps_bench_fio_${cell_id}_w.json"
-	local read_json="/tmp/ps_bench_fio_${cell_id}_r.json"
 	local write_ms=0 read_ms=0 verify="OK" note=""
 
-	# fio's verify=crc32c with do_verify=0 on write, do_verify=1
-	# on read gives us correctness checking without inflating the
-	# write timing.  Single job, single bs of size, count=1.
+	local t0 t1
+	t0=$(date +%s%N)
 	if ! sudo docker exec "${CLIENT_CONTAINER}" \
 	     fio --name=psb-w --filename="${fname}" \
 	         --rw=write --bs="${size}" --size="${size}" \
 	         --verify=crc32c --do_verify=0 \
 	         --create_on_open=1 --allow_file_create=1 \
+	         --end_fsync=1 \
 	         --thread=0 --ioengine=psync \
-	         --output-format=json --output="${write_json}" \
+	         --minimal \
 	     >/tmp/ps_bench_fio_w_stderr.log 2>&1; then
 		verify="FAIL"; note="fio_write_failed"
 		echo "0 0 ${verify} ${note}"
 		return
 	fi
-	# lat_ns.mean is per-IO; for one-shot single-bs single-count
-	# cells that equals wall-clock.
-	write_ms=$(sudo docker exec "${CLIENT_CONTAINER}" \
-	    sh -c "python3 -c 'import json,sys; d=json.load(open(\"${write_json}\")); print(int(d[\"jobs\"][0][\"write\"][\"lat_ns\"][\"mean\"]/1e6))'" \
-	    2>/dev/null || echo 0)
+	t1=$(date +%s%N)
+	write_ms=$(( (t1 - t0) / 1000000 ))
 
+	t0=$(date +%s%N)
 	if ! sudo docker exec "${CLIENT_CONTAINER}" \
 	     fio --name=psb-r --filename="${fname}" \
 	         --rw=read --bs="${size}" --size="${size}" \
 	         --verify=crc32c --do_verify=1 \
 	         --thread=0 --ioengine=psync \
-	         --output-format=json --output="${read_json}" \
+	         --minimal \
 	     >/tmp/ps_bench_fio_r_stderr.log 2>&1; then
 		verify="FAIL"; note="fio_read_or_verify_failed"
 		echo "${write_ms} 0 ${verify} ${note}"
 		return
 	fi
-	read_ms=$(sudo docker exec "${CLIENT_CONTAINER}" \
-	    sh -c "python3 -c 'import json,sys; d=json.load(open(\"${read_json}\")); print(int(d[\"jobs\"][0][\"read\"][\"lat_ns\"][\"mean\"]/1e6))'" \
-	    2>/dev/null || echo 0)
+	t1=$(date +%s%N)
+	read_ms=$(( (t1 - t0) / 1000000 ))
 
 	# Clean up the test file inside the mount so subsequent
 	# iters don't accumulate.  Ignore errors; verify rc above
