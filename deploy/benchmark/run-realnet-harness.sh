@@ -137,6 +137,22 @@ emit_row() {
     local write_ms=$6 read_ms=$7 verify=$8 note=$9 ts=${10}
     local bps_w=0 bps_r=0
 
+    # Belt-and-suspenders: an empty / non-numeric timing comes
+    # from a stripped result line (run_cell_d exited mid-stream)
+    # and would crash the arithmetic compare below under `set -u`.
+    # Treat it as 0 + add a parse_failed note so the CSV row still
+    # emits cleanly.
+    if ! [[ "$write_ms" =~ ^[0-9]+$ ]]; then
+        write_ms=0
+        verify=FAIL
+        note="${note:+$note;}parse_failed"
+    fi
+    if ! [[ "$read_ms" =~ ^[0-9]+$ ]]; then
+        read_ms=0
+        verify=FAIL
+        note="${note:+$note;}parse_failed"
+    fi
+
     # Avoid div-by-zero; report 0 when timing is 0 (failed cell).
     if [ "$write_ms" -gt 0 ]; then
         bps_w=$(( size * 1000 / write_ms ))
@@ -213,42 +229,65 @@ run_cell_d() {
     # is local on the client.  Timing comes from `date +%s%N` around
     # the dd calls so we measure end-to-end wall clock (not dd's own
     # internal rate which excludes fsync).
+    # set +e on dd / cmp -- we want to emit a FAIL row per failed
+    # cell rather than abort the whole sweep on the first error.
+    # `set -u` stays on (catches typos); pipefail removed because
+    # there are no pipelines that need it.
     ssh "$CLIENT_HOST" bash -s <<EOF
-set -euo pipefail
+set -uo pipefail
 in=/tmp/realnet_in_${size}.bin
 out=/tmp/realnet_out_${cell_id}.bin
 target=$MOUNT_POINT/${cell_id}.bin
 
 # Pre-cache input per size (re-used across iters).
 if [ ! -f "\$in" ] || [ "\$(stat -c%s "\$in" 2>/dev/null)" != "${size}" ]; then
-    sudo dd if=/dev/urandom of="\$in" bs=${size} count=1 status=none
+    if ! sudo dd if=/dev/urandom of="\$in" bs=${size} count=1 status=none; then
+        rc=\$?
+        echo "0 0 FAIL input_gen_failed_\$rc"
+        exit 0
+    fi
 fi
 sudo rm -f "\$target" "\$out"
 
 t0=\$(date +%s%N)
-sudo dd if="\$in" of="\$target" bs=${size} count=1 \
-    conv=fsync status=none
+if ! sudo dd if="\$in" of="\$target" bs=${size} count=1 \
+        conv=fsync status=none; then
+    rc=\$?
+    echo "0 0 FAIL dd_write_failed_\$rc"
+    exit 0
+fi
 t1=\$(date +%s%N)
 write_ms=\$(( (t1 - t0) / 1000000 ))
 
 # Drop client page cache so the read is not served from RAM.  If
-# this fails (permission), report rather than silently faking the
-# read measurement.
+# the drop fails (typically permission), warn via the note column
+# but continue: a stale-cache read timing is better than no read
+# timing at all, and the note column lets the operator discount
+# the read value when relevant.  Matches the design doc's
+# documented "warn once and continue" contract.
+drop_note=
 if ! echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1; then
-    echo "0 0 FAIL drop_caches_failed"
-    exit 0
+    drop_note=drop_caches_failed
 fi
 
 t0=\$(date +%s%N)
-sudo dd if="\$target" of="\$out" bs=${size} status=none
+if ! sudo dd if="\$target" of="\$out" bs=${size} status=none; then
+    rc=\$?
+    echo "\$write_ms 0 FAIL dd_read_failed_\$rc"
+    exit 0
+fi
 t1=\$(date +%s%N)
 read_ms=\$(( (t1 - t0) / 1000000 ))
 
 verify=OK
-note=
+note=\$drop_note
 if ! sudo cmp -s "\$in" "\$out"; then
     verify=FAIL
-    note=bytes_mismatch
+    if [ -n "\$note" ]; then
+        note="\${note};bytes_mismatch"
+    else
+        note=bytes_mismatch
+    fi
 fi
 sudo rm -f "\$out"
 echo "\$write_ms \$read_ms \$verify \$note"
@@ -290,10 +329,21 @@ for variant in "${VARIANT_ARR[@]}"; do
 
             # Switch MDS default coding once per (codec, geom).
             # Only variant d uses the MDS path through the PS,
-            # so skip the probe when running stub variants.
+            # so skip the probe when running stub variants.  If
+            # the probe fails (MDS gone, container died, probe
+            # CLI grammar drift) every subsequent variant-d cell
+            # in this (codec, geom) iteration would otherwise be
+            # labelled with the *requested* codec/geom while the
+            # MDS continues issuing layouts under whatever coding
+            # it had before -- silent data corruption in the CSV.
+            # Skip the cells with verify=FAIL note=
+            # set_default_coding_failed so downstream analysis
+            # sees the gap explicitly.
+            coding_ok=1
             if [ "$variant" = "d" ]; then
                 if ! set_default_coding "$codec" "$k" "$m"; then
-                    echo "WARN: set_default_coding $codec $k $m failed" >&2
+                    echo "WARN: set_default_coding $codec/$k+$m failed -- skipping cells" >&2
+                    coding_ok=0
                 fi
             fi
 
@@ -303,18 +353,22 @@ for variant in "${VARIANT_ARR[@]}"; do
                     cell_id="${variant}_${codec}_${k}_${m}_${size}_${iter}"
                     ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-                    case "$variant" in
-                    d)
-                        result=$(run_cell_d "$size" "$iter" "$cell_id")
-                        ;;
-                    a|b|c)
-                        result=$(run_cell_stub)
-                        ;;
-                    *)
-                        echo "FAIL: unknown variant '$variant'" >&2
-                        exit 1
-                        ;;
-                    esac
+                    if [ "$coding_ok" = "0" ]; then
+                        result="0 0 FAIL set_default_coding_failed"
+                    else
+                        case "$variant" in
+                        d)
+                            result=$(run_cell_d "$size" "$iter" "$cell_id")
+                            ;;
+                        a|b|c)
+                            result=$(run_cell_stub)
+                            ;;
+                        *)
+                            echo "FAIL: unknown variant '$variant'" >&2
+                            exit 1
+                            ;;
+                        esac
+                    fi
 
                     # Parse "write_ms read_ms verify note".  Note
                     # may be empty.
