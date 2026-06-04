@@ -290,13 +290,22 @@ rsync -a "$LOCAL_WORK/tls/" "$ADEPT_HOST:$REMOTE_TLS/"
 rsync -a "$LOCAL_WORK/cfg/ps-realnet.toml" \
     "$ADEPT_HOST:$REMOTE_WORK/ps-realnet.toml"
 
-# Kill any prior PS reffsd; clean state dirs.
+# Kill any prior PS reffsd; clean state dirs.  Also open the PS
+# listener port (4098) on adept's firewall -- the host's default
+# firewalld config opens the `nfs` service (port 2049) but the PS
+# binds 4098, which is blocked until we add an explicit allow.
+# Transient (no --permanent) so reboots restore the original
+# posture; same convention as the shadow firewalld step.
 ssh "$ADEPT_HOST" bash -s <<EOF
 set -euo pipefail
 pkill -u loghyr -f 'reffsd.*ps-realnet' 2>/dev/null || true
 sleep 1
 rm -rf /tmp/ps_realnet_data /tmp/ps_realnet_state
 mkdir -p /tmp/ps_realnet_data /tmp/ps_realnet_state
+if sudo systemctl is-active firewalld >/dev/null 2>&1; then
+    sudo firewall-cmd --add-port=4098/tcp >/dev/null
+    sudo firewall-cmd --add-port=4098/udp >/dev/null
+fi
 EOF
 
 # Launch reffsd PS.  Use nohup-via-env so ASAN_OPTIONS reaches the
