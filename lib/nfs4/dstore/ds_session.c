@@ -87,10 +87,34 @@ int ds_session_create(struct dstore *ds)
 	 * here as well; those paths need verification before being
 	 * relied on against an MDS-to-DS session.
 	 */
-	ret = mds_session_create(ms, ds->ds_address);
+	/*
+	 * mds_session_clnt_open parses the host string for a "host:port"
+	 * suffix and bypasses portmap when a port is present.  When the
+	 * dstore config carries an explicit port (e.g. multi-host realnet
+	 * benches that publish each DS on a distinct host port to dodge
+	 * portmap-on-shared-IP), the NFSv3 dstore path at
+	 * lib/nfs4/dstore/dstore.c honours ds->ds_port via clnttcp_create
+	 * but the NFSv4 path here was passing the bare address -- libtirpc
+	 * then fell through to portmap and the connect failed with
+	 * "RPC: Program not registered".  Format the suffix once for the
+	 * MDS-to-DS NFSv4 session so per-DS port plumbing matches the v3
+	 * path's behaviour.
+	 */
+	char host_buf[REFFS_CONFIG_MAX_HOST + 8];
+	const char *host_arg;
+
+	if (ds->ds_port > 0) {
+		snprintf(host_buf, sizeof(host_buf), "%s:%u", ds->ds_address,
+			 (unsigned)ds->ds_port);
+		host_arg = host_buf;
+	} else {
+		host_arg = ds->ds_address;
+	}
+
+	ret = mds_session_create(ms, host_arg);
 	if (ret) {
 		LOG("ds_session: failed to connect to DS %s (dstore %u): %d",
-		    ds->ds_address, ds->ds_id, ret);
+		    host_arg, ds->ds_id, ret);
 		free(ms);
 		return ret;
 	}

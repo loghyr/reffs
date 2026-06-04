@@ -12,6 +12,34 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 standing so prereq #4 (the harness) and prereqs #5-6 (smoke +
 full sweep) have something to drive.
 
+## Scope clarification (revised after first-smoke 2026-06-03)
+
+The initial design imagined this single bringup standing up the
+full 4-variant topology in one shot.  First smoke surfaced a
+genuine conflict: variants a/b/c need an MDS that speaks plain
+TCP, but the proxy-server draft (and the implementation per
+`proxy_registration.c`) require **TLS or RPCSEC_GSS** on the
+PS-to-MDS session.  reffsd's `tls = true` makes the MDS listener
+TLS-required (the AUTH_TLS STARTTLS path is gated on the client
+initiating the upgrade, which ec_demo and the kernel client do
+not).  Three viable resolutions:
+
+| Option | Result |
+|--------|--------|
+| (a) Drop TLS on MDS | Variants a/b/c work; variant d **does not** -- `PROXY_REGISTRATION` rejects AUTH_SYS sessions |
+| (b) Keep TLS on MDS | Variant d works; variants a/b/c blocked by handshake failure |
+| (c) Code: dual-mode TLS listener | Both work.  Days of work in `lib/io/`. |
+| (d) Two MDS instances on different ports | Both work.  Complex backend sharing problem. |
+
+For this slice we land **(b)**: the realnet bringup ships as
+**variant-d-only** today.  The plain-MDS bringup for variants
+a/b/c is queued as a follow-up slice that either picks (c) or
+runs two MDS containers.  The headline WG question
+"client EC vs server EC" maps to variants c and d; variant d is
+preserved, and the variant-c surrogate (`ec_demo` against a plain
+MDS) can be measured on the existing single-host setup until the
+plain-MDS realnet bringup lands.
+
 The existing `run-ps-bench-bringup.sh` is single-host docker:
 it brings up the docker-compose `mds + 10 DSes + N PSes` stack
 on one Linux host and orchestrates everything via the
@@ -53,10 +81,20 @@ name).  The realnet variant publishes every DS port so the
 
 Why per-DS port publishing and not macvlan?
 
-- The `[[data_server]]` config already has a `port` field
+- The `[[data_server]]` config has a `port` field
   (`lib/include/reffs/settings.h:140`) and the layout XDR
-  carries (address, port) tuples per RFC 8881 § 19.  No code
-  change required.
+  carries (address, port) tuples per RFC 8881 § 19.  The
+  NFSv3 dstore path already honours `ds_port` via
+  `clnttcp_create` (`lib/nfs4/dstore/dstore.c:204,294`).
+- **The NFSv4 dstore path did not, prior to this slice.**
+  `lib/nfs4/dstore/ds_session.c` was calling
+  `mds_session_create(ms, ds->ds_address)` with the bare
+  address; libtirpc fell through to portmap and the MDS-to-DS
+  session failed with `RPC: Program not registered`.  First
+  smoke caught this; the fix lives in this slice (snprintf a
+  `host:port` suffix when `ds_port > 0`, mirroring the v3
+  path's behaviour).  10 LOC, single file, no XDR/RCU/on-disk
+  format -- inline-review eligible per CLAUDE.md gating.
 - macvlan needs lab-subnet DHCP allocation and per-host
   bridge configuration; port-publish needs one yaml edit.
 - The shared-fsync caveat (Option 1 con per the 4-variant
@@ -228,13 +266,35 @@ data-collection.
 |--------------------------------------|------------------------------------|
 | shadow's LAN IP not discoverable    | `ip -4 addr` returns empty -> fail-fast |
 | MDS never ready                      | 120s `reffsd ready` poll timeout   |
-| PS never registers                   | grep MDS log for grant count != 1  |
+| PS never registers                   | MDS grant count == 0 (authoritative) |
 | PS upstream session never up         | grep PS log for `listener stays dark` |
 | docker-compose port conflict on shadow | `docker compose up` exits non-zero |
 | SSH connect failure                  | `ssh ... exit 0` smoke before any work |
+| Firewalld blocks DS publish ports    | `firewall-cmd --add-port=22049-22058/{tcp,udp}` step (transient) |
+| Stale PROXY_REGISTRATION retry       | Squat-DELAY on second registration is treated as benign as long as MDS recorded >=1 grant -- the PS occasionally re-registers under contention with a fresh `registration_id` and gets squat-DELAY'd; the first grant is the topology-up signal |
 
 ## Deferred / NOT_NOW_BROWN_COW
 
+- **Plain-MDS realnet bringup for variants a/b/c.**  This slice
+  is variant-d-only by design (see scope clarification above).
+  Follow-up slice picks one of: (i) dual-mode TLS listener
+  (`lib/io/` code change, days of work), or (ii) two MDS
+  containers on different ports sharing a backend mount, or
+  (iii) just re-use the existing single-host bench for a/b/c
+  measurement and only do realnet for variant d.  The
+  4-variant deck slide (slide 22 on `ietf126.md`) can land
+  with variant d on realnet topology and variants a/b/c on
+  single-host until the follow-up resolves.
+- **Why we did not investigate dual-mode TLS in this slice.**
+  The reffs RPC layer registers AUTH_TLS as a flavor
+  (`lib/rpc/rpc.c:1276`) but the actual STARTTLS upgrade is
+  client-initiated; ec_demo and the Linux kernel client do
+  not currently issue the AUTH_TLS NULL probe before their
+  first NFSv4 op.  Making the listener accept plain TCP and
+  upgrade on STARTTLS-request, while rejecting non-STARTTLS
+  plain TCP traffic from the PS specifically, would touch
+  authentication negotiation in a way that warrants its own
+  design slice.
 - **Option 2 topology** (N+3 distinct hosts).  Same bringup
   script with different host inventory; deferred until
   per-DS-storage measurement is needed.
