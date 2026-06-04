@@ -231,8 +231,10 @@ run_cell_d() {
     # internal rate which excludes fsync).
     # set +e on dd / cmp -- we want to emit a FAIL row per failed
     # cell rather than abort the whole sweep on the first error.
-    # `set -u` stays on (catches typos); pipefail removed because
-    # there are no pipelines that need it.
+    # `set -u` stays on (catches typos).  pipefail is harmless --
+    # this body has no pipelines today, but the option is kept on
+    # so any future pipeline addition does not silently swallow
+    # intermediate failures.
     ssh "$CLIENT_HOST" bash -s <<EOF
 set -uo pipefail
 in=/tmp/realnet_in_${size}.bin

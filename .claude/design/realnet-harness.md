@@ -262,11 +262,13 @@ above + the future full-sweep numbers.
 |----------------------------------|----------------------------------------------|-----------|
 | PS listener not reachable       | `nc -zv ADEPT_LAN_IP 4098` fails             | exit 1 with "run-realnet-bringup.sh first" |
 | Mount fails                      | non-zero `mount` exit                        | exit 1 with mount stderr |
+| `dd` input-gen fails             | non-zero exit on /dev/urandom dd            | row with `verify=FAIL, note=input_gen_failed_<rc>` |
 | `dd write` fails                 | non-zero exit                                | row with `verify=FAIL, note=dd_write_failed_<rc>` |
 | `dd read` fails                  | non-zero exit                                | row with `verify=FAIL, note=dd_read_failed_<rc>` |
-| `cmp` reports diff               | `cmp` non-zero                               | row with `verify=FAIL, note=bytes_mismatch_at_<offset>` |
-| `reffs-probe sb-set-default-coding` fails | probe exit non-zero | row with `verify=FAIL, note=set_default_coding_failed` |
-| `drop_caches` fails              | (typically permission)                       | warn once and continue (read timings will be cache-influenced) |
+| `cmp` reports diff               | `cmp` non-zero                               | row with `verify=FAIL, note=bytes_mismatch` |
+| `reffs-probe sb-set-default-coding` fails | probe exit non-zero | row with `verify=FAIL, note=set_default_coding_failed` for every cell in the affected (codec, geom) iteration |
+| `drop_caches` fails              | sudo tee non-zero (typically permission)     | note column gets `drop_caches_failed`; verify stays OK; read timing is cache-influenced |
+| Result line stripped / non-numeric | regex `^[0-9]+$` fails in emit_row          | row with `verify=FAIL, note=parse_failed` (belt-and-suspenders guard) |
 
 ## Deferred / NOT_NOW_BROWN_COW
 
