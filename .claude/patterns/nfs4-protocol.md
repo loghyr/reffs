@@ -28,6 +28,37 @@ nfs4_client_alloc_or_find() owns the full decision tree:
 All five cases must be handled. Falling through to case 1 for cases 3-5 produces
 state corruption under client restart.
 
+## DESTROY_CLIENTID idempotent semantics
+
+RFC 8881 §18.50.3 sanctions returning NFS4ERR_STALE_CLIENTID when
+the destroyed clientid is unknown to the server.  That is wire-
+legal but the Linux NFS client treats STALE_CLIENTID as a state-
+recovery hint and retries DESTROY_CLIENTID ~10 times at one-per-
+second cadence per peer.  In a pNFS fan-out (Flex Files v2,
+k+m mirrors), the kernel runs that retry storm against each DS in
+the layout, adding `10 * (k+m)` seconds to every file lifecycle
+whenever the client has stale clientid state.  The bench cell
+showed 60s/cell at RS 4+2 (10 retries x 6 DSes x 1s).
+
+Return NFS4_OK from DESTROY_CLIENTID when the clientid is unknown.
+The destroy is idempotent: if there is no client record, the
+operation has effectively already completed and no caller can
+observe a state transition.  This stays inside the RFC envelope
+("the SHOULD-language for STALE_CLIENTID is a server-side
+freedom, not a client-visible contract") and removes the
+retry-storm tax.
+
+The CLIENTID_BUSY branch (session count > 0) is unchanged --
+that branch protects an in-use client from destruction and must
+keep its NFS4ERR_CLIENTID_BUSY response so the client can retry
+after releasing its sessions.
+
+The change lives in `nfs4_op_destroy_clientid` in
+`lib/nfs4/server/session.c`; the test pinning the contract is
+`test_destroy_clientid_unknown_is_ok` (paired with
+`test_destroy_clientid_busy_returns_busy` to guard the
+non-idempotent branch) in `lib/nfs4/tests/nfs4_session.c`.
+
 ## utf8string validation
 
 All string fields off the wire (client owner, server owner, nii_name, path

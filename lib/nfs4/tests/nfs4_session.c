@@ -27,6 +27,8 @@
 #include "reffs/server.h"
 #include "nfs4/client.h"
 #include "nfs4/client_persist.h"
+#include "nfs4/compound.h"
+#include "nfs4/ops.h"
 #include "nfs4/session.h"
 #include "nfs4_test_harness.h"
 
@@ -317,6 +319,97 @@ START_TEST(test_session_two_per_client)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* DESTROY_CLIENTID idempotent                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Drive the OP_DESTROY_CLIENTID handler directly through a stack-
+ * allocated compound.  The handler reads only c_args / c_res /
+ * c_curr_op / c_server_state, so no listener / RPC plumbing is
+ * needed.  Returns the per-op dcr_status the handler set.
+ */
+static nfsstat4 run_destroy_clientid(struct compound *compound, clientid4 cid)
+{
+	nfs_argop4 argv = { 0 };
+	nfs_resop4 resv = { 0 };
+
+	argv.argop = OP_DESTROY_CLIENTID;
+	argv.nfs_argop4_u.opdestroy_clientid.dca_clientid = cid;
+	resv.resop = OP_DESTROY_CLIENTID;
+
+	compound->c_args->argarray.argarray_len = 1;
+	compound->c_args->argarray.argarray_val = &argv;
+	compound->c_res->resarray.resarray_len = 1;
+	compound->c_res->resarray.resarray_val = &resv;
+	compound->c_curr_op = 0;
+
+	(void)nfs4_op_destroy_clientid(compound);
+	nfsstat4 dcr_status = resv.nfs_resop4_u.opdestroy_clientid.dcr_status;
+	/* Detach our stack arrays before the caller frees the compound. */
+	compound->c_args->argarray.argarray_val = NULL;
+	compound->c_args->argarray.argarray_len = 0;
+	compound->c_res->resarray.resarray_val = NULL;
+	compound->c_res->resarray.resarray_len = 0;
+	return dcr_status;
+}
+
+START_TEST(test_destroy_clientid_unknown_is_ok)
+{
+	/*
+	 * Unknown clientid -> NFS4_OK, not NFS4ERR_STALE_CLIENTID.
+	 * The destroy is idempotent: the client is already gone.
+	 * See lib/nfs4/server/session.c nfs4_op_destroy_clientid and
+	 * .claude/patterns/nfs4-protocol.md "DESTROY_CLIENTID
+	 * idempotent semantics" for the rationale.
+	 */
+	COMPOUND4args args = { 0 };
+	COMPOUND4res res = { 0 };
+	struct compound c = { 0 };
+
+	c.c_args = &args;
+	c.c_res = &res;
+	c.c_server_state = g_ss;
+
+	/* Bogus clientid that no real EXCHANGE_ID could have produced. */
+	clientid4 bogus = 0xDEADBEEFCAFEBABEULL;
+
+	nfsstat4 status = run_destroy_clientid(&c, bogus);
+	ck_assert_uint_eq(status, NFS4_OK);
+}
+END_TEST
+
+START_TEST(test_destroy_clientid_busy_returns_busy)
+{
+	/*
+	 * Sanity check the non-idempotent branch: with our setup client
+	 * (g_nc) holding a live session, DESTROY_CLIENTID on its real
+	 * clientid must report NFS4ERR_CLIENTID_BUSY.  This guards the
+	 * "unknown -> NFS4_OK" change from accidentally short-circuiting
+	 * the busy / active-state checks.
+	 */
+	channel_attrs4 ca = make_fore_chan(65536, 65536, 4096, 8, 4);
+	struct nfs4_session *ns = nfs4_session_alloc(g_ss, g_nc, &ca, 0);
+
+	ck_assert_ptr_nonnull(ns);
+
+	COMPOUND4args args = { 0 };
+	COMPOUND4res res = { 0 };
+	struct compound c = { 0 };
+
+	c.c_args = &args;
+	c.c_res = &res;
+	c.c_server_state = g_ss;
+
+	nfsstat4 status =
+		run_destroy_clientid(&c, nfs4_client_to_client(g_nc)->c_id);
+	ck_assert_uint_eq(status, NFS4ERR_CLIENTID_BUSY);
+
+	nfs4_session_unhash(g_ss, ns);
+	nfs4_session_put(ns);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite assembly                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -343,6 +436,12 @@ Suite *nfs4_session_suite(void)
 	tc = tcase_create("slot_table");
 	tcase_add_checked_fixture(tc, setup, teardown);
 	tcase_add_test(tc, test_session_slots_initial_state);
+	suite_add_tcase(s, tc);
+
+	tc = tcase_create("destroy_clientid");
+	tcase_add_checked_fixture(tc, setup, teardown);
+	tcase_add_test(tc, test_destroy_clientid_unknown_is_ok);
+	tcase_add_test(tc, test_destroy_clientid_busy_returns_busy);
 	suite_add_tcase(s, tc);
 
 	tc = tcase_create("multi_session");

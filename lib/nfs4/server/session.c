@@ -974,8 +974,21 @@ uint32_t nfs4_op_destroy_clientid(struct compound *compound)
 
 	nc = nfs4_client_find(args->dca_clientid);
 	if (!nc) {
-		*status = NFS4ERR_STALE_CLIENTID;
-		goto out;
+		/*
+		 * Idempotent: the clientid is already gone, so the
+		 * destroy has effectively already happened.  RFC 8881
+		 * S18.50.3 sanctions NFS4ERR_STALE_CLIENTID here, but
+		 * the Linux NFS client treats that as a recovery hint
+		 * and retries DESTROY_CLIENTID ~10 times per DS at one-
+		 * per-second cadence.  In the pNFS fan-out path that
+		 * adds 10*N seconds to every file lifecycle when the
+		 * client has stale clientid state.  Returning NFS4_OK
+		 * for an already-gone clientid stops the retry loop
+		 * without violating any invariant -- there is no
+		 * client record for any caller to observe a state
+		 * transition on.  See patterns/nfs4-protocol.md.
+		 */
+		goto out; /* *status stays NFS4_OK from calloc */
 	}
 
 	if (__atomic_load_n(&nc->nc_session_count, __ATOMIC_ACQUIRE) > 0) {
