@@ -1,0 +1,60 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# PS config for the 3-host PS-encoder bench (Option 1).  Stamped
+# by deploy/benchmark/run-realnet-bringup.sh on adept; the script
+# substitutes:
+#
+#   REPLACE_WITH_PS_CERT       absolute path to ps-0.crt on adept
+#   REPLACE_WITH_PS_KEY        absolute path to ps-0.key on adept
+#   REPLACE_WITH_PS_CA         absolute path to ca.crt on adept
+#   REPLACE_WITH_MDS_HOST      shadow's LAN IP
+#
+# Unlike the single-host ps-tls.toml, this PS is the SOLE PS on
+# adept and binds the canonical ports (4098 client listener, 2049
+# native NFS listener if anything ever uses it -- variants a/b/c
+# bypass the PS so it just sits idle for those runs).  The squat-
+# guard does not come into play because only one PROXY_REGISTRATION
+# happens per bench run.
+
+[server]
+port                  = 4099
+probe_port            = 20499
+bind                  = "*"
+role                  = "standalone"
+minor_versions        = [1, 2]
+grace_period          = 5
+workers               = 4
+log_level             = "info"
+register_with_rpcbind = false
+
+[backend]
+type        = "posix"
+path        = "/tmp/ps_realnet_data"
+state_file  = "/tmp/ps_realnet_state"
+
+[[export]]
+path        = "/"
+
+    [[export.clients]]
+    match       = "*"
+    access      = "rw"
+    root_squash = false
+    flavors     = ["sys"]
+
+[[proxy_mds]]
+id        = 1
+port      = 4098
+bind      = "*"
+address   = "REPLACE_WITH_MDS_HOST"
+mds_port  = 2049
+mds_probe = 20490
+
+tls_cert  = "REPLACE_WITH_PS_CERT"
+tls_key   = "REPLACE_WITH_PS_KEY"
+tls_ca    = "REPLACE_WITH_PS_CA"
+tls_mode  = "starttls"
+
+# Self-signed mini-CA -- accept the MDS server cert without external
+# CA verification, same posture as the single-host ps-tls.toml.
+tls_insecure_no_verify = true

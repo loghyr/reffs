@@ -1,0 +1,169 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# MDS config for the 3-host PS-encoder bench (Option 1).  Used
+# by deploy/benchmark/run-realnet-bringup.sh on shadow.
+#
+# This file is a *template* -- the bringup script substitutes
+# two placeholders before launching the MDS:
+#
+#   REPLACE_WITH_SHADOW_LAN_IP    shadow's LAN IP from `ip -4 addr`.
+#                                  Used in every [[data_server]] entry
+#                                  so the MDS dials each DS via the
+#                                  same host the PS and client see.
+#   REPLACE_WITH_PS_FINGERPRINT   SHA-256 of the PS mTLS cert minted
+#                                  by deploy/sanity/setup-mini-ca.sh.
+#                                  Allows PROXY_REGISTRATION from
+#                                  the bench PS on adept.
+#
+# Without the IP substitution the MDS cannot dial out to its own
+# DSes.  Without the fingerprint substitution variant d (PS-encoded)
+# cannot run -- variants a/b/c still work because the kernel client
+# does AUTH_SYS, not TLS.  The MDS is TLS-capable but not TLS-only,
+# so the same config serves every variant.
+#
+# The MDS reads this file inside the docker container; the bringup
+# script mounts the stamped working copy at /etc/mds.toml.
+#
+# The DSes live in docker-compose containers on shadow, each
+# publishing port 2049 on a distinct shadow host port (22049 +
+# (id-1)).  The MDS therefore reaches each DS via shadow's LAN
+# IP -- the same way the PS on adept and the client on dreamer
+# reach them.  This is the cross-host reachability fix for the
+# 2026-06-02 single-host bench's docker-compose-DNS artefact.
+
+[server]
+port            = 2049
+bind            = "*"
+role            = "mds"
+minor_versions  = [1, 2]
+grace_period    = 5
+workers         = 4
+log_level       = "info"
+layout_width    = 10
+register_with_rpcbind = false
+tls             = true
+tls_cert        = "/tmp/reffs_ps_tls/ca.crt"
+tls_key         = "/tmp/reffs_ps_tls/ca.key"
+tls_ca          = "/tmp/reffs_ps_tls/ca.crt"
+
+[backend]
+type            = "posix"
+path            = "/tmp/reffs_mds_data"
+state_file      = "/tmp/reffs_mds_state"
+
+[mds]
+# Mirror the bench mds.toml explicit interval.  30s comfortably
+# beats the 601s CONNECTION_TIMEOUT_SECONDS in lib/io/conn_info
+# while leaving headroom for backoff retries on a wedged DS.
+ds_session_renewal_interval_sec = 30
+
+[[export]]
+path         = "/"
+layout_types = ["ffv1", "ffv2"]
+dstores      = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+# Per-export erasure coding (.claude/design/per-export-default-coding.md).
+# RS 4+2 is the IETF 126 4-variant plan's default for variant d
+# (PS does EC against DSes).  Having it in the bench config means
+# the MDS issues k=4, m=2 geometry from LAYOUTGET without the
+# client (or the harness) needing to set it via probe at startup.
+default_coding = "rs:4+2"
+
+    [[export.clients]]
+    match       = "*"
+    access      = "rw"
+    root_squash = false
+    flavors     = ["sys", "tls"]
+
+# REPLACED by run-realnet-bringup.sh: the bringup script splices
+# the bench PS's mTLS cert fingerprint here, defaulting-deny against
+# unknown PS identities.  See proxy-server.md sec-security: the
+# MDS<->PS session MUST be authenticated and the allowlist is the
+# fingerprint-based mechanism.  Without this block the PS cannot
+# register and variant d cannot run.
+[[allowed_ps]]
+tls_cert_fingerprint = "REPLACE_WITH_PS_FINGERPRINT"
+
+# Per-DS port publishing on shadow: ds<i> publishes container port
+# 2049 on host port 22049 + i (see docker-compose-realnet.yml).
+# The MDS dials shadow's LAN IP on each published port.
+
+[[data_server]]
+id      = 1
+address = "REPLACE_WITH_SHADOW_LAN_IP"
+port    = 22049
+path    = "/"
+protocol = "nfsv4"
+tight_coupling = true
+
+[[data_server]]
+id      = 2
+address = "REPLACE_WITH_SHADOW_LAN_IP"
+port    = 22050
+path    = "/"
+protocol = "nfsv4"
+tight_coupling = true
+
+[[data_server]]
+id      = 3
+address = "REPLACE_WITH_SHADOW_LAN_IP"
+port    = 22051
+path    = "/"
+protocol = "nfsv4"
+tight_coupling = true
+
+[[data_server]]
+id      = 4
+address = "REPLACE_WITH_SHADOW_LAN_IP"
+port    = 22052
+path    = "/"
+protocol = "nfsv4"
+tight_coupling = true
+
+[[data_server]]
+id      = 5
+address = "REPLACE_WITH_SHADOW_LAN_IP"
+port    = 22053
+path    = "/"
+protocol = "nfsv4"
+tight_coupling = true
+
+[[data_server]]
+id      = 6
+address = "REPLACE_WITH_SHADOW_LAN_IP"
+port    = 22054
+path    = "/"
+protocol = "nfsv4"
+tight_coupling = true
+
+[[data_server]]
+id      = 7
+address = "REPLACE_WITH_SHADOW_LAN_IP"
+port    = 22055
+path    = "/"
+protocol = "nfsv4"
+tight_coupling = true
+
+[[data_server]]
+id      = 8
+address = "REPLACE_WITH_SHADOW_LAN_IP"
+port    = 22056
+path    = "/"
+protocol = "nfsv4"
+tight_coupling = true
+
+[[data_server]]
+id      = 9
+address = "REPLACE_WITH_SHADOW_LAN_IP"
+port    = 22057
+path    = "/"
+protocol = "nfsv4"
+tight_coupling = true
+
+[[data_server]]
+id      = 10
+address = "REPLACE_WITH_SHADOW_LAN_IP"
+port    = 22058
+path    = "/"
+protocol = "nfsv4"
+tight_coupling = true

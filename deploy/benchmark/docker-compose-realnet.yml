@@ -1,0 +1,213 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Real-network EC benchmark: 1 MDS + 10 DSes published on
+# distinct host ports for cross-host reachability.  Used by
+# the 4-variant PS-encoder bench (see
+# .claude/design/ps-encoder-bench-4variant-realnet.md and
+# .claude/design/multi-host-bench-bringup.md).
+#
+# The only structural difference from docker-compose.yml is the
+# `ports:` block on every dsN service: each DS publishes 2049 on
+# the docker host's port 22049+i so the **client and PS on other
+# hosts** can reach each DS directly over the LAN.  Without this,
+# the DSes are only reachable on the internal docker-bridge
+# network by `reffs-dsN` service name -- which is exactly the
+# reachability artefact the 2026-06-02 single-host bench tripped
+# over (see ps-encoder-bench.md Take 2).
+#
+# This yaml is brought up on shadow (the DS+MDS host).  The PS
+# on adept and the client on dreamer reach the DSes at
+# shadow-LAN-IP:22049 .. :22058.
+#
+# Usage: launched by deploy/benchmark/run-realnet-bringup.sh.
+# Do not invoke directly -- the bringup script also stamps
+# mds-realnet.toml with shadow's discovered LAN IP and
+# per-DS ports.
+
+x-ds-common: &ds-common
+  image: reffs-dev
+  privileged: true
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
+  volumes:
+    - build-vol:/shared:ro,z
+  healthcheck:
+    test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/2049' 2>/dev/null"]
+    interval: 5s
+    timeout: 3s
+    retries: 120
+    start_period: 5s
+  command: >
+    /bin/bash -c "
+      while [ ! -f /shared/ready ]; do sleep 1; done &&
+      rm -rf /tmp/reffs_ds_data /tmp/reffs_ds_state &&
+      mkdir -p /tmp/reffs_ds_data/sb_1 /tmp/reffs_ds_state &&
+      exec /shared/build/src/reffsd --config=/shared/src/deploy/benchmark/ds.toml
+    "
+
+services:
+  builder:
+    container_name: reffs-bench-builder
+    image: reffs-dev
+    volumes:
+      - ../../:/reffs:ro,z
+      - build-vol:/shared:z
+    command: >
+      /bin/bash -c "
+        rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /shared/src/ &&
+        find /shared/src -name 'parsetab.py' -delete &&
+        cd /shared/src && mkdir -p m4 && autoreconf -fi &&
+        mkdir -p /shared/build && cd /shared/build &&
+        /shared/src/configure &&
+        find /shared -name 'parsetab.py' -delete &&
+        make -j1 &&
+        touch /shared/ready &&
+        echo 'Build done.'
+      "
+
+  ds0:
+    <<: *ds-common
+    container_name: reffs-bench-ds0
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      bench:
+        aliases: [reffs-ds0]
+    ports:
+      - "22049:2049"
+      - "22049:2049/udp"
+
+  ds1:
+    <<: *ds-common
+    container_name: reffs-bench-ds1
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      bench:
+        aliases: [reffs-ds1]
+    ports:
+      - "22050:2049"
+      - "22050:2049/udp"
+
+  ds2:
+    <<: *ds-common
+    container_name: reffs-bench-ds2
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      bench:
+        aliases: [reffs-ds2]
+    ports:
+      - "22051:2049"
+      - "22051:2049/udp"
+
+  ds3:
+    <<: *ds-common
+    container_name: reffs-bench-ds3
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      bench:
+        aliases: [reffs-ds3]
+    ports:
+      - "22052:2049"
+      - "22052:2049/udp"
+
+  ds4:
+    <<: *ds-common
+    container_name: reffs-bench-ds4
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      bench:
+        aliases: [reffs-ds4]
+    ports:
+      - "22053:2049"
+      - "22053:2049/udp"
+
+  ds5:
+    <<: *ds-common
+    container_name: reffs-bench-ds5
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      bench:
+        aliases: [reffs-ds5]
+    ports:
+      - "22054:2049"
+      - "22054:2049/udp"
+
+  ds6:
+    <<: *ds-common
+    container_name: reffs-bench-ds6
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      bench:
+        aliases: [reffs-ds6]
+    ports:
+      - "22055:2049"
+      - "22055:2049/udp"
+
+  ds7:
+    <<: *ds-common
+    container_name: reffs-bench-ds7
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      bench:
+        aliases: [reffs-ds7]
+    ports:
+      - "22056:2049"
+      - "22056:2049/udp"
+
+  ds8:
+    <<: *ds-common
+    container_name: reffs-bench-ds8
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      bench:
+        aliases: [reffs-ds8]
+    ports:
+      - "22057:2049"
+      - "22057:2049/udp"
+
+  ds9:
+    <<: *ds-common
+    container_name: reffs-bench-ds9
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      bench:
+        aliases: [reffs-ds9]
+    ports:
+      - "22058:2049"
+      - "22058:2049/udp"
+
+  # MDS is brought up out-of-band by the bringup script so it can
+  # mount the realnet-specific mds-realnet.toml with shadow's
+  # LAN IP substituted.  Keeping it out of the compose file
+  # avoids needing a mds-realnet entry here that just gets
+  # replaced.  The bringup uses `docker run` with --network
+  # benchmark_bench so it joins this stack's network.
+
+volumes:
+  build-vol:
+
+networks:
+  bench:
+    driver: bridge
