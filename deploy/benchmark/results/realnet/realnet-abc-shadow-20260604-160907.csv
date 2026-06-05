@@ -1,0 +1,4 @@
+variant,codec,geometry,size_bytes,iter,write_ms,read_ms,verify,note,topology,client_host,ps_host,ds_mds_host,timestamp,bytes_per_sec_write,bytes_per_sec_read
+a,rs,4+2,4096,1,0,0,SKIP,needs_plain_mds_bringup,realnet-3host,dreamer,adept,shadow,2026-06-04T16:09:07Z,0,0
+b,rs,4+2,4096,1,0,0,SKIP,needs_plain_mds_bringup,realnet-3host,dreamer,adept,shadow,2026-06-04T16:09:07Z,0,0
+c,rs,4+2,4096,1,0,0,SKIP,needs_plain_mds_bringup,realnet-3host,dreamer,adept,shadow,2026-06-04T16:09:07Z,0,0

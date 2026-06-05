@@ -74,14 +74,17 @@ keeps `nc_session_count` honest for *non*-DESTROY_CLIENTID code
 paths that still need the strict count, and reaps trunking-
 probe sessions whose owning client is still healthy.
 
-Tests pinning the contract are in
-`lib/nfs4/tests/nfs4_session.c`:
-`test_destroy_clientid_unknown_is_ok`,
-`test_destroy_clientid_with_session_expires_client`,
-`test_session_alloc_seeds_timestamps`,
-`test_reaper_sweeps_aged_probe_session`,
-`test_reaper_leaves_used_session_alone`,
-`test_reaper_leaves_young_probe_alone`.
+Tests in `lib/nfs4/tests/nfs4_session.c`:
+
+- Lenient DESTROY_CLIENTID contract:
+  `test_destroy_clientid_unknown_is_ok` (unknown-clientid path),
+  `test_destroy_clientid_with_session_expires_client` (known-
+  clientid path with live session -> NFS4_OK + client torn down).
+- Probe-session reaper contract:
+  `test_session_alloc_seeds_timestamps`,
+  `test_reaper_sweeps_aged_probe_session`,
+  `test_reaper_leaves_used_session_alone`,
+  `test_reaper_leaves_young_probe_alone`.
 
 ## utf8string validation
 
