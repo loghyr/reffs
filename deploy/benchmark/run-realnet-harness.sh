@@ -45,6 +45,13 @@ CLIENT_HOST="${CLIENT_HOST:-dreamer}"
 PS_HOST="${PS_HOST:-adept}"
 DS_MDS_HOST="${DS_MDS_HOST:-shadow}"
 MOUNT_POINT="${MOUNT_POINT:-/mnt/realnet-bench}"
+# Variants a/b/c mount MDS-direct on plain NFSv4.2.  The realnet
+# MDS does dual-mode RPC (TLS-capable but not TLS-required) per
+# the dual-mode-RPC verification on 2026-06-05, so the existing
+# MDS container serves these variants on its native port 2049
+# alongside variant d's TLS PS path on port 4098.  See
+# multi-host-bench-bringup.md "Plain-MDS variants a/b/c".
+MOUNT_POINT_MDS="${MOUNT_POINT_MDS:-/mnt/realnet-mds-bench}"
 OUT=""
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -204,12 +211,31 @@ sudo mount -t nfs4 -o sec=sys,vers=4.2,port=4098 \
 EOF
 }
 
-# Cleanup mount on harness exit so re-runs start clean.  Best
+# Ensure the client has the plain MDS-direct mount.  Idempotent.
+# Variants a/b/c only.  The realnet MDS does dual-mode RPC, so
+# this is a normal NFSv4.2 mount on the MDS's native port -- no
+# extra container or port-publish needed beyond the variant d
+# bringup.
+mount_variants_abc() {
+    ssh "$CLIENT_HOST" bash -s <<EOF
+set -euo pipefail
+if mount | grep -q "$MOUNT_POINT_MDS"; then
+    exit 0
+fi
+sudo mkdir -p "$MOUNT_POINT_MDS"
+sudo mount -t nfs4 -o sec=sys,vers=4.2,port=2049 \
+    $DS_MDS_LAN_IP:/ $MOUNT_POINT_MDS
+EOF
+}
+
+# Cleanup mounts on harness exit so re-runs start clean.  Best
 # effort -- if umount fails (e.g., busy), leave the mount and
 # rely on the next bringup teardown to handle it.
 cleanup_mount() {
     ssh "$CLIENT_HOST" \
         "sudo umount $MOUNT_POINT 2>/dev/null || true" >/dev/null 2>&1
+    ssh "$CLIENT_HOST" \
+        "sudo umount $MOUNT_POINT_MDS 2>/dev/null || true" >/dev/null 2>&1
 }
 trap cleanup_mount EXIT
 
@@ -296,10 +322,69 @@ echo "\$write_ms \$read_ms \$verify \$note"
 EOF
 }
 
-# Per-cell variant a/b/c stub.  Always emits SKIP until the
-# plain-MDS bringup slice lands.
-run_cell_stub() {
-    echo "0 0 SKIP needs_plain_mds_bringup"
+# Per-cell variants a/b/c execution.  Same shape as run_cell_d but
+# targets the MDS-direct mount, exercising the kernel pNFS client
+# (no PS proxy in the path).  variant_label is "a", "b", or "c";
+# the body is identical for all three today because per-variant
+# MDS-export configs (single-DS FFv1 for a, multi-DS FFv1 for b,
+# FFv2 for c) are a follow-up slice.  CSV rows are tagged by the
+# variant letter so the eventual split lands as data without
+# re-running prior captures.
+run_cell_kernel_mds() {
+    local variant_label=$1 size=$2 iter=$3 cell_id=$4
+
+    ssh "$CLIENT_HOST" bash -s <<EOF
+set -uo pipefail
+in=/tmp/realnet_in_${size}.bin
+out=/tmp/realnet_out_${cell_id}.bin
+target=$MOUNT_POINT_MDS/${cell_id}.bin
+
+if [ ! -f "\$in" ] || [ "\$(stat -c%s "\$in" 2>/dev/null)" != "${size}" ]; then
+    if ! sudo dd if=/dev/urandom of="\$in" bs=${size} count=1 status=none; then
+        rc=\$?
+        echo "0 0 FAIL input_gen_failed_\$rc"
+        exit 0
+    fi
+fi
+sudo rm -f "\$target" "\$out"
+
+t0=\$(date +%s%N)
+if ! sudo dd if="\$in" of="\$target" bs=${size} count=1 \
+        conv=fsync status=none; then
+    rc=\$?
+    echo "0 0 FAIL dd_write_failed_\$rc"
+    exit 0
+fi
+t1=\$(date +%s%N)
+write_ms=\$(( (t1 - t0) / 1000000 ))
+
+drop_note=
+if ! echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1; then
+    drop_note=drop_caches_failed
+fi
+
+t0=\$(date +%s%N)
+if ! sudo dd if="\$target" of="\$out" bs=${size} status=none; then
+    rc=\$?
+    echo "\$write_ms 0 FAIL dd_read_failed_\$rc"
+    exit 0
+fi
+t1=\$(date +%s%N)
+read_ms=\$(( (t1 - t0) / 1000000 ))
+
+verify=OK
+note=\$drop_note
+if ! sudo cmp -s "\$in" "\$out"; then
+    verify=FAIL
+    if [ -n "\$note" ]; then
+        note="\${note};bytes_mismatch"
+    else
+        note=bytes_mismatch
+    fi
+fi
+sudo rm -f "\$out"
+echo "\$write_ms \$read_ms \$verify \$note"
+EOF
 }
 
 # -- main loop --------------------------------------------------------
@@ -308,9 +393,12 @@ ok_cells=0
 fail_cells=0
 skip_cells=0
 
-# Variant d setup: mount the PS once (idempotent).
+# Per-variant mount setup, idempotent.  Both mounts can coexist.
 case "$VARIANTS" in
 *d*) mount_variant_d ;;
+esac
+case "$VARIANTS" in
+*a*|*b*|*c*) mount_variants_abc ;;
 esac
 
 # Iteration order: variants outer, then codecs, then geoms, then
@@ -363,7 +451,8 @@ for variant in "${VARIANT_ARR[@]}"; do
                             result=$(run_cell_d "$size" "$iter" "$cell_id")
                             ;;
                         a|b|c)
-                            result=$(run_cell_stub)
+                            result=$(run_cell_kernel_mds \
+                                "$variant" "$size" "$iter" "$cell_id")
                             ;;
                         *)
                             echo "FAIL: unknown variant '$variant'" >&2

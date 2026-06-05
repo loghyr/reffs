@@ -17,13 +17,18 @@ and emits CSV ready for downstream analysis (deck slide 22 on
 
 This slice ships the harness shell that:
 
-1. Drives **variant d** (kernel client -> PS -> MDS+DSes) against
-   the realnet bringup landed by prereq #3.  This is the
-   variant-d-only subset; variants a/b/c are stubbed and return
-   `note=needs_plain_mds_bringup` until the plain-MDS realnet
-   follow-up slice lands (see
+1. Drives **all four variants** against the realnet bringup
+   landed by prereq #3.  Variant d goes kernel client -> PS ->
+   MDS+DSes via the PS listener on `:4098`; variants a/b/c go
+   kernel client -> MDS direct on `:2049` via the dual-mode
+   STARTTLS-fallthrough path the MDS already supports (see
    `.claude/design/multi-host-bench-bringup.md` scope
-   clarification).
+   clarification, 2026-06-05 revision).  Variants a/b/c share
+   an implementation (`run_cell_kernel_mds`) until per-variant
+   MDS export configs (single-DS FFv1 / multi-DS FFv1 / FFv2)
+   land in a follow-up slice; CSV rows are tagged by variant
+   letter so the eventual split lands as data without re-running
+   prior captures.
 2. Writes CSV with a schema compatible with the existing
    `run_ps_vs_client_bench.sh` analysis tooling so the variant-d
    numbers can be cross-correlated with the single-host A/B/C
@@ -195,21 +200,22 @@ Failure mode: if the probe RPC fails (e.g., MDS is gone), the
 harness emits `note=set_default_coding_failed` and skips the
 cell.
 
-## Variant stubs (a/b/c)
+## Variants a/b/c implementation
 
-For variants a/b/c, the harness emits one CSV row per cell with:
+The harness mounts the realnet MDS once at `$MOUNT_POINT_MDS`
+(default `/mnt/realnet-mds-bench`) via NFSv4.2 + AUTH_SYS on
+the MDS's native `:2049` port and runs `run_cell_kernel_mds`
+per cell.  The implementation is identical to `run_cell_d`
+except for the mount point: kernel does the WRITE + fsync
+COMMIT, kernel drops page cache, kernel does the READ, harness
+`cmp`s for `verify=OK`.
 
-```
-variant=<a|b|c>,codec=<codec>,geometry=<k>+<m>,size_bytes=<size>,
-iter=<iter>,write_ms=0,read_ms=0,verify=SKIP,
-note=needs_plain_mds_bringup,...
-```
-
-The `verify=SKIP` is distinguishable from `verify=FAIL` so
-downstream analysis can correctly attribute "no data" to "not
-implemented" rather than "implemented and broken".  When the
-plain-MDS bringup slice lands, the variant a/b/c handlers
-replace the stub.
+CSV rows are tagged by variant letter (`a`, `b`, or `c`) so a
+future per-variant MDS-export split (single-DS FFv1 for a,
+multi-DS FFv1 for b, FFv2 CHUNK for c) lands as data without
+re-running prior captures.  Until that follow-up slice, all
+three variants produce identical bytes-on-the-wire and the
+rows differ only in the variant column.
 
 ## Output organization
 

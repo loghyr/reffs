@@ -12,33 +12,47 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 standing so prereq #4 (the harness) and prereqs #5-6 (smoke +
 full sweep) have something to drive.
 
-## Scope clarification (revised after first-smoke 2026-06-03)
+## Scope clarification (revised after first-smoke 2026-06-03,
+## further revised after dual-mode-RPC verification 2026-06-05)
 
 The initial design imagined this single bringup standing up the
-full 4-variant topology in one shot.  First smoke surfaced a
-genuine conflict: variants a/b/c need an MDS that speaks plain
-TCP, but the proxy-server draft (and the implementation per
-`proxy_registration.c`) require **TLS or RPCSEC_GSS** on the
-PS-to-MDS session.  reffsd's `tls = true` makes the MDS listener
-TLS-required (the AUTH_TLS STARTTLS path is gated on the client
-initiating the upgrade, which ec_demo and the kernel client do
-not).  Three viable resolutions:
+full 4-variant topology in one shot.  First smoke (2026-06-03)
+surfaced an apparent conflict between variants a/b/c (kernel
+client speaks plain TCP) and variant d (PS-to-MDS session must
+be TLS or RPCSEC_GSS per `proxy_registration.c` and the
+proxy-server draft).  The shipped slice took option (b) below
+and labelled itself variant-d-only.
+
+A 2026-06-05 verification (mount the realnet MDS from dreamer
+with `port=2049,sec=sys`, run `dd conv=fsync` 4 KB + 1 MB) shows
+the conflict is not real: the realnet MDS does dual-mode RPC.
+The TLS-detect path in `lib/io/handlers.c:1006,1089` inspects
+the first six bytes for the TLS ChangeCipherSpec / ClientHello
+signature (`0x14 0x03 0x03 ...`) and falls through to plain RPC
+for any other prefix.  AUTH_SYS NFSv4.2 mounts coexist with the
+PS's mTLS session on the same `:2049` listener.  No second MDS
+container needed.
+
+The earlier "SSL handshake failed every 60 s" log signature in
+the MDS came from a stale `pd-protod`-style reffsd PS process
+left over from an older bringup, not from the kernel client.
+Killing the stale process silenced the SSL noise; the live
+variant-d path remained healthy and the kernel-client variant
+a path Just Worked when given the right mount options.
+
+Updated resolution table:
 
 | Option | Result |
 |--------|--------|
 | (a) Drop TLS on MDS | Variants a/b/c work; variant d **does not** -- `PROXY_REGISTRATION` rejects AUTH_SYS sessions |
-| (b) Keep TLS on MDS | Variant d works; variants a/b/c blocked by handshake failure |
-| (c) Code: dual-mode TLS listener | Both work.  Days of work in `lib/io/`. |
-| (d) Two MDS instances on different ports | Both work.  Complex backend sharing problem. |
+| (b) Keep TLS on MDS (existing) | Originally thought to be variant-d-only; in practice the MDS does dual-mode and variants a/b/c work via plain-TCP STARTTLS fallthrough on the same `:2049` port |
+| (c) Code: dual-mode TLS listener | Effectively already shipped via the STARTTLS detection path |
+| (d) Two MDS instances on different ports | Not needed |
 
-For this slice we land **(b)**: the realnet bringup ships as
-**variant-d-only** today.  The plain-MDS bringup for variants
-a/b/c is queued as a follow-up slice that either picks (c) or
-runs two MDS containers.  The headline WG question
-"client EC vs server EC" maps to variants c and d; variant d is
-preserved, and the variant-c surrogate (`ec_demo` against a plain
-MDS) can be measured on the existing single-host setup until the
-plain-MDS realnet bringup lands.
+The realnet bringup as it stands supports all four variants.
+Variants a/b/c mount the MDS directly at `<shadow_lan_ip>:2049`
+with `sec=sys`; variant d mounts the PS at `<adept_lan_ip>:4098`
+as before.
 
 The existing `run-ps-bench-bringup.sh` is single-host docker:
 it brings up the docker-compose `mds + 10 DSes + N PSes` stack
@@ -275,26 +289,20 @@ data-collection.
 
 ## Deferred / NOT_NOW_BROWN_COW
 
-- **Plain-MDS realnet bringup for variants a/b/c.**  This slice
-  is variant-d-only by design (see scope clarification above).
-  Follow-up slice picks one of: (i) dual-mode TLS listener
-  (`lib/io/` code change, days of work), or (ii) two MDS
-  containers on different ports sharing a backend mount, or
-  (iii) just re-use the existing single-host bench for a/b/c
-  measurement and only do realnet for variant d.  The
-  4-variant deck slide (slide 22 on `ietf126.md`) can land
-  with variant d on realnet topology and variants a/b/c on
-  single-host until the follow-up resolves.
-- **Why we did not investigate dual-mode TLS in this slice.**
-  The reffs RPC layer registers AUTH_TLS as a flavor
-  (`lib/rpc/rpc.c:1276`) but the actual STARTTLS upgrade is
-  client-initiated; ec_demo and the Linux kernel client do
-  not currently issue the AUTH_TLS NULL probe before their
-  first NFSv4 op.  Making the listener accept plain TCP and
-  upgrade on STARTTLS-request, while rejecting non-STARTTLS
-  plain TCP traffic from the PS specifically, would touch
-  authentication negotiation in a way that warrants its own
-  design slice.
+- **Per-variant MDS export configs (a vs b vs c distinction).**
+  All three variants share the kernel-MDS-direct path today; the
+  MDS issues whatever layout the kernel asks for and the per-
+  variant rows in the CSV are tagged by the variant letter but
+  use the same underlying layout.  The intended split (single-DS
+  FFv1 for a, multi-DS FFv1 mirror striping for b, FFv2 CHUNK
+  for c) needs per-export config knobs that don't exist yet.
+  Follow-up slice: add three exports to the bench MDS, each with
+  different `dstores` + `layout_types`, and have the harness
+  mount the matching export per variant.
+- **Plain-MDS realnet bringup** (the original deferred item that
+  this verification retired).  Now answered: the realnet MDS
+  already does dual-mode RPC; the deferred work was a
+  misdiagnosis.  Kept here for archaeology.
 - **Option 2 topology** (N+3 distinct hosts).  Same bringup
   script with different host inventory; deferred until
   per-DS-storage measurement is needed.
