@@ -181,6 +181,16 @@ static int g_nconnect = 1;
  */
 static char **g_spn_list;
 static int g_spn_list_n;
+/*
+ * --source-ip ADDR (long-only, opt-val 258).  Optional local IPv4
+ * source address to bind MDS- and DS-side TCP sockets to before
+ * connect.  When non-NULL/non-empty, the session-setup code
+ * threads this through struct mds_session::ms_source_ip; both
+ * libtirpc-driven clnt_create paths (bare host with no source_ip
+ * set) and manual-socket paths honour the binding.  See
+ * lib/include/reffs/source_bind.h.
+ */
+static const char *g_source_ip;
 
 /*
  * Optional directory of pre-baked Kerberos credential caches for
@@ -317,6 +327,15 @@ static int session_open(struct mds_session *ms, const char *mds_host)
 {
 	memset(ms, 0, sizeof(*ms));
 	mds_session_set_owner(ms, g_client_id);
+	/*
+	 * --source-ip: bind MDS-side TCP socket to this local IPv4
+	 * address.  mds_session_create*'s memset-zero pattern preserves
+	 * ms_source_ip via the same save/restore as ms_owner.
+	 * ec_pipeline's ds_connect call sites also read this value via
+	 * ctx->ctx_ms->ms_source_ip, so the DS-side NFSv3 sockets bind
+	 * the same source.
+	 */
+	ms->ms_source_ip = g_source_ip;
 
 	const char *sec_name[] = { "sys", "krb5", "krb5i", "krb5p" };
 
@@ -371,6 +390,7 @@ static void *burst_worker(void *vargs)
 	 * principal-resolution fan-out we want to drive.
 	 */
 	mds_session_set_owner(&ms, g_client_id);
+	ms.ms_source_ip = g_source_ip;
 
 	clock_gettime(CLOCK_MONOTONIC, &t0);
 	int ret;
@@ -1523,6 +1543,16 @@ static void usage(void)
 		"                   drives the multi-identity load shape.\n"
 		"                   Default: unset (threaded burst, one\n"
 		"                   ccache from the inherited environment).\n"
+		"  --source-ip A    Local IPv4 source address (dotted-quad) to\n"
+		"                   bind MDS- and DS-side TCP sockets to before\n"
+		"                   connect.  The address must already be\n"
+		"                   assigned to a local interface on this host\n"
+		"                   (bind fails with EADDRNOTAVAIL otherwise).\n"
+		"                   Use to drive multi-client stress from a\n"
+		"                   single host: each parallel ec_demo gets a\n"
+		"                   different --source-ip and --id so the MDS\n"
+		"                   sees them as independent clients.\n"
+		"                   Default: unset (kernel-assigned source).\n"
 		"\n"
 		"Subcommands:\n"
 		"  burst            Open --nsessions N parallel mds_sessions\n"
@@ -1565,6 +1595,14 @@ static struct option long_options[] = {
 	{ "shard-size", required_argument, NULL, 'Z' },
 	{ "offset", required_argument, NULL, 'O' },
 	{ "length", required_argument, NULL, 'L' },
+	/*
+	 * Optional local IPv4 source address to bind MDS- and DS-side
+	 * TCP sockets to before connect.  Use to run multiple parallel
+	 * ec_demo instances from one host, each presenting as a
+	 * different client (combined with a unique --id).  The address
+	 * must already be assigned to a local interface on this host.
+	 */
+	{ "source-ip", required_argument, NULL, 258 },
 	{ "help", no_argument, NULL, '?' },
 	{ NULL, 0, NULL, 0 },
 };
@@ -1808,6 +1846,18 @@ int main(int argc, char *argv[])
 			g_ccache_dir = optarg;
 			if (load_ccache_dir(g_ccache_dir) < 0)
 				return 1;
+			break;
+		case 258:
+			/*
+			 * --source-ip ADDR: bind MDS- and DS-side TCP sockets
+			 * to this local IPv4 source address before connect.
+			 * The address must already be assigned to a local
+			 * interface (bind returns EADDRNOTAVAIL otherwise).
+			 * Use with a unique --id per parallel ec_demo
+			 * instance to drive multi-client load from a single
+			 * host.
+			 */
+			g_source_ip = optarg;
 			break;
 		default:
 			usage();

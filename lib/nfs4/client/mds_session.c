@@ -24,6 +24,8 @@
 
 #include <rpc/rpc.h>
 
+#include "reffs/source_bind.h"
+
 #include "host_port.h"
 
 /*
@@ -891,7 +893,7 @@ void mds_session_set_owner(struct mds_session *ms, const char *id)
  * Returns a CLIENT * on success or NULL on failure.  Caller frees
  * via clnt_destroy.
  */
-static CLIENT *mds_session_clnt_open(const char *host)
+static CLIENT *mds_session_clnt_open(const char *host, const char *source_ip)
 {
 	if (!host) {
 		fprintf(stderr, "mds_session_clnt_open: NULL host\n");
@@ -909,13 +911,23 @@ static CLIENT *mds_session_clnt_open(const char *host)
 	}
 
 	/*
-	 * No explicit port -> hand the bare host string to libtirpc's
-	 * portmap-driven path.  This is the only call site that still
-	 * goes through portmap; the explicit-port path below bypasses
-	 * it for PS deployments where the proxy listener does not
-	 * register with rpcbind.
+	 * No explicit port AND no source-IP binding requested -> hand
+	 * the bare host string to libtirpc's portmap-driven path.  This
+	 * is the only call site that still goes through portmap; the
+	 * explicit-port path below bypasses it for PS deployments where
+	 * the proxy listener does not register with rpcbind.
+	 *
+	 * When source_ip is set we MUST own the socket so we can bind()
+	 * the local address before connecting.  libtirpc's clnt_create
+	 * internally creates and connects the socket itself with no hook
+	 * for source-IP override; the only way to control the source is
+	 * to do the socket setup ourselves and hand the fd to
+	 * clnttcp_create.  Fall through to the explicit-port path,
+	 * defaulting the port to 2049 (the standard NFS port).  Users
+	 * needing a non-default port with source-IP binding pass an
+	 * explicit "host:port" host string.
 	 */
-	if (port == 0) {
+	if (port == 0 && (!source_ip || source_ip[0] == '\0')) {
 		CLIENT *c = clnt_create(host_buf, NFS4_PROGRAM, NFS_V4, "tcp");
 
 		if (!c)
@@ -924,6 +936,9 @@ static CLIENT *mds_session_clnt_open(const char *host)
 				host_buf, clnt_spcreateerror(""));
 		return c;
 	}
+
+	if (port == 0)
+		port = 2049;
 
 	struct addrinfo hints = {
 		.ai_family = AF_INET,
@@ -948,6 +963,23 @@ static CLIENT *mds_session_clnt_open(const char *host)
 	if (fd < 0) {
 		fprintf(stderr, "mds_session_clnt_open: socket() failed: %s\n",
 			strerror(errno));
+		return NULL;
+	}
+
+	/*
+	 * Bind to source_ip BEFORE bindresvport, so the privileged-port
+	 * pick lands on the caller-chosen local address.  When source_ip
+	 * is NULL or empty this is a no-op (source_bind returns 0
+	 * immediately) and bindresvport will use the kernel-assigned
+	 * local address as before.
+	 *
+	 * Fatal: if the caller asked for a specific source IP and the
+	 * bind fails (address not on this host, etc.), there is no
+	 * useful fallback -- proceeding would silently use a different
+	 * source than the caller wanted.
+	 */
+	if (source_bind(fd, source_ip, "mds_session_clnt_open") < 0) {
+		close(fd);
 		return NULL;
 	}
 
@@ -1014,11 +1046,13 @@ int mds_session_create(struct mds_session *ms, const char *host)
 	 */
 	char saved_owner[256];
 	uint32_t saved_exchgid = ms->ms_exchgid_flags;
+	const char *saved_source_ip = ms->ms_source_ip;
 
 	memcpy(saved_owner, ms->ms_owner, sizeof(saved_owner));
 	memset(ms, 0, sizeof(*ms));
 	memcpy(ms->ms_owner, saved_owner, sizeof(ms->ms_owner));
 	ms->ms_exchgid_flags = saved_exchgid;
+	ms->ms_source_ip = saved_source_ip;
 
 	if (ms->ms_owner[0] == '\0')
 		mds_session_set_owner(ms, NULL);
@@ -1026,7 +1060,7 @@ int mds_session_create(struct mds_session *ms, const char *host)
 	if (pthread_mutex_init(&ms->ms_call_mutex, NULL) != 0)
 		return -ENOMEM;
 
-	ms->ms_clnt = mds_session_clnt_open(host);
+	ms->ms_clnt = mds_session_clnt_open(host, ms->ms_source_ip);
 	if (!ms->ms_clnt) {
 		pthread_mutex_destroy(&ms->ms_call_mutex);
 		return -ECONNREFUSED;
@@ -1083,7 +1117,8 @@ err:
 static CLIENT *
 mds_session_clnt_open_tls(const char *host, uint16_t port, const char *tls_cert,
 			  const char *tls_key, const char *tls_ca, int tls_mode,
-			  bool insecure_no_verify, SSL_CTX **ctx_out)
+			  bool insecure_no_verify, const char *source_ip,
+			  SSL_CTX **ctx_out)
 {
 	struct tls_client_config cfg = {
 		.cert_path = (tls_cert && tls_cert[0] != '\0') ? tls_cert :
@@ -1114,7 +1149,7 @@ mds_session_clnt_open_tls(const char *host, uint16_t port, const char *tls_cert,
 
 	*ctx_out = NULL;
 
-	fd = tls_tcp_connect(host, (int)port);
+	fd = tls_tcp_connect(host, (int)port, source_ip);
 	if (fd < 0)
 		return NULL;
 
@@ -1198,10 +1233,12 @@ int mds_session_create_tls(struct mds_session *ms, const char *host,
 	}
 
 	char saved_owner[256];
+	const char *saved_source_ip = ms->ms_source_ip;
 
 	memcpy(saved_owner, ms->ms_owner, sizeof(saved_owner));
 	memset(ms, 0, sizeof(*ms));
 	memcpy(ms->ms_owner, saved_owner, sizeof(ms->ms_owner));
+	ms->ms_source_ip = saved_source_ip;
 
 	if (ms->ms_owner[0] == '\0')
 		mds_session_set_owner(ms, NULL);
@@ -1214,7 +1251,7 @@ int mds_session_create_tls(struct mds_session *ms, const char *host,
 	ms->ms_clnt = mds_session_clnt_open_tls(host, port, tls_cert, tls_key,
 						tls_ca, tls_mode,
 						tls_insecure_no_verify,
-						&tls_ctx);
+						ms->ms_source_ip, &tls_ctx);
 	if (!ms->ms_clnt) {
 		pthread_mutex_destroy(&ms->ms_call_mutex);
 		return -ECONNREFUSED;
@@ -1268,10 +1305,12 @@ int mds_session_create_sec_spn(struct mds_session *ms, const char *host,
 
 	int ret;
 	char saved_owner[256];
+	const char *saved_source_ip = ms->ms_source_ip;
 
 	memcpy(saved_owner, ms->ms_owner, sizeof(saved_owner));
 	memset(ms, 0, sizeof(*ms));
 	memcpy(ms->ms_owner, saved_owner, sizeof(ms->ms_owner));
+	ms->ms_source_ip = saved_source_ip;
 
 	if (ms->ms_owner[0] == '\0')
 		mds_session_set_owner(ms, NULL);
@@ -1279,7 +1318,7 @@ int mds_session_create_sec_spn(struct mds_session *ms, const char *host,
 	if (pthread_mutex_init(&ms->ms_call_mutex, NULL) != 0)
 		return -ENOMEM;
 
-	ms->ms_clnt = mds_session_clnt_open(host);
+	ms->ms_clnt = mds_session_clnt_open(host, ms->ms_source_ip);
 	if (!ms->ms_clnt) {
 		pthread_mutex_destroy(&ms->ms_call_mutex);
 		return -ECONNREFUSED;
@@ -1540,7 +1579,7 @@ static int mds_session_open_secondary(struct mds_session *ms, const char *host,
 	 * as TCP rejects).
 	 */
 	errno = 0;
-	CLIENT *clnt = mds_session_clnt_open(host);
+	CLIENT *clnt = mds_session_clnt_open(host, ms->ms_source_ip);
 
 	if (!clnt)
 		return errno ? -errno : -ECONNREFUSED;

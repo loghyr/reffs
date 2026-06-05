@@ -112,7 +112,7 @@ int main(int argc, char *argv[])
 	printf("TEST 1: TCP connect to %s:%d ... ", server, port);
 	fflush(stdout);
 
-	int fd = tls_tcp_connect(server, port);
+	int fd = tls_tcp_connect(server, port, NULL);
 
 	if (fd < 0) {
 		printf("FAIL\n");

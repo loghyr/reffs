@@ -168,6 +168,29 @@ struct mds_session {
 	 * an admin-driven retag) racing with worker reads.
 	 */
 	_Atomic uint32_t ms_kick_listener_id;
+	/*
+	 * Optional local IPv4 source address (dotted-quad) to bind the
+	 * MDS-side TCP socket(s) to before connect.  When non-NULL and
+	 * non-empty, all transports opened by mds_session_create* (plain,
+	 * sec, sec_spn, sec_spn_nc, tls) bind() to this source before
+	 * connecting.  The address must already be assigned to a local
+	 * interface on this host (bind() returns EADDRNOTAVAIL otherwise).
+	 *
+	 * Used to drive multi-client stress from a single host: each
+	 * parallel ec_demo instance binds to a different source IP and
+	 * uses a distinct --id (EXCHANGE_ID clientowner) so the MDS sees
+	 * them as independent clients.
+	 *
+	 * Caller sets this field BEFORE calling mds_session_create*; the
+	 * memset-zero pattern in mds_session_create preserves it via the
+	 * same save/restore block as ms_owner and ms_exchgid_flags.  NULL
+	 * (default) reproduces the pre-source-IP behaviour byte-identical.
+	 *
+	 * Lifetime: pointer is borrowed; the caller owns the underlying
+	 * string and must keep it alive for the life of the session (the
+	 * field is read at every reconnect, not only at session create).
+	 */
+	const char *ms_source_ip;
 };
 
 /*
@@ -667,8 +690,14 @@ struct ds_conn {
 	CLIENT *dc_clnt;
 };
 
+/*
+ * source_ip: optional local IPv4 source address (dotted-quad) to
+ * bind the NFSv3 DS-side TCP socket to before connect.  NULL or
+ * empty is the no-op path (kernel-assigned source).  See
+ * ms_source_ip in struct mds_session for the rationale.
+ */
 int ds_connect(struct ds_conn *dc, const struct ec_device *dev, uint32_t uid,
-	       uint32_t gid);
+	       uint32_t gid, const char *source_ip);
 void ds_disconnect(struct ds_conn *dc);
 
 int ds_write(struct ds_conn *dc, const uint8_t *fh, uint32_t fh_len,

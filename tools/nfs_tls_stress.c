@@ -699,7 +699,7 @@ static void mode_starttls_loop(struct stress_config *cfg,
 	for (int i = 0; i < cfg->iterations; i++) {
 		uint64_t t0 = now_us();
 
-		int fd = tls_tcp_connect(cfg->host, cfg->port);
+		int fd = tls_tcp_connect(cfg->host, cfg->port, NULL);
 		if (fd < 0) {
 			stats->failures++;
 			if (cfg->verbose)
@@ -767,7 +767,7 @@ static void mode_mid_op_disconnect(struct stress_config *cfg,
 		uint64_t t0 = now_us();
 
 		/* Phase 1: connect, establish, send probe, HARD CLOSE */
-		int fd = tls_tcp_connect(cfg->host, cfg->port);
+		int fd = tls_tcp_connect(cfg->host, cfg->port, NULL);
 		if (fd < 0) {
 			stats->failures++;
 			continue;
@@ -809,7 +809,7 @@ static void mode_mid_op_disconnect(struct stress_config *cfg,
 		usleep((unsigned)(rand() % 100000));
 
 		/* Phase 2: reconnect and verify server recovered */
-		fd = tls_tcp_connect(cfg->host, cfg->port);
+		fd = tls_tcp_connect(cfg->host, cfg->port, NULL);
 		if (fd < 0) {
 			stats->failures++;
 			stats->reconnects++;
@@ -864,7 +864,7 @@ static void mode_hot_reconnect(struct stress_config *cfg,
 		uint64_t t0 = now_us();
 
 		/* Phase 1: normal STARTTLS + probe */
-		int fd = tls_tcp_connect(cfg->host, cfg->port);
+		int fd = tls_tcp_connect(cfg->host, cfg->port, NULL);
 		if (fd < 0) {
 			stats->failures++;
 			continue;
@@ -891,7 +891,7 @@ static void mode_hot_reconnect(struct stress_config *cfg,
 		close(fd);
 
 		/* Phase 2: reconnect with DIRECT TLS (no STARTTLS) */
-		fd = tls_tcp_connect(cfg->host, cfg->port);
+		fd = tls_tcp_connect(cfg->host, cfg->port, NULL);
 		if (fd < 0) {
 			stats->failures++;
 			stats->reconnects++;
@@ -909,7 +909,7 @@ static void mode_hot_reconnect(struct stress_config *cfg,
 			close(fd);
 
 			/* Retry with STARTTLS to verify recovery */
-			fd = tls_tcp_connect(cfg->host, cfg->port);
+			fd = tls_tcp_connect(cfg->host, cfg->port, NULL);
 			if (fd < 0) {
 				stats->failures++;
 				continue;
@@ -962,7 +962,7 @@ static void mode_rapid_cycle(struct stress_config *cfg,
 	for (int i = 0; i < cfg->iterations; i++) {
 		uint64_t t0 = now_us();
 
-		int fd = tls_tcp_connect(cfg->host, cfg->port);
+		int fd = tls_tcp_connect(cfg->host, cfg->port, NULL);
 		if (fd < 0) {
 			stats->failures++;
 			continue;

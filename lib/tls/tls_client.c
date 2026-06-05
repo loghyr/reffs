@@ -33,6 +33,7 @@
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
 
+#include "reffs/source_bind.h"
 #include "reffs/tls_client.h"
 
 /* ------------------------------------------------------------------ */
@@ -346,7 +347,7 @@ void tls_trace_handshake(SSL *ssl, const char *label)
 /* TCP helpers                                                         */
 /* ------------------------------------------------------------------ */
 
-int tls_tcp_connect(const char *host, int port)
+int tls_tcp_connect(const char *host, int port, const char *source_ip)
 {
 	struct addrinfo hints = { .ai_family = AF_UNSPEC,
 				  .ai_socktype = SOCK_STREAM };
@@ -370,6 +371,21 @@ int tls_tcp_connect(const char *host, int port)
 	struct timeval tv = { .tv_sec = 5 };
 	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 	setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+	/*
+	 * Bind to source_ip BEFORE connect.  When source_ip is NULL or
+	 * empty this is a no-op (source_bind returns 0 immediately).
+	 * IPv4-only today; if/when reffs supports IPv6 MDS-side, the
+	 * source_bind helper grows an AF_INET6 path.  For now any
+	 * caller asking for source_ip plus an IPv6 host gets the same
+	 * EADDRNOTAVAIL the kernel would have given them.
+	 */
+	if (source_ip && source_ip[0] != '\0' &&
+	    source_bind(fd, source_ip, "tls_tcp_connect") < 0) {
+		close(fd);
+		freeaddrinfo(res);
+		return -1;
+	}
 
 	if (connect(fd, res->ai_addr, res->ai_addrlen) < 0) {
 		close(fd);
