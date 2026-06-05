@@ -99,6 +99,20 @@ struct nfs4_session {
 	uint64_t ns_state; /* atomic flag word */
 	struct cds_lfht_node ns_node; /* in ss->ss_session_ht */
 
+	/*
+	 * Lifecycle timestamps for trunking-probe-session reaping
+	 * (issue #64).  ns_create_ns is set once at nfs4_session_alloc
+	 * and never changes; ns_last_seq_ns starts equal to it and is
+	 * updated on every OP_SEQUENCE.  A session whose ns_last_seq_ns
+	 * still equals ns_create_ns after the probe-reap threshold has
+	 * elapsed is a "never-used" trunking probe and gets unhashed
+	 * by lease_reaper so DESTROY_CLIENTID can succeed without the
+	 * Linux kernel's 10x retry storm.
+	 */
+	uint64_t ns_create_ns; /* CLOCK_MONOTONIC, set at alloc */
+	_Atomic uint64_t
+		ns_last_seq_ns; /* CLOCK_MONOTONIC, updated on SEQUENCE */
+
 	void (*ns_free_rcu)(struct rcu_head *rcu);
 	void (*ns_release)(struct urcu_ref *ref);
 };

@@ -36,17 +36,40 @@
 #include "nfs4/client.h"
 #include "nfs4/client_persist.h"
 #include "nfs4/lease_reaper.h"
+#include "nfs4/session.h"
 
 /*
- * Scan interval: check once per 30 seconds.  Lease periods are
- * typically 90 seconds, so a 30-second scan catches expired clients
- * within one-third of a lease period.
+ * Scan interval: check once per second.  The same loop now sweeps
+ * both client lease expiry (slow change, 1.5x lease typically 135s
+ * away) and probe-session expiry (issue #64, 2s after creation),
+ * so the interval is bounded by the faster of the two.  The client
+ * scan is a cheap rcu hash walk on an idle namespace -- doing it
+ * 30x more often than before adds negligible load.
  */
-#define LEASE_SCAN_INTERVAL_SEC 30
+#define LEASE_SCAN_INTERVAL_SEC 1
 
 /* Expire after 1.5x the lease time with no renewal. */
 #define LEASE_EXPIRE_FACTOR_NUM 3
 #define LEASE_EXPIRE_FACTOR_DEN 2
+
+/*
+ * Probe-session reaping (issue #64): a session that received
+ * CREATE_SESSION but has never been observed in SEQUENCE traffic
+ * is almost certainly a Linux NFS-client trunking-probe leftover
+ * (nfs4_pnfs_ds_connect emits 2x CREATE_SESSION per DS but only
+ * 1x DESTROY_SESSION).  After PROBE_REAP_AGE_NS of inactivity we
+ * unhash it so DESTROY_CLIENTID can pass the nc_session_count
+ * gate without triggering the kernel's 10x/1Hz retry storm.
+ *
+ * 2 seconds was chosen to bound the bench-cell penalty: the
+ * kernel begins DESTROY_CLIENTID retries ~2s after the probe is
+ * created, so the probe must be reaped before the 3rd retry.
+ * Legitimate slow clients still get SEQUENCE within 2s of
+ * CREATE_SESSION in any realistic deployment; if not, they would
+ * fail their own session-establishment timeout long before the
+ * server-side reaper fires.
+ */
+#define PROBE_REAP_AGE_NS (2ULL * 1000000000ULL)
 
 /* ------------------------------------------------------------------ */
 /* Global state                                                        */
@@ -56,6 +79,59 @@ static pthread_t lease_reaper_thread;
 static _Atomic uint32_t lease_reaper_running;
 static pthread_mutex_t lease_reaper_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t lease_reaper_cv = PTHREAD_COND_INITIALIZER;
+
+/* ------------------------------------------------------------------ */
+/* Probe-session sweep                                                 */
+/* ------------------------------------------------------------------ */
+
+unsigned int lease_reaper_sweep_probe_sessions(struct server_state *ss,
+					       uint64_t now_ns)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	unsigned int reaped = 0;
+
+	if (!ss || !ss->ss_session_ht)
+		return 0;
+
+	rcu_read_lock();
+	cds_lfht_first(ss->ss_session_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+		struct nfs4_session *ns =
+			caa_container_of(node, struct nfs4_session, ns_node);
+		uint64_t create = ns->ns_create_ns;
+		uint64_t last = atomic_load_explicit(&ns->ns_last_seq_ns,
+						     memory_order_acquire);
+
+		/*
+		 * Advance the iterator BEFORE any unhash (patterns/
+		 * rcu-violations.md Pattern 7 / ref-counting.md Rule 6):
+		 * nfs4_session_unhash drops the table's ref which may
+		 * fire the release callback synchronously, invalidating
+		 * the current node.
+		 */
+		cds_lfht_next(ss->ss_session_ht, &iter);
+
+		/* Used session -- last differs from create after any
+		 * SEQUENCE has bumped it.  Leave alone. */
+		if (last != create)
+			continue;
+		/* Young session -- give it more time to actually be used
+		 * before treating it as a probe.  Also guards against
+		 * pathological clocks where now_ns < create. */
+		if (create == 0 || now_ns <= create ||
+		    now_ns - create < PROBE_REAP_AGE_NS)
+			continue;
+
+		TRACE("lease_reaper: reaping probe session age=%" PRIu64 "ms",
+		      (uint64_t)((now_ns - create) / 1000000ULL));
+		nfs4_session_unhash(ss, ns);
+		reaped++;
+	}
+	rcu_read_unlock();
+
+	return reaped;
+}
 
 /* ------------------------------------------------------------------ */
 /* Thread function                                                     */
@@ -113,6 +189,13 @@ static void *lease_reaper_thread_fn(void *arg __attribute__((unused)))
 		uint64_t expire_ns = (uint64_t)lease_sec *
 				     LEASE_EXPIRE_FACTOR_NUM * 1000000000ULL /
 				     LEASE_EXPIRE_FACTOR_DEN;
+
+		/* Probe-session sweep (issue #64).  See helper for the
+		 * detection rule.  Cheap when the table is empty; the
+		 * 1-second tick is bounded by this sweep, not the
+		 * client-lease sweep below. */
+		if (ss->ss_session_ht)
+			lease_reaper_sweep_probe_sessions(ss, now);
 
 		struct cds_lfht_iter iter;
 		struct cds_lfht_node *node;

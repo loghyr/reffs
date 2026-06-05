@@ -8,6 +8,7 @@
 #endif
 
 #include <assert.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -293,6 +294,16 @@ struct nfs4_session *nfs4_session_alloc(struct server_state *ss,
 
 	pthread_mutex_init(&ns->ns_cb_mutex, NULL);
 	ns->ns_cb_fd = -1;
+
+	/*
+	 * Probe-session reaping (issue #64): stamp create time once, and
+	 * seed ns_last_seq_ns to the same value so the reaper sees
+	 * "never had a SEQUENCE" as create_ns == last_seq_ns.  Updated
+	 * by nfs4_op_sequence on the first (and every) SEQUENCE.
+	 */
+	ns->ns_create_ns = reffs_now_ns();
+	atomic_store_explicit(&ns->ns_last_seq_ns, ns->ns_create_ns,
+			      memory_order_relaxed);
 
 	/* Generate session ID: clientid4 || monotonic counter. */
 	session_make_id(ns->ns_sessionid, nc);
@@ -914,8 +925,17 @@ uint32_t nfs4_op_sequence(struct compound *compound)
 	compound->c_nfs4_client = nfs4_client_get(ns->ns_client);
 
 	/* Implicit lease renewal -- RFC 5661 S8.3. */
-	__atomic_store_n(&ns->ns_client->nc_last_renew_ns, reffs_now_ns(),
+	uint64_t now_ns = reffs_now_ns();
+
+	__atomic_store_n(&ns->ns_client->nc_last_renew_ns, now_ns,
 			 __ATOMIC_RELEASE);
+	/*
+	 * Mark this session as used (probe-session reaping -- issue #64).
+	 * ns_last_seq_ns differing from ns_create_ns tells lease_reaper
+	 * not to treat this session as a trunking probe.
+	 */
+	atomic_store_explicit(&ns->ns_last_seq_ns, now_ns,
+			      memory_order_relaxed);
 	ns = NULL; /* ref transferred to c_session */
 
 out:

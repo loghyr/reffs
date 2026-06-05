@@ -28,6 +28,7 @@
 #include "nfs4/client.h"
 #include "nfs4/client_persist.h"
 #include "nfs4/compound.h"
+#include "nfs4/lease_reaper.h"
 #include "nfs4/ops.h"
 #include "nfs4/session.h"
 #include "nfs4_test_harness.h"
@@ -410,6 +411,118 @@ START_TEST(test_destroy_clientid_busy_returns_busy)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Probe-session reaping (issue #64)                                   */
+/* ------------------------------------------------------------------ */
+
+START_TEST(test_session_alloc_seeds_timestamps)
+{
+	/*
+	 * A freshly-allocated session must have ns_create_ns set and
+	 * ns_last_seq_ns equal to it -- "never SEQUENCE'd" is the
+	 * trigger the reaper checks for probe-session detection.
+	 */
+	channel_attrs4 ca = make_fore_chan(65536, 65536, 4096, 8, 4);
+	struct nfs4_session *ns = nfs4_session_alloc(g_ss, g_nc, &ca, 0);
+
+	ck_assert_ptr_nonnull(ns);
+	ck_assert_uint_gt(ns->ns_create_ns, 0);
+	ck_assert_uint_eq(atomic_load_explicit(&ns->ns_last_seq_ns,
+					       memory_order_acquire),
+			  ns->ns_create_ns);
+
+	nfs4_session_unhash(g_ss, ns);
+	nfs4_session_put(ns);
+}
+END_TEST
+
+START_TEST(test_reaper_sweeps_aged_probe_session)
+{
+	/*
+	 * Probe session = never SEQUENCE'd.  Drive the reaper helper
+	 * with a synthetic `now` 10s past create; expect the session to
+	 * be unhashed and the sweep return count to be 1.
+	 */
+	channel_attrs4 ca = make_fore_chan(65536, 65536, 4096, 8, 4);
+	struct nfs4_session *ns = nfs4_session_alloc(g_ss, g_nc, &ca, 0);
+
+	ck_assert_ptr_nonnull(ns);
+	sessionid4 sid;
+
+	memcpy(sid, ns->ns_sessionid, sizeof(sessionid4));
+
+	uint64_t synthetic_now = ns->ns_create_ns + 10ULL * 1000000000ULL;
+	unsigned int reaped =
+		lease_reaper_sweep_probe_sessions(g_ss, synthetic_now);
+
+	ck_assert_uint_eq(reaped, 1);
+
+	/* Unhashed -- subsequent find returns NULL. */
+	struct nfs4_session *gone = nfs4_session_find(g_ss, sid);
+
+	ck_assert_ptr_null(gone);
+
+	nfs4_session_put(ns);
+}
+END_TEST
+
+START_TEST(test_reaper_leaves_used_session_alone)
+{
+	/*
+	 * A session that has had at least one SEQUENCE (here simulated
+	 * by bumping ns_last_seq_ns past ns_create_ns) is not a probe
+	 * and must not be reaped, even after the threshold elapses.
+	 */
+	channel_attrs4 ca = make_fore_chan(65536, 65536, 4096, 8, 4);
+	struct nfs4_session *ns = nfs4_session_alloc(g_ss, g_nc, &ca, 0);
+
+	ck_assert_ptr_nonnull(ns);
+
+	/* Simulate one SEQUENCE: bump ns_last_seq_ns. */
+	atomic_store_explicit(&ns->ns_last_seq_ns, ns->ns_create_ns + 1,
+			      memory_order_release);
+
+	uint64_t synthetic_now = ns->ns_create_ns + 100ULL * 1000000000ULL;
+	unsigned int reaped =
+		lease_reaper_sweep_probe_sessions(g_ss, synthetic_now);
+
+	ck_assert_uint_eq(reaped, 0);
+
+	/* Still findable. */
+	struct nfs4_session *found = nfs4_session_find(g_ss, ns->ns_sessionid);
+
+	ck_assert_ptr_eq(found, ns);
+	nfs4_session_put(found);
+
+	nfs4_session_unhash(g_ss, ns);
+	nfs4_session_put(ns);
+}
+END_TEST
+
+START_TEST(test_reaper_leaves_young_probe_alone)
+{
+	/*
+	 * Young probe -- created but not yet past the reap threshold --
+	 * must NOT be reaped.  Guards against premature destruction of
+	 * legitimate sessions whose first SEQUENCE is just slow to land.
+	 */
+	channel_attrs4 ca = make_fore_chan(65536, 65536, 4096, 8, 4);
+	struct nfs4_session *ns = nfs4_session_alloc(g_ss, g_nc, &ca, 0);
+
+	ck_assert_ptr_nonnull(ns);
+
+	/* Now == create + 100 ms (well under the 2s threshold). */
+	uint64_t synthetic_now = ns->ns_create_ns + 100ULL * 1000000ULL;
+	unsigned int reaped =
+		lease_reaper_sweep_probe_sessions(g_ss, synthetic_now);
+
+	ck_assert_uint_eq(reaped, 0);
+
+	nfs4_session_unhash(g_ss, ns);
+	nfs4_session_put(ns);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite assembly                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -442,6 +555,14 @@ Suite *nfs4_session_suite(void)
 	tcase_add_checked_fixture(tc, setup, teardown);
 	tcase_add_test(tc, test_destroy_clientid_unknown_is_ok);
 	tcase_add_test(tc, test_destroy_clientid_busy_returns_busy);
+	suite_add_tcase(s, tc);
+
+	tc = tcase_create("probe_session");
+	tcase_add_checked_fixture(tc, setup, teardown);
+	tcase_add_test(tc, test_session_alloc_seeds_timestamps);
+	tcase_add_test(tc, test_reaper_sweeps_aged_probe_session);
+	tcase_add_test(tc, test_reaper_leaves_used_session_alone);
+	tcase_add_test(tc, test_reaper_leaves_young_probe_alone);
 	suite_add_tcase(s, tc);
 
 	tc = tcase_create("multi_session");
