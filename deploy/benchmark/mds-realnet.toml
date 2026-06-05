@@ -77,62 +77,25 @@ default_coding = "rs:4+2"
 
 # -- Per-variant exports for the 4-variant plain-MDS smoke ----------
 #
-# Each of /a, /b, /c is mounted by the harness at one path under
-# MOUNT_POINT_MDS so the kernel client can do variant-distinct
-# work in the same single mount via NFSv4.2 export-crossing.  The
-# 4-variant design (.claude/design/realnet-harness.md) tagged
-# rows by variant letter for exactly this split.
+# /a, /b, /c are created at bringup time via the probe protocol
+# (see run-realnet-bringup.sh step 7 "per-variant MDS exports").
+# Listing them as [[export]] blocks here would be dead code:
+# sb-registry-v3 made the probe protocol the sole authority for
+# non-root exports, so [[export]] blocks for paths other than "/"
+# are ignored at startup.
 #
-#   /a -- FFv1 single DS, passthrough (no EC).  Baseline: the
-#         simplest possible NFSv4.2 + pNFS path, no parity, no
-#         mirror.  Measures kernel + LAN cost without anything
-#         else.
-#   /b -- FFv1 K-way mirror (CSM), passthrough.  K = 4 mirrors
-#         to match RS 4+2's K.  The kernel writes the same file
-#         to every dstore in the layout -- no parity, but K x
-#         the wire traffic.  Measures the mirror-mode CSM cost
-#         vs the single-DS baseline.
-#   /c -- FFv2 with RS 4+2, server EC via CHUNK ops.  K+M = 6
-#         dstores.  The kernel writes encoded chunks directly to
-#         DSes; DSes hold the encoded shards.  Measures the
-#         "server EC" path that variant d's PS replaces with
-#         client-side encoding through a proxy.
-
-[[export]]
-path         = "/a"
-layout_types = ["ffv1"]
-dstores      = [1]
-default_coding = "passthrough"
-
-    [[export.clients]]
-    match       = "*"
-    access      = "rw"
-    root_squash = false
-    flavors     = ["sys"]
-
-[[export]]
-path         = "/b"
-layout_types = ["ffv1"]
-dstores      = [1, 2, 3, 4]
-default_coding = "passthrough"
-
-    [[export.clients]]
-    match       = "*"
-    access      = "rw"
-    root_squash = false
-    flavors     = ["sys"]
-
-[[export]]
-path         = "/c"
-layout_types = ["ffv2"]
-dstores      = [1, 2, 3, 4, 5, 6]
-default_coding = "rs:4+2"
-
-    [[export.clients]]
-    match       = "*"
-    access      = "rw"
-    root_squash = false
-    flavors     = ["sys"]
+# The bringup script issues, in order:
+#   /a  -- sb-create + sb-set-layout-types ffv1
+#                    + sb-set-dstores 1
+#                    + sb-set-default-coding passthrough
+#                    + sb-mount /a
+#         (single DS, no parity, no mirror -- baseline)
+#   /b  -- ffv1 + dstores 1..4 + passthrough + mount /b
+#         (K-way CSM mirror to match RS 4+2's K)
+#   /c  -- ffv2 + dstores 1..6 + rs:4+2 + mount /c
+#         (server-side EC via CHUNK ops)
+#
+# Variant d still rides the root export above via the PS.
 
 # REPLACED by run-realnet-bringup.sh: the bringup script splices
 # the bench PS's mTLS cert fingerprint here, defaulting-deny against

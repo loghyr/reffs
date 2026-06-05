@@ -378,13 +378,66 @@ if [ "$mds_grants" = "0" ]; then
     exit 1
 fi
 
+# -- step 7: per-variant MDS exports via probe -----------------------
+#
+# sb-registry-v3 made the probe protocol the sole authority for
+# non-root exports; [[export]] blocks in the TOML for paths other
+# than "/" are ignored at startup.  Create the three per-variant
+# exports here so the bench harness's variants a/b/c map onto
+# distinct MDS configurations (single-DS FFv1, K-mirror FFv1,
+# server-EC FFv2) under one client mount via NFSv4.2 sub-export
+# traversal.  Idempotent: sb-create against an existing path is
+# a no-op so re-running this step is safe.
+echo "[bringup] 7/7 creating per-variant exports..."
+
+PROBE_CMD_REMOTE="sudo docker exec reffs-bench-mds \
+    /shared/build/scripts/reffs-probe.py \
+    --host 127.0.0.1 --port 20490"
+
+create_variant_export() {
+    local path=$1 layout_types=$2 dstores=$3 coding=$4
+
+    ssh "$SHADOW_HOST" bash -s <<EOF
+set -uo pipefail
+PROBE="$PROBE_CMD_REMOTE"
+# sb-create returns the new sb ID -- capture from output line
+# "Created superblock NNN: ...".  If the path already exists
+# (re-run), grep sb-list for the existing ID instead.
+existing=\$(\$PROBE sb-list 2>/dev/null | awk -v p=$path '\$3==p{print \$1}')
+if [ -n "\$existing" ]; then
+    id=\$existing
+    echo "[bringup]    $path already exists (id=\$id), reconfiguring"
+else
+    out=\$(\$PROBE sb-create --path $path --storage posix 2>&1)
+    id=\$(echo "\$out" | awk -F'superblock ' '/^Created/ {print \$2}' \
+              | awk -F: '{print \$1}')
+    if [ -z "\$id" ]; then
+        echo "FAIL: sb-create $path returned: \$out" >&2
+        exit 1
+    fi
+    echo "[bringup]    created sb id=\$id at $path"
+fi
+\$PROBE sb-set-flavors --id \$id --flavors sys >/dev/null
+\$PROBE sb-set-layout-types --id \$id --layout-types $layout_types >/dev/null
+\$PROBE sb-set-dstores --id \$id --dstores $dstores >/dev/null
+\$PROBE sb-set-default-coding --id \$id --default-coding "$coding" >/dev/null
+# sb-mount is idempotent -- returns OK on already-mounted.
+\$PROBE sb-mount --id \$id --path $path >/dev/null 2>&1 || true
+EOF
+}
+
+create_variant_export /a ffv1 "1"            passthrough
+create_variant_export /b ffv1 "1 2 3 4"      passthrough
+create_variant_export /c ffv2 "1 2 3 4 5 6"  "rs:4+2"
+
 # -- DONE ------------------------------------------------------------
 cat <<EOF
 
 [bringup] DONE.  3-host realnet topology up:
 
-    variant a/b/c clients -> $SHADOW_LAN_IP:2049  (direct MDS)
-    variant d   clients   -> $ADEPT_LAN_IP:4098   (PS-encoded)
+    variant a/b/c clients -> $SHADOW_LAN_IP:2049  (direct MDS,
+                                                  exports /a /b /c)
+    variant d   clients   -> $ADEPT_LAN_IP:4098   (PS-encoded, /)
 
     Mini-CA + PS cert    : $REMOTE_TLS/ on shadow + adept
     Stamped MDS toml     : $REMOTE_WORK/mds-realnet.toml on shadow
