@@ -14,6 +14,7 @@
  */
 
 #include <errno.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,9 +22,12 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include <rpc/rpc.h>
 #include <rpc/auth.h>
+
+#include "reffs/source_bind.h"
 
 #include "nfsv3_xdr.h"
 #include "ec_client.h"
@@ -35,19 +39,31 @@
 /* ------------------------------------------------------------------ */
 
 int ds_connect(struct ds_conn *dc, const struct ec_device *dev, uint32_t uid,
-	       uint32_t gid)
+	       uint32_t gid, const char *source_ip)
 {
 	memset(dc, 0, sizeof(*dc));
 
+	bool want_manual = (dev->ed_port > 0 && dev->ed_port != 2049) ||
+			   (source_ip && source_ip[0] != '\0');
+
 	/*
-	 * If the layout's uaddr encoded a non-default port (ed_port != 0 &&
-	 * != 2049), bypass portmap and connect directly via clnttcp_create.
-	 * Cross-host bench setups pack multiple DSes onto one host with
-	 * register_with_rpcbind=false; their non-default ports are not
-	 * registered with rpcbind and clnt_create's portmap lookup would
-	 * fail or return the wrong port.
+	 * Two paths:
+	 *
+	 *   1. Non-default port OR source_ip set -- own the socket so we
+	 *      can either bypass portmap (non-default port; cross-host
+	 *      bench setups pack multiple DSes on one host with
+	 *      register_with_rpcbind=false) or bind() the local source
+	 *      address before connect.  Default to port 2049 when only
+	 *      source_ip is set.  This is the only way to control the
+	 *      source: libtirpc's clnt_create internally creates and
+	 *      connects the socket itself and offers no hook to override
+	 *      the source.
+	 *
+	 *   2. Default port (2049) AND no source_ip -- hand the host
+	 *      string to libtirpc's portmap-driven path.  Byte-identical
+	 *      to the pre-source-IP behaviour.
 	 */
-	if (dev->ed_port > 0 && dev->ed_port != 2049) {
+	if (want_manual) {
 		struct sockaddr_in sin;
 		struct addrinfo hints = {
 			.ai_family = AF_INET,
@@ -60,12 +76,36 @@ int ds_connect(struct ds_conn *dc, const struct ec_device *dev, uint32_t uid,
 
 		sin = *(struct sockaddr_in *)res->ai_addr;
 		freeaddrinfo(res);
-		sin.sin_port = htons(dev->ed_port);
+		sin.sin_port = htons(dev->ed_port ? dev->ed_port : 2049);
 
-		int fd = RPC_ANYSOCK;
+		int fd = -1;
+
+		if (source_ip && source_ip[0] != '\0') {
+			/*
+			 * Set up the socket ourselves so source_bind +
+			 * connect can run before handing the connected fd
+			 * to clnttcp_create.
+			 */
+			fd = socket(AF_INET, SOCK_STREAM, 0);
+			if (fd < 0)
+				return -ECONNREFUSED;
+			if (source_bind(fd, source_ip, "ds_connect") < 0) {
+				close(fd);
+				return -ECONNREFUSED;
+			}
+			if (connect(fd, (struct sockaddr *)&sin, sizeof(sin)) <
+			    0) {
+				close(fd);
+				return -ECONNREFUSED;
+			}
+		} else {
+			fd = RPC_ANYSOCK;
+		}
 
 		dc->dc_clnt =
 			clnttcp_create(&sin, NFS3_PROGRAM, NFS_V3, &fd, 0, 0);
+		if (!dc->dc_clnt && fd >= 0)
+			close(fd);
 	} else {
 		dc->dc_clnt =
 			clnt_create(dev->ed_host, NFS3_PROGRAM, NFS_V3, "tcp");

@@ -105,9 +105,17 @@ void tls_trace_handshake(SSL *ssl, const char *label);
 
 /*
  * Connect a TCP socket to host:port with a 5-second timeout.
+ *
+ * source_ip: optional local IPv4 source address (dotted-quad).  When
+ * non-NULL and non-empty, the socket is bind()'d to that local
+ * address before connect.  The address must already be assigned to
+ * a local interface on this host (bind returns EADDRNOTAVAIL
+ * otherwise).  NULL or empty preserves the pre-source-IP behaviour
+ * (kernel picks the local source).
+ *
  * Returns fd on success, -1 on error.
  */
-int tls_tcp_connect(const char *host, int port);
+int tls_tcp_connect(const char *host, int port, const char *source_ip);
 
 /*
  * Close a TCP socket with RST (no FIN/ACK) via SO_LINGER=0.
