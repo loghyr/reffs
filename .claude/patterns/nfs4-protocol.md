@@ -30,34 +30,58 @@ state corruption under client restart.
 
 ## DESTROY_CLIENTID idempotent semantics
 
-RFC 8881 §18.50.3 sanctions returning NFS4ERR_STALE_CLIENTID when
-the destroyed clientid is unknown to the server.  That is wire-
-legal but the Linux NFS client treats STALE_CLIENTID as a state-
-recovery hint and retries DESTROY_CLIENTID ~10 times at one-per-
-second cadence per peer.  In a pNFS fan-out (Flex Files v2,
+RFC 8881 §18.50.3 says the server SHOULD return
+NFS4ERR_STALE_CLIENTID for an unknown clientid and MUST return
+NFS4ERR_CLIENTID_BUSY when sessions / opens / locks / delegations
+/ layouts exist.  Both responses make the Linux NFS client retry
+DESTROY_CLIENTID 10 times at one-per-second cadence per peer
+(linux-v6.7/fs/nfs/nfs4proc.c:9008,
+`NFS4_MAX_LOOP_ON_RECOVER`).  In a pNFS fan-out (Flex Files v2,
 k+m mirrors), the kernel runs that retry storm against each DS in
-the layout, adding `10 * (k+m)` seconds to every file lifecycle
-whenever the client has stale clientid state.  The bench cell
-showed 60s/cell at RS 4+2 (10 retries x 6 DSes x 1s).
+the layout, adding `10 * (k+m)` seconds per file lifecycle.
 
-Return NFS4_OK from DESTROY_CLIENTID when the clientid is unknown.
-The destroy is idempotent: if there is no client record, the
-operation has effectively already completed and no caller can
-observe a state transition.  This stays inside the RFC envelope
-("the SHOULD-language for STALE_CLIENTID is a server-side
-freedom, not a client-visible contract") and removes the
-retry-storm tax.
+reffs's `nfs4_op_destroy_clientid` (`lib/nfs4/server/session.c`)
+diverges from the RFC's letter on both branches to avoid that
+penalty:
 
-The CLIENTID_BUSY branch (session count > 0) is unchanged --
-that branch protects an in-use client from destruction and must
-keep its NFS4ERR_CLIENTID_BUSY response so the client can retry
-after releasing its sessions.
+- **Unknown clientid → NFS4_OK** (idempotent).  No client record
+  means the destroy has effectively already happened; no caller
+  can observe a state transition.  Covers cold-mount stale-state
+  cases.
 
-The change lives in `nfs4_op_destroy_clientid` in
-`lib/nfs4/server/session.c`; the test pinning the contract is
-`test_destroy_clientid_unknown_is_ok` (paired with
-`test_destroy_clientid_busy_returns_busy` to guard the
-non-idempotent branch) in `lib/nfs4/tests/nfs4_session.c`.
+- **Known clientid → unconditional `nfs4_client_expire`** (lenient
+  teardown).  The handler does not check `nc_session_count`; it
+  calls `nfs4_client_expire`, which tears down sessions, layouts,
+  locks, opens, and delegations in one shot, then returns
+  NFS4_OK.  Covers the Linux trunking-probe session-leak (issue
+  #64): the kernel's `nfs4_pnfs_ds_connect` emits 2x
+  CREATE_SESSION per DS but only 1x DESTROY_SESSION, leaving one
+  session per DS still hashed at DESTROY_CLIENTID time.  Real-
+  world Linux clients also pay a brief RCU grace period before
+  `nfs4_session_free_rcu` decrements `nc_session_count`, which
+  can keep the count above zero for the kernel's first one or
+  two retries even after a clean DESTROY_SESSION.
+
+The net wire outcome matches the spec: the client has no extant
+references after the call returns.  The behavioural difference
+is that reffs forgives common client teardown sloppiness rather
+than charging the 10x retry tax.
+
+The probe-session reaper (`lib/nfs4/server/lease_reaper.c`
+`lease_reaper_sweep_probe_sessions`, fires every 1 s on
+never-SEQUENCE'd sessions older than 2 s) complements this: it
+keeps `nc_session_count` honest for *non*-DESTROY_CLIENTID code
+paths that still need the strict count, and reaps trunking-
+probe sessions whose owning client is still healthy.
+
+Tests pinning the contract are in
+`lib/nfs4/tests/nfs4_session.c`:
+`test_destroy_clientid_unknown_is_ok`,
+`test_destroy_clientid_with_session_expires_client`,
+`test_session_alloc_seeds_timestamps`,
+`test_reaper_sweeps_aged_probe_session`,
+`test_reaper_leaves_used_session_alone`,
+`test_reaper_leaves_young_probe_alone`.
 
 ## utf8string validation
 

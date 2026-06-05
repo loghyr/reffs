@@ -112,8 +112,15 @@ static void setup(void)
 
 static void teardown(void)
 {
-	nfs4_client_expire(g_ss, g_nc);
-	g_nc = NULL;
+	/*
+	 * Tests that destroy g_nc out-of-band (e.g.,
+	 * test_destroy_clientid_with_session_expires_client) null it
+	 * to signal teardown to skip the re-expire.
+	 */
+	if (g_nc) {
+		nfs4_client_expire(g_ss, g_nc);
+		g_nc = NULL;
+	}
 	server_state_put(g_ss);
 	g_ss = NULL;
 	nfs4_test_teardown();
@@ -379,19 +386,32 @@ START_TEST(test_destroy_clientid_unknown_is_ok)
 }
 END_TEST
 
-START_TEST(test_destroy_clientid_busy_returns_busy)
+START_TEST(test_destroy_clientid_with_session_expires_client)
 {
 	/*
-	 * Sanity check the non-idempotent branch: with our setup client
-	 * (g_nc) holding a live session, DESTROY_CLIENTID on its real
-	 * clientid must report NFS4ERR_CLIENTID_BUSY.  This guards the
-	 * "unknown -> NFS4_OK" change from accidentally short-circuiting
-	 * the busy / active-state checks.
+	 * Lenient teardown (issue #64 follow-up to the probe-session
+	 * reaper): DESTROY_CLIENTID on a client that still has live
+	 * sessions returns NFS4_OK and tears the client down -- it
+	 * does NOT return NFS4ERR_CLIENTID_BUSY.  RFC 8881 S18.50.3
+	 * sanctions CLIENTID_BUSY here, but real-world Linux clients
+	 * leak trunking-probe sessions and pay a 10x/1Hz retry tax
+	 * per peer on BUSY; treating the call as "destroy this client
+	 * and everything it owns" matches the net outcome the spec
+	 * sketches without the kernel-retry penalty.  See
+	 * .claude/patterns/nfs4-protocol.md.
+	 *
+	 * Drive the handler with a stack compound, then verify the
+	 * session is unhashed (cannot be found via sessionid) and a
+	 * subsequent DESTROY_CLIENTID on the same id falls through to
+	 * the unknown-clientid idempotent path.
 	 */
 	channel_attrs4 ca = make_fore_chan(65536, 65536, 4096, 8, 4);
 	struct nfs4_session *ns = nfs4_session_alloc(g_ss, g_nc, &ca, 0);
 
 	ck_assert_ptr_nonnull(ns);
+	sessionid4 sid;
+
+	memcpy(sid, ns->ns_sessionid, sizeof(sessionid4));
 
 	COMPOUND4args args = { 0 };
 	COMPOUND4res res = { 0 };
@@ -401,12 +421,46 @@ START_TEST(test_destroy_clientid_busy_returns_busy)
 	c.c_res = &res;
 	c.c_server_state = g_ss;
 
-	nfsstat4 status =
-		run_destroy_clientid(&c, nfs4_client_to_client(g_nc)->c_id);
-	ck_assert_uint_eq(status, NFS4ERR_CLIENTID_BUSY);
+	clientid4 cid = nfs4_client_to_client(g_nc)->c_id;
+	nfsstat4 status = run_destroy_clientid(&c, cid);
 
-	nfs4_session_unhash(g_ss, ns);
-	nfs4_session_put(ns);
+	ck_assert_uint_eq(status, NFS4_OK);
+
+	/*
+	 * The handler called nfs4_client_expire which called
+	 * nfs4_session_destroy_for_client.  The session is unhashed;
+	 * find by sessionid returns NULL.  Do not touch `ns` again --
+	 * the hash ref was dropped synchronously and the alloc ref is
+	 * already gone (alloc returns with refcount 1, shared with
+	 * the hash table; unhash drops it).  Same lifecycle as the
+	 * existing test_session_unhash_removes.
+	 */
+	struct nfs4_session *gone = nfs4_session_find(g_ss, sid);
+
+	ck_assert_ptr_null(gone);
+
+	/*
+	 * Re-running DESTROY_CLIENTID on the same id hits the
+	 * unknown-clientid idempotent path.
+	 */
+	COMPOUND4args args2 = { 0 };
+	COMPOUND4res res2 = { 0 };
+	struct compound c2 = { 0 };
+
+	c2.c_args = &args2;
+	c2.c_res = &res2;
+	c2.c_server_state = g_ss;
+
+	status = run_destroy_clientid(&c2, cid);
+	ck_assert_uint_eq(status, NFS4_OK);
+
+	/*
+	 * g_nc was destroyed by the handler; null our reference so
+	 * teardown() skips the re-expire (see NULL-safe branch in
+	 * teardown above).
+	 */
+	g_nc = NULL;
+	(void)ns; /* unhash + free happened inside the handler */
 }
 END_TEST
 
@@ -554,7 +608,7 @@ Suite *nfs4_session_suite(void)
 	tc = tcase_create("destroy_clientid");
 	tcase_add_checked_fixture(tc, setup, teardown);
 	tcase_add_test(tc, test_destroy_clientid_unknown_is_ok);
-	tcase_add_test(tc, test_destroy_clientid_busy_returns_busy);
+	tcase_add_test(tc, test_destroy_clientid_with_session_expires_client);
 	suite_add_tcase(s, tc);
 
 	tc = tcase_create("probe_session");

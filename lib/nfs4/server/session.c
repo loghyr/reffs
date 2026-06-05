@@ -1011,11 +1011,31 @@ uint32_t nfs4_op_destroy_clientid(struct compound *compound)
 		goto out; /* *status stays NFS4_OK from calloc */
 	}
 
-	if (__atomic_load_n(&nc->nc_session_count, __ATOMIC_ACQUIRE) > 0) {
-		*status = NFS4ERR_CLIENTID_BUSY;
-		goto out;
-	}
-
+	/*
+	 * Lenient destroy: tear down the client and everything it owns
+	 * (sessions, layouts, locks, opens, delegations) in one shot.
+	 * nfs4_client_expire already does the full teardown -- it calls
+	 * nfs4_session_destroy_for_client, revokes layout stateids on
+	 * tight-coupled DSes, and drops persistent state.
+	 *
+	 * RFC 8881 S18.50.3 says the server MUST return
+	 * NFS4ERR_CLIENTID_BUSY when any sessions / opens / locks /
+	 * delegations / layouts exist.  We diverge here because real-
+	 * world Linux NFS clients ship trunking-probe and pNFS-DS-
+	 * teardown patterns that leave the server-side session count
+	 * above zero at the exact moment they send DESTROY_CLIENTID
+	 * (issue #64).  The kernel then retries 10x at 1Hz per peer
+	 * (linux-v6.7/fs/nfs/nfs4proc.c:9008), adding 10*N seconds per
+	 * file lifecycle in a pNFS fan-out.  Treating DESTROY_CLIENTID
+	 * as "destroy this client and everything it owns" matches the
+	 * RFC's net outcome (the client has no extant references after
+	 * the call returns) without the kernel-retry penalty.  The
+	 * client just asked us to forget the clientid; honouring that
+	 * by also forgetting its dependent state is the more useful
+	 * answer than CLIENTID_BUSY-and-spin.  See
+	 * .claude/patterns/nfs4-protocol.md "DESTROY_CLIENTID
+	 * idempotent semantics".
+	 */
 	nfs4_client_expire(ss, nc);
 	nc = NULL;
 
