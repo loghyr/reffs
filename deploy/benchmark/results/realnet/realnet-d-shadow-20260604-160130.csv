@@ -1,5 +1,0 @@
-variant,codec,geometry,size_bytes,iter,write_ms,read_ms,verify,note,topology,client_host,ps_host,ds_mds_host,timestamp,bytes_per_sec_write,bytes_per_sec_read
-d,rs,4+2,4096,1,61915,10487,OK,,realnet-3host,dreamer,adept,shadow,2026-06-04T16:01:32Z,66,390
-d,rs,4+2,4096,2,61912,10383,OK,,realnet-3host,dreamer,adept,shadow,2026-06-04T16:02:45Z,66,394
-d,rs,4+2,1048576,1,61999,10458,OK,,realnet-3host,dreamer,adept,shadow,2026-06-04T16:03:57Z,16912,100265
-d,rs,4+2,1048576,2,61998,10445,OK,,realnet-3host,dreamer,adept,shadow,2026-06-04T16:05:10Z,16913,100390
