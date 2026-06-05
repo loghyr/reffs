@@ -337,7 +337,15 @@ run_cell_kernel_mds() {
 set -uo pipefail
 in=/tmp/realnet_in_${size}.bin
 out=/tmp/realnet_out_${cell_id}.bin
-target=$MOUNT_POINT_MDS/${cell_id}.bin
+# Variant-specific subdir routes the I/O through the matching
+# MDS export (/a single-DS FFv1, /b 4-way mirror FFv1, /c FFv2
+# rs:4+2 server EC).  The kernel auto-crosses mount boundaries
+# via NFSv4.2 sub-export traversal so one mount at
+# $MOUNT_POINT_MDS sees all three sub-exports.  The /a, /b, /c
+# directories are created by the MDS at boot when it processes
+# the [[export]] blocks; they are mount-crossing points, NOT
+# client-writable directories.
+target=$MOUNT_POINT_MDS/${variant_label}/${cell_id}.bin
 
 if [ ! -f "\$in" ] || [ "\$(stat -c%s "\$in" 2>/dev/null)" != "${size}" ]; then
     if ! sudo dd if=/dev/urandom of="\$in" bs=${size} count=1 status=none; then

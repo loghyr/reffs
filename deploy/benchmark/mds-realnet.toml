@@ -75,6 +75,65 @@ default_coding = "rs:4+2"
     root_squash = false
     flavors     = ["sys", "tls"]
 
+# -- Per-variant exports for the 4-variant plain-MDS smoke ----------
+#
+# Each of /a, /b, /c is mounted by the harness at one path under
+# MOUNT_POINT_MDS so the kernel client can do variant-distinct
+# work in the same single mount via NFSv4.2 export-crossing.  The
+# 4-variant design (.claude/design/realnet-harness.md) tagged
+# rows by variant letter for exactly this split.
+#
+#   /a -- FFv1 single DS, passthrough (no EC).  Baseline: the
+#         simplest possible NFSv4.2 + pNFS path, no parity, no
+#         mirror.  Measures kernel + LAN cost without anything
+#         else.
+#   /b -- FFv1 K-way mirror (CSM), passthrough.  K = 4 mirrors
+#         to match RS 4+2's K.  The kernel writes the same file
+#         to every dstore in the layout -- no parity, but K x
+#         the wire traffic.  Measures the mirror-mode CSM cost
+#         vs the single-DS baseline.
+#   /c -- FFv2 with RS 4+2, server EC via CHUNK ops.  K+M = 6
+#         dstores.  The kernel writes encoded chunks directly to
+#         DSes; DSes hold the encoded shards.  Measures the
+#         "server EC" path that variant d's PS replaces with
+#         client-side encoding through a proxy.
+
+[[export]]
+path         = "/a"
+layout_types = ["ffv1"]
+dstores      = [1]
+default_coding = "passthrough"
+
+    [[export.clients]]
+    match       = "*"
+    access      = "rw"
+    root_squash = false
+    flavors     = ["sys"]
+
+[[export]]
+path         = "/b"
+layout_types = ["ffv1"]
+dstores      = [1, 2, 3, 4]
+default_coding = "passthrough"
+
+    [[export.clients]]
+    match       = "*"
+    access      = "rw"
+    root_squash = false
+    flavors     = ["sys"]
+
+[[export]]
+path         = "/c"
+layout_types = ["ffv2"]
+dstores      = [1, 2, 3, 4, 5, 6]
+default_coding = "rs:4+2"
+
+    [[export.clients]]
+    match       = "*"
+    access      = "rw"
+    root_squash = false
+    flavors     = ["sys"]
+
 # REPLACED by run-realnet-bringup.sh: the bringup script splices
 # the bench PS's mTLS cert fingerprint here, defaulting-deny against
 # unknown PS identities.  See proxy-server.md sec-security: the

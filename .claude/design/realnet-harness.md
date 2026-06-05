@@ -206,16 +206,28 @@ The harness mounts the realnet MDS once at `$MOUNT_POINT_MDS`
 (default `/mnt/realnet-mds-bench`) via NFSv4.2 + AUTH_SYS on
 the MDS's native `:2049` port and runs `run_cell_kernel_mds`
 per cell.  The implementation is identical to `run_cell_d`
-except for the mount point: kernel does the WRITE + fsync
-COMMIT, kernel drops page cache, kernel does the READ, harness
-`cmp`s for `verify=OK`.
+except for the mount point and the variant-specific subdir:
+kernel does the WRITE + fsync COMMIT, kernel drops page cache,
+kernel does the READ, harness `cmp`s for `verify=OK`.
 
-CSV rows are tagged by variant letter (`a`, `b`, or `c`) so a
-future per-variant MDS-export split (single-DS FFv1 for a,
-multi-DS FFv1 for b, FFv2 CHUNK for c) lands as data without
-re-running prior captures.  Until that follow-up slice, all
-three variants produce identical bytes-on-the-wire and the
-rows differ only in the variant column.
+Per-variant MDS exports (landed 2026-06-05) make the three
+variants measure distinct paths:
+
+- `/a` — FFv1, dstores=`[1]`, `default_coding="passthrough"`.
+  Single DS, no parity, no mirroring.  Baseline measurement.
+- `/b` — FFv1, dstores=`[1, 2, 3, 4]`, `default_coding=
+  "passthrough"`.  K-way mirror (CSM); kernel writes the file
+  to every dstore.  Measures multi-mirror cost vs single-DS.
+- `/c` — FFv2, dstores=`[1, 2, 3, 4, 5, 6]`, `default_coding=
+  "rs:4+2"`.  Server-side EC via CHUNK ops; the DSes receive
+  encoded shards.  The natural counterpart to variant d (client-
+  side EC via PS).
+
+The harness writes to `$MOUNT_POINT_MDS/<variant>/<cell_id>.bin`;
+NFSv4.2 sub-export traversal routes I/O to the right export
+under the single root mount.  The MDS auto-creates the `/a`,
+`/b`, `/c` mount-crossing points at boot when it processes the
+matching `[[export]]` blocks in `mds-realnet.toml`.
 
 ## Output organization
 
