@@ -1230,7 +1230,7 @@ static int cmd_getowner(const char *mds_host, const char *nfs_file)
 		return 1;
 	}
 
-	ret = mds_file_open(&ms, nfs_file, &mf);
+	ret = mds_file_open(&ms, nfs_file, &mf, NULL);
 	if (ret) {
 		fprintf(stderr, "ec_demo: open failed: %d\n", ret);
 		mds_session_destroy(&ms);
@@ -1264,7 +1264,7 @@ static int cmd_setowner(const char *mds_host, const char *nfs_file,
 		return 1;
 	}
 
-	ret = mds_file_open(&ms, nfs_file, &mf);
+	ret = mds_file_open(&ms, nfs_file, &mf, NULL);
 	if (ret) {
 		fprintf(stderr, "ec_demo: open failed: %d\n", ret);
 		mds_session_destroy(&ms);
@@ -1308,12 +1308,37 @@ static void bigfile_fill(uint8_t *buf, size_t len, uint64_t off)
 }
 
 static int cmd_bigfile(const char *mds_host, const char *nfs_file,
-		       size_t file_size, size_t chunk_size, bool delete_first)
+		       size_t file_size, size_t chunk_size, bool delete_first,
+		       uint32_t stripe_unit_hint, uint64_t expected_size_hint)
 {
 	struct mds_session ms;
 	struct mds_file mf;
 	uint8_t *buf;
 	int ret;
+
+	/*
+	 * Slice 3 of the Macklem-hint extension: package the two CLI
+	 * hint values plus ec_demo's existing K/M geometry into an
+	 * ffv2_layouthint4 and pass it to the initial mds_file_open
+	 * so it rides OPEN(CREATE).cva_attrs as FATTR4_LAYOUT_HINT.
+	 * NULL means "no hint" -- preserved by passing NULL below when
+	 * both CLI hints are zero.  Re-opens after the write use NULL
+	 * unconditionally (the file already exists; the MDS SHOULD
+	 * ignore the hint on grown files per slice-2 design).
+	 */
+	ffv2_coding_type4 supported[1] = { FFV2_ENCODING_RS_VANDERMONDE };
+	ffv2_layouthint4 layouthint = {
+		.ffv2lh_supported_types = {
+			.ffv2lh_supported_types_len = 1,
+			.ffv2lh_supported_types_val = supported,
+		},
+		.ffv2lh_preferred_protection = { .fdp_data = 4,
+						 .fdp_parity = 2 },
+		.ffv2lh_stripe_unit = stripe_unit_hint,
+		.ffv2lh_expected_file_size = expected_size_hint,
+	};
+	const ffv2_layouthint4 *hint_arg =
+		(stripe_unit_hint || expected_size_hint) ? &layouthint : NULL;
 
 	ret = session_open(&ms, mds_host);
 	if (ret) {
@@ -1366,8 +1391,10 @@ static int cmd_bigfile(const char *mds_host, const char *nfs_file,
 			nfs_file);
 	}
 
-	/* Open (create if needed) the file for writing. */
-	ret = mds_file_open(&ms, nfs_file, &mf);
+	/* Open (create if needed) the file for writing.  hint_arg is
+	 * non-NULL when either --stripe-unit-hint or --expected-size-hint
+	 * was passed; the MDS validates per slice-2. */
+	ret = mds_file_open(&ms, nfs_file, &mf, hint_arg);
 	if (ret) {
 		fprintf(stderr, "ec_demo: open %s failed: %d\n", nfs_file, ret);
 		mds_session_destroy(&ms);
@@ -1407,7 +1434,7 @@ static int cmd_bigfile(const char *mds_host, const char *nfs_file,
 	fprintf(stderr, "ec_demo: write done, %zu bytes\n", written);
 
 	/* Re-open for reading and verify the cycling pattern byte by byte. */
-	ret = mds_file_open(&ms, nfs_file, &mf);
+	ret = mds_file_open(&ms, nfs_file, &mf, NULL);
 	if (ret) {
 		fprintf(stderr, "ec_demo: reopen %s failed: %d\n", nfs_file,
 			ret);
@@ -1626,6 +1653,19 @@ static void usage(void)
 		"                   different --source-ip and --id so the MDS\n"
 		"                   sees them as independent clients.\n"
 		"                   Default: unset (kernel-assigned source).\n"
+		"  --stripe-unit-hint BYTES\n"
+		"                   Macklem-hint extension (slice 3): preferred\n"
+		"                   stripe unit in bytes for the next OPEN(CREATE).\n"
+		"                   Carried in FATTR4_LAYOUT_HINT createattrs as\n"
+		"                   ffv2lh_stripe_unit.  MDS validates 0 or\n"
+		"                   [4096, 8 MiB].  Currently honoured by `bigfile'\n"
+		"                   only.  Default: 0 (no hint).\n"
+		"  --expected-size-hint BYTES\n"
+		"                   Macklem-hint extension (slice 3): hint at the\n"
+		"                   file's eventual size.  Carried in\n"
+		"                   FATTR4_LAYOUT_HINT createattrs as\n"
+		"                   ffv2lh_expected_file_size.  Any uint64.\n"
+		"                   Default: 0 (no hint).\n"
 		"\n"
 		"Subcommands:\n"
 		"  burst            Open --nsessions N parallel mds_sessions\n"
@@ -1690,6 +1730,15 @@ static struct option long_options[] = {
 	 * must already be assigned to a local interface on this host.
 	 */
 	{ "source-ip", required_argument, NULL, 258 },
+	/*
+	 * Macklem-hint extension slice 3
+	 * (.claude/design/layouthint-ec-demo-cli.md).  Both flags
+	 * are advisory hints carried in OPEN(CREATE).cva_attrs as
+	 * FATTR4_LAYOUT_HINT; the MDS validates and TRACE's them.
+	 * Accept bare bytes only (KB/MB/GB suffix parsing deferred).
+	 */
+	{ "stripe-unit-hint", required_argument, NULL, 259 },
+	{ "expected-size-hint", required_argument, NULL, 260 },
 	{ "help", no_argument, NULL, '?' },
 	{ NULL, 0, NULL, 0 },
 };
@@ -1711,6 +1760,14 @@ int main(int argc, char *argv[])
 	size_t shard_size = EC_SHARD_SIZE_DEFAULT;
 	uint64_t range_offset = 0;
 	size_t range_length = 0;
+	/*
+	 * ffv2_layouthint4 fields, populated from --stripe-unit-hint
+	 * and --expected-size-hint.  Threaded into cmd_bigfile's first
+	 * mds_file_open as an optional createattrs payload; other
+	 * subcommands ignore them this slice.
+	 */
+	uint32_t stripe_unit_hint = 0;
+	uint64_t expected_size_hint = 0;
 	int opt;
 
 	if (argc < 2) {
@@ -1964,6 +2021,23 @@ int main(int argc, char *argv[])
 			 */
 			g_source_ip = optarg;
 			break;
+		case 259:
+			/*
+			 * --stripe-unit-hint BYTES: ffv2lh_stripe_unit in
+			 * the FATTR4_LAYOUT_HINT createattrs.  The MDS
+			 * validates 0 (no hint) or [4096, 8 MiB] per
+			 * slice-2 of the Macklem-hint extension.
+			 */
+			stripe_unit_hint = (uint32_t)strtoul(optarg, NULL, 0);
+			break;
+		case 260:
+			/*
+			 * --expected-size-hint BYTES: ffv2lh_expected_file_size
+			 * in the FATTR4_LAYOUT_HINT createattrs.  Any value is
+			 * acceptable; zero means "no hint".
+			 */
+			expected_size_hint = strtoull(optarg, NULL, 0);
+			break;
 		default:
 			usage();
 			return 1;
@@ -2002,7 +2076,8 @@ int main(int argc, char *argv[])
 						     30 * 1024 * 1024;
 
 		return cmd_bigfile(mds_host, nfs_file, file_size, chunk_size,
-				   delete_first);
+				   delete_first, stripe_unit_hint,
+				   expected_size_hint);
 	}
 
 	if (strcmp(cmd, "getowner") == 0) {

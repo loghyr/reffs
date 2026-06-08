@@ -564,8 +564,16 @@ struct mds_file {
 	nfs_fh4 mf_fh; /* current filehandle */
 };
 
-int mds_file_open(struct mds_session *ms, const char *path,
-		  struct mds_file *mf);
+/*
+ * @hint -- optional ffv2_layouthint4 payload to ride
+ * OPEN(CREATE).createattrs as FATTR4_LAYOUT_HINT.  NULL leaves
+ * createattrs zero-initialized (no hint).  The MDS validates and
+ * TRACE's the hint per slice-2 of the Macklem-hint extension; see
+ * .claude/design/layouthint-mds-hook.md for what the server does
+ * with the four fields.
+ */
+int mds_file_open(struct mds_session *ms, const char *path, struct mds_file *mf,
+		  const ffv2_layouthint4 *hint);
 int mds_file_close(struct mds_session *ms, struct mds_file *mf);
 int mds_file_getattr(struct mds_session *ms, struct mds_file *mf, char *owner,
 		     size_t owner_size, char *owner_group,

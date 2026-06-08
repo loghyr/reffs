@@ -596,7 +596,7 @@ int plain_write(struct mds_session *ms, const char *path, const uint8_t *data,
 	struct ec_layout layout;
 	int ret;
 
-	ret = mds_file_open(ms, path, &mf);
+	ret = mds_file_open(ms, path, &mf, NULL);
 	if (ret)
 		return ret;
 
@@ -666,7 +666,7 @@ int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	struct ec_layout layout;
 	int ret;
 
-	ret = mds_file_open(ms, path, &mf);
+	ret = mds_file_open(ms, path, &mf, NULL);
 	if (ret)
 		return ret;
 
@@ -1826,7 +1826,7 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 	struct mds_file mf;
 	int ret;
 
-	ret = mds_file_open(ms, path, &mf);
+	ret = mds_file_open(ms, path, &mf, NULL);
 	if (ret) {
 		ec_log("ec_write: OPEN failed: %d\n", ret);
 		return ret;
@@ -2117,7 +2117,7 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 	struct mds_file mf;
 	int ret;
 
-	ret = mds_file_open(ms, path, &mf);
+	ret = mds_file_open(ms, path, &mf, NULL);
 	if (ret)
 		return ret;
 
@@ -2196,7 +2196,7 @@ int ec_write_codec_range(struct mds_session *ms, const char *path,
 	first_stripe = offset / (uint64_t)stripe_data;
 	last_stripe = (end - 1) / (uint64_t)stripe_data;
 
-	ret = mds_file_open(ms, path, &mf);
+	ret = mds_file_open(ms, path, &mf, NULL);
 	if (ret) {
 		ec_log("ec_write_range: OPEN failed: %d\n", ret);
 		return ret;
@@ -2423,7 +2423,7 @@ int ec_read_codec_range(struct mds_session *ms, const char *path, uint8_t *buf,
 	first_stripe = offset / (uint64_t)stripe_data;
 	last_stripe = (end - 1) / (uint64_t)stripe_data;
 
-	ret = mds_file_open(ms, path, &mf);
+	ret = mds_file_open(ms, path, &mf, NULL);
 	if (ret) {
 		ec_log("ec_read_range: OPEN failed: %d\n", ret);
 		return ret;
@@ -2551,7 +2551,7 @@ int ec_repair_codec(struct mds_session *ms, const char *path, int k, int m,
 	    shard_size > EC_SHARD_SIZE_MAX || file_len == 0)
 		return -EINVAL;
 
-	ret = mds_file_open(ms, path, &mf);
+	ret = mds_file_open(ms, path, &mf, NULL);
 	if (ret)
 		return ret;
 

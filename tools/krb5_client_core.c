@@ -104,7 +104,7 @@ int krb5_client_once(const struct krb5_client_args *a)
 
 	struct mds_file mf;
 
-	ret = mds_file_open(&ms, test_file, &mf);
+	ret = mds_file_open(&ms, test_file, &mf, NULL);
 	if (ret) {
 		printf("FAIL (open: %d)\n", ret);
 		failed++;
@@ -128,7 +128,7 @@ int krb5_client_once(const struct krb5_client_args *a)
 	printf("TEST %d: READ + CRC verify ... ", ++test_num);
 	fflush(stdout);
 
-	ret = mds_file_open(&ms, test_file, &mf);
+	ret = mds_file_open(&ms, test_file, &mf, NULL);
 	if (ret) {
 		printf("FAIL (reopen: %d)\n", ret);
 		failed++;
@@ -175,7 +175,7 @@ int krb5_client_once(const struct krb5_client_args *a)
 		       test_file);
 		fflush(stdout);
 
-		ret = mds_file_open(&ms, test_file, &mf);
+		ret = mds_file_open(&ms, test_file, &mf, NULL);
 		if (ret) {
 			printf("FAIL (open: %d)\n", ret);
 			failed++;
@@ -209,7 +209,7 @@ int krb5_client_once(const struct krb5_client_args *a)
 		       a->file);
 		fflush(stdout);
 
-		ret = mds_file_open(&ms, a->file, &mf);
+		ret = mds_file_open(&ms, a->file, &mf, NULL);
 		if (ret) {
 			printf("FAIL (open: %d)\n", ret);
 			failed++;

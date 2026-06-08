@@ -107,7 +107,8 @@ static int split_path(const char *path, char ***components_out, char **buf_out,
 	return 0;
 }
 
-int mds_file_open(struct mds_session *ms, const char *path, struct mds_file *mf)
+int mds_file_open(struct mds_session *ms, const char *path, struct mds_file *mf,
+		  const ffv2_layouthint4 *hint)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -115,6 +116,17 @@ int mds_file_open(struct mds_session *ms, const char *path, struct mds_file *mf)
 	char *path_buf = NULL;
 	size_t ncomps = 0;
 	int ret;
+
+	/*
+	 * Heap-allocated buffers for the optional FATTR4_LAYOUT_HINT
+	 * createattrs payload.  Allocated below if @hint is non-NULL
+	 * and freed before return.  Sized at 256 bytes -- the four-
+	 * field ffv2_layouthint4 with a single supported_types entry
+	 * fits comfortably under 64 bytes.
+	 */
+	char hint_inner[256];
+	char hint_outer[320]; /* loh_type(4) + len(4) + body + pad */
+	uint32_t hint_attrmask_words[2] = { 0, 0 };
 
 	memset(mf, 0, sizeof(*mf));
 
@@ -187,9 +199,58 @@ int mds_file_open(struct mds_session *ms, const char *path, struct mds_file *mf)
 	/* Create if not exists, open if exists. */
 	open_args->openhow.opentype = OPEN4_CREATE;
 	open_args->openhow.openflag4_u.how.mode = UNCHECKED4;
-	/* No initial attributes -- let the server use defaults. */
-	memset(&open_args->openhow.openflag4_u.how.createhow4_u.createattrs, 0,
-	       sizeof(fattr4));
+
+	fattr4 *cattrs =
+		&open_args->openhow.openflag4_u.how.createhow4_u.createattrs;
+	memset(cattrs, 0, sizeof(*cattrs));
+
+	if (hint) {
+		/*
+		 * Hand-encode FATTR4_LAYOUT_HINT (attr 63) into
+		 * createattrs.  Pattern mirrors the OWNER /
+		 * OWNER_GROUP encoding below: bitmap4 of two words
+		 * with bit 63 (= word[1] bit 31) set, attr_vals is
+		 * the XDR-encoded fattr4_layout_hint blob.
+		 *
+		 * The fattr4_layout_hint outer wraps an opaque
+		 * loh_body that itself carries the XDR-encoded
+		 * ffv2_layouthint4 from the caller.  Two-stage
+		 * encode: inner first, then outer with the inner
+		 * bytes as the body payload.
+		 */
+		XDR xin;
+		ffv2_layouthint4 lh_copy = *hint;
+		u_int inner_len;
+
+		xdrmem_create(&xin, hint_inner, sizeof(hint_inner), XDR_ENCODE);
+		if (!xdr_ffv2_layouthint4(&xin, &lh_copy)) {
+			ret = -EINVAL;
+			goto out_err;
+		}
+		inner_len = xdr_getpos(&xin);
+
+		XDR xout;
+		fattr4_layout_hint outer = {
+			.loh_type = LAYOUT4_FLEX_FILES_V2,
+			.loh_body = {
+				.loh_body_len = inner_len,
+				.loh_body_val = hint_inner,
+			},
+		};
+
+		xdrmem_create(&xout, hint_outer, sizeof(hint_outer),
+			      XDR_ENCODE);
+		if (!xdr_fattr4_layout_hint(&xout, &outer)) {
+			ret = -EINVAL;
+			goto out_err;
+		}
+
+		hint_attrmask_words[1] |= (1u << (FATTR4_LAYOUT_HINT - 32));
+		cattrs->attrmask.bitmap4_len = 2;
+		cattrs->attrmask.bitmap4_val = hint_attrmask_words;
+		cattrs->attr_vals.attrlist4_len = xdr_getpos(&xout);
+		cattrs->attr_vals.attrlist4_val = hint_outer;
+	}
 
 	open_args->claim.claim = CLAIM_NULL;
 	open_args->claim.open_claim4_u.file.utf8string_val = (char *)fname;

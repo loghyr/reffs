@@ -81,7 +81,7 @@ static int cmd_put(const char *host, const char *name, const char *data)
 	if (ret)
 		return ret;
 
-	ret = mds_file_open(&ms, name, &mf);
+	ret = mds_file_open(&ms, name, &mf, NULL);
 	if (ret) {
 		fprintf(stderr, "er_demo put: open %s failed: %s\n", name,
 			strerror(-ret));
@@ -116,7 +116,7 @@ static int cmd_get(const char *host, const char *name)
 	if (ret)
 		return ret;
 
-	ret = mds_file_open(&ms, name, &mf);
+	ret = mds_file_open(&ms, name, &mf, NULL);
 	if (ret) {
 		fprintf(stderr, "er_demo get: open %s failed: %s\n", name,
 			strerror(-ret));
@@ -176,7 +176,7 @@ static int cmd_update(const char *host, const char *name, const char *data)
 	}
 
 	/* Step 1: Open the target file. */
-	ret = mds_file_open(&ms, name, &mf_target);
+	ret = mds_file_open(&ms, name, &mf_target, NULL);
 	if (ret) {
 		fprintf(stderr, "er_demo update: open %s failed: %s\n", name,
 			strerror(-ret));
@@ -184,7 +184,7 @@ static int cmd_update(const char *host, const char *name, const char *data)
 	}
 
 	/* Step 2: Create and open the clone file. */
-	ret = mds_file_open(&ms, clone_name, &mf_clone);
+	ret = mds_file_open(&ms, clone_name, &mf_clone, NULL);
 	if (ret) {
 		fprintf(stderr, "er_demo update: open clone %s failed: %s\n",
 			clone_name, strerror(-ret));
