@@ -745,6 +745,17 @@ out_close:
  */
 #define EC_OUTER_RETRY_MAX 3
 
+/*
+ * Bound on per-stripe NFS4ERR_DELAY retries in the full-stripe write path
+ * (ec_write_codec_with_file).  The MDS Track 1b chunk-collision gate
+ * (chunk.c axis-i PENDING-from-other-writer, axis-ii CAS) returns
+ * NFS4ERR_DELAY when concurrent writers race on the same chunk; the
+ * client must back off and retry rather than treating it as fatal.
+ * Bound matches EC_RMW_RETRY_MAX in the sub-stripe RMW path below so
+ * both write paths give up at the same point under sustained contention.
+ */
+#define EC_DELAY_RETRY_MAX 10
+
 static int ec_layout_refresh(struct ec_context *ctx, struct mds_session *ms,
 			     layouttype4 layout_type, layoutiomode4 iomode,
 			     int attempt)
@@ -983,6 +994,7 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 
 	for (size_t s = 0; s < nstripes; s++) {
 		int outer_retry = 0;
+		int delay_retry = 0;
 
 retry_stripe:
 		/*
@@ -1056,6 +1068,31 @@ retry_stripe:
 			ret = -ESTALE;
 			break;
 		}
+		if (ret == -EAGAIN && delay_retry < EC_DELAY_RETRY_MAX) {
+			/*
+			 * MDS chunk-collision gate signalled NFS4ERR_DELAY
+			 * on a concurrent-writer race.  Back off with
+			 * exponential delay + jitter (mirrors the
+			 * sub-stripe RMW pattern in ec_write_codec_range)
+			 * and retry the whole stripe.
+			 */
+			long base_ms = 50L << delay_retry;
+			if (base_ms > 500)
+				base_ms = 500;
+			long jitter_ms = rand() & 0x3f;
+			long sleep_ms = base_ms + jitter_ms;
+			struct timespec delay = { 0, sleep_ms * 1000000L };
+			delay_retry++;
+			ec_log("ec_write: stripe %zu data DELAY, retry "
+			       "%d/%d (sleep %ldms)\n",
+			       s, delay_retry, EC_DELAY_RETRY_MAX, sleep_ms);
+#ifdef __APPLE__
+			nanosleep(&delay, NULL);
+#else
+			clock_nanosleep(CLOCK_MONOTONIC, 0, &delay, NULL);
+#endif
+			goto retry_stripe;
+		}
 		if (ret)
 			break;
 
@@ -1104,6 +1141,24 @@ retry_stripe:
 			       s, ret);
 			ret = -ESTALE;
 			break;
+		}
+		if (ret == -EAGAIN && delay_retry < EC_DELAY_RETRY_MAX) {
+			long base_ms = 50L << delay_retry;
+			if (base_ms > 500)
+				base_ms = 500;
+			long jitter_ms = rand() & 0x3f;
+			long sleep_ms = base_ms + jitter_ms;
+			struct timespec delay = { 0, sleep_ms * 1000000L };
+			delay_retry++;
+			ec_log("ec_write: stripe %zu parity DELAY, retry "
+			       "%d/%d (sleep %ldms)\n",
+			       s, delay_retry, EC_DELAY_RETRY_MAX, sleep_ms);
+#ifdef __APPLE__
+			nanosleep(&delay, NULL);
+#else
+			clock_nanosleep(CLOCK_MONOTONIC, 0, &delay, NULL);
+#endif
+			goto retry_stripe;
 		}
 		if (ret)
 			break;
