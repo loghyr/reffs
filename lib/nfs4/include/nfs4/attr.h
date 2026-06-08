@@ -267,6 +267,22 @@ int nfs4_attribute_fini(void);
 void nfs4_attr_enable_layouts(void);
 
 /*
+ * Validate an ffv2_layouthint4 carried in a SETATTR(layout_hint).
+ * Exposed for unit tests; production callers go through
+ * nattr_to_inode().
+ *
+ * Returns NFS4_OK if acceptable (including the zero "no hint" form),
+ * NFS4ERR_NOTSUPP if loh_type is not LAYOUT4_FLEX_FILES_V2,
+ * NFS4ERR_BADXDR if the embedded ffv2_layouthint4 cannot be decoded,
+ * NFS4ERR_INVAL if ffv2lh_stripe_unit is non-zero and outside the
+ * [LAYOUTHINT_STRIPE_UNIT_MIN, LAYOUTHINT_STRIPE_UNIT_MAX] range.
+ */
+#define LAYOUTHINT_STRIPE_UNIT_MIN 4096u
+#define LAYOUTHINT_STRIPE_UNIT_MAX (8u * 1024u * 1024u)
+
+nfsstat4 nfs4_layouthint_validate(const fattr4_layout_hint *hint);
+
+/*
  * nfs4_wcc_fattr4_extract -- decode SIZE and TIME_MODIFY from an fattr4
  * blob received in LAYOUT_WCC ffdsw_attributes (RFC 9766 S3.7).
  *

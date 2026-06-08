@@ -214,6 +214,7 @@ TESTS = \
 	proxy_stateid_test \
 	reflected_getattr_test \
 	sec_label \
+	setattr_layouthint_test \
 	stateid_unhash \
 	task_state \
 	trust_stateid_test \

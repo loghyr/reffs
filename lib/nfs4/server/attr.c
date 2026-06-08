@@ -2411,11 +2411,72 @@ static void nattr_release(struct nfsv42_attr *nattr)
 /* ------------------------------------------------------------------ */
 
 /*
+ * Validate a SETATTR-supplied layout_hint per
+ * draft-haynes-nfsv4-flexfiles-v2 sec-ffv2-layouthint.
+ *
+ * Slice 2 of the Macklem-hint extension: validate-and-accept only.
+ * The decoded values are TRACE'd and discarded -- storage on the
+ * inode + LAYOUTGET consumer are separate slices (see
+ * .claude/design/layouthint-mds-hook.md).
+ *
+ * Returns NFS4_OK if acceptable (including the zero "no hint" form).
+ * NFS4ERR_NOTSUPP if loh_type is not LAYOUT4_FLEX_FILES_V2.
+ * NFS4ERR_BADXDR if the embedded ffv2_layouthint4 cannot be decoded.
+ * NFS4ERR_INVAL if ffv2lh_stripe_unit is non-zero and out of bounds.
+ *
+ * Constants LAYOUTHINT_STRIPE_UNIT_{MIN,MAX} live in nfs4/attr.h
+ * alongside the declaration so unit tests can use the same bounds.
+ */
+nfsstat4
+nfs4_layouthint_validate(const fattr4_layout_hint *hint)
+{
+	ffv2_layouthint4 lh = { 0 };
+	XDR xdrs;
+	nfsstat4 status = NFS4_OK;
+
+	if (hint->loh_type != LAYOUT4_FLEX_FILES_V2)
+		return NFS4ERR_NOTSUPP;
+
+	xdrmem_create(&xdrs, hint->loh_body.loh_body_val,
+		      hint->loh_body.loh_body_len, XDR_DECODE);
+
+	if (!xdr_ffv2_layouthint4(&xdrs, &lh))
+		return NFS4ERR_BADXDR;
+
+	if (lh.ffv2lh_stripe_unit != 0 &&
+	    (lh.ffv2lh_stripe_unit < LAYOUTHINT_STRIPE_UNIT_MIN ||
+	     lh.ffv2lh_stripe_unit > LAYOUTHINT_STRIPE_UNIT_MAX)) {
+		status = NFS4ERR_INVAL;
+		goto out;
+	}
+
+	TRACE("layouthint: stripe_unit=%u expected_size=%llu "
+	      "supported_types=%u protection=%u/%u",
+	      lh.ffv2lh_stripe_unit,
+	      (unsigned long long)lh.ffv2lh_expected_file_size,
+	      lh.ffv2lh_supported_types.ffv2lh_supported_types_len,
+	      lh.ffv2lh_preferred_protection.fdp_data,
+	      lh.ffv2lh_preferred_protection.fdp_parity);
+
+out:
+	xdr_free((xdrproc_t)xdr_ffv2_layouthint4, (char *)&lh);
+	return status;
+}
+
+/*
  * Return true if @attr may be set via SETATTR on this server.
  *
- * Unsupported write attrs (acl, dacl, sacl, layout_hint, mimetype,
- * retention/time-deleg) are not listed here so any request containing
- * them yields NFS4ERR_ATTRNOTSUPP.
+ * Unsupported write attrs (acl, dacl, sacl, mimetype, retention)
+ * are not listed here so any request containing them yields
+ * NFS4ERR_ATTRNOTSUPP.
+ *
+ * FATTR4_LAYOUT_HINT is settable (slice 2 of the Macklem-hint
+ * extension) but is intentionally still cleared from
+ * supported_attributes -- well-behaved clients won't try to set
+ * an unadvertised attr, but ec_demo and the unit tests drive the
+ * validation path directly.  Advertising lands once the hint is
+ * stored on the inode + consumed by the LAYOUTGET striping
+ * policy (see .claude/design/layouthint-mds-hook.md).
  */
 static bool nattr_is_settable(uint32_t attr)
 {
@@ -2423,6 +2484,7 @@ static bool nattr_is_settable(uint32_t attr)
 	case FATTR4_SIZE:
 	case FATTR4_ARCHIVE:
 	case FATTR4_HIDDEN:
+	case FATTR4_LAYOUT_HINT:
 	case FATTR4_MODE:
 	case FATTR4_MODE_SET_MASKED:
 	case FATTR4_OWNER:
@@ -2759,6 +2821,22 @@ static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
 			nfstime4_to_timespec(&nattr->time_create,
 					     &inode->i_btime);
 			break;
+		case FATTR4_LAYOUT_HINT: {
+			/*
+			 * Validate-only: the hint is range-checked and
+			 * TRACE'd; storage on the inode + consumption at
+			 * LAYOUTGET are deferred to slices 2b/4 (see
+			 * .claude/design/layouthint-mds-hook.md).
+			 */
+			nfsstat4 hs =
+				nfs4_layouthint_validate(&nattr->layout_hint);
+			if (hs != NFS4_OK) {
+				pthread_mutex_unlock(&inode->i_attr_mutex);
+				status = hs;
+				goto out;
+			}
+			break;
+		}
 		case FATTR4_SEC_LABEL:
 			if (nattr->sec_label.slai_data.slai_data_len >
 			    REFFS_SEC_LABEL_MAX) {
