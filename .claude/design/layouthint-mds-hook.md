@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # Slice 2: MDS validate-and-accept of `ffv2_layouthint4`
 
 ## Context

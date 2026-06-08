@@ -65,8 +65,7 @@ static nfsstat4 validate_hint(layouttype4 type, ffv2_layouthint4 *lh)
 START_TEST(test_layouthint_accept_zero_hints)
 {
 	ffv2_layouthint4 lh = { 0 };
-	ck_assert_uint_eq(validate_hint(LAYOUT4_FLEX_FILES_V2, &lh),
-			  NFS4_OK);
+	ck_assert_uint_eq(validate_hint(LAYOUT4_FLEX_FILES_V2, &lh), NFS4_OK);
 }
 END_TEST
 
@@ -85,8 +84,7 @@ START_TEST(test_layouthint_accept_valid_full_hints)
 		.ffv2lh_stripe_unit = 1u << 20,           /* 1 MiB   */
 		.ffv2lh_expected_file_size = 16ull << 30, /* 16 GiB  */
 	};
-	ck_assert_uint_eq(validate_hint(LAYOUT4_FLEX_FILES_V2, &lh),
-			  NFS4_OK);
+	ck_assert_uint_eq(validate_hint(LAYOUT4_FLEX_FILES_V2, &lh), NFS4_OK);
 }
 END_TEST
 
@@ -94,8 +92,7 @@ START_TEST(test_layouthint_accept_stripe_at_floor)
 {
 	ffv2_layouthint4 lh = { .ffv2lh_stripe_unit =
 					LAYOUTHINT_STRIPE_UNIT_MIN };
-	ck_assert_uint_eq(validate_hint(LAYOUT4_FLEX_FILES_V2, &lh),
-			  NFS4_OK);
+	ck_assert_uint_eq(validate_hint(LAYOUT4_FLEX_FILES_V2, &lh), NFS4_OK);
 }
 END_TEST
 
@@ -103,8 +100,7 @@ START_TEST(test_layouthint_accept_stripe_at_ceiling)
 {
 	ffv2_layouthint4 lh = { .ffv2lh_stripe_unit =
 					LAYOUTHINT_STRIPE_UNIT_MAX };
-	ck_assert_uint_eq(validate_hint(LAYOUT4_FLEX_FILES_V2, &lh),
-			  NFS4_OK);
+	ck_assert_uint_eq(validate_hint(LAYOUT4_FLEX_FILES_V2, &lh), NFS4_OK);
 }
 END_TEST
 

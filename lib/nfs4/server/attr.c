@@ -2427,8 +2427,7 @@ static void nattr_release(struct nfsv42_attr *nattr)
  * Constants LAYOUTHINT_STRIPE_UNIT_{MIN,MAX} live in nfs4/attr.h
  * alongside the declaration so unit tests can use the same bounds.
  */
-nfsstat4
-nfs4_layouthint_validate(const fattr4_layout_hint *hint)
+nfsstat4 nfs4_layouthint_validate(const fattr4_layout_hint *hint)
 {
 	ffv2_layouthint4 lh = { 0 };
 	XDR xdrs;
