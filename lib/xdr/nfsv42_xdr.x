@@ -4931,8 +4931,10 @@ struct ffv2_layoutreturn4 {
 };
 
 struct ffv2_layouthint4 {
-    ffv2_coding_type4       fflh_supported_types<>;
-    ffv2_data_protection4   fflh_preferred_protection;
+    ffv2_coding_type4       ffv2lh_supported_types<>;
+    ffv2_data_protection4   ffv2lh_preferred_protection;
+    uint32_t                ffv2lh_stripe_unit;
+    uint64_t                ffv2lh_expected_file_size;
 };
 
 const RCA4_TYPE_MASK_FFV2_LAYOUT_MIN     = 20;
