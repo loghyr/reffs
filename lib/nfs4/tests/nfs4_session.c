@@ -429,11 +429,13 @@ START_TEST(test_destroy_clientid_with_session_expires_client)
 	/*
 	 * The handler called nfs4_client_expire which called
 	 * nfs4_session_destroy_for_client.  The session is unhashed;
-	 * find by sessionid returns NULL.  Do not touch `ns` again --
-	 * the hash ref was dropped synchronously and the alloc ref is
-	 * already gone (alloc returns with refcount 1, shared with
-	 * the hash table; unhash drops it).  Same lifecycle as the
-	 * existing test_session_unhash_removes.
+	 * find by sessionid returns NULL.  nfs4_session_alloc returns
+	 * with refcount 2 (one for the hash, one bumped for the
+	 * caller -- see session.c:339 "Bump ref for the caller; hash
+	 * table holds its own ref").  The handler dropped the hash
+	 * ref via the unhash path; the caller ref still lives, so
+	 * this test MUST nfs4_session_put(ns) at the end (see below)
+	 * to avoid leaking the session.  CI LSAN catches the leak.
 	 */
 	struct nfs4_session *gone = nfs4_session_find(g_ss, sid);
 
@@ -460,7 +462,8 @@ START_TEST(test_destroy_clientid_with_session_expires_client)
 	 * teardown above).
 	 */
 	g_nc = NULL;
-	(void)ns; /* unhash + free happened inside the handler */
+	nfs4_session_put(
+		ns); /* drop caller ref; handler dropped the hash ref */
 }
 END_TEST
 
