@@ -457,13 +457,21 @@ START_TEST(test_destroy_clientid_with_session_expires_client)
 	ck_assert_uint_eq(status, NFS4_OK);
 
 	/*
-	 * g_nc was destroyed by the handler; null our reference so
-	 * teardown() skips the re-expire (see NULL-safe branch in
-	 * teardown above).
+	 * Drop refs the test still holds before nulling g_nc so
+	 * teardown() skips the re-expire.  The handler's
+	 * nfs4_client_expire dropped the hash ref + the find ref it
+	 * took (the lease-reaper-equivalent ref via
+	 * nfs4_client_find); setup()'s caller ref from
+	 * nfs4_client_alloc_or_find is still held and must be
+	 * dropped here so the client is freed.  Likewise the session
+	 * caller ref from nfs4_session_alloc (refcount 2: hash +
+	 * caller, see session.c:339 "Bump ref for the caller; hash
+	 * table holds its own ref") -- handler dropped the hash ref
+	 * via the unhash, the caller ref still lives.
 	 */
+	nfs4_client_put(g_nc);
 	g_nc = NULL;
-	nfs4_session_put(
-		ns); /* drop caller ref; handler dropped the hash ref */
+	nfs4_session_put(ns);
 }
 END_TEST
 
