@@ -249,6 +249,25 @@ You also need `kinit` on the test host and a reachable krb5 realm
 (your AD or MIT KDC).  The script does not install or configure
 those.
 
+**SPN-attached-to-UPN identities** -- if an AD user account has
+an SPN attached (e.g. `nfs/svc-k8s-nfs-dev.ad.local` registered
+on user `krbspnuser1`) and you want the test to authenticate as
+the SPN form, put the SPN directly in the principal column:
+
+```
+# principal                                    password
+nfs/svc-k8s-nfs-dev.ad.local@AD.LOCAL          Tonian@2013
+```
+
+`kinit` treats the SPN identically to a UPN -- AS-REQ CName is
+the SPN (because it's an attached identity in AD), the user
+account's password authenticates, the TGT comes back under the
+SPN identity, and the subsequent TGS-REQ to the NFS server uses
+the auto-derived `nfs/<server>@<REALM>` destination.  The
+`--spn` flag on `ec_demo` is a separate concept (it overrides
+the destination service principal, not the initiator) -- don't
+conflate the two.
+
 ### Getting a reffs build
 
 On a Linux host with autotools and a C toolchain:
@@ -276,6 +295,35 @@ is what dependency-tracks correctly across `git pull`s.  Don't
 try `make -j tools/ec_demo` -- the parallel-build target graph
 for that file pulls in libraries that aren't reachable from a
 single-target invocation, and the build will fail.
+
+### Re-running after a `git pull`
+
+The driver script picks up its own edits directly, but
+`ec_demo` is a compiled binary -- you have to rebuild after every
+`git pull`:
+
+```sh
+cd /path/to/reffs
+git pull
+cd build
+make -j$(nproc)
+```
+
+If the change pulled in updated NFS3ERR_ / NFS4ERR_ name
+decoding (`ec_demo` printing things like
+`status=NFS4ERR_PERM(13)` or `NFS3 error: status=N
+(NFS3ERR_<NAME>)`) and you see the old style without names, the
+generated XDR tooling also needs a refresh:
+
+```sh
+pip3 install --force-reinstall --no-deps \
+    'reply-xdr@git+https://github.com/loghyr/reply.git'
+```
+
+This regenerates the constants `xdr-parser` emits during the
+configure step; without it the new symbolic-name strings stay
+absent even after a clean `make`.  It's a once-per-release-of-
+`reply-xdr` step, not a per-`git-pull` one.
 
 ### Running it
 
@@ -388,7 +436,12 @@ longer stressing per-identity handling.
 Treat the principals file as a credential: mode `0600`, never
 commit it.
 
-## Troubleshooting
+## Troubleshooting (`nfs_krb5_multiclient` / `make` driver)
+
+For the in-tree driver and its `make -f Makefile.ci krb5`
+wrapper, the failure surface lives in the temp run directory the
+driver keeps on failure.  For external-FFv1-server failures see
+the next section instead.
 
 **The run failed — where do I look?**
 
@@ -437,6 +490,52 @@ hits a memory bug, it aborts; the driver detects the non-zero exit
 and fails the run with a message like
 `reffsd exited N (sanitizer finding or error)`. The details are in
 `reffsd.log`. This is a real server bug — file it.
+
+## Troubleshooting (external FFv1 server)
+
+These are the failures `krb5_ffv1_stress.sh` workers produce
+when the target is an already-running external NFSv4.2 server
+(the section above this is for the in-tree `make` driver).  On
+failure the script keeps its temp directory and prints the path
+on the last line:
+
+```
+krb5_ffv1_stress: run dir kept: /tmp/krb5_ffv1_stress.XXXXXX
+```
+
+Inside that directory each worker has its own `worker_<N>.log`;
+the `FAIL ...` summary at the top of the script's output gives a
+per-worker stderr tail too.
+
+**Decoder for the common `ec_demo` error lines.**  The errno
+appears in two forms -- `failed: -N` is the negative-errno return
+from the underlying syscall path; `(NFS4ERR_<NAME>)` is the
+symbolic NFS4 status, decoded by `ec_demo` from the COMPOUND
+result and printed just above the failed-call line.
+
+| Symptom in `ec_demo` output | Likely cause | Action |
+|---|---|---|
+| `error while loading shared libraries: libreffs_xdr.so.0` | Invoked the libtool inner ELF (`build/tools/.libs/ec_demo`) directly instead of the libtool wrapper | Pass `--ec-demo ./build/tools/ec_demo` (the wrapper in `tools/`, not the binary in `tools/.libs/`).  The wrapper sets `LD_LIBRARY_PATH` for you. |
+| `FATAL: ec_demo not executable: ./build/tools/ec_demo` | Wrong path, or working directory isn't the source root | Run the script from the reffs source root, or pass `--ec-demo /absolute/path/to/build/tools/ec_demo`. |
+| `session create failed: -111` (ECONNREFUSED) | Wrong port, or hostname not resolving | Add `:2049` to `--server`; verify `getent hosts <server>` returns the right IP. |
+| `session create failed: -99` (EADDRNOTAVAIL); `Cannot assign requested address` | Source-port pool exhausted (back-to-back runs, or high `--nconnect`) | `sudo sysctl -w net.ipv4.tcp_tw_reuse=1`; reduce `--clients` or `--nconnect`; or fan out across multiple `--source-ip` values.  See "Running at scale" above. |
+| `bindresvport failed (Address already in use)` followed by `NFS4ERR_PERM` | TIME_WAIT'd reserved-port slot, hitting strict reserved-port checking on the server | Same actions as above (`tcp_tw_reuse=1`).  If the server can be reconfigured to accept unprivileged source ports, that lifts the wall further. |
+| `session create failed: -121` (EREMOTEIO) | Server returned an NFS4 error on the COMPOUND.  The line just above will name the op and the status: `mds_compound_send: COMPOUND tag="..." op[N]=OP_<op>(NN) status=NFS4ERR_<NAME>` | Decode the `NFS4ERR_<NAME>` and address it.  Common ones below. |
+| `... status=NFS4ERR_PERM` on `EXCHANGE_ID` or `BIND_CONN_TO_SESSION` | Server's strict port checking rejected an unprivileged source port; or principal-to-uid mapping rejected the client | Check whether the server is using a reserved-port-required mount stance.  Check the server's idmap chain. |
+| `... status=NFS4ERR_DELAY` on `LAYOUTGET` | Server is busy or the layout placement path is throttling | Wait and retry; if persistent, server-side investigation -- look at the server's per-share layout state. |
+| `... status=NFS4ERR_LAYOUTUNAVAILABLE` on `LAYOUTGET` | No layout can be issued for the share, often because the requested EC geometry (`--k`/`--m`) exceeds the share's DS count | Match the geometry to the share.  Try `--codec mirror --k 1 --m 0` (the default) against a one-DS share; `--codec rs --k 4 --m 2` needs at least 6 DSes. |
+| `ec_write: need 6 mirrors, got 1` | Same as `LAYOUTUNAVAILABLE` -- the layout returned has fewer DSes than the codec requires | Use `--codec mirror --k 1 --m 0`, or move to a multi-DS share. |
+| `ec_read: stripe N shard[K] ds_read ... ret=-5` (EIO) followed by `ec_decode ret=-5` | DS-side I/O error returned to the client | Server-side / DS-side investigation. |
+| `ds_read: clnt_call failed: rpc_stat=N (RPC: ...)` | Transport-level failure on the DS (connection drop, timeout, server RST) | Check network reachability of the DS, and the DS's load. |
+| `ds_read: NFS3 error: status=N (NFS3ERR_<NAME>)` | DS returned an explicit NFS3 error | Decode `NFS3ERR_<NAME>` (IO, JUKEBOX, STALE, ACCES, ...). |
+| `ec_demo: invalid k=1 m=0` | Codec doesn't permit `m=0`, or the binary predates the `mirror` codec | Update to a current build (the default now uses `mirror`/k=1/m=0); for RS pass `--codec rs --k 4 --m 2`. |
+| Workers hang, no error printed | Intermittent network path (firewall, MTU mismatch, packet loss); or KDC unreachable mid-handshake | Run `tshark`/`tcpdump` filtered on the server IP + NFS port; correlate to worker stderr timestamps.  Check `kinit` works from the test client; check the krb5 trace if needed (`KRB5_TRACE=/dev/stderr kinit ...`). |
+
+**Server-side errors are server-side problems.**  When the
+COMPOUND status decodes to a server NFS4ERR_ -- particularly
+`NFS4ERR_DELAY`, `NFS4ERR_LAYOUTUNAVAILABLE`, or DS-side EIO --
+the next step is on the server.  reffs as a client just relays
+what the server told it.
 
 ## What happens under the hood
 
@@ -524,6 +623,13 @@ distinct (clientowner, krb5 principal) tuples.  The directory
 should contain one regular file per identity; whatever provisions
 your pod ccaches in production is the right tool to provision
 this directory in test.
+
+Ccaches are paired with `--spn-list` entries by natural-order
+sort of their basename, so the obvious naming `cc_0`, `cc_1`,
+..., `cc_31` pairs worker `i` with ccache `cc_<i>` and (if
+`--spn-list` is set) the `i`-th SPN.  No zero-padding needed --
+the sort is natural-order, not lexicographic, so `cc_2` sorts
+before `cc_10` the way you'd expect.
 
 **SPN rotation** (the target-service axis, orthogonal to the
 above; useful when the server hosts multiple service principals):
