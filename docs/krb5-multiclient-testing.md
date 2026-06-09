@@ -259,7 +259,7 @@ cd reffs
 mkdir -p m4 && autoreconf -fi
 mkdir build && cd build
 ../configure
-make -j tools/ec_demo
+make -j$(nproc)
 ```
 
 `configure` will name any missing development packages.  On
@@ -270,14 +270,18 @@ same names with `-dev`.  If you would rather use a containerised
 build, `make -f Makefile.reffs image` builds a development image
 with everything pinned (Dockerfile lives at the top of the tree).
 
-You only need `tools/ec_demo` for this script; the full `make -j`
-will also work.
+The `make -j$(nproc)` invocation builds the whole tree; the
+script needs `build/tools/ec_demo` to exist, but the full build
+is what dependency-tracks correctly across `git pull`s.  Don't
+try `make -j tools/ec_demo` -- the parallel-build target graph
+for that file pulls in libraries that aren't reachable from a
+single-target invocation, and the build will fail.
 
 ### Running it
 
 ```sh
 ./scripts/krb5_ffv1_stress.sh \
-    --server nfs.example.com \
+    --server nfs.example.com:2049 \
     --path /your/share/stress \
     --clients 8 \
     --principals /path/to/principals.txt
@@ -289,10 +293,85 @@ The script exits `PASS N/N` or `FAIL k/N (m failed)`; on any
 failure it keeps its run directory and dumps each failing worker's
 log tail to stderr.
 
-Useful options: `--size <bytes>` (default 10 MB), `--k <K> --m <M>`
-(EC geometry; default 4+2), `--codec rs|mojette-sys|mojette-nonsys|stripe`,
-`--ec-demo <path>` if your build is elsewhere.  `--help` lists the
-full set.
+Pass the port (`:2049`) explicitly.  Omitting it can hit a
+session-create round trip that ends with `session create failed:
+-111` (ECONNREFUSED) on the first attempt against some targets,
+because the no-port form takes a different code path through
+libtirpc's portmapper that some servers (notably the Hammerspace
+Anvil) handle inconsistently.
+
+**Server hostname resolution.**  The `--server` value must
+resolve to the server's IP from the test client.  AD-attached
+server names (e.g. `*.ad.local`, `*.win.ad.test`) often don't
+appear in public DNS; add an `/etc/hosts` entry on the test
+client:
+
+```
+10.200.107.69  ae58rfme5g080w.ad.local
+```
+
+`getent hosts <hostname>` from the test client should return the
+right IP before you run the script.
+
+Useful options:
+
+| Option | Meaning |
+|---|---|
+| `--size <bytes>` | Bytes per file (default 10 MB) |
+| `--k <K> --m <M>` | EC geometry; default `1 0` with the `mirror` codec (matches one-DS-per-share targets).  For RS 4+2 pass `--codec rs --k 4 --m 2` and the target share must back the layout with at least 6 DSes. |
+| `--codec rs\|mojette-sys\|mojette-nonsys\|stripe\|mirror` | Erasure-coding codec. `mirror` is the default. |
+| `--nconnect <N>` | Number of TCP transports per session (NFSv4 multi-pathing).  Default 1.  See "Running at scale" below. |
+| `--source-ip <IP>` | Bind outgoing sockets to a specific local IP.  Useful when the test client has multiple addresses and you need to spread workers across them.  See "Running at scale" below. |
+| `--sec <flavor>` | Security flavor (default `krb5`). |
+| `--ec-demo <path>` | Where the `ec_demo` binary lives (default `./build/tools/ec_demo`). |
+| `--help` | Full option list. |
+
+### Running at scale
+
+The test client opens a fresh source-port pair per worker per
+transport.  When the target enforces strict reserved-port
+checking (the default NFSv4 stance, and the Anvil default),
+clients are limited to the privileged port range -- about 500
+usable ports per source IP after TIME_WAIT slack.  Per-source-IP
+worker ceiling, before connect or `bindresvport` start failing:
+
+| `--nconnect` | Max workers per source IP |
+|---|---|
+| 1            | ~400 |
+| 2            | ~200 |
+| 4            | ~100 |
+| 8            | ~50 (hard wall ~53) |
+
+For back-to-back runs at any meaningful concurrency, enable
+TIME_WAIT slot reuse on the test client:
+
+```sh
+sudo sysctl -w net.ipv4.tcp_tw_reuse=1
+```
+
+Without it, the second run typically fails with
+`session create failed: -99` (EADDRNOTAVAIL) or
+`bindresvport failed (Address already in use)`.  Make this
+permanent by adding the line to `/etc/sysctl.d/99-nfs-stress.conf`
+if you run this regularly.
+
+To exceed the per-IP ceiling, configure additional source IPs on
+the test client and fan workers out across them with
+`--source-ip`:
+
+```sh
+./scripts/krb5_ffv1_stress.sh --source-ip 10.1.1.5 \
+    --server ... --clients 50 --nconnect 8 ... &
+./scripts/krb5_ffv1_stress.sh --source-ip 10.1.1.6 \
+    --server ... --clients 50 --nconnect 8 ... &
+./scripts/krb5_ffv1_stress.sh --source-ip 10.1.1.7 \
+    --server ... --clients 50 --nconnect 8 ... &
+wait
+```
+
+Each `--source-ip` value gets its own per-IP ceiling, so three
+local IPs lift the nconnect=8 wall from ~50 to ~150 concurrent
+workers.
 
 ### The precondition (server side)
 
