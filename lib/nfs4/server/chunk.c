@@ -71,6 +71,153 @@ static inline bool chunk_cid_is_reserved(uint32_t cid)
 	       cid == CHUNK_GUARD_CLIENT_ID_MDS;
 }
 
+/*
+ * chunk_write_validate_payload -- input + per-chunk-CRC validation
+ * shared between OP_CHUNK_WRITE and OP_CHUNK_WRITE_REPAIR.
+ *
+ * Both ops carry the same payload shape (the cwa_/cwra_ XDR prefix
+ * differs); this helper takes already-extracted fields so it is
+ * struct-agnostic.  The per-op stateid / trust-table check stays
+ * inline in each handler -- CHUNK_WRITE allows special stateids,
+ * CHUNK_WRITE_REPAIR rejects them and additionally requires iomode
+ * RW, so the auth shape differs even though the payload contract
+ * does not.
+ *
+ * Validation rules (in order; first failure wins):
+ *   1. current FH set                 -> NFS4ERR_NOFILEHANDLE
+ *   2. current FH is a regular file   -> NFS4ERR_INVAL
+ *   3. chunk_size > 0, chunks_len > 0 -> NFS4ERR_INVAL
+ *   4. cg_client_id not reserved      -> NFS4ERR_INVAL
+ *   5. nchunks > 0                    -> NFS4ERR_INVAL
+ *   6. nchecksums == 0 || nchecksums == nchunks -> NFS4ERR_INVAL
+ *   7. per-payload wire_algo is a known algorithm and every
+ *      checksum4 matches it with the right cs_value length
+ *                                     -> NFS4ERR_INVAL
+ *   8. per-chunk CRC matches recomputed CRC of payload chunk
+ *                                     -> NFS4ERR_INVAL
+ *
+ * Returns NFS4_OK on success and sets *out_wire_algo to the
+ * per-payload checksum algorithm (0 if no checksums supplied) and
+ * *out_nchunks to the computed chunk count.  On failure returns a
+ * non-zero nfsstat4 (caller assigns to *status).  The op_log_tag
+ * appears in any TRACE() line emitted for a rejection ("CHUNK_WRITE"
+ * vs "CHUNK_WRITE_REPAIR") so log readers can attribute the
+ * failure to the originating op.
+ */
+static nfsstat4
+chunk_write_validate_payload(struct compound *compound, uint32_t chunk_size,
+			     const char *chunks_data, uint32_t chunks_len,
+			     uint32_t cg_client_id, const checksum4 *checksums,
+			     uint32_t nchecksums, const char *op_log_tag,
+			     uint32_t *out_wire_algo, uint32_t *out_nchunks)
+{
+	*out_wire_algo = 0;
+	*out_nchunks = 0;
+
+	if (network_file_handle_empty(&compound->c_curr_nfh))
+		return NFS4ERR_NOFILEHANDLE;
+
+	if (!compound->c_inode || !S_ISREG(compound->c_inode->i_mode))
+		return NFS4ERR_INVAL;
+
+	if (chunk_size == 0 || chunks_len == 0)
+		return NFS4ERR_INVAL;
+
+	if (chunk_cid_is_reserved(cg_client_id))
+		return NFS4ERR_INVAL;
+
+	/*
+	 * The chunks opaque blob contains one or more chunks.  Most are
+	 * chunk_size bytes; the last may be shorter when the shard size
+	 * is not a multiple of chunk_size (Mojette parity projections
+	 * produce variable-sized shards).
+	 */
+	uint32_t total_data = chunks_len;
+	uint32_t nchunks = (total_data + chunk_size - 1) / chunk_size;
+
+	if (nchunks == 0)
+		return NFS4ERR_INVAL;
+
+	if (nchecksums > 0 && nchecksums != nchunks)
+		return NFS4ERR_INVAL;
+
+	/*
+	 * Validate per-chunk checksums if provided.  The wire type is
+	 * checksum4; only CHECKSUM_ALG_CRC32 is supported by this
+	 * implementation -- chunk_checksum_unpack_crc32() (below) rejects
+	 * other algorithms or wrong cs_value lengths with NFS4ERR_INVAL.
+	 *
+	 * Step 8 pre-validation: every wire checksum4 uses the same
+	 * algorithm and a value length that matches that algorithm's
+	 * registered size.  Unknown algorithms, mixed-algorithm
+	 * payloads, and wrong lengths are all NFS4ERR_INVAL.
+	 *
+	 * Per-file algorithm consistency (the second half of step 8)
+	 * runs in the caller after chunk_store_get -- the chunk_store
+	 * is the authoritative record of the file's established
+	 * algorithm.
+	 */
+	uint32_t wire_algo = 0;
+
+	if (nchecksums > 0) {
+		wire_algo = checksums[0].cs_algorithm;
+		int expected_value_len = chunk_checksum_expected_len(wire_algo);
+
+		if (expected_value_len < 0) {
+			TRACE("%s: unknown checksum algorithm %u", op_log_tag,
+			      wire_algo);
+			return NFS4ERR_INVAL;
+		}
+		for (uint32_t i = 0; i < nchecksums; i++) {
+			const checksum4 *cs4 = &checksums[i];
+
+			if (cs4->cs_algorithm != wire_algo) {
+				TRACE("%s: mixed-algorithm payload "
+				      "(entry %u: %u vs first %u)",
+				      op_log_tag, i, cs4->cs_algorithm,
+				      wire_algo);
+				return NFS4ERR_INVAL;
+			}
+			if ((int)cs4->cs_value.cs_value_len !=
+			    expected_value_len) {
+				TRACE("%s: checksum length mismatch "
+				      "(algo %u expects %d, got %u)",
+				      op_log_tag, wire_algo, expected_value_len,
+				      cs4->cs_value.cs_value_len);
+				return NFS4ERR_INVAL;
+			}
+		}
+	}
+
+	for (uint32_t i = 0; i < nchecksums; i++) {
+		uint32_t expected;
+		nfsstat4 ust =
+			chunk_checksum_unpack_crc32(&checksums[i], &expected);
+
+		if (ust != NFS4_OK)
+			return ust;
+
+		const uint8_t *cdata =
+			(const uint8_t *)chunks_data + (size_t)i * chunk_size;
+		uint32_t clen = chunk_size;
+
+		if (i == nchunks - 1 && total_data % chunk_size != 0)
+			clen = total_data % chunk_size;
+		uint32_t computed = (uint32_t)crc32(0L, cdata, (uInt)clen);
+
+		if (computed != expected) {
+			TRACE("%s: CRC mismatch chunk %u: "
+			      "expected 0x%08x got 0x%08x",
+			      op_log_tag, i, expected, computed);
+			return NFS4ERR_INVAL;
+		}
+	}
+
+	*out_wire_algo = wire_algo;
+	*out_nchunks = nchunks;
+	return NFS4_OK;
+}
+
 /* ------------------------------------------------------------------ */
 /* CHUNK_WRITE                                                         */
 /* ------------------------------------------------------------------ */
@@ -83,129 +230,24 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	CHUNK_WRITE4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, CHUNK_WRITE4res_u, cwr_resok4);
 
-	if (network_file_handle_empty(&compound->c_curr_nfh)) {
-		*status = NFS4ERR_NOFILEHANDLE;
-		return 0;
-	}
+	uint32_t wire_algo;
+	uint32_t nchunks;
+	nfsstat4 vs = chunk_write_validate_payload(
+		compound, args->cwa_chunk_size, args->cwa_chunks.cwa_chunks_val,
+		args->cwa_chunks.cwa_chunks_len,
+		args->cwa_owner.co_guard.cg_client_id,
+		args->cwa_checksums.cwa_checksums_val,
+		args->cwa_checksums.cwa_checksums_len, "CHUNK_WRITE",
+		&wire_algo, &nchunks);
 
-	if (!compound->c_inode || !S_ISREG(compound->c_inode->i_mode)) {
-		*status = NFS4ERR_INVAL;
+	if (vs != NFS4_OK) {
+		*status = vs;
 		return 0;
 	}
 
 	uint32_t chunk_size = args->cwa_chunk_size;
-
-	if (chunk_size == 0 || args->cwa_chunks.cwa_chunks_len == 0) {
-		*status = NFS4ERR_INVAL;
-		return 0;
-	}
-
-	if (chunk_cid_is_reserved(args->cwa_owner.co_guard.cg_client_id)) {
-		*status = NFS4ERR_INVAL;
-		return 0;
-	}
-
-	/*
-	 * The chunks opaque blob contains one or more chunks.  Most are
-	 * cwa_chunk_size bytes; the last may be shorter when the shard
-	 * size is not a multiple of chunk_size (Mojette parity projections
-	 * produce variable-sized shards).
-	 */
 	uint32_t total_data = args->cwa_chunks.cwa_chunks_len;
-	uint32_t nchunks = (total_data + chunk_size - 1) / chunk_size;
-
-	if (nchunks == 0) {
-		*status = NFS4ERR_INVAL;
-		return 0;
-	}
-
-	/*
-	 * Validate per-chunk checksums if provided.  The wire type is
-	 * checksum4; only CHECKSUM_ALG_CRC32 is supported by this
-	 * implementation -- chunk_checksum_unpack_crc32() rejects other
-	 * algorithms or wrong cs_value lengths with NFS4ERR_INVAL.
-	 */
 	uint32_t nchecksums = args->cwa_checksums.cwa_checksums_len;
-
-	if (nchecksums > 0 && nchecksums != nchunks) {
-		*status = NFS4ERR_INVAL;
-		return 0;
-	}
-
-	/*
-	 * Step 8 pre-validation: every wire checksum4 uses the same
-	 * algorithm and a value length that matches that algorithm's
-	 * registered size.  Unknown algorithms, mixed-algorithm
-	 * payloads, and wrong lengths are all NFS4ERR_INVAL.
-	 *
-	 * Per-file algorithm consistency (the second half of step 8)
-	 * runs below after chunk_store_get -- the chunk_store is the
-	 * authoritative record of the file's established algorithm.
-	 */
-	uint32_t wire_algo = 0;
-
-	if (nchecksums > 0) {
-		wire_algo =
-			args->cwa_checksums.cwa_checksums_val[0].cs_algorithm;
-		int expected_value_len = chunk_checksum_expected_len(wire_algo);
-
-		if (expected_value_len < 0) {
-			TRACE("CHUNK_WRITE: unknown checksum algorithm %u",
-			      wire_algo);
-			*status = NFS4ERR_INVAL;
-			return 0;
-		}
-		for (uint32_t i = 0; i < nchecksums; i++) {
-			const checksum4 *cs4 =
-				&args->cwa_checksums.cwa_checksums_val[i];
-
-			if (cs4->cs_algorithm != wire_algo) {
-				TRACE("CHUNK_WRITE: mixed-algorithm payload "
-				      "(entry %u: %u vs first %u)",
-				      i, cs4->cs_algorithm, wire_algo);
-				*status = NFS4ERR_INVAL;
-				return 0;
-			}
-			if ((int)cs4->cs_value.cs_value_len !=
-			    expected_value_len) {
-				TRACE("CHUNK_WRITE: checksum length "
-				      "mismatch (algo %u expects %d, "
-				      "got %u)",
-				      wire_algo, expected_value_len,
-				      cs4->cs_value.cs_value_len);
-				*status = NFS4ERR_INVAL;
-				return 0;
-			}
-		}
-	}
-
-	for (uint32_t i = 0; i < nchecksums; i++) {
-		uint32_t expected;
-		nfsstat4 ust = chunk_checksum_unpack_crc32(
-			&args->cwa_checksums.cwa_checksums_val[i], &expected);
-
-		if (ust != NFS4_OK) {
-			*status = ust;
-			return 0;
-		}
-
-		const uint8_t *cdata =
-			(const uint8_t *)args->cwa_chunks.cwa_chunks_val +
-			(size_t)i * chunk_size;
-		uint32_t clen = chunk_size;
-
-		if (i == nchunks - 1 && total_data % chunk_size != 0)
-			clen = total_data % chunk_size;
-		uint32_t computed = (uint32_t)crc32(0L, cdata, (uInt)clen);
-
-		if (computed != expected) {
-			TRACE("CHUNK_WRITE: CRC mismatch chunk %u: "
-			      "expected 0x%08x got 0x%08x",
-			      i, expected, computed);
-			*status = NFS4ERR_INVAL;
-			return 0;
-		}
-	}
 
 	/*
 	 * Trust table validation -- tightly-coupled DS.
