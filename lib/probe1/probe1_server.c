@@ -926,6 +926,8 @@ static void fill_sb_info(probe_sb_info1 *psi, const struct super_block *sb)
 		&cs->cs_rollback_invoked, memory_order_relaxed);
 	psi->psi_chunk_stats.pcs_repair_initiated = atomic_load_explicit(
 		&cs->cs_repair_initiated, memory_order_relaxed);
+	psi->psi_chunk_stats.pcs_repair_completed = atomic_load_explicit(
+		&cs->cs_repair_completed, memory_order_relaxed);
 	psi->psi_chunk_stats.pcs_fences_rotated = atomic_load_explicit(
 		&cs->cs_fences_rotated, memory_order_relaxed);
 

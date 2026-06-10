@@ -306,6 +306,7 @@ struct probe_chunk_stats1 {
 	unsigned hyper		pcs_commit_crc_recompute;
 	unsigned hyper		pcs_rollback_invoked;
 	unsigned hyper		pcs_repair_initiated;
+	unsigned hyper		pcs_repair_completed;
 	unsigned hyper		pcs_fences_rotated;
 	/*
 	 * INV-1 partial-stripe write instrumentation (appended for
