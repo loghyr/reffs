@@ -11,8 +11,13 @@ the IETF 126 candidate-deck answer to `question-ais.txt` item 4
 repair ops) per user directive after rejecting Tier 1
 (client-side write-back via plain CHUNK_WRITE).*
 
-*Status: PENDING -- seven Open Questions in section 12 need
-author answers before Slice 1 starts.*
+*Status: SHIPPED 2026-06-10 (commits 555e1bfd914e..d7259702cb25 on
+main).  All 7 Open Questions in section 12 answered.  All 3
+slices landed; reviewer-pass BLOCKER + 2 WARNINGs resolved in
+d7259702cb25.  Tests on main: chunk_test 31/31,
+chunk_repair_test 23/23, layout_segment_test 12/12.  What's left
+is wallclock-running the 80 bench cells against a live topology
+and dropping the resulting CSV onto the IETF 126 deck.*
 
 ---
 
