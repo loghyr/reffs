@@ -526,6 +526,110 @@ START_TEST(test_persist_checksum_algorithm)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* ldf_flags persistence (ec-repair slice 2)                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The per-mirror ldf_flags field carries FFV2_DS_FLAGS_REPAIR / SPARE
+ * across MDS restarts so the system does not lose track of a half-
+ * repaired file.  These tests exercise the disk round-trip.
+ */
+START_TEST(test_ldf_flags_default_zero)
+{
+	struct layout_data_file ldf = make_data_file(10, 0xAA, 4096);
+
+	ck_assert_uint_eq(ldf.ldf_flags, 0);
+}
+END_TEST
+
+START_TEST(test_ldf_flags_persist_roundtrip)
+{
+	struct inode *inode = inode_alloc(g_posix_sb, 700);
+
+	ck_assert_ptr_nonnull(inode);
+
+	struct layout_segments *lss = layout_segments_alloc();
+	struct layout_data_file *files =
+		calloc(2, sizeof(struct layout_data_file));
+
+	files[0] = make_data_file(10, 0xAA, 4096);
+	files[1] = make_data_file(20, 0xBB, 4096);
+	files[1].ldf_flags = FFV2_DS_FLAGS_REPAIR;
+
+	struct layout_segment seg = {
+		.ls_offset = 0,
+		.ls_length = 0,
+		.ls_stripe_unit = 65536,
+		.ls_k = 1,
+		.ls_m = 1,
+		.ls_nfiles = 2,
+		.ls_layout_type = LAYOUT4_FLEX_FILES_V2,
+		.ls_files = files,
+	};
+
+	layout_segments_add(lss, &seg);
+	inode->i_layout_segments = lss;
+
+	inode_sync_to_disk(inode);
+	layout_segments_free(inode->i_layout_segments);
+	inode->i_layout_segments = NULL;
+
+	ck_assert_int_eq(g_posix_sb->sb_ops->inode_alloc(inode), 0);
+	ck_assert_ptr_nonnull(inode->i_layout_segments);
+
+	struct layout_data_file *l0 =
+		&inode->i_layout_segments->lss_segs[0].ls_files[0];
+	struct layout_data_file *l1 =
+		&inode->i_layout_segments->lss_segs[0].ls_files[1];
+
+	ck_assert_uint_eq(l0->ldf_flags, 0);
+	ck_assert_uint_eq(l1->ldf_flags, FFV2_DS_FLAGS_REPAIR);
+
+	inode_active_put(inode);
+}
+END_TEST
+
+START_TEST(test_ldf_flags_persist_combined)
+{
+	struct inode *inode = inode_alloc(g_posix_sb, 701);
+
+	ck_assert_ptr_nonnull(inode);
+
+	struct layout_segments *lss = layout_segments_alloc();
+	struct layout_data_file *files =
+		calloc(1, sizeof(struct layout_data_file));
+
+	files[0] = make_data_file(10, 0xCC, 4096);
+	files[0].ldf_flags = FFV2_DS_FLAGS_REPAIR | FFV2_DS_FLAGS_SPARE;
+
+	struct layout_segment seg = {
+		.ls_offset = 0,
+		.ls_length = 0,
+		.ls_stripe_unit = 65536,
+		.ls_k = 1,
+		.ls_m = 0,
+		.ls_nfiles = 1,
+		.ls_layout_type = LAYOUT4_FLEX_FILES_V2,
+		.ls_files = files,
+	};
+
+	layout_segments_add(lss, &seg);
+	inode->i_layout_segments = lss;
+
+	inode_sync_to_disk(inode);
+	layout_segments_free(inode->i_layout_segments);
+	inode->i_layout_segments = NULL;
+
+	ck_assert_int_eq(g_posix_sb->sb_ops->inode_alloc(inode), 0);
+	ck_assert_uint_eq(
+		inode->i_layout_segments->lss_segs[0].ls_files[0].ldf_flags,
+		FFV2_DS_FLAGS_REPAIR | FFV2_DS_FLAGS_SPARE);
+
+	inode_active_put(inode);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 
 Suite *layout_segment_suite(void)
 {
@@ -548,6 +652,9 @@ Suite *layout_segment_suite(void)
 	tcase_add_test(tc_posix, test_multiple_segments);
 	tcase_add_test(tc_posix, test_lss_gen_persists_across_inode_sync);
 	tcase_add_test(tc_posix, test_persist_checksum_algorithm);
+	tcase_add_test(tc_mem, test_ldf_flags_default_zero);
+	tcase_add_test(tc_posix, test_ldf_flags_persist_roundtrip);
+	tcase_add_test(tc_posix, test_ldf_flags_persist_combined);
 	suite_add_tcase(s, tc_posix);
 
 	return s;

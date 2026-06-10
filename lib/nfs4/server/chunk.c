@@ -35,6 +35,7 @@
 #include "reffs/data_block.h"
 #include "reffs/fs.h"
 #include "reffs/inode.h"
+#include "reffs/layout_segment.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
 #include "reffs/server.h"
@@ -1060,13 +1061,121 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
 	return 0;
 }
 
+/*
+ * OP_CHUNK_REPAIRED -- client tells the MDS that an EC repair landed
+ * on a previously REPAIR-flagged mirror.  The MDS clears
+ * FFV2_DS_FLAGS_REPAIR on every flagged mirror covered by the
+ * requested range and persists the layout segments so the cleared
+ * state survives an MDS restart.
+ *
+ * Validation rules (.claude/design/ec-repair.md sec 4):
+ *   1. current FH set                 -> NFS4ERR_NOFILEHANDLE
+ *   2. current FH is a regular file   -> NFS4ERR_INVAL
+ *   3. cpa_owner.cg_client_id not reserved -> NFS4ERR_INVAL
+ *   4. inode has i_layout_segments    -> NFS4ERR_INVAL
+ *   5. (idempotent) no mirror is FFV2_DS_FLAGS_REPAIR-flagged ->
+ *      NFS4_OK with no state change.  Covers the crash-recovery
+ *      retry case where the client re-issues the op after the MDS
+ *      already persisted the clear.
+ *
+ * cs_repair_completed bumps by the COUNT of mirrors actually
+ * cleared (per Open Question 4 answer 2026-06-09: per-mirror, not
+ * per-call).  An idempotent retry that clears zero mirrors does
+ * not bump the counter.
+ *
+ * NOT_NOW_BROWN_COW: rigorous cpa_stateid validation (must resolve
+ * to a valid OPEN or layout stateid on the inode) is deferred to a
+ * follow-up.  The IETF-demo cooperative-client model treats
+ * stateid auth as a layout-layer concern enforced by the MDS at
+ * LAYOUTGET time; the chunk-state-clearing surface here is
+ * controlled by the layout's own clientid match (Open Question 1
+ * answer: defence-in-depth TRUST_STATEID hint is out of scope).
+ *
+ * NOT_NOW_BROWN_COW: cpa_offset / cpa_count range matching against
+ * the layout segments' byte ranges.  Single-segment whole-file
+ * layouts (the demo cell shape) trivially satisfy any range; once
+ * striped repair lands, this needs the per-segment chunk_size
+ * plumbing flagged in Open Question 3.
+ *
+ * NOT_NOW_BROWN_COW: clientid match between the layout-holder and
+ * the calling client (rule 7 in the design doc).  Deferred to the
+ * same follow-up as stateid validation; the demo's cooperative
+ * single-writer model is unaffected.
+ */
 uint32_t nfs4_op_chunk_repaired(struct compound *compound)
 {
+	CHUNK_REPAIRED4args *args = NFS4_OP_ARG_SETUP(compound, opchunk_repair);
 	CHUNK_REPAIRED4res *res = NFS4_OP_RES_SETUP(compound, opchunk_repair);
 	nfsstat4 *status = &res->cpr_status;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		return 0;
+	}
 
+	if (!compound->c_inode || !S_ISREG(compound->c_inode->i_mode)) {
+		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	if (chunk_cid_is_reserved(args->cpa_owner.co_guard.cg_client_id)) {
+		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+
+	struct layout_segments *lss = compound->c_inode->i_layout_segments;
+
+	if (!lss || lss->lss_count == 0) {
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	/*
+	 * Demo cell shape is single-segment whole-file -- iterate every
+	 * mirror in every segment and clear FFV2_DS_FLAGS_REPAIR.  The
+	 * cleared count tells cs_repair_completed how much work
+	 * actually happened (zero on idempotent retry, N on a real
+	 * clear).
+	 */
+	uint32_t cleared = 0;
+
+	for (uint32_t s = 0; s < lss->lss_count; s++) {
+		struct layout_segment *seg = &lss->lss_segs[s];
+
+		for (uint32_t f = 0; f < seg->ls_nfiles; f++) {
+			struct layout_data_file *ldf = &seg->ls_files[f];
+
+			if (ldf->ldf_flags & FFV2_DS_FLAGS_REPAIR) {
+				ldf->ldf_flags &= ~FFV2_DS_FLAGS_REPAIR;
+				cleared++;
+			}
+		}
+	}
+
+	if (cleared > 0) {
+		/*
+		 * Persist the cleared flag bits BEFORE returning NFS4_OK
+		 * so the client can rely on the MDS-side state surviving
+		 * a power-fail-after-reply.  Crash-recovery story:
+		 * .claude/design/ec-repair.md sec 3 covers each failure
+		 * point; idempotent rule 5 above handles client retries
+		 * that win the race against MDS persistence.
+		 */
+		inode_sync_to_disk(compound->c_inode);
+
+		if (compound->c_curr_sb)
+			atomic_fetch_add_explicit(
+				&compound->c_curr_sb->sb_chunk_stats
+					 .cs_repair_completed,
+				cleared, memory_order_relaxed);
+	}
+
+	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+
+	/* *status stays NFS4_OK (calloc'd default). */
 	return 0;
 }
 

@@ -50,6 +50,7 @@
 #include "reffs/inode.h"
 #include "reffs/server.h"
 #include "reffs/super_block.h"
+#include "reffs/layout_segment.h"
 #include "nfs4/chunk_checksum.h"
 #include "nfs4/chunk_store.h"
 #include "nfs4/client.h"
@@ -901,6 +902,355 @@ END_TEST
  */
 
 /* ------------------------------------------------------------------ */
+/* Group F: OP_CHUNK_REPAIRED (MDS-side) -- ec-repair slice 2          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Build CHUNK_REPAIRED args in slot 0 with the given stateid and
+ * range.  The owner uses a real (non-reserved) client id.
+ */
+static void set_repaired_args(struct cm_ctx *cm, const stateid4 *stid,
+			      uint64_t offset, uint32_t count)
+{
+	cm_set_op(cm, 0, OP_CHUNK_REPAIRED);
+	CHUNK_REPAIRED4args *args =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.opchunk_repair;
+
+	args->cpa_stateid = *stid;
+	args->cpa_offset = offset;
+	args->cpa_count = count;
+	args->cpa_owner.co_guard.cg_client_id = 0xDEAD0001;
+	args->cpa_owner.co_guard.cg_gen_id = 1;
+}
+
+/*
+ * Attach an i_layout_segments to g_inode with `nfiles` mirrors.
+ * `flagmask` is OR'd onto each ldf_flags so the caller can preset
+ * FFV2_DS_FLAGS_REPAIR on every mirror; per-mirror customisation
+ * happens after this returns.
+ */
+static void attach_layout_segments(uint32_t nfiles, uint32_t flagmask)
+{
+	struct layout_segments *lss = layout_segments_alloc();
+	struct layout_data_file *files =
+		calloc(nfiles, sizeof(struct layout_data_file));
+
+	ck_assert_ptr_nonnull(files);
+
+	for (uint32_t i = 0; i < nfiles; i++) {
+		files[i].ldf_dstore_id = 100 + i;
+		files[i].ldf_fh_len = 8;
+		memset(files[i].ldf_fh, (uint8_t)(0xA0 + i), 8);
+		files[i].ldf_uid = 1000;
+		files[i].ldf_gid = 1000;
+		files[i].ldf_mode = 0644;
+		files[i].ldf_flags = flagmask;
+	}
+
+	struct layout_segment seg = {
+		.ls_offset = 0,
+		.ls_length = 0,
+		.ls_stripe_unit = 65536,
+		.ls_k = nfiles > 1 ? nfiles - 1 : 1,
+		.ls_m = nfiles > 1 ? 1 : 0,
+		.ls_nfiles = nfiles,
+		.ls_layout_type = LAYOUT4_FLEX_FILES_V2,
+		.ls_files = files,
+	};
+
+	layout_segments_add(lss, &seg);
+	g_inode->i_layout_segments = lss;
+}
+
+static void detach_layout_segments(void)
+{
+	if (g_inode->i_layout_segments) {
+		layout_segments_free(g_inode->i_layout_segments);
+		g_inode->i_layout_segments = NULL;
+	}
+}
+
+/* No current filehandle -> NFS4ERR_NOFILEHANDLE. */
+START_TEST(test_repaired_no_fh)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	stateid4 stid = make_stateid(0xF1);
+
+	set_repaired_args(cm, &stid, 0, 0);
+	nfs4_op_chunk_repaired(cm->compound);
+
+	CHUNK_REPAIRED4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					   .nfs_resop4_u.opchunk_repair;
+
+	ck_assert_int_eq(res->cpr_status, NFS4ERR_NOFILEHANDLE);
+
+	cm_free(cm);
+}
+END_TEST
+
+/* Directory FH -> NFS4ERR_INVAL. */
+START_TEST(test_repaired_not_regular_file)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	stateid4 stid = make_stateid(0xF2);
+
+	uint64_t ino =
+		__atomic_add_fetch(&g_sb->sb_next_ino, 1, __ATOMIC_RELAXED);
+	struct inode *dir = inode_alloc(g_sb, ino);
+
+	ck_assert_ptr_nonnull(dir);
+	dir->i_mode = S_IFDIR | 0750;
+
+	cm_set_inode(cm, dir);
+	set_repaired_args(cm, &stid, 0, 0);
+	nfs4_op_chunk_repaired(cm->compound);
+
+	CHUNK_REPAIRED4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					   .nfs_resop4_u.opchunk_repair;
+
+	ck_assert_int_eq(res->cpr_status, NFS4ERR_INVAL);
+
+	cm_free(cm);
+	inode_active_put(dir);
+}
+END_TEST
+
+START_TEST(test_repaired_reserved_client_id_none)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	stateid4 stid = make_stateid(0xF3);
+
+	cm_set_inode(cm, g_inode);
+	set_repaired_args(cm, &stid, 0, 0);
+
+	CHUNK_REPAIRED4args *args =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.opchunk_repair;
+
+	args->cpa_owner.co_guard.cg_client_id = CHUNK_GUARD_CLIENT_ID_NONE;
+
+	nfs4_op_chunk_repaired(cm->compound);
+
+	CHUNK_REPAIRED4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					   .nfs_resop4_u.opchunk_repair;
+
+	ck_assert_int_eq(res->cpr_status, NFS4ERR_INVAL);
+
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_repaired_reserved_client_id_mds)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	stateid4 stid = make_stateid(0xF4);
+
+	cm_set_inode(cm, g_inode);
+	set_repaired_args(cm, &stid, 0, 0);
+
+	CHUNK_REPAIRED4args *args =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.opchunk_repair;
+
+	args->cpa_owner.co_guard.cg_client_id = CHUNK_GUARD_CLIENT_ID_MDS;
+
+	nfs4_op_chunk_repaired(cm->compound);
+
+	CHUNK_REPAIRED4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					   .nfs_resop4_u.opchunk_repair;
+
+	ck_assert_int_eq(res->cpr_status, NFS4ERR_INVAL);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * Inode with no i_layout_segments -> NFS4ERR_INVAL.  The repair was
+ * never issued for this file.
+ */
+START_TEST(test_repaired_no_layout_segments)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	stateid4 stid = make_stateid(0xF5);
+
+	cm_set_inode(cm, g_inode);
+	ck_assert_ptr_null(g_inode->i_layout_segments);
+	set_repaired_args(cm, &stid, 0, 0);
+	nfs4_op_chunk_repaired(cm->compound);
+
+	CHUNK_REPAIRED4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					   .nfs_resop4_u.opchunk_repair;
+
+	ck_assert_int_eq(res->cpr_status, NFS4ERR_INVAL);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * No mirror has FFV2_DS_FLAGS_REPAIR set -> NFS4_OK idempotent.
+ * Covers the crash-recovery case where the client retries an op the
+ * MDS already executed and persisted.  Counter does NOT bump on the
+ * idempotent path -- it counts mirrors actually cleared, not calls.
+ */
+START_TEST(test_repaired_no_mirror_in_repair)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	stateid4 stid = make_stateid(0xF6);
+
+	cm_set_inode(cm, g_inode);
+	attach_layout_segments(2, 0);
+
+	uint64_t completed_before =
+		atomic_load_explicit(&g_sb->sb_chunk_stats.cs_repair_completed,
+				     memory_order_relaxed);
+
+	set_repaired_args(cm, &stid, 0, 0);
+	nfs4_op_chunk_repaired(cm->compound);
+
+	CHUNK_REPAIRED4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					   .nfs_resop4_u.opchunk_repair;
+
+	ck_assert_int_eq(res->cpr_status, NFS4_OK);
+
+	uint64_t completed_after =
+		atomic_load_explicit(&g_sb->sb_chunk_stats.cs_repair_completed,
+				     memory_order_relaxed);
+
+	ck_assert_uint_eq(completed_after, completed_before);
+
+	detach_layout_segments();
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_repaired_clears_single_mirror)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	stateid4 stid = make_stateid(0xF7);
+
+	cm_set_inode(cm, g_inode);
+	attach_layout_segments(2, 0);
+	g_inode->i_layout_segments->lss_segs[0].ls_files[1].ldf_flags =
+		FFV2_DS_FLAGS_REPAIR;
+
+	uint64_t completed_before =
+		atomic_load_explicit(&g_sb->sb_chunk_stats.cs_repair_completed,
+				     memory_order_relaxed);
+
+	set_repaired_args(cm, &stid, 0, 0);
+	nfs4_op_chunk_repaired(cm->compound);
+
+	CHUNK_REPAIRED4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					   .nfs_resop4_u.opchunk_repair;
+
+	ck_assert_int_eq(res->cpr_status, NFS4_OK);
+	ck_assert_uint_eq(
+		g_inode->i_layout_segments->lss_segs[0].ls_files[1].ldf_flags &
+			FFV2_DS_FLAGS_REPAIR,
+		0);
+
+	uint64_t completed_after =
+		atomic_load_explicit(&g_sb->sb_chunk_stats.cs_repair_completed,
+				     memory_order_relaxed);
+
+	ck_assert_uint_eq(completed_after, completed_before + 1);
+
+	detach_layout_segments();
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_repaired_clears_multiple_mirrors)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	stateid4 stid = make_stateid(0xF8);
+
+	cm_set_inode(cm, g_inode);
+	attach_layout_segments(3, FFV2_DS_FLAGS_REPAIR);
+
+	uint64_t completed_before =
+		atomic_load_explicit(&g_sb->sb_chunk_stats.cs_repair_completed,
+				     memory_order_relaxed);
+
+	set_repaired_args(cm, &stid, 0, 0);
+	nfs4_op_chunk_repaired(cm->compound);
+
+	CHUNK_REPAIRED4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					   .nfs_resop4_u.opchunk_repair;
+
+	ck_assert_int_eq(res->cpr_status, NFS4_OK);
+
+	for (uint32_t i = 0; i < 3; i++)
+		ck_assert_uint_eq(g_inode->i_layout_segments->lss_segs[0]
+						  .ls_files[i]
+						  .ldf_flags &
+					  FFV2_DS_FLAGS_REPAIR,
+				  0);
+
+	uint64_t completed_after =
+		atomic_load_explicit(&g_sb->sb_chunk_stats.cs_repair_completed,
+				     memory_order_relaxed);
+
+	ck_assert_uint_eq(completed_after, completed_before + 3);
+
+	detach_layout_segments();
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_repaired_idempotent_second_call)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	stateid4 stid = make_stateid(0xF9);
+
+	cm_set_inode(cm, g_inode);
+	attach_layout_segments(2, FFV2_DS_FLAGS_REPAIR);
+
+	uint64_t completed_start =
+		atomic_load_explicit(&g_sb->sb_chunk_stats.cs_repair_completed,
+				     memory_order_relaxed);
+
+	set_repaired_args(cm, &stid, 0, 0);
+	nfs4_op_chunk_repaired(cm->compound);
+
+	CHUNK_REPAIRED4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					   .nfs_resop4_u.opchunk_repair;
+
+	ck_assert_int_eq(res->cpr_status, NFS4_OK);
+
+	uint64_t completed_after_first =
+		atomic_load_explicit(&g_sb->sb_chunk_stats.cs_repair_completed,
+				     memory_order_relaxed);
+
+	ck_assert_uint_eq(completed_after_first, completed_start + 2);
+
+	/* Reset slot and issue the same op a second time. */
+	memset(&cm->compound->c_args->argarray.argarray_val[0], 0,
+	       sizeof(nfs_argop4));
+	memset(&cm->compound->c_res->resarray.resarray_val[0], 0,
+	       sizeof(nfs_resop4));
+	set_repaired_args(cm, &stid, 0, 0);
+	nfs4_op_chunk_repaired(cm->compound);
+
+	res = &cm->compound->c_res->resarray.resarray_val[0]
+		       .nfs_resop4_u.opchunk_repair;
+	ck_assert_int_eq(res->cpr_status, NFS4_OK);
+
+	uint64_t completed_after_second =
+		atomic_load_explicit(&g_sb->sb_chunk_stats.cs_repair_completed,
+				     memory_order_relaxed);
+
+	ck_assert_uint_eq(completed_after_second, completed_after_first);
+
+	detach_layout_segments();
+	cm_free(cm);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -933,6 +1283,19 @@ static Suite *chunk_repair_suite(void)
 	tcase_add_test(tc_c, test_repair_multi_block);
 	tcase_add_test(tc_c, test_repair_bypasses_pending_collision_gate);
 	suite_add_tcase(s, tc_c);
+
+	TCase *tc_f = tcase_create("chunk_repaired_mds");
+	tcase_add_checked_fixture(tc_f, repair_setup, repair_teardown);
+	tcase_add_test(tc_f, test_repaired_no_fh);
+	tcase_add_test(tc_f, test_repaired_not_regular_file);
+	tcase_add_test(tc_f, test_repaired_reserved_client_id_none);
+	tcase_add_test(tc_f, test_repaired_reserved_client_id_mds);
+	tcase_add_test(tc_f, test_repaired_no_layout_segments);
+	tcase_add_test(tc_f, test_repaired_no_mirror_in_repair);
+	tcase_add_test(tc_f, test_repaired_clears_single_mirror);
+	tcase_add_test(tc_f, test_repaired_clears_multiple_mirrors);
+	tcase_add_test(tc_f, test_repaired_idempotent_second_call);
+	suite_add_tcase(s, tc_f);
 
 	return s;
 }

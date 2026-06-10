@@ -58,6 +58,14 @@ struct layout_data_file_disk {
 	uint32_t ldf_gid;
 	uint16_t ldf_mode;
 	uint16_t ldf_pad;
+	/*
+	 * Per-mirror flag bits (ec-repair slice 2).  Currently only
+	 * FFV2_DS_FLAGS_REPAIR / FFV2_DS_FLAGS_SPARE -- ACTIVE/PARITY
+	 * are derived positionally at LAYOUTGET time.  Per CLAUDE.md
+	 * "No persistent storage has been deployed" no version bump
+	 * is needed; existing in-memory tests calloc-default to 0.
+	 */
+	uint32_t ldf_flags;
 };
 
 /*
@@ -100,6 +108,7 @@ struct layout_data_file {
 	uint32_t ldf_gid;
 	uint16_t ldf_mode;
 	bool ldf_stale; /* true if last GETATTR to this DS failed */
+	uint32_t ldf_flags; /* FFV2_DS_FLAGS_REPAIR / SPARE (slice 2) */
 
 	/*
 	 * Timestamps for the last dstore op (monotonic ns, in-memory only).

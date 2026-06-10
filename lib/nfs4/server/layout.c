@@ -812,8 +812,16 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 		ffds->ffv2ds_user.utf8string_val = strdup(uid_str);
 		ffds->ffv2ds_group.utf8string_len = strlen(gid_str);
 		ffds->ffv2ds_group.utf8string_val = strdup(gid_str);
-		ffds->ffv2ds_flags = (i < seg->ls_k) ? FFV2_DS_FLAGS_ACTIVE :
-						       FFV2_DS_FLAGS_PARITY;
+		/*
+		 * ACTIVE/PARITY is positional (the mirror's index in the
+		 * layout determines whether it carries data shards or
+		 * parity shards).  REPAIR / SPARE are mutable per-mirror
+		 * state stored in ldf_flags and OR'd in here so the client
+		 * sees the current repair status on every LAYOUTGET.
+		 */
+		ffds->ffv2ds_flags = ((i < seg->ls_k) ? FFV2_DS_FLAGS_ACTIVE :
+							FFV2_DS_FLAGS_PARITY) |
+				     ldf->ldf_flags;
 	}
 
 	u_long xdr_size = xdr_sizeof((xdrproc_t)xdr_ffv2_layout4, &ffl);
