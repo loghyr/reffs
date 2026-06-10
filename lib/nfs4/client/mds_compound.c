@@ -20,6 +20,37 @@
 
 #include <rpc/rpc.h>
 
+/*
+ * RFC 5531 sec 8.2 extends auth_stat with values 11..14 (AUTH_DECODE,
+ * AUTH_NET_ADDR, RPCSEC_GSS_CREDPROBLEM, RPCSEC_GSS_CTXPROBLEM).
+ * glibc's <rpc/auth.h> declares all of them in the enum; Darwin's
+ * <rpc/auth.h> only declares the original RFC 1057 values 0..10.
+ * Define the missing values as integers so the symbolic-decode switch
+ * below compiles on macOS too.  The case labels are still ints; the
+ * enum tag widens to cover them per C standard.
+ */
+#ifndef AUTH_KERB_GENERIC
+#define AUTH_KERB_GENERIC 8
+#endif
+#ifndef AUTH_TIMEEXPIRE
+#define AUTH_TIMEEXPIRE 9
+#endif
+#ifndef AUTH_TKT_FILE
+#define AUTH_TKT_FILE 10
+#endif
+#ifndef AUTH_DECODE
+#define AUTH_DECODE 11
+#endif
+#ifndef AUTH_NET_ADDR
+#define AUTH_NET_ADDR 12
+#endif
+#ifndef RPCSEC_GSS_CREDPROBLEM
+#define RPCSEC_GSS_CREDPROBLEM 13
+#endif
+#ifndef RPCSEC_GSS_CTXPROBLEM
+#define RPCSEC_GSS_CTXPROBLEM 14
+#endif
+
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"
 #include "ec_client.h"
@@ -43,7 +74,7 @@
  * Names match RFC 5531 sec 8.2 and the libtirpc auth_stat enum.
  * Unknown values produce "AUTH_STAT_?".
  */
-static const char *auth_stat_name(enum auth_stat s)
+static const char *auth_stat_name(int s)
 {
 	switch (s) {
 	case AUTH_OK:
