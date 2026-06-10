@@ -72,15 +72,17 @@ struct cm_ctx {
 };
 
 /*
- * Per-call client id counter so successive cm_alloc() calls do
- * not collide in the nfs4_client hash table on duplicate clientid.
- * The chunk_test.c equivalent works around this by reusing a single
- * cm_ctx across slots; for repair tests that need two independent
- * (writer + repair-writer) compounds, allocating distinct clientids
- * is simpler.
+ * cm_alloc uses a stable clientid (0xC0DEC0DE).  Per-fixture teardown
+ * destroys the client hash table; nfs4_client_alloc-with-same-cid
+ * across fixtures is fine because the table state is fresh.
+ * Multi-step tests (e.g. test_repair_bypasses_pending_collision_gate)
+ * cannot call cm_alloc twice within a single test -- the second call
+ * collides on the hash table and nfs4_client_alloc returns NULL --
+ * so they reuse one cm_ctx with cm_reset_slot between ops.  An earlier
+ * version used a monotonic per-call counter to dodge the collision; it
+ * leaked clients (LSAN-confirmed on garbo 2026-06-10) because each
+ * unique cid stayed in the table past teardown.
  */
-static atomic_uint g_cm_alloc_seq;
-
 static struct cm_ctx *cm_alloc(unsigned int nops)
 {
 	struct cm_ctx *cm = calloc(1, sizeof(*cm));
@@ -118,10 +120,6 @@ static struct cm_ctx *cm_alloc(unsigned int nops)
 
 	verifier4 v;
 	struct sockaddr_in sin;
-	unsigned int cid = 0xDEAD0000U +
-			   atomic_fetch_add_explicit(&g_cm_alloc_seq, 1,
-						     memory_order_relaxed) +
-			   1;
 
 	memset(&v, 0x22, sizeof(v));
 	memset(&sin, 0, sizeof(sin));
@@ -129,7 +127,7 @@ static struct cm_ctx *cm_alloc(unsigned int nops)
 	sin.sin_addr.s_addr = htonl(0x7f000004);
 	sin.sin_port = htons(2049);
 
-	cm->nc = nfs4_client_alloc(&v, &sin, 1, cid, 0);
+	cm->nc = nfs4_client_alloc(&v, &sin, 1, 0xC0DEC0DE, 0);
 	ck_assert_ptr_nonnull(cm->nc);
 	c->c_nfs4_client = nfs4_client_get(cm->nc);
 
@@ -818,10 +816,24 @@ END_TEST
  * Pre-populate a PENDING block from a different owner; verify
  * CHUNK_WRITE_REPAIR succeeds (does not return NFS4ERR_DELAY).
  */
+/*
+ * Reset slot idx of cm's compound so it can be reused for a second
+ * op.  Mirrors chunk_test.c's cm_reset_slot.  Per-test multi-op
+ * pattern: free heap allocs from the prior op's args + res, memset
+ * the slot, run the next op.  Keeps cm_alloc count at 1 per test so
+ * the stable-clientid path (see cm_alloc header comment) works.
+ */
+static void cm_reset_slot(struct cm_ctx *cm, unsigned int idx)
+{
+	memset(&cm->compound->c_args->argarray.argarray_val[idx], 0,
+	       sizeof(nfs_argop4));
+	memset(&cm->compound->c_res->resarray.resarray_val[idx], 0,
+	       sizeof(nfs_resop4));
+}
+
 START_TEST(test_repair_bypasses_pending_collision_gate)
 {
 	static char buf[CHUNK_SZ];
-	struct cm_ctx *cm_pre = cm_alloc(1);
 	struct cm_ctx *cm = cm_alloc(1);
 	stateid4 anon;
 	stateid4 stid_repair = make_stateid(0xC3);
@@ -830,12 +842,13 @@ START_TEST(test_repair_bypasses_pending_collision_gate)
 	memset(buf, 0xCC, sizeof(buf));
 	uint32_t crc = crc32(0, (const Bytef *)buf, sizeof(buf));
 
+	cm_set_inode(cm, g_inode);
+
 	/* First writer (anonymous stateid, different owner) lands PENDING. */
-	cm_set_inode(cm_pre, g_inode);
-	cm_set_op(cm_pre, 0, OP_CHUNK_WRITE);
+	cm_set_op(cm, 0, OP_CHUNK_WRITE);
 
 	CHUNK_WRITE4args *wargs =
-		&cm_pre->compound->c_args->argarray.argarray_val[0]
+		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_write;
 
 	wargs->cwa_stateid = anon;
@@ -851,7 +864,7 @@ START_TEST(test_repair_bypasses_pending_collision_gate)
 	(void)chunk_checksum_pack_crc32(
 		&wargs->cwa_checksums.cwa_checksums_val[0], crc);
 
-	nfs4_op_chunk_write(cm_pre->compound);
+	nfs4_op_chunk_write(cm->compound);
 
 	struct chunk_block *cb_pre =
 		chunk_store_lookup(g_inode->i_chunk_store, 0);
@@ -859,8 +872,24 @@ START_TEST(test_repair_bypasses_pending_collision_gate)
 	ck_assert_ptr_nonnull(cb_pre);
 	ck_assert_int_eq(cb_pre->cb_state, CHUNK_STATE_PENDING);
 
+	/*
+	 * Free the pre-populator's heap (CHUNK_WRITE checksum) then
+	 * reset the slot so CHUNK_WRITE_REPAIR can reuse it.
+	 */
+	free(wargs->cwa_checksums.cwa_checksums_val[0].cs_value.cs_value_val);
+	free(wargs->cwa_checksums.cwa_checksums_val);
+	/*
+	 * CHUNK_WRITE's resok has a calloc'd cwr_block_status array
+	 * that the handler allocates on the success path; free it
+	 * before resetting the slot or it leaks.
+	 */
+	CHUNK_WRITE4res *wres = &cm->compound->c_res->resarray.resarray_val[0]
+					 .nfs_resop4_u.opchunk_write;
+	free(wres->CHUNK_WRITE4res_u.cwr_resok4.cwr_block_status
+		     .cwr_block_status_val);
+	cm_reset_slot(cm, 0);
+
 	/* Now the repair-write from a different owner must succeed. */
-	cm_set_inode(cm, g_inode);
 	register_trust(&stid_repair, g_inode->i_ino, 0xDEAD0001,
 		       LAYOUTIOMODE4_RW, future_expire_ns());
 	set_repair_args(cm, &stid_repair, buf, CHUNK_SZ, CHUNK_SZ, 0, &crc, 1);
@@ -882,12 +911,7 @@ START_TEST(test_repair_bypasses_pending_collision_gate)
 	free_repair_res(cm);
 	free_repair_args(cm);
 	trust_stateid_revoke(&stid_repair);
-
-	/* Free the pre-populator's checksum array. */
-	free(wargs->cwa_checksums.cwa_checksums_val[0].cs_value.cs_value_val);
-	free(wargs->cwa_checksums.cwa_checksums_val);
 	cm_free(cm);
-	cm_free(cm_pre);
 }
 END_TEST
 
@@ -1228,10 +1252,7 @@ START_TEST(test_repaired_idempotent_second_call)
 	ck_assert_uint_eq(completed_after_first, completed_start + 2);
 
 	/* Reset slot and issue the same op a second time. */
-	memset(&cm->compound->c_args->argarray.argarray_val[0], 0,
-	       sizeof(nfs_argop4));
-	memset(&cm->compound->c_res->resarray.resarray_val[0], 0,
-	       sizeof(nfs_resop4));
+	cm_reset_slot(cm, 0);
 	set_repaired_args(cm, &stid, 0, 0);
 	nfs4_op_chunk_repaired(cm->compound);
 
