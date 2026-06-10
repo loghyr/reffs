@@ -7,9 +7,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ## Context
 
-Christoph Hellwig (IETF 124, msg of 2026-05-15) and David Black
-(same thread) argued that "EC encoding should be on the server,
-not on the client."  The reffs FFv2 proxy-server role
+A recurring WG position (see the FFv2 review threads on the
+nfsv4 list around IETF 124) argues that "EC encoding should be
+on the server, not on the client."  The reffs FFv2 proxy-server role
 (`draft-haynes-nfsv4-flexfiles-v2-proxy-server`) is the
 server-side-encoding answer: a registered peer of the MDS that
 takes client writes and emits CHUNK_WRITE on the client's
@@ -77,7 +77,8 @@ options for handling that in the harness:
    (does not currently exist).
 
 3. **Use ffv2_layouthint4 per-file from the client side** -- the
-   Macklem thread item.  Cleanest long-term; deferred.
+   layouthint extension proposed on the nfsv4 list.  Cleanest
+   long-term; deferred.
 
 **Choice for this design: option 1 (MVP).**  Smallest
 deliverable that closes the WG question with real numbers.  The
@@ -91,7 +92,7 @@ Followups:
   separate slice once the layouthint XDR for option 3 lands and
   we know what knobs make sense at the probe layer.
 - Option 3 (`ffv2_layouthint4` per-file) is tracked in the
-  Macklem-striping-attribute-hint thread; see
+  striping-attribute-hint thread on the nfsv4 list; see
   `ietf126-plan.md` Bucket 3a action items.
 
 ## Workload driver: fio for variants B + C
