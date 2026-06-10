@@ -178,6 +178,7 @@ static void cm_free(struct cm_ctx *cm)
 		free(c->c_res);
 		free(c);
 	}
+	nfs4_client_put(cm->nc);
 	free(cm);
 }
 
