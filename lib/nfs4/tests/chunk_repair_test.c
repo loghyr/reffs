@@ -780,8 +780,13 @@ START_TEST(test_repair_multi_block)
 		ck_assert_int_eq(resok->cwrr_status.cwrr_status_val[i],
 				 NFS4_OK);
 
-		struct chunk_block *cb = chunk_store_lookup(
-			g_inode->i_chunk_store, i * CHUNK_SZ);
+		/*
+		 * chunk_store_lookup keys by block index, not byte offset;
+		 * the handler writes blocks at args->cwra_offset + i and
+		 * the test passes cwra_offset = 0.
+		 */
+		struct chunk_block *cb =
+			chunk_store_lookup(g_inode->i_chunk_store, i);
 
 		ck_assert_ptr_nonnull(cb);
 		ck_assert_uint_eq(cb->cb_flags & CHUNK_BLOCK_REPAIR_PROVENANCE,

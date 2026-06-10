@@ -1332,18 +1332,267 @@ uint32_t chunk_rollback_for_client(uint64_t writer_clientid,
 	return total;
 }
 
+/*
+ * OP_CHUNK_WRITE_REPAIR -- write a reconstructed shard back to a DS
+ * after EC-decode found the original missing or corrupt.  Mirrors the
+ * CHUNK_WRITE payload contract (cwra_/cwa_ field-prefix differs but
+ * the validation rules are identical -- see chunk_write_validate_
+ * payload) and diverges from CHUNK_WRITE on two axes:
+ *
+ *   1. Stateid requirement.  CHUNK_WRITE accepts special stateids
+ *      (anonymous, read-bypass) and bypasses the trust-table check
+ *      for them.  CHUNK_WRITE_REPAIR rejects special stateids
+ *      (NFS4ERR_BAD_STATEID) and additionally requires the trust
+ *      entry's iomode to be LAYOUTIOMODE4_RW (NFS4ERR_ACCESS for
+ *      a READ-only entry).  See .claude/design/ec-repair.md sec 4.
+ *
+ *   2. Concurrency control.  CHUNK_WRITE has the Track 1b chunk-
+ *      collision gate (Option C, lines 393-424 above) that rejects
+ *      writes landing on a PENDING block owned by a different
+ *      writer.  CHUNK_WRITE_REPAIR explicitly bypasses that gate
+ *      because the layout-layer (FFV2_DS_FLAGS_REPAIR +
+ *      iomode=RW trust entry) gates concurrency at a higher level:
+ *      a repair client is the sole authorised writer for the slot
+ *      while its repair-flagged layout is in effect.
+ *
+ *      NOT_NOW_BROWN_COW: tighter concurrency control inside the
+ *      repair-write path itself is needed if the MDS ever issues a
+ *      repair-flagged layout while a normal writer is mid-PENDING.
+ *      The demo cells do not exercise that case (the MDS issues
+ *      repair only when the mirror is known-missing data, not
+ *      mid-write); the production scenario needs a synchronisation
+ *      with the normal-writer path.
+ *
+ * Every touched block gets CHUNK_BLOCK_REPAIR_PROVENANCE set in
+ * cb_flags -- purely informational (operator audit trail for "this
+ * block was the result of an EC repair, not a normal write");
+ * persisted via cbd_flags.
+ *
+ * cs_repair_initiated is bumped once per call (the existing INV-1
+ * counter; the stub also bumped it).  cs_repair_completed is the
+ * MDS-side counter that the OP_CHUNK_REPAIRED handler bumps when a
+ * client tells the MDS the repair landed -- that handler is Slice
+ * 2 of the ec-repair work.
+ */
 uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 {
+	CHUNK_WRITE_REPAIR4args *args =
+		NFS4_OP_ARG_SETUP(compound, opchunk_write_repair);
 	CHUNK_WRITE_REPAIR4res *res =
 		NFS4_OP_RES_SETUP(compound, opchunk_write_repair);
 	nfsstat4 *status = &res->cwrr_status;
+	CHUNK_WRITE_REPAIR4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, CHUNK_WRITE_REPAIR4res_u, cwrr_resok4);
+
+	uint32_t wire_algo;
+	uint32_t nchunks;
+	nfsstat4 vs = chunk_write_validate_payload(
+		compound, args->cwra_chunk_size,
+		args->cwra_chunks.cwra_chunks_val,
+		args->cwra_chunks.cwra_chunks_len,
+		args->cwra_owner.co_guard.cg_client_id,
+		args->cwra_checksums.cwra_checksums_val,
+		args->cwra_checksums.cwra_checksums_len, "CHUNK_WRITE_REPAIR",
+		&wire_algo, &nchunks);
+
+	if (vs != NFS4_OK) {
+		*status = vs;
+		return 0;
+	}
+
+	uint32_t chunk_size = args->cwra_chunk_size;
+	uint32_t total_data = args->cwra_chunks.cwra_chunks_len;
+	uint32_t nchecksums = args->cwra_checksums.cwra_checksums_len;
+
+	/*
+	 * Stateid auth (rules 6/7/8 of .claude/design/ec-repair.md sec
+	 * 4).  Repair MUST use a real layout stateid -- special
+	 * stateids do not carry authorisation for a repair-write.
+	 */
+	if (stateid4_is_special(&args->cwra_stateid)) {
+		*status = NFS4ERR_BAD_STATEID;
+		return 0;
+	}
+
+	struct trust_entry *te = trust_stateid_find(&args->cwra_stateid);
+
+	if (!te) {
+		*status = NFS4ERR_BAD_STATEID;
+		return 0;
+	}
+
+	uint64_t now = reffs_now_ns();
+	uint64_t exp =
+		atomic_load_explicit(&te->te_expire_ns, memory_order_acquire);
+	uint32_t te_flags =
+		atomic_load_explicit(&te->te_flags, memory_order_acquire);
+
+	if (te_flags & TRUST_PENDING) {
+		trust_entry_put(te);
+		*status = NFS4ERR_DELAY;
+		return 0;
+	}
+	if (exp != 0 && now > exp) {
+		trust_entry_put(te);
+		*status = NFS4ERR_BAD_STATEID;
+		return 0;
+	}
+	if (!(te_flags & TRUST_ACTIVE)) {
+		trust_entry_put(te);
+		*status = NFS4ERR_BAD_STATEID;
+		return 0;
+	}
+	if (te->te_iomode != LAYOUTIOMODE4_RW) {
+		trust_entry_put(te);
+		*status = NFS4ERR_ACCESS;
+		return 0;
+	}
+
+	trust_entry_put(te);
 
 	if (compound->c_curr_sb)
 		atomic_fetch_add_explicit(
 			&compound->c_curr_sb->sb_chunk_stats.cs_repair_initiated,
 			1, memory_order_relaxed);
 
-	*status = NFS4ERR_NOTSUPP;
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+
+	struct chunk_store *cs = chunk_store_get(
+		compound->c_inode, compound->c_server_state->ss_state_dir);
+
+	if (!cs) {
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_DELAY;
+		return 0;
+	}
+
+	/*
+	 * Per-file algorithm consistency -- same rule as CHUNK_WRITE:
+	 * the first write on a file establishes the checksum algorithm;
+	 * later writes (including repair-writes) must match it.  An
+	 * incoming repair-write with a different algorithm is a wire-
+	 * level inconsistency and gets NFS4ERR_INVAL.
+	 */
+	if (nchecksums > 0) {
+		if (cs->cs_checksum_algorithm == 0) {
+			cs->cs_checksum_algorithm = wire_algo;
+			cs->cs_dirty = true;
+		} else if (cs->cs_checksum_algorithm != wire_algo) {
+			TRACE("CHUNK_WRITE_REPAIR: per-file algorithm mismatch "
+			      "(file=%u wire=%u)",
+			      cs->cs_checksum_algorithm, wire_algo);
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_INVAL;
+			return 0;
+		}
+	}
+
+	if (cs->cs_chunk_size == 0)
+		cs->cs_chunk_size = chunk_size;
+
+	/*
+	 * CHUNK_WRITE's guarded-CAS and PENDING-collision gates are
+	 * deliberately bypassed here -- see header comment for why.
+	 */
+
+	pthread_rwlock_wrlock(&compound->c_inode->i_db_rwlock);
+	if (!compound->c_inode->i_db) {
+		compound->c_inode->i_db = data_block_alloc(
+			compound->c_inode, args->cwra_chunks.cwra_chunks_val,
+			args->cwra_chunks.cwra_chunks_len,
+			(off_t)args->cwra_offset * chunk_size);
+		if (!compound->c_inode->i_db) {
+			pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_NOSPC;
+			return 0;
+		}
+	} else {
+		ssize_t wret =
+			data_block_write(compound->c_inode->i_db,
+					 args->cwra_chunks.cwra_chunks_val,
+					 args->cwra_chunks.cwra_chunks_len,
+					 (off_t)args->cwra_offset * chunk_size);
+
+		if (wret < 0) {
+			pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_IO;
+			return 0;
+		}
+	}
+
+	int64_t new_end = (int64_t)args->cwra_offset * (int64_t)chunk_size +
+			  (int64_t)total_data;
+
+	if (new_end > compound->c_inode->i_size)
+		compound->c_inode->i_size = new_end;
+
+	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+
+	for (uint32_t i = 0; i < nchunks; i++) {
+		uint32_t blk_size = chunk_size;
+
+		if (i == nchunks - 1 && total_data % chunk_size != 0)
+			blk_size = total_data % chunk_size;
+
+		uint32_t blk_csum_algo = CHECKSUM_ALG_NONE;
+		uint32_t blk_csum_len = 0;
+		uint8_t blk_csum_value[CHUNK_VALUE_MAX] = { 0 };
+
+		if (i < nchecksums) {
+			const checksum4 *cs4 =
+				&args->cwra_checksums.cwra_checksums_val[i];
+
+			blk_csum_algo = cs4->cs_algorithm;
+			blk_csum_len = cs4->cs_value.cs_value_len;
+			if (blk_csum_len > sizeof(blk_csum_value))
+				blk_csum_len = sizeof(blk_csum_value);
+			memcpy(blk_csum_value, cs4->cs_value.cs_value_val,
+			       blk_csum_len);
+		}
+
+		struct chunk_block blk = {
+			.cb_state = CHUNK_STATE_PENDING,
+			.cb_flags = CHUNK_BLOCK_REPAIR_PROVENANCE,
+			.cb_gen_id = args->cwra_owner.co_guard.cg_gen_id,
+			.cb_client_id = args->cwra_owner.co_guard.cg_client_id,
+			.cb_owner_id = args->cwra_owner.co_id,
+			.cb_payload_id = args->cwra_payload_id,
+			.cb_checksum_algorithm = blk_csum_algo,
+			.cb_checksum_len = blk_csum_len,
+			.cb_chunk_size = blk_size,
+			.cb_writer_clientid =
+				compound->c_nfs4_client ?
+					nfs4_client_to_client(
+						compound->c_nfs4_client)
+						->c_id :
+					0,
+		};
+
+		memcpy(blk.cb_checksum_value, blk_csum_value,
+		       sizeof(blk.cb_checksum_value));
+
+		if (chunk_store_write(cs, args->cwra_offset + i, &blk) < 0) {
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_DELAY;
+			return 0;
+		}
+	}
+
+	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+
+	resok->cwrr_count = nchunks;
+	resok->cwrr_committed = (args->cwra_stable == FILE_SYNC4) ? FILE_SYNC4 :
+								    UNSTABLE4;
+	chunk_write_verf(compound->c_server_state, resok->cwrr_writeverf);
+
+	resok->cwrr_status.cwrr_status_val = calloc(nchunks, sizeof(nfsstat4));
+	if (!resok->cwrr_status.cwrr_status_val) {
+		*status = NFS4ERR_DELAY;
+		return 0;
+	}
+	resok->cwrr_status.cwrr_status_len = nchunks;
 
 	return 0;
 }
