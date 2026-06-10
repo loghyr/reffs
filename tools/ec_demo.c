@@ -1542,8 +1542,10 @@ static void usage(void)
 		" Unique per concurrent instance.\n"
 		"  --layout TYPE    Layout: v1 (default, NFSv3 DS),"
 		" v2 (CHUNK ops)\n"
-		"  --skip-ds LIST   Comma-separated DS indices to skip"
-		" on read (degraded mode)\n"
+		"  --skip-ds SHARDS Comma-separated DS indices, or 0x"
+		"bit-per-shard mask;\n"
+		"                   marks shards as missing for read"
+		" (degraded mode)\n"
 		"  --force-scalar   Disable SIMD in Mojette forward"
 		" transform (benchmark scalar path)\n"
 		"  --force-gd       Use geometry-driven Mojette inverse"
@@ -1642,11 +1644,13 @@ static void usage(void)
 		"mojette-nonsys]\n"
 		"                    Drive wire-level EC repair via\n"
 		"                    OP_CHUNK_WRITE_REPAIR + CHUNK_REPAIRED.\n"
-		"                    --skip-ds MASK marks lost shards as a\n"
-		"                    bit-per-shard mask; the codec decodes\n"
-		"                    from peers and writes reconstructed\n"
-		"                    bytes back.  Prints per-phase timing\n"
-		"                    (ms) for the ec-repair bench harness.\n");
+		"                    --skip-ds marks shards as lost; accepts\n"
+		"                    a 0x bit-per-shard mask or a comma-\n"
+		"                    separated list of indices.  The codec\n"
+		"                    decodes from peers and writes\n"
+		"                    reconstructed bytes back.  Prints\n"
+		"                    per-phase timing (ms) for the ec-repair\n"
+		"                    bench harness.\n");
 }
 
 static struct option long_options[] = {
@@ -1797,6 +1801,24 @@ int main(int argc, char *argv[])
 
 			if (!copy)
 				return 1;
+
+			if (optarg[0] == '0' &&
+			    (optarg[1] == 'x' || optarg[1] == 'X')) {
+				unsigned long long mask =
+					strtoull(optarg, &end, 16);
+
+				if (*end != '\0' || end == optarg) {
+					fprintf(stderr,
+						"ec_demo: invalid --skip-ds"
+						" mask %s\n",
+						optarg);
+					free(copy);
+					return 1;
+				}
+				skip_ds_mask = (uint64_t)mask;
+				free(copy);
+				break;
+			}
 
 			for (tok = strtok(copy, ","); tok;
 			     tok = strtok(NULL, ",")) {
