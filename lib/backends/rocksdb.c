@@ -374,6 +374,7 @@ static void rocksdb_inode_sync(struct inode *inode)
 						.ldf_uid = ldf->ldf_uid,
 						.ldf_gid = ldf->ldf_gid,
 						.ldf_mode = ldf->ldf_mode,
+						.ldf_flags = ldf->ldf_flags,
 					};
 					memcpy(ldfd.ldf_fh, ldf->ldf_fh,
 					       ldf->ldf_fh_len);
@@ -601,6 +602,8 @@ static int rocksdb_inode_alloc(struct inode *inode)
 								ldfd.ldf_gid;
 							files[f].ldf_mode =
 								ldfd.ldf_mode;
+							files[f].ldf_flags =
+								ldfd.ldf_flags;
 						}
 
 						if (ok) {

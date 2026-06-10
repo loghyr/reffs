@@ -108,7 +108,18 @@ struct layout_data_file {
 	uint32_t ldf_gid;
 	uint16_t ldf_mode;
 	bool ldf_stale; /* true if last GETATTR to this DS failed */
-	uint32_t ldf_flags; /* FFV2_DS_FLAGS_REPAIR / SPARE (slice 2) */
+	/*
+	 * Per-mirror flag bits (FFV2_DS_FLAGS_REPAIR / SPARE -- ec-repair
+	 * slice 2).  Both read and write paths are i_attr_mutex-protected:
+	 * the LAYOUTGET encoder at layout.c:824 reads it under
+	 * c_inode->i_attr_mutex while building ffv2ds_flags; OP_CHUNK_REPAIRED
+	 * at chunk.c clears it under the same mutex; posix / rocksdb backends
+	 * persist + reload it as part of the synchronous
+	 * inode_sync_to_disk + inode_alloc paths which also hold
+	 * i_attr_mutex.  Do NOT add a lock-free reader without revisiting
+	 * this invariant.
+	 */
+	uint32_t ldf_flags;
 
 	/*
 	 * Timestamps for the last dstore op (monotonic ns, in-memory only).

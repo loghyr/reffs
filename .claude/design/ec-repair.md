@@ -699,17 +699,74 @@ the single-slot MDS-to-DS session bug noted in
    mirror.**  Spec'd as NFS4_OK (rule 6 of Sec 4 above) per the
    crash-recovery story.  The draft (line 8110) says
    "NFS4ERR_INVAL if precondition fails".  This is a deliberate
-   divergence from the draft for crash recovery -- **confirm OK
-   to diverge OR change to NFS4ERR_INVAL and require the client
-   to track its own retry idempotence.**
+   divergence from the draft for crash recovery -- **ANSWERED
+   2026-06-10: diverge to NFS4_OK on the "no mirror flagged"
+   path.**  The crash-recovery retry where the client re-issues
+   after the MDS already persisted the clear is the load-bearing
+   case; NFS4ERR_INVAL would force every client to track its own
+   in-flight idempotence ledger.  Shipped in commit `606c7fb79b3c`;
+   the draft prose needs the same correction in -07.
 
 7. **Is the OUT-OF-SCOPE `MDS detection logic` deferred-OK for
    the IETF deck?**  The deck answers "cost of collisions and
    repair" but the deferred autopilot means the demo answers it
    only with a client-driven repair.  The "MDS notices CRC-fail
-   and issues a repair on its own" is a separate slice.
-   Confirm the deck framing acknowledges this is client-driven
-   repair on demand.
+   and issues a repair on its own" is a separate slice.  **ANSWERED
+   2026-06-10: yes, deferred-OK for the IETF deck.**  The bench
+   harness drives repair via `ec_demo repair --skip-ds`; the deck
+   row in `ietf126.md` Bucket 4 names this as "client-driven
+   repair on demand" so the audience sees the scope explicitly.
+
+## 12a. Deferred / NOT_NOW_BROWN_COW (post-IETF)
+
+All four NOT_NOW_BROWN_COW markers in the shipped handler
+headers are gated on the demo's cooperative-client model.
+Production deployments need each addressed before scaling
+beyond a single trusted writer per file.
+
+- **CHUNK_WRITE_REPAIR mid-PENDING collision** (`chunk.c`
+  `nfs4_op_chunk_write_repair` header).  If the MDS ever issues
+  a repair-flagged layout while a normal writer is mid-PENDING
+  on the same range, the repair-write races against the normal
+  writer because the chunk-layer gates are bypassed.  Today's
+  cooperative model prevents this -- the MDS only flags REPAIR
+  when the mirror has lost data and is not being normally
+  written.  Production fix: a per-block "repair-in-progress"
+  sentinel that the normal-writer path checks before stamping
+  PENDING (or, alternatively, gate at the layout-server level
+  with a recall before granting RW layouts on a REPAIR-flagged
+  mirror).
+
+- **CHUNK_REPAIRED rigorous cpa_stateid validation** (`chunk.c`
+  `nfs4_op_chunk_repaired` header).  The current handler accepts
+  any non-zero cpa_stateid without checking that it resolves to
+  a valid OPEN or layout stateid on the inode.  The demo
+  cooperative-client model treats stateid auth as a layout-layer
+  concern enforced at LAYOUTGET time; the chunk-state-clearing
+  surface here is controlled by the layout's own clientid match.
+  Production fix: call `stateid_inode_find_*` and reject on miss.
+
+- **CHUNK_REPAIRED cpa_offset / cpa_count range matching**
+  (`chunk.c` `nfs4_op_chunk_repaired` header).  The handler
+  clears EVERY flagged mirror in EVERY segment regardless of the
+  requested range.  Demo cell shape is single-segment whole-file
+  so range trivially matches.  Production fix: walk `lss_segs`
+  and only clear flags on segments overlapping `[cpa_offset,
+  cpa_offset + cpa_count)` in chunk-index units; needs the
+  per-segment chunk_size plumbing flagged in Open Question 3.
+
+- **CHUNK_REPAIRED clientid match between layout-holder and
+  calling client** (`chunk.c` `nfs4_op_chunk_repaired` header).
+  Rule 7 in Section 4 above describes the check; the shipped
+  handler skips it.  Production fix: compare
+  `seg->ls_holder_clientid` (or equivalent layout-tracking
+  field) against `compound->c_nfs4_client->nc_clientid` and
+  return `NFS4ERR_ACCESS` on mismatch.
+
+These four markers also have NOT_NOW_BROWN_COW comments in
+their respective source locations so a future code-walker
+sees them; this section is the planner-side anchor that
+followup-trackers see.
 
 ## 13. Effort summary
 
