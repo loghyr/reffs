@@ -38,6 +38,15 @@ enum chunk_state {
 /* Per-block flags (cb_flags).  Wire format: chrr_locked is bool<>,
  * but in-memory we use a flags word for extensibility. */
 #define CHUNK_BLOCK_LOCKED 0x1
+/*
+ * Set by OP_CHUNK_WRITE_REPAIR on every block it touches; persisted
+ * via cbd_flags.  Purely informational (operator audit trail for
+ * "this block was the result of an EC repair, not a normal write");
+ * does not gate any state transition.  See
+ * .claude/design/ec-repair.md sec 2 (Option C state-machine
+ * choice).
+ */
+#define CHUNK_BLOCK_REPAIR_PROVENANCE 0x2
 
 /*
  * CHUNK_VALUE_MAX is sized for the largest supported checksum (SHA512,

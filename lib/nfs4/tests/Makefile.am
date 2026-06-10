@@ -198,6 +198,7 @@ TESTS = \
 	bitmap \
 	cb_pending \
 	chunk_test \
+	chunk_repair_test \
 	compound_async \
 	default_coding_dispatch_test \
 	delegation_lifecycle \

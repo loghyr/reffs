@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # EC Wire-Level Repair on reffs -- Implementation Plan
 
 *Plan-agent output from 2026-06-09 session.  Drafted to support
