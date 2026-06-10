@@ -732,6 +732,58 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		   const stateid4 *stateid, const chunk_guard4 *guard);
 
 /*
+ * ds_chunk_write_repair -- OP_CHUNK_WRITE_REPAIR to a data server.
+ * Wire-equivalent of ds_chunk_write minus the chunk_guard4; stateid
+ * is REQUIRED.  See lib/nfs4/server/chunk.c nfs4_op_chunk_write_repair
+ * for the matching server contract.  ec-repair slice 3.
+ */
+int ds_chunk_write_repair(struct mds_session *ds, const uint8_t *fh,
+			  uint32_t fh_len, uint64_t block_offset,
+			  uint32_t chunk_size, const uint8_t *data,
+			  uint32_t data_len, uint32_t owner_id,
+			  const stateid4 *stateid);
+
+/*
+ * mds_chunk_repaired -- OP_CHUNK_REPAIRED to the MDS.
+ *
+ * Tells the MDS that an EC repair landed; the MDS clears
+ * FFV2_DS_FLAGS_REPAIR on every repair-flagged mirror covered by
+ * [offset, offset+count) in chunk-index units.  Idempotent on the
+ * MDS side: a re-issued call after a successful clear returns
+ * NFS4_OK without bumping cs_repair_completed.  Caller passes the
+ * real layout stateid from the LAYOUTGET; demo's cooperative model
+ * does not exercise stricter stateid validation (NOT_NOW_BROWN_COW
+ * in the server-side handler header).
+ *
+ * Returns 0 on NFS4_OK, -EIO on non-OK status, or the usual
+ * -errno on transport failure.
+ */
+int mds_chunk_repaired(struct mds_session *ms, struct mds_file *mf,
+		       const stateid4 *stateid, uint64_t offset, uint32_t count,
+		       uint32_t owner_id);
+
+/*
+ * Timing + count stats from a single ec_repair_codec invocation;
+ * the function itself is declared after `enum ec_codec_type` below
+ * (the type predates this struct on the file but the function
+ * signature references it, hence the split).
+ */
+struct ec_repair_stats {
+	uint64_t layoutget_ns;
+	uint64_t total_read_ns;
+	uint64_t total_decode_ns;
+	uint64_t total_write_repair_ns;
+	uint64_t total_finalize_ns;
+	uint64_t total_commit_ns;
+	uint64_t chunk_repaired_ns;
+	uint64_t layoutreturn_ns;
+	uint64_t total_ns;
+	uint64_t bytes_repaired;
+	uint32_t shards_repaired;
+	uint32_t stripes_processed;
+};
+
+/*
  * ds_chunk_read -- CHUNK_READ from a data server.
  * block_offset: starting block number.
  * count: number of blocks to read.
@@ -807,6 +859,30 @@ int ec_read(struct mds_session *ms, const char *path, uint8_t *buf,
  * the Mojette 24 KiB shard demo (96 KiB / k=4) without changing
  * the codec or the FINALIZE/COMMIT total_blocks math.
  */
+/*
+ * ec_repair_codec -- drive the wire-level EC repair end-to-end.
+ *
+ * For each stripe in [0, file_len):
+ *   1. Read k+m shards from the layout (skipping shards whose bit
+ *      is set in shard_loss_mask, which simulates client-side loss
+ *      detection).
+ *   2. ec_decode reconstructs the lost shards in memory.
+ *   3. For each lost shard, issue CHUNK_WRITE_REPAIR to the
+ *      owning DS to write the reconstructed bytes back.
+ *
+ * After all stripes complete: a single round of CHUNK_FINALIZE +
+ * CHUNK_COMMIT per repaired mirror, then CHUNK_REPAIRED to the MDS
+ * (clears the repair flag, bumps cs_repair_completed), then
+ * LAYOUTRETURN.
+ *
+ * `out_stats` (optional, may be NULL) is populated with timing +
+ * counts before return.  ec-repair slice 3.
+ */
+int ec_repair_codec(struct mds_session *ms, const char *path, int k, int m,
+		    enum ec_codec_type codec_type, layouttype4 layout_type,
+		    uint64_t shard_loss_mask, size_t shard_size,
+		    size_t file_len, struct ec_repair_stats *out_stats);
+
 int ec_write_codec(struct mds_session *ms, const char *path,
 		   const uint8_t *data, size_t data_len, int k, int m,
 		   enum ec_codec_type codec_type, layouttype4 layout_type,

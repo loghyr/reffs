@@ -256,6 +256,156 @@ out:
 }
 
 /* ------------------------------------------------------------------ */
+/* CHUNK_WRITE_REPAIR (ec-repair slice 3)                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * ds_chunk_write_repair -- OP_CHUNK_WRITE_REPAIR to a data server.
+ *
+ * Wire-equivalent of ds_chunk_write minus the chunk_guard4 -- the
+ * repair path bypasses CHUNK_WRITE's guarded-CAS gate because the
+ * MDS-issued repair-flagged layout (FFV2_DS_FLAGS_REPAIR + iomode RW
+ * trust entry) gates concurrency at the layout layer, not the chunk
+ * layer.  See lib/nfs4/server/chunk.c nfs4_op_chunk_write_repair
+ * for the matching server-side justification.
+ *
+ * Stateid is REQUIRED (not NULL) -- the repair handler rejects
+ * special stateids with NFS4ERR_BAD_STATEID.  Caller passes the real
+ * layout stateid from the LAYOUTGET that triggered the repair.
+ *
+ * Returns 0 on success, -ESTALE for NFS4ERR_BAD_STATEID, -EAGAIN
+ * for NFS4ERR_DELAY, or -EIO for other status.  Mirrors
+ * ds_chunk_write's mapping so the ec_repair_codec retry loop can
+ * reuse the same backoff logic.
+ */
+int ds_chunk_write_repair(struct mds_session *ds, const uint8_t *fh,
+			  uint32_t fh_len, uint64_t block_offset,
+			  uint32_t chunk_size, const uint8_t *data,
+			  uint32_t data_len, uint32_t owner_id,
+			  const stateid4 *stateid)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	if (!stateid)
+		return -EINVAL;
+
+	/* SEQUENCE + PUTFH + CHUNK_WRITE_REPAIR = 3 ops */
+	ret = mds_compound_init(&mc, 3, "chunk_write_repair");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ds);
+	if (ret)
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = fh_len;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)fh;
+
+	slot = mds_compound_add_op(&mc, OP_CHUNK_WRITE_REPAIR);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+
+	CHUNK_WRITE_REPAIR4args *cwra =
+		&slot->nfs_argop4_u.opchunk_write_repair;
+
+	memcpy(&cwra->cwra_stateid, stateid, sizeof(stateid4));
+	cwra->cwra_offset = block_offset;
+	cwra->cwra_stable = FILE_SYNC4;
+	cwra->cwra_owner.co_guard.cg_gen_id = chunk_writer_next_gen_id();
+	cwra->cwra_owner.co_guard.cg_client_id = chunk_writer_client_id();
+	cwra->cwra_owner.co_id = owner_id;
+	cwra->cwra_payload_id = 0;
+	cwra->cwra_chunk_size = chunk_size;
+
+	uint32_t nchunks = (data_len + chunk_size - 1) / chunk_size;
+
+	cwra->cwra_checksums.cwra_checksums_len = nchunks;
+	cwra->cwra_checksums.cwra_checksums_val =
+		calloc(nchunks, sizeof(checksum4));
+	if (!cwra->cwra_checksums.cwra_checksums_val) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	for (uint32_t i = 0; i < nchunks; i++) {
+		uint32_t clen = chunk_size;
+
+		if (i == nchunks - 1 && data_len % chunk_size != 0)
+			clen = data_len % chunk_size;
+		uint32_t crc = (uint32_t)crc32(
+			0L, data + (size_t)i * chunk_size, (uInt)clen);
+
+		if (chunk_checksum_pack_crc32(
+			    &cwra->cwra_checksums.cwra_checksums_val[i], crc) <
+		    0) {
+			ret = -ENOMEM;
+			goto out_crc;
+		}
+	}
+
+	cwra->cwra_chunks.cwra_chunks_len = data_len;
+	cwra->cwra_chunks.cwra_chunks_val = (char *)data;
+
+	ret = mds_compound_send(&mc, ds);
+	if (ret == -EREMOTEIO) {
+		if (mc.mc_res.status == NFS4ERR_BAD_STATEID)
+			ret = -ESTALE;
+		else if (mc.mc_res.status == NFS4ERR_DELAY)
+			ret = -EAGAIN;
+	}
+	if (ret)
+		goto out_crc;
+
+	nfs_resop4 *res_slot = mds_compound_result(&mc, 2);
+
+	if (!res_slot) {
+		ret = -EIO;
+	} else {
+		nfsstat4 st =
+			res_slot->nfs_resop4_u.opchunk_write_repair.cwrr_status;
+
+		if (st != NFS4_OK) {
+			if (st == NFS4ERR_BAD_STATEID)
+				ret = -ESTALE;
+			else if (st == NFS4ERR_DELAY)
+				ret = -EAGAIN;
+			else
+				ret = -EIO;
+		}
+	}
+
+out_crc:
+	cwra->cwra_chunks.cwra_chunks_val = NULL;
+	cwra->cwra_chunks.cwra_chunks_len = 0;
+	if (cwra->cwra_checksums.cwra_checksums_val) {
+		for (uint32_t i = 0;
+		     i < cwra->cwra_checksums.cwra_checksums_len; i++) {
+			free(cwra->cwra_checksums.cwra_checksums_val[i]
+				     .cs_value.cs_value_val);
+		}
+		free(cwra->cwra_checksums.cwra_checksums_val);
+	}
+	cwra->cwra_checksums.cwra_checksums_val = NULL;
+	cwra->cwra_checksums.cwra_checksums_len = 0;
+out:
+	if (mc.mc_args.argarray.argarray_len > 1) {
+		nfs_argop4 *pfh = &mc.mc_args.argarray.argarray_val[1];
+		pfh->nfs_argop4_u.opputfh.object.nfs_fh4_val = NULL;
+	}
+	mds_compound_fini(&mc);
+	return ret;
+}
+
+/* ------------------------------------------------------------------ */
 /* CHUNK_READ                                                          */
 /* ------------------------------------------------------------------ */
 

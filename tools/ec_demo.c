@@ -761,6 +761,79 @@ static int cmd_read(const char *mds_host, const char *nfs_file,
 	return ret ? 1 : 0;
 }
 
+/*
+ * cmd_repair -- drive the wire-level EC repair end-to-end via
+ * ec_repair_codec.  --skip-ds <mask> simulates client-side loss of
+ * the listed shard indices (one bit per shard, mask | (1<<i) marks
+ * shard i lost); the codec decodes the missing shards from peers
+ * and the new OP_CHUNK_WRITE_REPAIR / CHUNK_REPAIRED wire ops write
+ * them back to their DSes + clear the MDS-side FFV2_DS_FLAGS_REPAIR
+ * flag.  ec-repair slice 3.
+ */
+static int cmd_repair(const char *mds_host, const char *nfs_file, int k, int m,
+		      size_t file_len, enum ec_codec_type codec_type,
+		      layouttype4 layout_type, uint64_t shard_loss_mask,
+		      size_t shard_size)
+{
+	struct mds_session ms;
+	int ret;
+
+	if (shard_loss_mask == 0) {
+		fprintf(stderr,
+			"ec_demo repair: --skip-ds <mask> must be non-zero\n");
+		return 1;
+	}
+	if (file_len == 0) {
+		fprintf(stderr,
+			"ec_demo repair: --read-size <bytes> required\n");
+		return 1;
+	}
+
+	ret = session_open(&ms, mds_host);
+	if (ret) {
+		fprintf(stderr, "ec_demo: session create failed: %d\n", ret);
+		return 1;
+	}
+
+	fprintf(stderr,
+		"ec_demo: repair %s (%d+%d, shard=%zu, loss_mask=0x%llx, len=%zu)\n",
+		nfs_file, k, m, shard_size, (unsigned long long)shard_loss_mask,
+		file_len);
+
+	struct ec_repair_stats stats = { 0 };
+
+	ret = ec_repair_codec(&ms, nfs_file, k, m, codec_type, layout_type,
+			      shard_loss_mask, shard_size, file_len, &stats);
+	if (ret) {
+		fprintf(stderr, "ec_demo: repair failed: %d\n", ret);
+	} else {
+		/*
+		 * Single-line CSV-friendly output for the bench harness
+		 * (reffs-docs/ec-repair-bench-tier2.md columns).  All
+		 * times in ms with 3 decimal digits; bytes_repaired and
+		 * shards_repaired as integers.
+		 */
+		fprintf(stdout,
+			"layoutget_ms=%.3f read_ms=%.3f decode_ms=%.3f "
+			"write_repair_ms=%.3f finalize_ms=%.3f commit_ms=%.3f "
+			"chunk_repaired_ms=%.3f layoutreturn_ms=%.3f "
+			"total_ms=%.3f bytes_repaired=%llu shards_repaired=%u "
+			"stripes_processed=%u\n",
+			stats.layoutget_ns / 1e6, stats.total_read_ns / 1e6,
+			stats.total_decode_ns / 1e6,
+			stats.total_write_repair_ns / 1e6,
+			stats.total_finalize_ns / 1e6,
+			stats.total_commit_ns / 1e6,
+			stats.chunk_repaired_ns / 1e6,
+			stats.layoutreturn_ns / 1e6, stats.total_ns / 1e6,
+			(unsigned long long)stats.bytes_repaired,
+			stats.shards_repaired, stats.stripes_processed);
+	}
+
+	mds_session_destroy(&ms);
+	return ret ? 1 : 0;
+}
+
 static int cmd_verify(const char *mds_host, const char *nfs_file,
 		      const char *local_file, int k, int m,
 		      enum ec_codec_type codec_type, layouttype4 layout_type,
@@ -1561,7 +1634,19 @@ static void usage(void)
 		"                   Prints per-handshake min/max/avg ms and\n"
 		"                   total elapsed.  No file I/O -- this is a\n"
 		"                   handshake-burst-only driver for the\n"
-		"                   krb5 stress reproducer.\n");
+		"                   krb5 stress reproducer.\n"
+		"\n"
+		"  ec_demo repair    --mds HOST --file NAME --size N"
+		" --skip-ds MASK\n"
+		"                    [--k K] [--m M] [--codec rs|mojette-sys|"
+		"mojette-nonsys]\n"
+		"                    Drive wire-level EC repair via\n"
+		"                    OP_CHUNK_WRITE_REPAIR + CHUNK_REPAIRED.\n"
+		"                    --skip-ds MASK marks lost shards as a\n"
+		"                    bit-per-shard mask; the codec decodes\n"
+		"                    from peers and writes reconstructed\n"
+		"                    bytes back.  Prints per-phase timing\n"
+		"                    (ms) for the ec-repair bench harness.\n");
 }
 
 static struct option long_options[] = {
@@ -1951,6 +2036,12 @@ int main(int argc, char *argv[])
 		return cmd_read(mds_host, nfs_file, local_output, k, m,
 				read_size, codec_type, layout_type,
 				skip_ds_mask, shard_size);
+	}
+
+	if (strcmp(cmd, "repair") == 0) {
+		return cmd_repair(mds_host, nfs_file, k, m, read_size,
+				  codec_type, layout_type, skip_ds_mask,
+				  shard_size);
 	}
 
 	if (strcmp(cmd, "verify") == 0) {

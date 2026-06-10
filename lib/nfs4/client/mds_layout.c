@@ -493,6 +493,90 @@ int mds_getdeviceinfo(struct mds_session *ms, const deviceid4 devid,
 /* LAYOUTRETURN                                                        */
 /* ------------------------------------------------------------------ */
 
+/*
+ * mds_chunk_repaired -- SEQ + PUTFH(mds_fh) + CHUNK_REPAIRED.
+ *
+ * Tells the MDS the repair landed; the server clears
+ * FFV2_DS_FLAGS_REPAIR on every flagged mirror covered by the
+ * range.  Wire-shape mirrors mds_layout_return (same compound
+ * structure; the layout-type-specific body of LAYOUTRETURN does
+ * not apply here).  ec-repair slice 3.
+ */
+int mds_chunk_repaired(struct mds_session *ms, struct mds_file *mf,
+		       const stateid4 *stateid, uint64_t offset, uint32_t count,
+		       uint32_t owner_id)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	if (!stateid)
+		return -EINVAL;
+
+	/* SEQUENCE + PUTFH + CHUNK_REPAIRED = 3 ops */
+	ret = mds_compound_init(&mc, 3, "chunk_repaired");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+	slot->nfs_argop4_u.opputfh.object = mf->mf_fh;
+
+	slot = mds_compound_add_op(&mc, OP_CHUNK_REPAIRED);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+
+	CHUNK_REPAIRED4args *cpa = &slot->nfs_argop4_u.opchunk_repair;
+
+	memcpy(&cpa->cpa_stateid, stateid, sizeof(stateid4));
+	cpa->cpa_offset = offset;
+	cpa->cpa_count = count;
+	/*
+	 * cg_gen_id is unused by the server's CHUNK_REPAIRED handler;
+	 * cg_client_id only needs to be non-reserved (chunk_cid_is_reserved
+	 * rejects NONE=0 / MDS=1).  owner_id is the caller's stable
+	 * identifier and serves both purposes.
+	 */
+	cpa->cpa_owner.co_guard.cg_gen_id = 0;
+	cpa->cpa_owner.co_guard.cg_client_id = owner_id;
+	cpa->cpa_owner.co_id = owner_id;
+
+	ret = mds_compound_send(&mc, ms);
+	if (ret == 0) {
+		nfs_resop4 *res_slot = mds_compound_result(&mc, 2);
+
+		if (!res_slot) {
+			ret = -EIO;
+		} else {
+			nfsstat4 st =
+				res_slot->nfs_resop4_u.opchunk_repair.cpr_status;
+
+			if (st != NFS4_OK)
+				ret = -EIO;
+		}
+	}
+
+	/* PUTFH borrowed mf->mf_fh; do not let fini double-free. */
+	if (mc.mc_args.argarray.argarray_len > 1) {
+		nfs_argop4 *pfh = &mc.mc_args.argarray.argarray_val[1];
+		pfh->nfs_argop4_u.opputfh.object.nfs_fh4_val = NULL;
+	}
+
+	mds_compound_fini(&mc);
+	return ret;
+}
+
 int mds_layout_return(struct mds_session *ms, struct mds_file *mf,
 		      const struct authunix_parms *creds,
 		      struct ec_layout *layout)

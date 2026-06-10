@@ -2522,6 +2522,223 @@ out_close:
 }
 
 /* ------------------------------------------------------------------ */
+/* ec_repair_codec -- wire-level EC repair end-to-end (slice 3)        */
+/* ------------------------------------------------------------------ */
+
+static uint64_t repair_now_ns(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+int ec_repair_codec(struct mds_session *ms, const char *path, int k, int m,
+		    enum ec_codec_type codec_type, layouttype4 layout_type,
+		    uint64_t shard_loss_mask, size_t shard_size,
+		    size_t file_len, struct ec_repair_stats *out_stats)
+{
+	struct ec_repair_stats stats = { 0 };
+	struct ec_context ctx;
+	struct mds_file mf;
+	int ret;
+	uint64_t valid_mask = (k + m < 64) ? (1ULL << (k + m)) - 1 : ~0ULL;
+	int nlost = __builtin_popcountll(shard_loss_mask & valid_mask);
+	uint64_t t_start = repair_now_ns();
+
+	if (k < 1 || m < 1 || nlost == 0 || nlost > m || shard_size == 0 ||
+	    (shard_size % sizeof(uint64_t)) != 0 ||
+	    shard_size > EC_SHARD_SIZE_MAX || file_len == 0)
+		return -EINVAL;
+
+	ret = mds_file_open(ms, path, &mf);
+	if (ret)
+		return ret;
+
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.ctx_ms = ms;
+	ctx.ctx_k = k;
+	ctx.ctx_m = m;
+	ctx.ctx_file = mf;
+
+	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
+	if (!ctx.ctx_codec) {
+		ret = -ENOMEM;
+		goto rc_close;
+	}
+
+	uint64_t t_lg = repair_now_ns();
+
+	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW, layout_type,
+			     NULL, &ctx.ctx_layout);
+	stats.layoutget_ns = repair_now_ns() - t_lg;
+	if (ret)
+		goto rc_codec;
+
+	if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
+		ret = -EINVAL;
+		goto rc_layout;
+	}
+
+	ret = ec_resolve_mirrors(&ctx);
+	if (ret)
+		goto rc_layout;
+
+	uint32_t rd_chunk_sz = ctx.ctx_layout.el_chunk_size;
+
+	if (rd_chunk_sz == 0)
+		rd_chunk_sz = (uint32_t)shard_size;
+
+	int total = k + m;
+	size_t stripe_data = (size_t)k * shard_size;
+	size_t nstripes = (file_len + stripe_data - 1) / stripe_data;
+	size_t ds_stride = shard_size;
+	uint8_t **shards = calloc(total, sizeof(uint8_t *));
+	bool *present = calloc(total, sizeof(bool));
+
+	if (!shards || !present) {
+		free(shards);
+		free(present);
+		ret = -ENOMEM;
+		goto rc_conns;
+	}
+
+	for (int i = 0; i < total; i++) {
+		size_t sz = shard_write_size(ctx.ctx_codec, i, shard_size);
+
+		if (sz > ds_stride)
+			ds_stride = sz;
+		sz = DIV_CEIL(sz, rd_chunk_sz) * rd_chunk_sz;
+		shards[i] = calloc(1, sz);
+		if (!shards[i]) {
+			for (int j = 0; j < i; j++)
+				free(shards[j]);
+			free(shards);
+			free(present);
+			ret = -ENOMEM;
+			goto rc_conns;
+		}
+	}
+
+	for (size_t s = 0; s < nstripes && ret == 0; s++) {
+		uint64_t t_read = repair_now_ns();
+
+		for (int i = 0; i < total; i++) {
+			uint32_t rsz = (uint32_t)shard_write_size(
+				ctx.ctx_codec, i, shard_size);
+			uint32_t nblk = DIV_CEIL(rsz, rd_chunk_sz);
+			uint32_t nread = 0;
+
+			if (shard_loss_mask & (1ULL << i)) {
+				present[i] = false;
+				continue;
+			}
+			ret = ec_chunk_read(
+				&ctx, i,
+				(uint64_t)s * DIV_CEIL(ds_stride, rd_chunk_sz),
+				nblk, shards[i], rd_chunk_sz, &nread, NULL);
+			present[i] = (ret == 0 && nread == nblk);
+			ret = 0;
+		}
+		stats.total_read_ns += repair_now_ns() - t_read;
+
+		uint64_t t_dec = repair_now_ns();
+
+		ret = ctx.ctx_codec->ec_decode(ctx.ctx_codec, shards, present,
+					       shard_size);
+		stats.total_decode_ns += repair_now_ns() - t_dec;
+		if (ret)
+			break;
+
+		uint64_t t_wr = repair_now_ns();
+
+		for (int i = 0; i < total; i++) {
+			if (!(shard_loss_mask & (1ULL << i)))
+				continue;
+			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
+			uint32_t rsz = (uint32_t)shard_write_size(
+				ctx.ctx_codec, i, shard_size);
+			uint64_t blk_off =
+				(uint64_t)s * DIV_CEIL(ds_stride, rd_chunk_sz);
+
+			ret = ds_chunk_write_repair(ctx.ctx_ds_sess[i],
+						    em->em_fh, em->em_fh_len,
+						    blk_off, rd_chunk_sz,
+						    shards[i], rsz, 1,
+						    &ctx.ctx_layout.el_stateid);
+			if (ret)
+				break;
+			stats.shards_repaired++;
+			stats.bytes_repaired += rsz;
+		}
+		stats.total_write_repair_ns += repair_now_ns() - t_wr;
+		stats.stripes_processed++;
+	}
+
+	for (int i = 0; i < total; i++)
+		free(shards[i]);
+	free(shards);
+	free(present);
+
+	if (ret)
+		goto rc_conns;
+
+	uint32_t total_blocks =
+		(uint32_t)(nstripes * DIV_CEIL(ds_stride, rd_chunk_sz));
+	uint64_t t_fin = repair_now_ns();
+
+	for (int i = 0; i < total && ret == 0; i++) {
+		if (!(shard_loss_mask & (1ULL << i)))
+			continue;
+		struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
+
+		ret = ds_chunk_finalize(ctx.ctx_ds_sess[i], em->em_fh,
+					em->em_fh_len, 0, total_blocks, 1);
+	}
+	stats.total_finalize_ns += repair_now_ns() - t_fin;
+	if (ret)
+		goto rc_conns;
+
+	uint64_t t_cmt = repair_now_ns();
+
+	for (int i = 0; i < total && ret == 0; i++) {
+		if (!(shard_loss_mask & (1ULL << i)))
+			continue;
+		struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
+
+		ret = ds_chunk_commit(ctx.ctx_ds_sess[i], em->em_fh,
+				      em->em_fh_len, 0, total_blocks, 1, NULL);
+	}
+	stats.total_commit_ns += repair_now_ns() - t_cmt;
+	if (ret)
+		goto rc_conns;
+
+	uint64_t t_cr = repair_now_ns();
+
+	ret = mds_chunk_repaired(ms, &ctx.ctx_file, &ctx.ctx_layout.el_stateid,
+				 0, total_blocks, 1);
+	stats.chunk_repaired_ns = repair_now_ns() - t_cr;
+
+rc_conns:
+	ec_disconnect_all(&ctx);
+rc_layout: {
+	uint64_t t_lr = repair_now_ns();
+
+	mds_layout_return(ms, &ctx.ctx_file, NULL, &ctx.ctx_layout);
+	stats.layoutreturn_ns = repair_now_ns() - t_lr;
+	ec_layout_free(&ctx.ctx_layout);
+}
+rc_codec:
+	ec_codec_destroy(ctx.ctx_codec);
+rc_close:
+	mds_file_close(ms, &mf);
+	stats.total_ns = repair_now_ns() - t_start;
+	if (out_stats)
+		*out_stats = stats;
+	return ret;
+}
+
+/* ------------------------------------------------------------------ */
 /* Backward-compatible wrappers (default to Reed-Solomon)              */
 /* ------------------------------------------------------------------ */
 
