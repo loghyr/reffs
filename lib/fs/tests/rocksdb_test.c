@@ -44,11 +44,13 @@ const char *__asan_default_options(void)
 #include "reffs/dirent.h"
 #include "reffs/fs.h"
 #include "reffs/inode.h"
+#include "reffs/layout_segment.h"
 #include "reffs/persist_ops.h"
 #include "reffs/server_persist.h"
 #include "reffs/client_persist.h"
 #include "reffs/super_block.h"
 #include "fs_test_harness.h"
+#include "nfsv42_xdr.h"
 
 static char state_dir[] = "/tmp/reffs-rocksdb-XXXXXX";
 
@@ -279,6 +281,79 @@ START_TEST(test_rocksdb_inode_delete_cleanup)
 }
 END_TEST
 
+START_TEST(test_rocksdb_ldf_flags_roundtrip)
+{
+	struct super_block *sb = super_block_alloc(
+		305, "/rdb_ldf", REFFS_STORAGE_ROCKSDB, state_dir);
+	ck_assert_ptr_nonnull(sb);
+
+	int ret = super_block_dirent_create(sb, NULL, reffs_life_action_birth);
+	ck_assert_int_eq(ret, 0);
+
+	struct inode *inode = inode_alloc(sb, 0);
+	ck_assert_ptr_nonnull(inode);
+	inode->i_mode = S_IFREG | 0644;
+	inode->i_nlink = 1;
+	uint64_t ino = inode->i_ino;
+
+	/*
+	 * Build a 1-segment / 2-mirror layout.  Mirror 0 carries the
+	 * FFV2_DS_FLAGS_REPAIR bit (the per-mirror flag the ec-repair
+	 * slice persists on a half-repaired file); mirror 1 is clean.
+	 * Both must round-trip through RocksDB byte-for-byte so an MDS
+	 * restart does not lose track of a repair in progress.
+	 */
+	struct layout_segments *lss = layout_segments_alloc();
+	ck_assert_ptr_nonnull(lss);
+
+	struct layout_segment seg = {
+		.ls_offset = 0,
+		.ls_length = 0,
+		.ls_stripe_unit = 0,
+		.ls_k = 1,
+		.ls_m = 1,
+		.ls_nfiles = 2,
+		.ls_layout_type = LAYOUT4_FLEX_FILES_V2,
+		.ls_checksum_algorithm = LAYOUT_CHECKSUM_ALG_CRC32,
+		.ls_files = calloc(2, sizeof(struct layout_data_file)),
+	};
+	ck_assert_ptr_nonnull(seg.ls_files);
+	seg.ls_files[0].ldf_dstore_id = 7;
+	seg.ls_files[0].ldf_fh_len = 4;
+	memcpy(seg.ls_files[0].ldf_fh, "fh07", 4);
+	seg.ls_files[0].ldf_flags = FFV2_DS_FLAGS_REPAIR;
+	seg.ls_files[1].ldf_dstore_id = 8;
+	seg.ls_files[1].ldf_fh_len = 4;
+	memcpy(seg.ls_files[1].ldf_fh, "fh08", 4);
+	seg.ls_files[1].ldf_flags = 0;
+
+	ret = layout_segments_add(lss, &seg);
+	ck_assert_int_eq(ret, 0);
+
+	inode->i_layout_segments = lss;
+
+	inode_sync_to_disk(inode);
+	inode_active_put(inode);
+
+	struct inode *loaded = inode_alloc(sb, ino);
+	ck_assert_ptr_nonnull(loaded);
+	ck_assert_ptr_nonnull(loaded->i_layout_segments);
+	ck_assert_uint_eq(loaded->i_layout_segments->lss_count, 1);
+
+	const struct layout_segment *lseg =
+		&loaded->i_layout_segments->lss_segs[0];
+	ck_assert_uint_eq(lseg->ls_nfiles, 2);
+	ck_assert_uint_eq(lseg->ls_files[0].ldf_dstore_id, 7);
+	ck_assert_uint_eq(lseg->ls_files[0].ldf_flags, FFV2_DS_FLAGS_REPAIR);
+	ck_assert_uint_eq(lseg->ls_files[1].ldf_dstore_id, 8);
+	ck_assert_uint_eq(lseg->ls_files[1].ldf_flags, 0);
+
+	inode_active_put(loaded);
+	super_block_release_dirents(sb);
+	super_block_put(sb);
+}
+END_TEST
+
 START_TEST(test_rocksdb_key_ordering)
 {
 	/* Verify BE64 keys sort correctly in RocksDB */
@@ -480,6 +555,7 @@ static Suite *rocksdb_suite(void)
 	tcase_add_test(tc, test_rocksdb_data_posix_roundtrip);
 	tcase_add_test(tc, test_rocksdb_dir_roundtrip);
 	tcase_add_test(tc, test_rocksdb_inode_delete_cleanup);
+	tcase_add_test(tc, test_rocksdb_ldf_flags_roundtrip);
 	tcase_add_test(tc, test_rocksdb_key_ordering);
 	suite_add_tcase(s, tc);
 

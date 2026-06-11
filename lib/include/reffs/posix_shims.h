@@ -27,6 +27,40 @@
 #include <unistd.h>
 
 /*
+ * RFC 5531 sec 8.2 auth_stat extensions (8..14).  glibc's
+ * <rpc/auth.h> declares all of them in the enum; Darwin's
+ * <rpc/auth.h> only declares the original RFC 1057 values 0..7.
+ * Define the missing values as integers so a switch over
+ * enum auth_stat compiles on macOS too -- the case labels stay
+ * ints; the enum tag widens to cover them per C standard.
+ *
+ * Must be #included AFTER <rpc/auth.h> (typically via
+ * <rpc/rpc.h>) so the platform's existing definitions take
+ * precedence and only the gaps are filled in.
+ */
+#ifndef AUTH_KERB_GENERIC
+#define AUTH_KERB_GENERIC 8
+#endif
+#ifndef AUTH_TIMEEXPIRE
+#define AUTH_TIMEEXPIRE 9
+#endif
+#ifndef AUTH_TKT_FILE
+#define AUTH_TKT_FILE 10
+#endif
+#ifndef AUTH_DECODE
+#define AUTH_DECODE 11
+#endif
+#ifndef AUTH_NET_ADDR
+#define AUTH_NET_ADDR 12
+#endif
+#ifndef RPCSEC_GSS_CREDPROBLEM
+#define RPCSEC_GSS_CREDPROBLEM 13
+#endif
+#ifndef RPCSEC_GSS_CTXPROBLEM
+#define RPCSEC_GSS_CTXPROBLEM 14
+#endif
+
+/*
  * reffs_accept4_nb_cloexec -- accept(2) with the resulting fd
  * set non-blocking and close-on-exec.
  *
