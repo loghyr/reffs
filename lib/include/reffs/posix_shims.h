@@ -28,35 +28,29 @@
 
 /*
  * RFC 5531 sec 8.2 auth_stat extensions (8..14).  glibc's
- * <rpc/auth.h> declares all of them in the enum; Darwin's
+ * <rpc/auth.h> declares all of them as enum elements; Darwin's
  * <rpc/auth.h> only declares the original RFC 1057 values 0..7.
- * Define the missing values as integers so a switch over
- * enum auth_stat compiles on macOS too -- the case labels stay
+ * On Darwin we define the missing values as integer macros so a
+ * switch over enum auth_stat compiles -- the case labels stay
  * ints; the enum tag widens to cover them per C standard.
  *
- * Must be #included AFTER <rpc/auth.h> (typically via
- * <rpc/rpc.h>) so the platform's existing definitions take
- * precedence and only the gaps are filled in.
+ * Guarded on __APPLE__ rather than on the names themselves
+ * (#ifndef AUTH_KERB_GENERIC ...) so the macros never become
+ * visible on Linux even if posix_shims.h is #included before
+ * <rpc/auth.h>: glibc declares those names as enum elements
+ * (e.g. RPCSEC_GSS_CTXPROBLEM = 14), and a literal `#define
+ * RPCSEC_GSS_CTXPROBLEM 14` already in scope when the enum
+ * declaration is processed turns it into `14 = 14`, which is
+ * a parse error.  Header order is hard to police across the
+ * tree, so we make the workaround platform-pinned instead.
  */
-#ifndef AUTH_KERB_GENERIC
+#ifdef __APPLE__
 #define AUTH_KERB_GENERIC 8
-#endif
-#ifndef AUTH_TIMEEXPIRE
 #define AUTH_TIMEEXPIRE 9
-#endif
-#ifndef AUTH_TKT_FILE
 #define AUTH_TKT_FILE 10
-#endif
-#ifndef AUTH_DECODE
 #define AUTH_DECODE 11
-#endif
-#ifndef AUTH_NET_ADDR
 #define AUTH_NET_ADDR 12
-#endif
-#ifndef RPCSEC_GSS_CREDPROBLEM
 #define RPCSEC_GSS_CREDPROBLEM 13
-#endif
-#ifndef RPCSEC_GSS_CTXPROBLEM
 #define RPCSEC_GSS_CTXPROBLEM 14
 #endif
 
