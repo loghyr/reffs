@@ -40,6 +40,7 @@ m=0
 codec=mirror
 sec=krb5
 nconnect=1
+source_ips=
 
 usage() {
 	cat >&2 <<'EOF'
@@ -61,6 +62,18 @@ Usage: krb5_ffv1_stress.sh --server <host[:port]>
                                                        nconnect.  Each transport
                                                        carries its own
                                                        RPCSEC_GSS context.)
+                           [--source-ips A[,B,...]]   (optional CSV of local
+                                                       IPv4 source addresses.
+                                                       Workers are round-robin
+                                                       assigned by index; with
+                                                       one address all workers
+                                                       share it, with N they
+                                                       cycle.  Threads through
+                                                       ec_demo --source-ip
+                                                       which binds both the
+                                                       MDS- and DS-side TCP
+                                                       sockets to the chosen
+                                                       address.)
 
 Drives N krb5-authenticated NFSv4.2 clients at an external FFv1
 server.  Each worker writes <path>/krb5stress_<i> with the supplied
@@ -115,6 +128,7 @@ while [ $# -gt 0 ]; do
 	--codec) codec=$2; shift 2 ;;
 	--sec) sec=$2; shift 2 ;;
 	--nconnect) nconnect=$2; shift 2 ;;
+	--source-ips) source_ips=$2; shift 2 ;;
 	-h | --help) usage; exit 0 ;;
 	*) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
 	esac
@@ -128,6 +142,20 @@ done
 [ "$clients" -ge 1 ]  || die "--clients must be >= 1"
 [[ "$nconnect" =~ ^[0-9]+$ ]] || die "--nconnect must be a positive integer"
 [ "$nconnect" -ge 1 ] || die "--nconnect must be >= 1"
+
+# Parse --source-ips CSV into an indexable array.  Empty array means
+# no per-worker --source-ip flag is passed (ec_demo's default: kernel
+# picks the outbound interface).  Light syntactic check on each entry
+# -- ec_demo's source_bind does the real inet_pton + EADDRNOTAVAIL
+# surfacing, this just catches obvious typos before fork.
+declare -a source_ip_arr
+if [ -n "$source_ips" ]; then
+	IFS=',' read -r -a source_ip_arr <<<"$source_ips"
+	for ip in "${source_ip_arr[@]}"; do
+		[[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+			die "--source-ips entry not a dotted-quad IPv4: $ip"
+	done
+fi
 if [ ! -e "$ec_demo" ]; then
 	die "ec_demo not found at: $ec_demo
   CWD is: $(pwd)
@@ -267,6 +295,13 @@ declare -a pids
 # halves the footprint to clients x nconnect (264 ports), well
 # inside the pool.
 for ((i = 0; i < clients; i++)); do
+	# Round-robin pick the source IP for this worker.  Skip the flag
+	# entirely when no --source-ips was given so ec_demo's default
+	# (kernel-picked outbound iface) is preserved.
+	src_args=()
+	if [ "${#source_ip_arr[@]}" -gt 0 ]; then
+		src_args=(--source-ip "${source_ip_arr[$((i % ${#source_ip_arr[@]}))]}")
+	fi
 	(
 		export KRB5CCNAME=$cc_dir/cc_$i
 		exec "$ec_demo" write_verify \
@@ -279,6 +314,7 @@ for ((i = 0; i < clients; i++)); do
 			--k "$k" \
 			--m "$m" \
 			--nconnect "$nconnect" \
+			"${src_args[@]}" \
 			--id "krb5stress_$i"
 	) >"$log_dir/worker_$i.log" 2>&1 &
 	pids+=("$!")
