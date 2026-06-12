@@ -995,6 +995,12 @@ static CLIENT *mds_session_clnt_open(const char *host, const char *source_ip)
 	 * portmap) skips that and would otherwise get an ephemeral
 	 * port from the kernel, tripping strict servers.
 	 *
+	 * When source_ip is set, source_bind already used
+	 * bindresvport_sa to bind both the source address and a
+	 * privileged port in one step -- skip the second bindresvport
+	 * which would return EINVAL on Linux for an already-bound fd
+	 * and pollute stderr with a misleading warning.
+	 *
 	 * Failure on EACCES/EPERM (running non-root) is non-fatal: we
 	 * fall through to the kernel-assigned port and only strict
 	 * servers will reject -- which they would have done anyway.
@@ -1002,7 +1008,8 @@ static CLIENT *mds_session_clnt_open(const char *host, const char *source_ip)
 	 * is not surprised when the connect succeeds but the server
 	 * rejects at EXCHANGE_ID.
 	 */
-	if (bindresvport(fd, NULL) < 0 && errno != EACCES && errno != EPERM)
+	if ((!source_ip || source_ip[0] == '\0') &&
+	    bindresvport(fd, NULL) < 0 && errno != EACCES && errno != EPERM)
 		fprintf(stderr,
 			"ec_demo: bindresvport failed (%s); strict-port "
 			"servers (e.g. Hammerspace Anvil) will reject the "

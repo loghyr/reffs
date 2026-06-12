@@ -27,10 +27,28 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <rpc/rpc.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
 
+/*
+ * Bind the socket to source_ip AND a privileged source port in one
+ * step via libtirpc's bindresvport_sa.  Two reasons it MUST be one
+ * step:
+ *
+ *   1. Two separate calls -- bind(fd, src, port=0) then
+ *      bindresvport(fd, NULL) -- fail because the second bind on an
+ *      already-bound fd returns EINVAL on Linux.
+ *
+ *   2. The DS-side connect path (lib/nfs4/ps/ds_io.c) never calls
+ *      bindresvport after source_bind, so without bindresvport_sa
+ *      the source port is whatever the kernel picks at first packet:
+ *      >= 1024 on Linux.  Strict-port servers (Hammerspace Anvil)
+ *      reject NFSv3 WRITEs from an ephemeral source with
+ *      NFS3ERR_PERM -- silently failing the ec_demo write path even
+ *      though the MDS-side EXCHANGE_ID succeeded.
+ */
 static inline int source_bind(int fd, const char *source_ip, const char *who)
 {
 	if (!source_ip || source_ip[0] == '\0')
@@ -40,7 +58,7 @@ static inline int source_bind(int fd, const char *source_ip, const char *who)
 
 	memset(&src, 0, sizeof(src));
 	src.sin_family = AF_INET;
-	src.sin_port = 0; /* let bindresvport/kernel pick the port */
+	src.sin_port = 0; /* bindresvport_sa picks a privileged port */
 
 	if (inet_pton(AF_INET, source_ip, &src.sin_addr) != 1) {
 		fprintf(stderr,
@@ -50,12 +68,13 @@ static inline int source_bind(int fd, const char *source_ip, const char *who)
 		return -EINVAL;
 	}
 
-	if (bind(fd, (struct sockaddr *)&src, sizeof(src)) < 0) {
+	if (bindresvport_sa(fd, (struct sockaddr *)&src) < 0) {
 		int e = errno;
 
 		fprintf(stderr,
-			"%s: bind to source IP %s failed: %s "
-			"(address must already be assigned to a local interface)\n",
+			"%s: bindresvport_sa to source IP %s failed: %s "
+			"(address must be assigned to a local interface and "
+			"caller must be root for ports < 1024)\n",
 			who ? who : "source_bind", source_ip, strerror(e));
 		errno = e;
 		return -e;
