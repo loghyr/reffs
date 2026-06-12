@@ -73,7 +73,15 @@ Usage: krb5_ffv1_stress.sh --server <host[:port]>
                                                        which binds both the
                                                        MDS- and DS-side TCP
                                                        sockets to the chosen
-                                                       address.)
+                                                       address via
+                                                       bindresvport_sa, so the
+                                                       source port stays
+                                                       privileged (< 1024) on
+                                                       both legs -- required by
+                                                       Hammerspace Anvil DSes
+                                                       with strict_port_check
+                                                       enabled.  Caller must be
+                                                       root.)
 
 Drives N krb5-authenticated NFSv4.2 clients at an external FFv1
 server.  Each worker writes <path>/krb5stress_<i> with the supplied
