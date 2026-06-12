@@ -27,10 +27,17 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
-#include <rpc/rpc.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+
+/*
+ * libtirpc forward decl -- pulling <rpc/rpc.h> here would force every
+ * source_bind.h consumer to carry libtirpc CFLAGS, including lib/tls
+ * which has no other reason to.  The signature has been stable since
+ * libtirpc 0.2 (Linux) so a local prototype is safe.
+ */
+extern int bindresvport_sa(int sd, struct sockaddr *sa);
 
 /*
  * Bind the socket to source_ip AND a privileged source port in one
