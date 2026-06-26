@@ -11,6 +11,15 @@ DOCKER = $(SUDO) docker
 IMAGE_NAME = reffs-dev
 CI_IMAGE_NAME = reffs-ci
 
+# Sanitizer flags for sandbox builds (override SAN="" for a plain build).
+SAN ?= --enable-asan --enable-ubsan
+
+# External-DS client-validation MDS (see examples/reffsd-mds-validate.toml).
+# Override MDS_VALIDATE_TOML to point at your own edited config; the path
+# must be under the repo root, which is bind-mounted read-only at /reffs.
+MDS_VALIDATE_NAME = $(IMAGE_NAME)-mds-validate
+MDS_VALIDATE_TOML ?= /reffs/examples/reffsd-mds-validate.toml
+
 # Default target: style and license check
 all:
 	@if [ "$(SKIP_STYLE)" != "1" ]; then $(MAKE) -f Makefile.reffs style; fi
@@ -50,6 +59,8 @@ help:
 	@echo "  stop-image      - Stop and remove any running sandbox containers"
 	@echo "  test-image      - Stop any running containers and start a fresh one"
 	@echo "  shell           - Open a shell in the running sandbox container"
+	@echo "  run-mds-validate - Run MDS-only server (no rpcbind, host net) for external-client validation"
+	@echo "  stop-mds-validate - Stop the MDS validation sandbox container"
 	@echo "  reconf          - Force re-generation of build system (autoreconf)"
 	@echo "  install-hooks   - Install git pre-push hook from hooks/pre-push"
 	@echo ""
@@ -242,6 +253,42 @@ test-image: stop-image run-image
 # Open a shell in the running sandbox container
 shell:
 	$(DOCKER) exec -it $(IMAGE_NAME)-sandbox /bin/bash
+
+# Run reffs as a Flex Files MDS for validating an external NFSv4.2
+# client.  MDS-only: the data servers are external -- edit the DS
+# entries in $(MDS_VALIDATE_TOML) first.  Host networking lets the MDS
+# reach the external DS IPs and lets the client mount 2049/20490
+# directly: no -p publishes, no pasta NAT, no host port 111.
+# --entrypoint /bin/bash bypasses the image entrypoint so the
+# container-local rpcbind is never started; the MDS itself skips
+# rpcbind via register_with_rpcbind = false in the toml.  ASAN/UBSAN
+# run with halt_on_error=0 so a sanitizer hit logs rather than killing
+# the long-running validation server.
+run-mds-validate: $(LOGS_DIR) stop-mds-validate
+	$(DOCKER) run -it --rm --name $(MDS_VALIDATE_NAME) --privileged \
+		--network host \
+		--ulimit nofile=65536:65536 \
+		--entrypoint /bin/bash \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(IMAGE_NAME) \
+		-c "rm -rf /tmp/reffs_data /tmp/reffs.state && mkdir -p /tmp/reffs_data /tmp/reffs.state/reffs.state && \
+			rm -rf /src/* /build/* && \
+			rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
+			cd /src && find . -name parsetab.py -delete && autoreconf -fi && \
+			cd /build && ../src/configure $(SAN) && make && \
+			sed 's|/var/lib/reffs/mds/data|/tmp/reffs_data|g; s|/var/lib/reffs/mds/reffs.state|/tmp/reffs.state/reffs.state|g' \
+				$(MDS_VALIDATE_TOML) > /tmp/reffsd.toml && \
+			script -f -q -c 'ASAN_OPTIONS=detect_leaks=0:halt_on_error=0 UBSAN_OPTIONS=halt_on_error=0 ./src/reffsd --file=/logs/reffs.trc --config=/tmp/reffsd.toml' /logs/reffs.console"
+
+# Stop and remove the MDS validation sandbox container
+stop-mds-validate:
+	@CONTAINERS=$$($(DOCKER) ps -aq --filter name=$(MDS_VALIDATE_NAME)); \
+	if [ -n "$$CONTAINERS" ]; then \
+		echo "Stopping and removing containers: $$CONTAINERS"; \
+		$(DOCKER) stop $$CONTAINERS 2>/dev/null || true; \
+		$(DOCKER) rm -f $$CONTAINERS 2>/dev/null || true; \
+	fi
 
 # Build the project inside the container using the internal build directory
 # This avoids root-owned objects in the host git repo
@@ -468,4 +515,4 @@ run-ps-demo-encodings: image
 stop-ps-demo-encodings:
 	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile ps-demo-encodings down -v 2>/dev/null || true
 
-.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined stop-combined clean-combined run-pnfs test-pnfs stop-pnfs logs-pnfs run-benchmark stop-benchmark run-larger-shards stop-larger-shards run-sanity stop-sanity run-ps-demo stop-ps-demo run-ps-demo-kmount stop-ps-demo-kmount run-ps-demo-encodings stop-ps-demo-encodings
+.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined stop-combined clean-combined run-pnfs test-pnfs stop-pnfs logs-pnfs run-benchmark stop-benchmark run-larger-shards stop-larger-shards run-sanity stop-sanity run-ps-demo stop-ps-demo run-ps-demo-kmount stop-ps-demo-kmount run-ps-demo-encodings stop-ps-demo-encodings run-mds-validate stop-mds-validate
