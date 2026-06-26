@@ -23,14 +23,28 @@ the external DSes.
   `layout_types`/`dstores` on the root export, and placeholder
   `[[data_server]]` blocks (RFC 5737 doc IPs) the operator edits.
 - `Makefile.reffs` targets `run-mds-validate` / `stop-mds-validate`.
+- `scripts/run_mds_validate.sh` -- bare-metal launcher (no Docker):
+  builds reffsd in `build/` if needed, generates a runtime config from
+  `--ds` arguments, and runs reffsd in the foreground.  Does not mount.
 
 ## Usage
+
+Containerized (host networking, builds in the sandbox):
 
 ```
 # Edit examples/reffsd-mds-validate.toml: replace the [[data_server]]
 # placeholder addresses with your real DS IPs/paths.
 make -f Makefile.reffs run-mds-validate
 # Client: mount -t nfs -o vers=4.2 <host>:/ /mnt/point
+```
+
+Bare-metal (no Docker), passing reachable DSes on the command line:
+
+```
+scripts/run_mds_validate.sh --ds 192.168.2.105:/ds1 --ds 192.168.2.106:/ds2
+# --dry-run prints the generated config without building or launching.
+# With no --ds the MDS still boots and is mountable but issues no
+# layouts.  The script never mounts -- do that from the client.
 ```
 
 Knobs:
@@ -93,7 +107,11 @@ per-DS failures and `reffsd.c` treats its non-zero return as a warning
 (~956).  So the server boots and is mountable with placeholder DS IPs
 -- but LAYOUTGET returns NFS4ERR_LAYOUTUNAVAILABLE until real,
 reachable DSes are configured.  (Note: unreachable placeholder IPs can
-stall startup on the per-DS connect timeout.)
+stall startup on the per-DS connect timeout -- `clnt_create(...,"tcp")`
+in `mount_get_root_fh` black-holes on a non-routable DS for ~2 min.)
+`scripts/run_mds_validate.sh` sidesteps this by generating the config
+only from the reachable DSes passed via `--ds` (or none at all), so it
+never boots against the committed placeholder addresses.
 
 ## Deferred / not in scope
 
