@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# pNFS Flex Files metadata server (MDS) for external-client validation.
+#
+# reffs runs as the MDS ONLY.  The data servers are EXTERNAL and are
+# provided/operated by you; this server never hosts data.  An external
+# NFSv4.2 client mounts this MDS, receives Flex Files layouts, and does
+# data I/O directly to the data servers listed below.
+#
+# rpcbind is disabled (register_with_rpcbind = false): NFSv4.2 uses the
+# well-known port 2049 (RFC 8881 S1.5) and needs no portmapper.  This
+# also avoids the ~22 startup pmap round-trips.  See
+# .claude/design/no-rpcbind.md.
+#
+# Run it with:
+#   make -f Makefile.reffs run-mds-validate
+#
+# BEFORE USE: edit the [[data_server]] blocks to point at YOUR data
+# servers.  At startup the MDS connects to each DS via NFSv3 MOUNT for
+# the control plane (CREATE/REMOVE/GETATTR), so every DS must be
+# NFSv3-reachable from the host running this MDS.  The placeholder
+# addresses below use the RFC 5737 documentation range (192.0.2.0/24)
+# and are NOT routable -- replace them.
+
+[server]
+port                  = 2049
+bind                  = "*"
+role                  = "mds"
+register_with_rpcbind = false
+minor_versions        = [1, 2]
+grace_period          = 45
+workers               = 8
+max_session_slots     = 64
+log_level             = "info"
+
+[backend]
+type            = "posix"
+path            = "/var/lib/reffs/mds/data"
+state_file      = "/var/lib/reffs/mds/reffs.state"
+
+[iouring]
+network_sq_size = 2048
+network_cq_size = 8192
+backend_sq_size = 512
+backend_cq_size = 2048
+
+[[export]]
+path         = "/"
+# Enable pNFS Flex Files on the root namespace so the client's
+# LAYOUTGET succeeds.  WITHOUT layout_types, the per-export layout
+# gate denies every LAYOUTGET.  "ffv1" (NFSv3 data path) works with
+# any NFSv3 data server; add "ffv2" only if your data servers are
+# reffs instances that speak the CHUNK ops.  dstores binds the
+# [[data_server]] ids below to this export.
+layout_types = ["ffv1"]
+dstores      = [1, 2]
+
+    [[export.clients]]
+    match       = "*"
+    access      = "rw"
+    root_squash = false
+    flavors     = ["sys"]
+
+# ---------------------------------------------------------------------
+# EDIT: external data servers (operator-provided).
+#
+# Each DS must be reachable over NFSv3 from this host.  Set `port` to
+# the DS's NFS port to skip the DS-side portmap (rpcbind) lookup at
+# 111; omit it to let the MDS discover the port via portmap.
+# ---------------------------------------------------------------------
+[[data_server]]
+id      = 1
+address = "192.0.2.10"   # EDIT: data server #1 address
+path    = "/ds1"         # EDIT: data server #1 export path
+# port  = 2049           # optional: pin to bypass DS-side portmap
+
+[[data_server]]
+id      = 2
+address = "192.0.2.11"   # EDIT: data server #2 address
+path    = "/ds2"
+# port  = 2049
