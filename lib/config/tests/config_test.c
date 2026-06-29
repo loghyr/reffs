@@ -795,6 +795,30 @@ START_TEST(test_load_data_server_none)
 }
 END_TEST
 
+START_TEST(test_load_data_server_mount_port)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	/* Separate mountd port for a knfsd DS (port = nfsd). */
+	char *path = write_toml("[[data_server]]\n"
+				"id         = 42\n"
+				"address    = \"169.254.0.5\"\n"
+				"path       = \"/ds1\"\n"
+				"port       = 3049\n"
+				"mount_port = 20048\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.ndata_servers, 1);
+	ck_assert_uint_eq(cfg.data_servers[0].port, 3049);
+	ck_assert_uint_eq(cfg.data_servers[0].mount_port, 20048);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* load -- [[proxy_mds]] entries                                        */
 /* ------------------------------------------------------------------ */
@@ -1320,6 +1344,7 @@ Suite *config_suite(void)
 	tcase_add_test(tc_load, test_load_data_server_single);
 	tcase_add_test(tc_load, test_load_data_server_multiple);
 	tcase_add_test(tc_load, test_load_data_server_none);
+	tcase_add_test(tc_load, test_load_data_server_mount_port);
 	tcase_add_test(tc_load, test_load_proxy_mds_single);
 	tcase_add_test(tc_load, test_load_proxy_mds_multiple);
 	tcase_add_test(tc_load, test_load_proxy_mds_none);

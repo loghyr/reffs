@@ -65,25 +65,32 @@ dstores      = [1, 2]
 # ---------------------------------------------------------------------
 # EDIT: external data servers (operator-provided).
 #
-# Each DS must be reachable over NFSv3 from this host.  Set `port` to
-# pin the DS port and skip the DS-side portmap (rpcbind) lookup at 111;
-# omit it to let the MDS discover the port via portmap.  NOTE: `port`
-# is used for BOTH the MOUNT (mountd) and NFS (nfsd) programs, so pin
-# it only for a DS that serves both on one port (e.g. a reffs DS).
-# Standard knfsd uses separate mountd/nfsd ports -- omit `port` there
-# and rely on the DS's portmap.  Also: a DS whose address is this
-# host's own IP (or 127.0.0.1/localhost) is treated as a local VFS
-# dstore, not contacted over NFSv3 -- use a non-local hostname for a
-# same-host knfsd.
+# Each DS must be reachable over NFSv3 from this host.
+#
+#   port       -- pin the nfsd port; skips the DS-side portmap lookup.
+#                 An explicit `port` ALSO marks this as a real wire DS,
+#                 so a link-local or same-host address (e.g. a knfsd
+#                 instance) is contacted over NFSv3 instead of being
+#                 served from the local combined-mode VFS.
+#   mount_port -- pin the mountd port (defaults to `port` when unset).
+#                 knfsd runs mountd and nfsd on SEPARATE ports, so set
+#                 both for a knfsd DS; a reffs DS serves both on one
+#                 port, so `port` alone suffices.
+#
+# Omit both ports to let the MDS discover them via the DS's portmap
+# (rpcbind) -- but note that without `port` a same-host/local address
+# falls back to the local VFS dstore and is not contacted over NFSv3.
 # ---------------------------------------------------------------------
 [[data_server]]
-id      = 1
-address = "192.0.2.10"   # EDIT: data server #1 address
-path    = "/ds1"         # EDIT: data server #1 export path
-# port  = 2049           # optional: pin to bypass DS-side portmap
+id         = 1
+address    = "192.0.2.10"   # EDIT: data server #1 address
+path       = "/ds1"         # EDIT: data server #1 export path
+# port       = 3049         # EDIT: knfsd nfsd port (forces wire DS)
+# mount_port = 20048        # EDIT: knfsd mountd port (omit for reffs DS)
 
 [[data_server]]
-id      = 2
-address = "192.0.2.11"   # EDIT: data server #2 address
-path    = "/ds2"
-# port  = 2049
+id         = 2
+address    = "192.0.2.11"   # EDIT: data server #2 address
+path       = "/ds2"
+# port       = 3049
+# mount_port = 20048

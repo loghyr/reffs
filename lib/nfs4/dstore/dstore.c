@@ -221,9 +221,18 @@ static int mount_get_root_fh(struct dstore *ds)
 			    ds->ds_address);
 			return -ECONNREFUSED;
 		}
+		/*
+		 * mountd may live on a different port than nfsd (e.g. a
+		 * knfsd DS).  Use the explicit mount_port when set; else
+		 * fall back to the NFS port (a reffs DS serves both on one
+		 * port).
+		 */
+		uint16_t mport = ds->ds_mount_port > 0 ? ds->ds_mount_port :
+							 ds->ds_port;
+
 		sin = *(struct sockaddr_in *)res->ai_addr;
 		freeaddrinfo(res);
-		sin.sin_port = htons(ds->ds_port);
+		sin.sin_port = htons(mport);
 
 		int fd = RPC_ANYSOCK;
 
@@ -231,7 +240,7 @@ static int mount_get_root_fh(struct dstore *ds)
 					  0);
 		if (!mnt_clnt) {
 			LOG("dstore[%u]: clnttcp_create(%s:%u) MOUNT failed",
-			    ds->ds_id, ds->ds_address, ds->ds_port);
+			    ds->ds_id, ds->ds_address, mport);
 			return -ECONNREFUSED;
 		}
 	} else {
@@ -441,8 +450,9 @@ int dstore_probe_root_access(struct dstore *ds)
 /* ------------------------------------------------------------------ */
 
 struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
-			    const char *path, enum reffs_ds_protocol protocol,
-			    bool do_mount, bool tight_coupling)
+			    uint16_t mount_port, const char *path,
+			    enum reffs_ds_protocol protocol, bool do_mount,
+			    bool tight_coupling)
 {
 	struct dstore *ds;
 	struct cds_lfht_node *node;
@@ -458,6 +468,7 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
 	ds->ds_id = id;
 	ds->ds_protocol = protocol;
 	ds->ds_port = port;
+	ds->ds_mount_port = mount_port;
 	strncpy(ds->ds_address, address, sizeof(ds->ds_address) - 1);
 	strncpy(ds->ds_path, path, sizeof(ds->ds_path) - 1);
 	pthread_mutex_init(&ds->ds_clnt_mutex, NULL);
@@ -488,9 +499,20 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
 	 * Select the ops vtable: local if the address is the loopback
 	 * or matches our own server.  For remote DSes, select based
 	 * on the configured protocol.
+	 *
+	 * An explicit NFS port (port > 0) means "this is a real wire DS
+	 * at this address:port" -- force the remote vtable and skip the
+	 * local-address heuristic, so a DS on a link-local or same-host
+	 * address (e.g. a knfsd instance) is contacted over the wire
+	 * rather than served from the local combined-mode VFS.  See
+	 * .claude/design/dstore-explicit-port.md.
 	 */
-	if (!strcmp(address, "127.0.0.1") || !strcmp(address, "::1") ||
-	    !strcmp(address, "localhost") || dstore_address_is_local(address)) {
+	bool force_remote = port > 0;
+
+	if (!force_remote &&
+	    (!strcmp(address, "127.0.0.1") || !strcmp(address, "::1") ||
+	     !strcmp(address, "localhost") ||
+	     dstore_address_is_local(address))) {
 		ds->ds_ops = &dstore_ops_local;
 		ds->ds_tight_coupled = true; /* combined mode is always tight */
 		__atomic_or_fetch(&ds->ds_state, DSTORE_IS_MOUNTED,
@@ -660,8 +682,8 @@ int dstore_load_config(const struct reffs_config *cfg)
 		const struct reffs_data_server_config *dsc =
 			&cfg->data_servers[i];
 		struct dstore *ds = dstore_alloc(dsc->id, dsc->address,
-						 dsc->port, dsc->path,
-						 dsc->protocol, true,
+						 dsc->port, dsc->mount_port,
+						 dsc->path, dsc->protocol, true,
 						 dsc->tight_coupling);
 
 		if (!ds) {

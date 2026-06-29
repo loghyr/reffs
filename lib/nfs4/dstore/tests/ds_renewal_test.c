@@ -158,7 +158,7 @@ END_TEST
  */
 START_TEST(test_renewal_kick_resets_per_dstore_schedule)
 {
-	struct dstore *ds = dstore_alloc(99, "192.0.2.1", 0, "/test",
+	struct dstore *ds = dstore_alloc(99, "192.0.2.1", 0, 0, "/test",
 					 REFFS_DS_PROTO_NFSV4, false, false);
 
 	ck_assert_ptr_nonnull(ds);
@@ -217,7 +217,7 @@ END_TEST
  */
 START_TEST(test_session_borrow_release_replace_cycle)
 {
-	struct dstore *ds = dstore_alloc(101, "192.0.2.2", 0, "/test",
+	struct dstore *ds = dstore_alloc(101, "192.0.2.2", 0, 0, "/test",
 					 REFFS_DS_PROTO_NFSV4, false, false);
 
 	ck_assert_ptr_nonnull(ds);
@@ -263,7 +263,7 @@ END_TEST
  */
 START_TEST(test_renewal_kick_nfsv3_dstore_clears_schedule)
 {
-	struct dstore *ds = dstore_alloc(102, "192.0.2.3", 0, "/test",
+	struct dstore *ds = dstore_alloc(102, "192.0.2.3", 0, 0, "/test",
 					 REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(ds);
@@ -356,7 +356,7 @@ END_TEST
  */
 START_TEST(test_tick_local_skip)
 {
-	struct dstore *ds = dstore_alloc(200, "127.0.0.1", 0, "/test",
+	struct dstore *ds = dstore_alloc(200, "127.0.0.1", 0, 0, "/test",
 					 REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(ds);
@@ -394,7 +394,7 @@ END_TEST
  */
 START_TEST(test_tick_nfsv3_in_backoff)
 {
-	struct dstore *ds = dstore_alloc(201, "192.0.2.1", 0, "/test",
+	struct dstore *ds = dstore_alloc(201, "192.0.2.1", 0, 0, "/test",
 					 REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(ds);
@@ -441,7 +441,7 @@ END_TEST
  */
 START_TEST(test_tick_nfsv4_no_session_in_backoff)
 {
-	struct dstore *ds = dstore_alloc(202, "192.0.2.2", 0, "/test",
+	struct dstore *ds = dstore_alloc(202, "192.0.2.2", 0, 0, "/test",
 					 REFFS_DS_PROTO_NFSV4, false, false);
 
 	ck_assert_ptr_nonnull(ds);

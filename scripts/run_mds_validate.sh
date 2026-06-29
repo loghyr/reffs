@@ -16,21 +16,24 @@
 #     sudo mount -t nfs -o vers=4.2 <this-host>:/ /mnt/point
 #
 # Usage:
-#   scripts/run_mds_validate.sh [--ds ADDR:/path]... [OPTIONS]
+#   scripts/run_mds_validate.sh [--ds ADDR:/PATH[:NFSPORT[:MOUNTPORT]]]... [OPTIONS]
 #
 # Options:
-#   --ds ADDR:/PATH[:PORT]
-#                     External data server, NFSv3-reachable from here.
-#                     Repeatable.  ADDR is an IPv4 address or hostname;
-#                     PATH is its export path; PORT (optional, trailing,
-#                     all-digits) pins the DS port and bypasses the
-#                     DS-side portmap.
-#                       NOTE: reffs uses PORT for BOTH the MOUNT (mountd)
-#                       and NFS (nfsd) programs, so pin it only for a DS
-#                       that serves both on one port (e.g. a reffs DS).
-#                       Standard knfsd runs mountd and nfsd on separate
-#                       ports -- there, OMIT PORT and let reffs discover
-#                       both via the DS host's portmap (rpcbind).
+#   --ds ADDR:/PATH[:NFSPORT[:MOUNTPORT]]
+#                     External data server (repeatable).  ADDR is an
+#                     IPv4 address or hostname; PATH is its export path.
+#                     NFSPORT (optional) pins the nfsd port; MOUNTPORT
+#                     (optional) pins the mountd port.  Both are trailing
+#                     all-digit fields.  An explicit NFSPORT also marks
+#                     this as a real wire DS, so a link-local or
+#                     same-host address (e.g. a knfsd instance) is
+#                     contacted over NFSv3 rather than served from the
+#                     local combined-mode VFS.
+#                       knfsd runs mountd and nfsd on separate ports:
+#                       set both, e.g. 169.254.0.5:/exp:3049:20048.
+#                       A reffs DS serves both on one port, so NFSPORT
+#                       alone suffices.  Omit both ports to use the DS
+#                       host's portmap (rpcbind) for discovery.
 #                     With no --ds the MDS still boots and is mountable
 #                     but issues no layouts (LAYOUTGET ->
 #                     NFS4ERR_LAYOUTUNAVAILABLE).
@@ -141,27 +144,38 @@ mkdir -p "$DATA_DIR/data" "$DATA_DIR/state"
 	echo "    root_squash = false"
 	echo '    flavors     = ["sys"]'
 	# One [[data_server]] per --ds.  Split ADDR:/PATH on the first
-	# colon (IPv4/hostname has no colon; the path starts with '/').
+	# colon (IPv4/hostname has no colon; the path starts with '/'),
+	# then peel up to two trailing all-digit ports in the order
+	# PATH:NFSPORT:MOUNTPORT (so a path containing a colon is not
+	# misread as a port).
 	id=0
 	for spec in "${DS_SPECS[@]+"${DS_SPECS[@]}"}"; do
 		id=$((id + 1))
 		addr="${spec%%:*}"
 		rest="${spec#*:}"
-		# Optional trailing ":PORT" -- only when it is all digits, so
-		# an export path that contains a colon is not misread as a port.
-		port=""
+		nfsport=""
+		mountport=""
 		if [[ "$rest" == *:* && "${rest##*:}" =~ ^[0-9]+$ ]]; then
-			port="${rest##*:}"
-			path="${rest%:*}"
+			last="${rest##*:}"
+			rest="${rest%:*}"
+			if [[ "$rest" == *:* && "${rest##*:}" =~ ^[0-9]+$ ]]; then
+				mountport="$last"
+				nfsport="${rest##*:}"
+				path="${rest%:*}"
+			else
+				nfsport="$last"
+				path="$rest"
+			fi
 		else
 			path="$rest"
 		fi
 		echo
 		echo "[[data_server]]"
-		echo "id      = $id"
-		echo "address = \"$addr\""
-		echo "path    = \"$path\""
-		[[ -n "$port" ]] && echo "port    = $port"
+		echo "id         = $id"
+		echo "address    = \"$addr\""
+		echo "path       = \"$path\""
+		[[ -n "$nfsport" ]] && echo "port       = $nfsport"
+		[[ -n "$mountport" ]] && echo "mount_port = $mountport"
 	done
 } > "$CONFIG"
 
