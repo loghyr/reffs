@@ -45,6 +45,7 @@ struct dstore {
 	char ds_address[REFFS_CONFIG_MAX_HOST]; /* hostname or IP from config */
 	char ds_ip[INET_ADDRSTRLEN]; /* resolved dotted-decimal IP */
 	uint16_t ds_port; /* explicit port; 0 = portmap default */
+	uint16_t ds_mount_port; /* explicit mountd port; 0 = same as ds_port */
 	char ds_path[REFFS_CONFIG_MAX_PATH];
 
 	/* DS protocol: nfsv3 (flex files) or nfsv4 (file layouts). */
@@ -198,8 +199,9 @@ void dstore_fini(void);
  * at session-setup time and ignore this flag.
  */
 struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
-			    const char *path, enum reffs_ds_protocol protocol,
-			    bool mount, bool tight_coupling);
+			    uint16_t mount_port, const char *path,
+			    enum reffs_ds_protocol protocol, bool mount,
+			    bool tight_coupling);
 
 /*
  * dstore_find -- look up by id.

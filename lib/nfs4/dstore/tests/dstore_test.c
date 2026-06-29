@@ -73,7 +73,7 @@ END_TEST
 
 START_TEST(test_alloc_find)
 {
-	struct dstore *ds = dstore_alloc(42, FAKE_DS_ADDR, 0, FAKE_DS_PATH,
+	struct dstore *ds = dstore_alloc(42, FAKE_DS_ADDR, 0, 0, FAKE_DS_PATH,
 					 REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(ds);
@@ -97,7 +97,7 @@ END_TEST
 
 START_TEST(test_refcount)
 {
-	struct dstore *ds = dstore_alloc(1, FAKE_DS_ADDR, 0, FAKE_DS_PATH,
+	struct dstore *ds = dstore_alloc(1, FAKE_DS_ADDR, 0, 0, FAKE_DS_PATH,
 					 REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(ds);
@@ -128,13 +128,13 @@ END_TEST
 
 START_TEST(test_duplicate_id)
 {
-	struct dstore *ds1 = dstore_alloc(7, FAKE_DS_ADDR, 0, FAKE_DS_PATH,
+	struct dstore *ds1 = dstore_alloc(7, FAKE_DS_ADDR, 0, 0, FAKE_DS_PATH,
 					  REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(ds1);
 
 	/* Same ID should fail. */
-	struct dstore *ds2 = dstore_alloc(7, "192.0.2.2", 0, "/other",
+	struct dstore *ds2 = dstore_alloc(7, "192.0.2.2", 0, 0, "/other",
 					  REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_null(ds2);
@@ -151,7 +151,7 @@ END_TEST
 
 START_TEST(test_unmounted_not_available)
 {
-	struct dstore *ds = dstore_alloc(3, FAKE_DS_ADDR, 0, FAKE_DS_PATH,
+	struct dstore *ds = dstore_alloc(3, FAKE_DS_ADDR, 0, 0, FAKE_DS_PATH,
 					 REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(ds);
@@ -170,9 +170,9 @@ END_TEST
 
 START_TEST(test_unload_all)
 {
-	struct dstore *ds1 = dstore_alloc(10, FAKE_DS_ADDR, 0, FAKE_DS_PATH,
+	struct dstore *ds1 = dstore_alloc(10, FAKE_DS_ADDR, 0, 0, FAKE_DS_PATH,
 					  REFFS_DS_PROTO_NFSV3, false, false);
-	struct dstore *ds2 = dstore_alloc(20, "192.0.2.2", 0, FAKE_DS_PATH,
+	struct dstore *ds2 = dstore_alloc(20, "192.0.2.2", 0, 0, FAKE_DS_PATH,
 					  REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(ds1);
@@ -206,7 +206,7 @@ END_TEST
 
 START_TEST(test_local_vtable_ipv4)
 {
-	struct dstore *ds = dstore_alloc(50, "127.0.0.1", 0, FAKE_DS_PATH,
+	struct dstore *ds = dstore_alloc(50, "127.0.0.1", 0, 0, FAKE_DS_PATH,
 					 REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(ds);
@@ -218,7 +218,7 @@ END_TEST
 
 START_TEST(test_local_vtable_ipv6)
 {
-	struct dstore *ds = dstore_alloc(51, "::1", 0, FAKE_DS_PATH,
+	struct dstore *ds = dstore_alloc(51, "::1", 0, 0, FAKE_DS_PATH,
 					 REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(ds);
@@ -230,7 +230,7 @@ END_TEST
 
 START_TEST(test_local_vtable_localhost)
 {
-	struct dstore *ds = dstore_alloc(52, "localhost", 0, FAKE_DS_PATH,
+	struct dstore *ds = dstore_alloc(52, "localhost", 0, 0, FAKE_DS_PATH,
 					 REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(ds);
@@ -242,8 +242,9 @@ END_TEST
 
 START_TEST(test_remote_vtable)
 {
-	struct dstore *ds = dstore_alloc(53, "192.168.1.100", 0, FAKE_DS_PATH,
-					 REFFS_DS_PROTO_NFSV3, false, false);
+	struct dstore *ds = dstore_alloc(53, "192.168.1.100", 0, 0,
+					 FAKE_DS_PATH, REFFS_DS_PROTO_NFSV3,
+					 false, false);
 
 	ck_assert_ptr_nonnull(ds);
 	ck_assert_ptr_eq(ds->ds_ops, &dstore_ops_nfsv3);
@@ -267,9 +268,9 @@ END_TEST
  */
 START_TEST(test_remote_nfsv3_tight_coupling_opt_in)
 {
-	struct dstore *ds = dstore_alloc(54, "192.168.1.101", 0, FAKE_DS_PATH,
-					 REFFS_DS_PROTO_NFSV3, false,
-					 true /* tight_coupling */);
+	struct dstore *ds = dstore_alloc(54, "192.168.1.101", 0, 0,
+					 FAKE_DS_PATH, REFFS_DS_PROTO_NFSV3,
+					 false, true /* tight_coupling */);
 
 	ck_assert_ptr_nonnull(ds);
 	ck_assert_ptr_eq(ds->ds_ops, &dstore_ops_nfsv3);
@@ -285,13 +286,50 @@ END_TEST
  */
 START_TEST(test_local_always_tight_coupled)
 {
-	struct dstore *ds = dstore_alloc(55, "127.0.0.1", 0, FAKE_DS_PATH,
+	struct dstore *ds = dstore_alloc(55, "127.0.0.1", 0, 0, FAKE_DS_PATH,
 					 REFFS_DS_PROTO_NFSV3, false,
 					 false /* tight_coupling=false */);
 
 	ck_assert_ptr_nonnull(ds);
 	ck_assert_ptr_eq(ds->ds_ops, &dstore_ops_local);
 	ck_assert(ds->ds_tight_coupled);
+	dstore_put(ds);
+}
+END_TEST
+
+/*
+ * An explicit NFS port marks a real wire DS: dstore_alloc must select
+ * the NFSv3 vtable and skip the local-address VFS bypass even for a
+ * loopback/local address (e.g. a knfsd DS reached over a link-local
+ * IP).  mount_port is the separate mountd port.  do_mount=false so no
+ * RPC is attempted -- only the vtable selection is under test.
+ */
+START_TEST(test_explicit_port_forces_remote)
+{
+	struct dstore *ds = dstore_alloc(70, "127.0.0.1", 3049, 20048,
+					 FAKE_DS_PATH, REFFS_DS_PROTO_NFSV3,
+					 false, false);
+
+	ck_assert_ptr_nonnull(ds);
+	ck_assert_ptr_eq(ds->ds_ops, &dstore_ops_nfsv3);
+	ck_assert_uint_eq(ds->ds_port, 3049);
+	ck_assert_uint_eq(ds->ds_mount_port, 20048);
+	dstore_put(ds);
+}
+END_TEST
+
+/*
+ * Force-remote triggers on the NFS port alone (mount_port optional):
+ * a reffs DS that serves MOUNT + NFS on one port sets only `port`.
+ */
+START_TEST(test_explicit_port_alone_forces_remote)
+{
+	struct dstore *ds = dstore_alloc(71, "127.0.0.1", 3049, 0, FAKE_DS_PATH,
+					 REFFS_DS_PROTO_NFSV3, false, false);
+
+	ck_assert_ptr_nonnull(ds);
+	ck_assert_ptr_eq(ds->ds_ops, &dstore_ops_nfsv3);
+	ck_assert_uint_eq(ds->ds_mount_port, 0);
 	dstore_put(ds);
 }
 END_TEST
@@ -321,9 +359,9 @@ static unsigned drain_count_ids(struct dstore **arr, uint32_t n,
 
 START_TEST(test_drain_excludes_from_collect_available)
 {
-	struct dstore *a = dstore_alloc(60, "127.0.0.1", 0, FAKE_DS_PATH,
+	struct dstore *a = dstore_alloc(60, "127.0.0.1", 0, 0, FAKE_DS_PATH,
 					REFFS_DS_PROTO_NFSV3, false, false);
-	struct dstore *b = dstore_alloc(61, "127.0.0.1", 0, FAKE_DS_PATH,
+	struct dstore *b = dstore_alloc(61, "127.0.0.1", 0, 0, FAKE_DS_PATH,
 					REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(a);
@@ -353,7 +391,7 @@ END_TEST
 
 START_TEST(test_undrain_restores)
 {
-	struct dstore *ds = dstore_alloc(62, "127.0.0.1", 0, FAKE_DS_PATH,
+	struct dstore *ds = dstore_alloc(62, "127.0.0.1", 0, 0, FAKE_DS_PATH,
 					 REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(ds);
@@ -377,9 +415,9 @@ END_TEST
 
 START_TEST(test_drained_still_in_collect_all)
 {
-	struct dstore *a = dstore_alloc(63, "127.0.0.1", 0, FAKE_DS_PATH,
+	struct dstore *a = dstore_alloc(63, "127.0.0.1", 0, 0, FAKE_DS_PATH,
 					REFFS_DS_PROTO_NFSV3, false, false);
-	struct dstore *b = dstore_alloc(64, "127.0.0.1", 0, FAKE_DS_PATH,
+	struct dstore *b = dstore_alloc(64, "127.0.0.1", 0, 0, FAKE_DS_PATH,
 					REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(a);
@@ -401,7 +439,7 @@ END_TEST
 
 START_TEST(test_drain_idempotent)
 {
-	struct dstore *ds = dstore_alloc(65, "127.0.0.1", 0, FAKE_DS_PATH,
+	struct dstore *ds = dstore_alloc(65, "127.0.0.1", 0, 0, FAKE_DS_PATH,
 					 REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(ds);
@@ -419,7 +457,7 @@ END_TEST
 
 START_TEST(test_drain_does_not_affect_is_connected)
 {
-	struct dstore *ds = dstore_alloc(66, "127.0.0.1", 0, FAKE_DS_PATH,
+	struct dstore *ds = dstore_alloc(66, "127.0.0.1", 0, 0, FAKE_DS_PATH,
 					 REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(ds);
@@ -596,7 +634,7 @@ END_TEST
 
 START_TEST(test_dstore_instance_count_field_present)
 {
-	struct dstore *ds = dstore_alloc(700, "127.0.0.1", 0, FAKE_DS_PATH,
+	struct dstore *ds = dstore_alloc(700, "127.0.0.1", 0, 0, FAKE_DS_PATH,
 					 REFFS_DS_PROTO_NFSV3, false, false);
 
 	ck_assert_ptr_nonnull(ds);
@@ -641,6 +679,8 @@ Suite *dstore_suite(void)
 	tcase_add_test(tc_vtable, test_remote_vtable);
 	tcase_add_test(tc_vtable, test_remote_nfsv3_tight_coupling_opt_in);
 	tcase_add_test(tc_vtable, test_local_always_tight_coupled);
+	tcase_add_test(tc_vtable, test_explicit_port_forces_remote);
+	tcase_add_test(tc_vtable, test_explicit_port_alone_forces_remote);
 	suite_add_tcase(s, tc_vtable);
 
 	TCase *tc_drain = tcase_create("drain");
