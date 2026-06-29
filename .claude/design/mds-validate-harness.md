@@ -42,10 +42,16 @@ Bare-metal (no Docker), passing reachable DSes on the command line:
 
 ```
 scripts/run_mds_validate.sh --ds 192.168.2.105:/ds1 --ds 192.168.2.106:/ds2
+# Optional trailing :PORT pins the DS port (used for BOTH mountd and
+# nfsd) -- only for a DS that serves both on one port, e.g. a reffs DS:
+scripts/run_mds_validate.sh --ds 10.0.0.9:/ds1:3049
 # --dry-run prints the generated config without building or launching.
 # With no --ds the MDS still boots and is mountable but issues no
 # layouts.  The script never mounts -- do that from the client.
 ```
+
+See "Pointing at a data server on the MDS host" below for the local-DS
+(knfsd) caveats.
 
 Knobs:
 - `SAN` -- sanitizer flags for the sandbox build (default
@@ -112,6 +118,51 @@ in `mount_get_root_fh` black-holes on a non-routable DS for ~2 min.)
 `scripts/run_mds_validate.sh` sidesteps this by generating the config
 only from the reachable DSes passed via `--ds` (or none at all), so it
 never boots against the committed placeholder addresses.
+
+### Pointing at a data server on the MDS host (knfsd / local-DS gotchas)
+
+Two reffs behaviors bite when the DS lives on the same host as the MDS:
+
+1. **Local address -> VFS vtable, not NFSv3.**  `dstore_alloc`
+   (`lib/nfs4/dstore/dstore.c` ~492) routes `127.0.0.1`, `::1`,
+   `localhost`, and any address string that matches one of the host's
+   own interface IPs (`dstore_address_is_local`) to the *local VFS*
+   vtable -- combined mode, expecting a DS super_block (sb_id=2) that a
+   pure `role = "mds"` server does not have.  It never does an NFSv3
+   connect.  So a same-host knfsd reached by `localhost` or by the
+   host's numeric IP is silently not contacted over the wire.
+   Escape hatch: use a hostname/alias that resolves to the host but is
+   not the literal `localhost` and not a numeric local IP (the check is
+   a string compare against numeric interface addresses).  e.g. add
+   `127.0.0.1 reffs-ds` to /etc/hosts and use `--ds reffs-ds:/export`.
+
+2. **One port for both MOUNT and NFS.**  When a `[[data_server]]` sets
+   `port`, reffs uses it for *both* the MOUNT (mountd) and NFS (nfsd)
+   programs (`mount_get_root_fh`, ~230 and ~316).  A reffs DS serves
+   both on one port, so pinning works.  Standard knfsd runs mountd and
+   nfsd on *separate* ports, so pinning the nfsd port makes the MOUNT
+   call hit nfsd and fail.  For knfsd, omit the port and let reffs
+   discover both via the DS host's portmap (rpcbind, which knfsd needs
+   anyway).
+
+Working recipes:
+
+- **Local knfsd DS (NFSv3):** run knfsd with nfsd on a non-2049 port
+  (e.g. 3049) so it does not collide with the MDS, keep rpcbind
+  running, and point reffs at a non-local-matching hostname with NO
+  pinned port:
+  `scripts/run_mds_validate.sh --ds reffs-ds:/export`
+- **reffs DS on a custom port, no rpcbind:** a `role = "ds"` reffs
+  server serves MOUNT+NFS on one port, so pin it:
+  `scripts/run_mds_validate.sh --ds 10.0.0.9:/ds1:3049`
+- **Cleanest / most representative:** run the DS on a separate host or
+  network namespace -- then every address is non-local and both portmap
+  and pinned-port modes work without the local-vtable caveat.
+
+Possible reffs core follow-ups (not done): a per-`[[data_server]]`
+`force_remote`/protocol override to bypass the local-address heuristic,
+and a separate mountd-port field so a single knfsd can be pinned
+without rpcbind.
 
 ## Deferred / not in scope
 

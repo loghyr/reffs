@@ -19,11 +19,21 @@
 #   scripts/run_mds_validate.sh [--ds ADDR:/path]... [OPTIONS]
 #
 # Options:
-#   --ds ADDR:/PATH   External data server, NFSv3-reachable from here.
+#   --ds ADDR:/PATH[:PORT]
+#                     External data server, NFSv3-reachable from here.
 #                     Repeatable.  ADDR is an IPv4 address or hostname;
-#                     PATH is its export path.  With no --ds the MDS
-#                     still boots and is mountable but issues no layouts
-#                     (every LAYOUTGET returns NFS4ERR_LAYOUTUNAVAILABLE).
+#                     PATH is its export path; PORT (optional, trailing,
+#                     all-digits) pins the DS port and bypasses the
+#                     DS-side portmap.
+#                       NOTE: reffs uses PORT for BOTH the MOUNT (mountd)
+#                       and NFS (nfsd) programs, so pin it only for a DS
+#                       that serves both on one port (e.g. a reffs DS).
+#                       Standard knfsd runs mountd and nfsd on separate
+#                       ports -- there, OMIT PORT and let reffs discover
+#                       both via the DS host's portmap (rpcbind).
+#                     With no --ds the MDS still boots and is mountable
+#                     but issues no layouts (LAYOUTGET ->
+#                     NFS4ERR_LAYOUTUNAVAILABLE).
 #   --layout TYPES    Comma-separated layout types when --ds is given
 #                     (default: ffv1).  ffv1 works with any NFSv3 DS;
 #                     ffv2 needs reffs DSes that speak the CHUNK ops.
@@ -136,12 +146,22 @@ mkdir -p "$DATA_DIR/data" "$DATA_DIR/state"
 	for spec in "${DS_SPECS[@]+"${DS_SPECS[@]}"}"; do
 		id=$((id + 1))
 		addr="${spec%%:*}"
-		path="${spec#*:}"
+		rest="${spec#*:}"
+		# Optional trailing ":PORT" -- only when it is all digits, so
+		# an export path that contains a colon is not misread as a port.
+		port=""
+		if [[ "$rest" == *:* && "${rest##*:}" =~ ^[0-9]+$ ]]; then
+			port="${rest##*:}"
+			path="${rest%:*}"
+		else
+			path="$rest"
+		fi
 		echo
 		echo "[[data_server]]"
 		echo "id      = $id"
 		echo "address = \"$addr\""
 		echo "path    = \"$path\""
+		[[ -n "$port" ]] && echo "port    = $port"
 	done
 } > "$CONFIG"
 
