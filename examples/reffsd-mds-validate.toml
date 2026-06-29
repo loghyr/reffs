@@ -66,8 +66,15 @@ dstores      = [1, 2]
 # EDIT: external data servers (operator-provided).
 #
 # Each DS must be reachable over NFSv3 from this host.  Set `port` to
-# the DS's NFS port to skip the DS-side portmap (rpcbind) lookup at
-# 111; omit it to let the MDS discover the port via portmap.
+# pin the DS port and skip the DS-side portmap (rpcbind) lookup at 111;
+# omit it to let the MDS discover the port via portmap.  NOTE: `port`
+# is used for BOTH the MOUNT (mountd) and NFS (nfsd) programs, so pin
+# it only for a DS that serves both on one port (e.g. a reffs DS).
+# Standard knfsd uses separate mountd/nfsd ports -- omit `port` there
+# and rely on the DS's portmap.  Also: a DS whose address is this
+# host's own IP (or 127.0.0.1/localhost) is treated as a local VFS
+# dstore, not contacted over NFSv3 -- use a non-local hostname for a
+# same-host knfsd.
 # ---------------------------------------------------------------------
 [[data_server]]
 id      = 1
