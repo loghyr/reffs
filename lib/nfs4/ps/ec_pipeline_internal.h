@@ -10,7 +10,7 @@
  * Whitebox surface for ec_pipeline.c.  Tests include this header
  * to drive the per-mirror CHUNK dispatch (ec_chunk_write /
  * ec_chunk_read) directly without standing up a full LAYOUTGET +
- * codec stack.  The Phase 5 short-circuit dispatch hook lives at
+ * encoding stack.  The Phase 5 short-circuit dispatch hook lives at
  * the very top of those functions; the partial-2-mirrors test
  * needs to exercise the hook with synthetic per-mirror em_local
  * flags, so the test allocates a struct ec_context on the stack
@@ -68,7 +68,7 @@ struct ec_context {
 	 * destroyed exactly once by ec_disconnect_all.
 	 */
 	struct mds_session **ctx_ds_sess;
-	struct ec_codec *ctx_codec;
+	struct ec_encoding *ctx_encoding;
 	uint32_t ctx_k;
 	uint32_t ctx_m;
 	struct ps_listener_state *ctx_pls;

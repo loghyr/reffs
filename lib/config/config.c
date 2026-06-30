@@ -441,38 +441,38 @@ static void parse_one_client_rule(struct reffs_client_rule_config *rule,
  * Invariants enforced:
  *   - K in [1, LAYOUT_SEG_MAX_FILES]
  *   - K + M <= LAYOUT_SEG_MAX_FILES
- *   - M == 0 IFF codec == PASSTHROUGH
+ *   - M == 0 IFF encoding == PASSTHROUGH
  *
- * Mirror codec (REFFS_CODEC_MIRRORED) is intentionally not parsed
+ * Mirror encoding (REFFS_ENCODING_MIRRORED) is intentionally not parsed
  * here; the TOML surface listed in
  * .claude/design/per-export-default-coding.md "Coding spec
- * format" enumerates four codecs.  If mirror is ever needed as a
- * default codec, add it as a separate slice.
+ * format" enumerates four encodings.  If mirror is ever needed as a
+ * default encoding, add it as a separate slice.
  */
 static int parse_coding_spec(const char *s, struct reffs_coding_spec *out)
 {
 	static const struct {
 		const char *name;
-		enum reffs_codec_type type;
-	} codec_names[] = {
-		{ "passthrough", REFFS_CODEC_PASSTHROUGH },
-		{ "rs", REFFS_CODEC_RS_VANDERMONDE },
-		{ "mojette-sys", REFFS_CODEC_MOJETTE_SYSTEMATIC },
-		{ "mojette-nonsys", REFFS_CODEC_MOJETTE_NON_SYSTEMATIC },
+		enum reffs_encoding_type type;
+	} encoding_names[] = {
+		{ "passthrough", REFFS_ENCODING_PASSTHROUGH },
+		{ "rs", REFFS_ENCODING_RS_VANDERMONDE },
+		{ "mojette-sys", REFFS_ENCODING_MOJETTE_SYSTEMATIC },
+		{ "mojette-nonsys", REFFS_ENCODING_MOJETTE_NON_SYSTEMATIC },
 	};
-	char codec_name[32];
+	char encoding_name[32];
 	unsigned int k = 0;
 	unsigned int m = 0;
 	int n;
 
-	/* Try the full "<codec>:K+M" form first. */
-	n = sscanf(s, "%31[^:]:%u+%u", codec_name, &k, &m);
+	/* Try the full "<encoding>:K+M" form first. */
+	n = sscanf(s, "%31[^:]:%u+%u", encoding_name, &k, &m);
 	if (n == 1) {
-		/* No colon, just a codec name -- only "passthrough" is
+		/* No colon, just a encoding name -- only "passthrough" is
 		 * valid in that form (the others all require K+M). */
-		if (strcmp(codec_name, "passthrough") != 0)
+		if (strcmp(encoding_name, "passthrough") != 0)
 			return -1;
-		out->cs_codec_type = REFFS_CODEC_PASSTHROUGH;
+		out->cs_encoding_type = REFFS_ENCODING_PASSTHROUGH;
 		out->cs_k = 0;
 		out->cs_m = 0;
 		return 0;
@@ -485,23 +485,23 @@ static int parse_coding_spec(const char *s, struct reffs_coding_spec *out)
 	if (m > LAYOUT_SEG_MAX_FILES - k)
 		return -1;
 
-	for (size_t i = 0; i < sizeof(codec_names) / sizeof(codec_names[0]);
-	     i++) {
-		if (strcmp(codec_name, codec_names[i].name) == 0) {
-			enum reffs_codec_type t = codec_names[i].type;
+	for (size_t i = 0;
+	     i < sizeof(encoding_names) / sizeof(encoding_names[0]); i++) {
+		if (strcmp(encoding_name, encoding_names[i].name) == 0) {
+			enum reffs_encoding_type t = encoding_names[i].type;
 
 			/* m == 0 IFF PASSTHROUGH */
-			if (t == REFFS_CODEC_PASSTHROUGH && m != 0)
+			if (t == REFFS_ENCODING_PASSTHROUGH && m != 0)
 				return -1;
-			if (t != REFFS_CODEC_PASSTHROUGH && m == 0)
+			if (t != REFFS_ENCODING_PASSTHROUGH && m == 0)
 				return -1;
-			out->cs_codec_type = t;
+			out->cs_encoding_type = t;
 			out->cs_k = (uint16_t)k;
 			out->cs_m = (uint16_t)m;
 			return 0;
 		}
 	}
-	return -1; /* unknown codec name */
+	return -1; /* unknown encoding name */
 }
 
 /* Parse one [[export]] table entry. */
@@ -561,7 +561,7 @@ static void parse_one_export(struct reffs_export_config *exp, toml_table_t *tbl)
 
 	/*
 	 * default_coding = "rs:4+2" (or "passthrough", etc.)
-	 * Per-export default codec for LAYOUTGET layout segments.
+	 * Per-export default encoding for LAYOUTGET layout segments.
 	 * Invalid value -> TRACE and leave default_coding zero
 	 * (LAYOUTGET falls back to PASSTHROUGH with k = ss_layout_width).
 	 */

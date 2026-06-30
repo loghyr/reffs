@@ -131,7 +131,7 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		 * its prior CHUNK_READ.  Server rejects with NFS4ERR_DELAY
 		 * if the current block has a different {cg_gen_id,
 		 * cg_client_id}; mapped below to -EAGAIN for the RMW retry
-		 * path (see ec_write_codec_range).
+		 * path (see ec_write_encoding_range).
 		 */
 		cwa->cwa_guard.cwg_check = TRUE;
 		cwa->cwa_guard.write_chunk_guard4_u.cwg_guard = *guard;
@@ -183,7 +183,7 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	 * CHUNK_WRITE failing with NFS4ERR_BAD_STATEID -- the trust-
 	 * stateid revocation signal -- map to -ESTALE so the inner
 	 * retry in ec_chunk_write and the outer retry in
-	 * ec_write_codec (slice 1.6) can recognise it.  Without this
+	 * ec_write_encoding (slice 1.6) can recognise it.  Without this
 	 * remap the BAD_STATEID surfaces as -EREMOTEIO, the per-op
 	 * status check below is unreachable, and the retry path is
 	 * effectively dead for the only error mode it was designed
@@ -275,7 +275,7 @@ out:
  *
  * Returns 0 on success, -ESTALE for NFS4ERR_BAD_STATEID, -EAGAIN
  * for NFS4ERR_DELAY, or -EIO for other status.  Mirrors
- * ds_chunk_write's mapping so the ec_repair_codec retry loop can
+ * ds_chunk_write's mapping so the ec_repair_encoding retry loop can
  * reuse the same backoff logic.
  */
 int ds_chunk_write_repair(struct mds_session *ds, const uint8_t *fh,

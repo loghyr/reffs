@@ -344,7 +344,7 @@ END_TEST
  * 1 remote.  Drive both mirrors in a single test; assert the
  * counter advances by exactly 1 (the local one) and that both
  * arms fired (1 stub call + 1 RPC call).  The order here mirrors
- * what the higher-level codec walk in ec_pipeline.c would do --
+ * what the higher-level encoding walk in ec_pipeline.c would do --
  * each per-mirror call is an independent dispatch decision.
  */
 START_TEST(test_dispatch_two_mirrors_partial_shortcircuit)
@@ -478,7 +478,7 @@ START_TEST(test_dispatch_read_path_mirrors_write)
 	/*
 	 * recording_sc_read sets *nread = buf_len on success; mirror
 	 * the production helper's behaviour so the higher-level
-	 * codec walk sees the right number of bytes.
+	 * encoding walk sees the right number of bytes.
 	 */
 	ck_assert_uint_eq(nread0, TEST_CHUNK_SZ);
 }

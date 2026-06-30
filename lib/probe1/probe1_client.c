@@ -1367,7 +1367,7 @@ struct rpc_trans *probe1_client_op_sb_set_stripe_unit(uint64_t id,
 }
 
 struct rpc_trans *probe1_client_op_sb_set_default_coding(uint64_t id,
-							 uint32_t codec_type,
+							 uint32_t encoding_type,
 							 uint32_t k, uint32_t m)
 {
 	int ret;
@@ -1388,7 +1388,7 @@ struct rpc_trans *probe1_client_op_sb_set_default_coding(uint64_t id,
 	SB_SET_DEFAULT_CODING1args *args = ph->ph_args;
 
 	args->scda_id = id;
-	args->scda_coding.pcs_codec_type = codec_type;
+	args->scda_coding.pcs_encoding_type = encoding_type;
 	args->scda_coding.pcs_k = k;
 	args->scda_coding.pcs_m = m;
 
@@ -1404,9 +1404,9 @@ struct rpc_trans *probe1_client_op_sb_set_default_coding(uint64_t id,
  * Receive-side handler for SB_GET_DEFAULT_CODING.  Logs the
  * triple in the same format the TOML parser accepts on input
  * ("rs:4+2", "passthrough", etc.) so admins can copy the
- * output straight back into a config file.  Unknown codec
+ * output straight back into a config file.  Unknown encoding
  * values print as a raw integer to surface drift between the
- * REFFS_CODEC_* enum and the FFV2_ENCODING_* wire constants.
+ * REFFS_ENCODING_* enum and the FFV2_ENCODING_* wire constants.
  */
 static int sb_get_default_coding_cb(struct rpc_trans *rt)
 {
@@ -1421,23 +1421,23 @@ static int sb_get_default_coding_cb(struct rpc_trans *rt)
 
 	SB_GET_DEFAULT_CODING1resok *resok =
 		&res->SB_GET_DEFAULT_CODING1res_u.sgda_resok;
-	uint32_t codec = resok->sgda_coding.pcs_codec_type;
+	uint32_t encoding = resok->sgda_coding.pcs_encoding_type;
 	uint32_t k = resok->sgda_coding.pcs_k;
 	uint32_t m = resok->sgda_coding.pcs_m;
 
-	if (codec == 0 && k == 0 && m == 0) {
+	if (encoding == 0 && k == 0 && m == 0) {
 		LOG("default_coding = <unset>");
-	} else if (codec == REFFS_CODEC_PASSTHROUGH) {
+	} else if (encoding == REFFS_ENCODING_PASSTHROUGH) {
 		LOG("default_coding = passthrough");
-	} else if (codec == REFFS_CODEC_RS_VANDERMONDE) {
+	} else if (encoding == REFFS_ENCODING_RS_VANDERMONDE) {
 		LOG("default_coding = rs:%u+%u", k, m);
-	} else if (codec == REFFS_CODEC_MOJETTE_SYSTEMATIC) {
+	} else if (encoding == REFFS_ENCODING_MOJETTE_SYSTEMATIC) {
 		LOG("default_coding = mojette-sys:%u+%u", k, m);
-	} else if (codec == REFFS_CODEC_MOJETTE_NON_SYSTEMATIC) {
+	} else if (encoding == REFFS_ENCODING_MOJETTE_NON_SYSTEMATIC) {
 		LOG("default_coding = mojette-nonsys:%u+%u", k, m);
 	} else {
-		LOG("default_coding = codec=%u k=%u m=%u (unknown)", codec, k,
-		    m);
+		LOG("default_coding = encoding=%u k=%u m=%u (unknown)",
+		    encoding, k, m);
 	}
 
 	io_handler_stop();

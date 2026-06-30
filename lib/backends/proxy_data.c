@@ -74,7 +74,7 @@ ssize_t proxy_data_db_read(struct data_block *db __attribute__((unused)),
 {
 	/*
 	 * Phase 3 routes proxy READ through ps_proxy_pipeline_read()
-	 * (op-handler shim), which calls ec_read_codec directly with
+	 * (op-handler shim), which calls ec_read_encoding directly with
 	 * the proxy SB's session and the file's upstream FH -- that
 	 * path bypasses data_block_read entirely.  This stub returns
 	 * -ENOSYS so any caller that DOES reach data_block_read on a

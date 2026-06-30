@@ -6,7 +6,7 @@
 #endif
 
 /*
- * Unit tests for Reed-Solomon erasure codec.
+ * Unit tests for Reed-Solomon erasure encoding.
  */
 
 #include <check.h>
@@ -27,12 +27,12 @@ static void fill_pattern(uint8_t *buf, size_t len, int shard_idx)
 
 START_TEST(test_init_valid)
 {
-	struct ec_codec *c = ec_rs_create(4, 2);
+	struct ec_encoding *c = ec_rs_create(4, 2);
 
 	ck_assert_ptr_nonnull(c);
 	ck_assert_int_eq(c->ec_k, 4);
 	ck_assert_int_eq(c->ec_m, 2);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
@@ -47,7 +47,7 @@ END_TEST
 START_TEST(test_encode_decode_no_loss)
 {
 	int k = 4, m = 2;
-	struct ec_codec *c = ec_rs_create(k, m);
+	struct ec_encoding *c = ec_rs_create(k, m);
 
 	ck_assert_ptr_nonnull(c);
 
@@ -86,14 +86,14 @@ START_TEST(test_encode_decode_no_loss)
 	}
 	for (int i = 0; i < m; i++)
 		free(parity[i]);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_one_data_loss)
 {
 	int k = 4, m = 2;
-	struct ec_codec *c = ec_rs_create(k, m);
+	struct ec_encoding *c = ec_rs_create(k, m);
 
 	ck_assert_ptr_nonnull(c);
 
@@ -130,14 +130,14 @@ START_TEST(test_one_data_loss)
 	}
 	for (int i = 0; i < m; i++)
 		free(parity[i]);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_one_parity_loss)
 {
 	int k = 4, m = 2;
-	struct ec_codec *c = ec_rs_create(k, m);
+	struct ec_encoding *c = ec_rs_create(k, m);
 
 	ck_assert_ptr_nonnull(c);
 
@@ -176,14 +176,14 @@ START_TEST(test_one_parity_loss)
 		free(parity[i]);
 		free(orig_parity[i]);
 	}
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_mixed_loss)
 {
 	int k = 4, m = 2;
-	struct ec_codec *c = ec_rs_create(k, m);
+	struct ec_encoding *c = ec_rs_create(k, m);
 
 	ck_assert_ptr_nonnull(c);
 
@@ -228,14 +228,14 @@ START_TEST(test_mixed_loss)
 		free(parity[i]);
 		free(orig_parity[i]);
 	}
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_too_many_losses)
 {
 	int k = 4, m = 2;
-	struct ec_codec *c = ec_rs_create(k, m);
+	struct ec_encoding *c = ec_rs_create(k, m);
 
 	ck_assert_ptr_nonnull(c);
 
@@ -251,14 +251,14 @@ START_TEST(test_too_many_losses)
 
 	for (int i = 0; i < 6; i++)
 		free(shards[i]);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 START_TEST(test_small_shard)
 {
 	int k = 3, m = 1;
-	struct ec_codec *c = ec_rs_create(k, m);
+	struct ec_encoding *c = ec_rs_create(k, m);
 
 	ck_assert_ptr_nonnull(c);
 
@@ -287,7 +287,7 @@ START_TEST(test_small_shard)
 		free(orig[i]);
 	}
 	free(parity[0]);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
@@ -295,7 +295,7 @@ START_TEST(test_large_k)
 {
 	int k = 16, m = 4;
 	int n = k + m;
-	struct ec_codec *c = ec_rs_create(k, m);
+	struct ec_encoding *c = ec_rs_create(k, m);
 	size_t len = 1024;
 
 	ck_assert_ptr_nonnull(c);
@@ -345,13 +345,13 @@ START_TEST(test_large_k)
 	}
 	for (int i = 0; i < m; i++)
 		free(parity[i]);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 Suite *rs_suite(void)
 {
-	Suite *s = suite_create("Reed-Solomon Codec");
+	Suite *s = suite_create("Reed-Solomon Encoding");
 
 	TCase *tc = tcase_create("rs");
 	tcase_add_test(tc, test_init_valid);

@@ -576,28 +576,29 @@ out_v1:
 }
 
 /*
- * REFFS_CODEC_* values are designed to match FFV2_ENCODING_* on
+ * REFFS_ENCODING_* values are designed to match FFV2_ENCODING_* on
  * the wire so the sb->layout translation is the identity cast.
  * Pin the alignment here -- this is the one place that includes
  * both nfsv42_xdr.h and reffs/coding_spec.h, so a future XDR
  * change to FFV2_ENCODING_* gets caught at compile time.
  * Plan-review N2 of .claude/design/per-export-default-coding.md.
  */
-_Static_assert((int)REFFS_CODEC_PASSTHROUGH == (int)FFV2_ENCODING_PASSTHROUGH,
-	       "REFFS_CODEC_PASSTHROUGH must match FFV2_ENCODING_PASSTHROUGH");
 _Static_assert(
-	(int)REFFS_CODEC_MOJETTE_SYSTEMATIC ==
+	(int)REFFS_ENCODING_PASSTHROUGH == (int)FFV2_ENCODING_PASSTHROUGH,
+	"REFFS_ENCODING_PASSTHROUGH must match FFV2_ENCODING_PASSTHROUGH");
+_Static_assert(
+	(int)REFFS_ENCODING_MOJETTE_SYSTEMATIC ==
 		(int)FFV2_ENCODING_MOJETTE_SYSTEMATIC,
-	"REFFS_CODEC_MOJETTE_SYSTEMATIC must match FFV2_ENCODING_MOJETTE_SYSTEMATIC");
+	"REFFS_ENCODING_MOJETTE_SYSTEMATIC must match FFV2_ENCODING_MOJETTE_SYSTEMATIC");
 _Static_assert(
-	(int)REFFS_CODEC_MOJETTE_NON_SYSTEMATIC ==
+	(int)REFFS_ENCODING_MOJETTE_NON_SYSTEMATIC ==
 		(int)FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC,
-	"REFFS_CODEC_MOJETTE_NON_SYSTEMATIC must match FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC");
+	"REFFS_ENCODING_MOJETTE_NON_SYSTEMATIC must match FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC");
 _Static_assert(
-	(int)REFFS_CODEC_RS_VANDERMONDE == (int)FFV2_ENCODING_RS_VANDERMONDE,
-	"REFFS_CODEC_RS_VANDERMONDE must match FFV2_ENCODING_RS_VANDERMONDE");
-_Static_assert((int)REFFS_CODEC_MIRRORED == (int)FFV2_ENCODING_MIRRORED,
-	       "REFFS_CODEC_MIRRORED must match FFV2_ENCODING_MIRRORED");
+	(int)REFFS_ENCODING_RS_VANDERMONDE == (int)FFV2_ENCODING_RS_VANDERMONDE,
+	"REFFS_ENCODING_RS_VANDERMONDE must match FFV2_ENCODING_RS_VANDERMONDE");
+_Static_assert((int)REFFS_ENCODING_MIRRORED == (int)FFV2_ENCODING_MIRRORED,
+	       "REFFS_ENCODING_MIRRORED must match FFV2_ENCODING_MIRRORED");
 
 /*
  * Resolve the target layout width from the sb's default_coding,
@@ -606,7 +607,7 @@ _Static_assert((int)REFFS_CODEC_MIRRORED == (int)FFV2_ENCODING_MIRRORED,
  *
  *   - File layouts: one FH per DS (no mirroring), target = nds.
  *   - Flex files with explicit default_coding: target = k + m
- *     -- the configured codec geometry dictates how many DSes
+ *     -- the configured encoding geometry dictates how many DSes
  *     the layout needs (plan-review B2).
  *   - Flex files with unset default_coding: legacy behaviour --
  *     target = ss_layout_width (server-wide knob), falling back
@@ -636,7 +637,7 @@ uint32_t default_coding_resolve_target(const struct reffs_coding_spec *coding,
  *     NFS4ERR_LAYOUTUNAVAILABLE rather than silently emitting a
  *     degraded geometry.
  *   - Unset default_coding: legacy behaviour -- ls_k = nfiles,
- *     ls_m = 0, codec = PASSTHROUGH (driven from the ls_m == 0
+ *     ls_m = 0, encoding = PASSTHROUGH (driven from the ls_m == 0
  *     branch of the original layoutget_build_v2 dispatch).
  *
  * Pure function -- no globals, no I/O.  Unit-tested in
@@ -644,9 +645,9 @@ uint32_t default_coding_resolve_target(const struct reffs_coding_spec *coding,
  */
 int default_coding_resolve_segment(const struct reffs_coding_spec *coding,
 				   uint32_t nfiles, uint16_t *out_k,
-				   uint16_t *out_m, uint32_t *out_codec_type)
+				   uint16_t *out_m, uint32_t *out_encoding_type)
 {
-	if (!out_k || !out_m || !out_codec_type)
+	if (!out_k || !out_m || !out_encoding_type)
 		return -EINVAL;
 
 	/*
@@ -654,7 +655,7 @@ int default_coding_resolve_segment(const struct reffs_coding_spec *coding,
 	 * trap fires only for m > 0 specs.  PASSTHROUGH (m == 0)
 	 * means "ship the bytes plain across nfiles DSes" -- the
 	 * runway count IS the ls_k, exactly like the unset path.
-	 * The setter invariant ties (m == 0) to (codec ==
+	 * The setter invariant ties (m == 0) to (encoding ==
 	 * PASSTHROUGH), so this single branch covers both the
 	 * "unset" and "explicit passthrough" cases without an
 	 * extra is_unset() probe.
@@ -667,17 +668,17 @@ int default_coding_resolve_segment(const struct reffs_coding_spec *coding,
 			return -EAGAIN;
 		*out_k = coding->cs_k;
 		*out_m = coding->cs_m;
-		*out_codec_type = (uint32_t)coding->cs_codec_type;
+		*out_encoding_type = (uint32_t)coding->cs_encoding_type;
 		return 0;
 	}
 
 	/* Legacy / explicit-PASSTHROUGH path: ls_k = nfiles, ls_m = 0,
-	 * codec = PASSTHROUGH. */
+	 * encoding = PASSTHROUGH. */
 	if (nfiles > UINT16_MAX)
 		nfiles = UINT16_MAX;
 	*out_k = (uint16_t)nfiles;
 	*out_m = 0;
-	*out_codec_type = (uint32_t)REFFS_CODEC_PASSTHROUGH;
+	*out_encoding_type = (uint32_t)REFFS_ENCODING_PASSTHROUGH;
 	return 0;
 }
 
@@ -1374,17 +1375,17 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		 * Resolve ls_k / ls_m / ffm_coding_type from the sb's
 		 * default_coding and the runway-popped nfiles (step 5
 		 * plan-review B2 fix): when default_coding is set, the
-		 * codec geometry comes from config, not from nfiles;
+		 * encoding geometry comes from config, not from nfiles;
 		 * if nfiles is short of k+m, we surface
 		 * NFS4ERR_LAYOUTUNAVAILABLE rather than silently
 		 * shipping a degraded layout.
 		 */
 		uint16_t seg_k = 0;
 		uint16_t seg_m = 0;
-		uint32_t seg_codec = (uint32_t)REFFS_CODEC_PASSTHROUGH;
+		uint32_t seg_encoding = (uint32_t)REFFS_ENCODING_PASSTHROUGH;
 		int code_rc = default_coding_resolve_segment(
 			&layout_sb->sb_default_coding, nfiles, &seg_k, &seg_m,
-			&seg_codec);
+			&seg_encoding);
 
 		if (code_rc == -EAGAIN) {
 			/*
@@ -1572,7 +1573,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		if (build_sb &&
 		    !reffs_coding_spec_is_unset(&build_sb->sb_default_coding)) {
 			coding_type = (uint32_t)build_sb->sb_default_coding
-					      .cs_codec_type;
+					      .cs_encoding_type;
 		} else if (build_seg->ls_m == 0) {
 			coding_type = (uint32_t)FFV2_ENCODING_PASSTHROUGH;
 		} else {

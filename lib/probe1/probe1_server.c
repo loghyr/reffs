@@ -904,8 +904,8 @@ static void fill_sb_info(probe_sb_info1 *psi, const struct super_block *sb)
 	/* Per-export default erasure-coding spec.  Unset (all zero)
 	 * is the legacy fallback sentinel; see
 	 * .claude/design/per-export-default-coding.md step 5. */
-	psi->psi_default_coding.pcs_codec_type =
-		(unsigned int)sb->sb_default_coding.cs_codec_type;
+	psi->psi_default_coding.pcs_encoding_type =
+		(unsigned int)sb->sb_default_coding.cs_encoding_type;
 	psi->psi_default_coding.pcs_k =
 		(unsigned int)sb->sb_default_coding.cs_k;
 	psi->psi_default_coding.pcs_m =
@@ -2187,7 +2187,7 @@ static int probe1_op_sb_set_checksum_algorithm(struct rpc_trans *rt)
  * .claude/design/per-export-default-coding.md step 7.
  *
  * Stamps the spec on super_block::sb_default_coding via the
- * existing setter, which validates: codec_type known, k in
+ * existing setter, which validates: encoding_type known, k in
  * [1, LAYOUT_SEG_MAX_FILES], k+m <= LAYOUT_SEG_MAX_FILES,
  * PASSTHROUGH iff m == 0.  The "all-zero spec clears policy"
  * shortcut is also handled by the setter.
@@ -2215,8 +2215,8 @@ static int probe1_op_sb_set_default_coding(struct rpc_trans *rt)
 	}
 
 	struct reffs_coding_spec spec = {
-		.cs_codec_type =
-			(enum reffs_codec_type)args->scda_coding.pcs_codec_type,
+		.cs_encoding_type = (enum reffs_encoding_type)
+					    args->scda_coding.pcs_encoding_type,
 		.cs_k = (uint16_t)args->scda_coding.pcs_k,
 		.cs_m = (uint16_t)args->scda_coding.pcs_m,
 	};
@@ -2231,7 +2231,8 @@ static int probe1_op_sb_set_default_coding(struct rpc_trans *rt)
 	 */
 	if ((sb->sb_layout_types & SB_LAYOUT_FILE) &&
 	    !reffs_coding_spec_is_unset(&spec) &&
-	    (spec.cs_codec_type != REFFS_CODEC_PASSTHROUGH || spec.cs_m != 0)) {
+	    (spec.cs_encoding_type != REFFS_ENCODING_PASSTHROUGH ||
+	     spec.cs_m != 0)) {
 		TRACE("sb-set-default-coding: sb %lu advertises file "
 		      "layouts; EC coding rejected (single-DS rule)",
 		      (unsigned long)sb->sb_id);
@@ -2244,9 +2245,9 @@ static int probe1_op_sb_set_default_coding(struct rpc_trans *rt)
 
 	if (rc < 0) {
 		TRACE("sb-set-default-coding: sb %lu rejected spec "
-		      "(codec=%u k=%u m=%u): %d",
-		      (unsigned long)sb->sb_id, spec.cs_codec_type, spec.cs_k,
-		      spec.cs_m, rc);
+		      "(encoding=%u k=%u m=%u): %d",
+		      (unsigned long)sb->sb_id, spec.cs_encoding_type,
+		      spec.cs_k, spec.cs_m, rc);
 		super_block_put(sb);
 		*res = PROBE1ERR_INVAL;
 		return *res;
@@ -2286,8 +2287,8 @@ static int probe1_op_sb_get_default_coding(struct rpc_trans *rt)
 	SB_GET_DEFAULT_CODING1resok *resok =
 		&res->SB_GET_DEFAULT_CODING1res_u.sgda_resok;
 
-	resok->sgda_coding.pcs_codec_type =
-		(unsigned int)sb->sb_default_coding.cs_codec_type;
+	resok->sgda_coding.pcs_encoding_type =
+		(unsigned int)sb->sb_default_coding.cs_encoding_type;
 	resok->sgda_coding.pcs_k = (unsigned int)sb->sb_default_coding.cs_k;
 	resok->sgda_coding.pcs_m = (unsigned int)sb->sb_default_coding.cs_m;
 

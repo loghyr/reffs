@@ -114,7 +114,7 @@ struct reffs_export_config {
 	uint32_t dstores[REFFS_CONFIG_MAX_DSTORES];
 	unsigned int ndstores;
 	/*
-	 * Per-export default codec for LAYOUTGET.  Parsed from TOML
+	 * Per-export default encoding for LAYOUTGET.  Parsed from TOML
 	 * `default_coding = "rs:K+M"` etc.  Zero-initialised means
 	 * no explicit default -- LAYOUTGET falls back to PASSTHROUGH
 	 * with k = ss_layout_width (server-wide).  See

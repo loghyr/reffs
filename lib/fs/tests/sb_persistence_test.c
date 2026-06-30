@@ -313,7 +313,7 @@ START_TEST(test_registry_default_coding_persisted)
 	uuid_generate(child->sb_uuid);
 
 	struct reffs_coding_spec spec = {
-		.cs_codec_type = REFFS_CODEC_RS_VANDERMONDE,
+		.cs_encoding_type = REFFS_ENCODING_RS_VANDERMONDE,
 		.cs_k = 4,
 		.cs_m = 2,
 	};
@@ -335,8 +335,8 @@ START_TEST(test_registry_default_coding_persisted)
 	struct super_block *reloaded = super_block_find(20);
 	ck_assert_ptr_nonnull(reloaded);
 
-	ck_assert_int_eq(reloaded->sb_default_coding.cs_codec_type,
-			 REFFS_CODEC_RS_VANDERMONDE);
+	ck_assert_int_eq(reloaded->sb_default_coding.cs_encoding_type,
+			 REFFS_ENCODING_RS_VANDERMONDE);
 	ck_assert_uint_eq(reloaded->sb_default_coding.cs_k, 4);
 	ck_assert_uint_eq(reloaded->sb_default_coding.cs_m, 2);
 

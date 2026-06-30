@@ -279,15 +279,15 @@ struct probe_client_rule1 {
 /*
  * Per-export default erasure-coding spec -- mirrors
  * struct reffs_coding_spec in lib/include/reffs/coding_spec.h.
- * pcs_codec_type values are the FFV2_ENCODING_* wire constants
+ * pcs_encoding_type values are the FFV2_ENCODING_* wire constants
  * (PASSTHROUGH=1, MOJETTE_SYS=2, MOJETTE_NONSYS=3, RS_VANDERMONDE=4,
- * MIRRORED=5).  An all-zero spec (cs_codec_type == 0) is the
+ * MIRRORED=5).  An all-zero spec (cs_encoding_type == 0) is the
  * "unset" sentinel: LAYOUTGET falls back to the legacy
  * ls_k = nfiles, ls_m = 0 path.  See
  * .claude/design/per-export-default-coding.md.
  */
 struct probe_coding_spec1 {
-	unsigned int	pcs_codec_type;
+	unsigned int	pcs_encoding_type;
 	unsigned int	pcs_k;
 	unsigned int	pcs_m;
 };
@@ -494,10 +494,10 @@ struct SB_SET_CHECKSUM_ALGORITHM1args {
  * LAYOUTGET (lib/nfs4/server/layout.c
  * default_coding_resolve_target / _resolve_segment) to drive the
  * issued layout's (ls_k, ls_m, ffm_coding_type) without using
- * the runway-pop count as the codec geometry.
+ * the runway-pop count as the encoding geometry.
  *
  * Validation in the handler (see step 7 in the design doc):
- *   - scda_coding.pcs_codec_type must be a known
+ *   - scda_coding.pcs_encoding_type must be a known
  *     FFV2_ENCODING_* value
  *   - pcs_k >= 1, pcs_k <= LAYOUT_SEG_MAX_FILES (32)
  *   - pcs_k + pcs_m <= LAYOUT_SEG_MAX_FILES
@@ -507,7 +507,7 @@ struct SB_SET_CHECKSUM_ALGORITHM1args {
  *     with pcs_m == 0 is accepted -- file layouts require a
  *     single DS per per-export-dstore.md.
  *
- * Setting an all-zero spec (pcs_codec_type == 0, k == 0,
+ * Setting an all-zero spec (pcs_encoding_type == 0, k == 0,
  * m == 0) clears the policy: LAYOUTGET falls back to the legacy
  * nfiles-driven path.  Returns probe_stat1 directly.
  */

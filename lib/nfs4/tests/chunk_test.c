@@ -829,8 +829,8 @@ START_TEST(test_chunk_finalize_transitions_state)
 END_TEST
 
 /*
- * Sparse FINALIZE: codecs with variable-size shards (Mojette
- * systematic; any future projection codec) write blocks at a
+ * Sparse FINALIZE: encodings with variable-size shards (Mojette
+ * systematic; any future projection encoding) write blocks at a
  * stride wider than they actually fill -- a data shard may write
  * one chunk per stripe while the largest parity shard writes
  * four, leaving holes at offsets in between.  FINALIZE / COMMIT

@@ -197,7 +197,7 @@ struct super_block {
 	uint32_t sb_checksum_algorithm;
 
 	/*
-	 * Per-export default codec used at LAYOUTGET time when this
+	 * Per-export default encoding used at LAYOUTGET time when this
 	 * sb has no other source (no ffv2_layouthint4 from the
 	 * client, no per-file override).  Set via TOML at boot
 	 * (root sb only, parsed by parse_one_export) or at runtime
@@ -348,14 +348,14 @@ void super_block_set_flavors(struct super_block *sb,
 			     unsigned int nflavors);
 
 /*
- * Set the per-export default codec.  Validates the spec's
+ * Set the per-export default encoding.  Validates the spec's
  * internal consistency:
  *   - cs_k in [1, LAYOUT_SEG_MAX_FILES]
  *   - cs_k + cs_m <= LAYOUT_SEG_MAX_FILES
- *   - cs_m == 0 IFF cs_codec_type == REFFS_CODEC_PASSTHROUGH
- *   - cs_codec_type is one of the REFFS_CODEC_* enum values
+ *   - cs_m == 0 IFF cs_encoding_type == REFFS_ENCODING_PASSTHROUGH
+ *   - cs_encoding_type is one of the REFFS_ENCODING_* enum values
  *
- * A fully-zero spec (cs_codec_type=0, cs_k=0, cs_m=0) is
+ * A fully-zero spec (cs_encoding_type=0, cs_k=0, cs_m=0) is
  * accepted as the "clear / fall back to PASSTHROUGH with k =
  * ss_layout_width" sentinel.  See
  * .claude/design/per-export-default-coding.md "Coding spec

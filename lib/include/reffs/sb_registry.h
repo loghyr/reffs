@@ -89,7 +89,7 @@ struct sb_registry_entry {
 	 */
 	uint32_t sre_checksum_algorithm;
 	/*
-	 * Per-export default codec.  Mirrors sb->sb_default_coding.
+	 * Per-export default encoding.  Mirrors sb->sb_default_coding.
 	 * Zero-initialised entries (legacy / never-set) load as
 	 * reffs_coding_spec_is_unset() == true and the LAYOUTGET
 	 * dispatch routes to the ss_layout_width PASSTHROUGH

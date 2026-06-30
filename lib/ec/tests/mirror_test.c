@@ -6,7 +6,7 @@
 #endif
 
 /*
- * Unit tests for the mirror codec.
+ * Unit tests for the mirror encoding.
  *
  * The MIRRORED encoding (FFV2_ENCODING_MIRRORED on the wire,
  * draft-haynes-nfsv4-flexfiles-v2 sec-encoding-mirrored) replicates
@@ -14,7 +14,7 @@
  * present shard as authoritative and populates the missing slots
  * with a copy of it.
  *
- * These tests exercise the codec interface (ec_codec_t / encode /
+ * These tests exercise the encoding interface (ec_encoding_t / encode /
  * decode) in isolation; the pipeline plumbing that lays shards
  * out at the same file offset and the wire-level FFv2 emit live
  * in lib/nfs4/ps/ec_pipeline.c and are exercised by
@@ -48,13 +48,13 @@ static void fill_pattern(uint8_t *buf, size_t len, int seed)
 
 START_TEST(test_init_valid)
 {
-	struct ec_codec *c = ec_mirror_create(3);
+	struct ec_encoding *c = ec_mirror_create(3);
 
 	ck_assert_ptr_nonnull(c);
 	ck_assert_int_eq(c->ec_k, 3);
 	ck_assert_int_eq(c->ec_m, 0);
 	ck_assert_str_eq(c->ec_name, "mirror");
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
@@ -70,7 +70,7 @@ END_TEST
 START_TEST(test_encode_replicates_data0)
 {
 	int k = 4;
-	struct ec_codec *c = ec_mirror_create(k);
+	struct ec_encoding *c = ec_mirror_create(k);
 
 	ck_assert_ptr_nonnull(c);
 
@@ -93,7 +93,7 @@ START_TEST(test_encode_replicates_data0)
 
 	for (int i = 0; i < k; i++)
 		free(data[i]);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
@@ -104,7 +104,7 @@ END_TEST
 START_TEST(test_encode_aliased_buffers_noop)
 {
 	int k = 3;
-	struct ec_codec *c = ec_mirror_create(k);
+	struct ec_encoding *c = ec_mirror_create(k);
 
 	ck_assert_ptr_nonnull(c);
 
@@ -122,7 +122,7 @@ START_TEST(test_encode_aliased_buffers_noop)
 	fill_pattern(expected, SHARD_LEN, 2);
 	ck_assert_mem_eq(backing, expected, SHARD_LEN);
 
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
@@ -133,7 +133,7 @@ END_TEST
 START_TEST(test_encode_null_data_rejected)
 {
 	int k = 3;
-	struct ec_codec *c = ec_mirror_create(k);
+	struct ec_encoding *c = ec_mirror_create(k);
 
 	ck_assert_ptr_nonnull(c);
 
@@ -147,7 +147,7 @@ START_TEST(test_encode_null_data_rejected)
 
 	free(data[0]);
 	free(data[2]);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 
 	/* And NULL data[0] -- the source -- is also rejected. */
 	c = ec_mirror_create(k);
@@ -159,7 +159,7 @@ START_TEST(test_encode_null_data_rejected)
 	/* NULL data array entirely. */
 	ck_assert_int_eq(c->ec_encode(c, NULL, NULL, SHARD_LEN), -EINVAL);
 
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
@@ -167,7 +167,7 @@ END_TEST
 START_TEST(test_decode_picks_present_shard)
 {
 	int k = 4;
-	struct ec_codec *c = ec_mirror_create(k);
+	struct ec_encoding *c = ec_mirror_create(k);
 
 	ck_assert_ptr_nonnull(c);
 
@@ -192,7 +192,7 @@ START_TEST(test_decode_picks_present_shard)
 
 	for (int i = 0; i < k; i++)
 		free(shards[i]);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
@@ -200,7 +200,7 @@ END_TEST
 START_TEST(test_decode_all_absent_eio)
 {
 	int k = 3;
-	struct ec_codec *c = ec_mirror_create(k);
+	struct ec_encoding *c = ec_mirror_create(k);
 
 	ck_assert_ptr_nonnull(c);
 
@@ -215,7 +215,7 @@ START_TEST(test_decode_all_absent_eio)
 
 	for (int i = 0; i < k; i++)
 		free(shards[i]);
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
@@ -227,7 +227,7 @@ END_TEST
 START_TEST(test_decode_null_shard_rejected)
 {
 	int k = 3;
-	struct ec_codec *c = ec_mirror_create(k);
+	struct ec_encoding *c = ec_mirror_create(k);
 
 	ck_assert_ptr_nonnull(c);
 
@@ -265,7 +265,7 @@ START_TEST(test_decode_null_shard_rejected)
 
 	ck_assert_int_eq(c->ec_decode(c, NULL, present_c, SHARD_LEN), -EINVAL);
 
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
@@ -276,7 +276,7 @@ END_TEST
  */
 START_TEST(test_k1_trivial)
 {
-	struct ec_codec *c = ec_mirror_create(1);
+	struct ec_encoding *c = ec_mirror_create(1);
 
 	ck_assert_ptr_nonnull(c);
 	ck_assert_int_eq(c->ec_k, 1);
@@ -303,13 +303,13 @@ START_TEST(test_k1_trivial)
 
 	ck_assert_int_eq(c->ec_decode(c, data, present_fail, SHARD_LEN), -EIO);
 
-	ec_codec_destroy(c);
+	ec_encoding_destroy(c);
 }
 END_TEST
 
 Suite *mirror_suite(void)
 {
-	Suite *s = suite_create("Mirror Codec");
+	Suite *s = suite_create("Mirror Encoding");
 	TCase *tc = tcase_create("mirror");
 
 	tcase_add_test(tc, test_init_valid);

@@ -16,5 +16,5 @@ TESTS = \
 	matrix_test \
 	mirror_test \
 	mojette_test \
-	mojette_codec_test \
+	mojette_encoding_test \
 	rs_test

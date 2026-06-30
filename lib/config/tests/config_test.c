@@ -480,7 +480,7 @@ START_TEST(test_load_export_multi_rule)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* load -- default_coding (per-export codec selection)                  */
+/* load -- default_coding (per-export encoding selection)                  */
 /*                                                                      */
 /* See .claude/design/per-export-default-coding.md.                     */
 /* ------------------------------------------------------------------ */
@@ -488,7 +488,7 @@ END_TEST
 /*
  * Absent default_coding -> spec is zero-initialised, which the
  * LAYOUTGET dispatch interprets as PASSTHROUGH with k = ss_layout_width.
- * This pins today's behaviour (no per-export codec config required).
+ * This pins today's behaviour (no per-export encoding config required).
  */
 START_TEST(test_config_default_coding_absent)
 {
@@ -512,7 +512,7 @@ START_TEST(test_config_default_coding_absent)
 END_TEST
 
 /*
- * "passthrough" (no :K+M) -> PASSTHROUGH codec, k = m = 0.
+ * "passthrough" (no :K+M) -> PASSTHROUGH encoding, k = m = 0.
  * Explicit form of the absent-field default.
  */
 START_TEST(test_config_default_coding_passthrough)
@@ -529,8 +529,8 @@ START_TEST(test_config_default_coding_passthrough)
 	ck_assert_ptr_nonnull(path);
 
 	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
-	ck_assert_int_eq(cfg.exports[0].default_coding.cs_codec_type,
-			 REFFS_CODEC_PASSTHROUGH);
+	ck_assert_int_eq(cfg.exports[0].default_coding.cs_encoding_type,
+			 REFFS_ENCODING_PASSTHROUGH);
 	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_k, 0);
 	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_m, 0);
 
@@ -540,7 +540,7 @@ START_TEST(test_config_default_coding_passthrough)
 END_TEST
 
 /*
- * "rs:4+2" -> REFFS_CODEC_RS_VANDERMONDE, k=4, m=2.
+ * "rs:4+2" -> REFFS_ENCODING_RS_VANDERMONDE, k=4, m=2.
  * The canonical Bucket 2 bench setting.
  */
 START_TEST(test_config_default_coding_rs_4_2)
@@ -557,8 +557,8 @@ START_TEST(test_config_default_coding_rs_4_2)
 	ck_assert_ptr_nonnull(path);
 
 	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
-	ck_assert_int_eq(cfg.exports[0].default_coding.cs_codec_type,
-			 REFFS_CODEC_RS_VANDERMONDE);
+	ck_assert_int_eq(cfg.exports[0].default_coding.cs_encoding_type,
+			 REFFS_ENCODING_RS_VANDERMONDE);
 	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_k, 4);
 	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_m, 2);
 
@@ -568,7 +568,7 @@ START_TEST(test_config_default_coding_rs_4_2)
 END_TEST
 
 /*
- * "mojette-sys:8+2" -> REFFS_CODEC_MOJETTE_SYSTEMATIC, k=8, m=2.
+ * "mojette-sys:8+2" -> REFFS_ENCODING_MOJETTE_SYSTEMATIC, k=8, m=2.
  * Wider geometry recommended for storage-efficient deployments
  * (per ec_benchmark_full_report.md S8 conclusion 6).
  */
@@ -586,8 +586,8 @@ START_TEST(test_config_default_coding_mojette_sys_8_2)
 	ck_assert_ptr_nonnull(path);
 
 	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
-	ck_assert_int_eq(cfg.exports[0].default_coding.cs_codec_type,
-			 REFFS_CODEC_MOJETTE_SYSTEMATIC);
+	ck_assert_int_eq(cfg.exports[0].default_coding.cs_encoding_type,
+			 REFFS_ENCODING_MOJETTE_SYSTEMATIC);
 	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_k, 8);
 	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_m, 2);
 
@@ -597,11 +597,11 @@ START_TEST(test_config_default_coding_mojette_sys_8_2)
 END_TEST
 
 /*
- * Invalid codec name -> spec stays zero (TRACE, no parse failure).
+ * Invalid encoding name -> spec stays zero (TRACE, no parse failure).
  * Forgiving parser per existing TOML pattern (layout_types,
  * dstores all skip unknown values rather than abort).
  */
-START_TEST(test_config_default_coding_invalid_codec)
+START_TEST(test_config_default_coding_invalid_encoding)
 {
 	struct reffs_config cfg;
 	reffs_config_defaults(&cfg);
@@ -632,7 +632,7 @@ START_TEST(test_config_default_coding_invalid_format)
 	struct reffs_config cfg;
 	char *path;
 
-	/* "rs" -- no colon, codec is not passthrough */
+	/* "rs" -- no colon, encoding is not passthrough */
 	reffs_config_defaults(&cfg);
 	path = write_toml("[[export]]\n"
 			  "path = \"/m1\"\n"
@@ -706,8 +706,8 @@ START_TEST(test_config_default_coding_max_k_m)
 			  "default_coding = \"rs:30+2\"\n");
 	ck_assert_ptr_nonnull(path);
 	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
-	ck_assert_int_eq(cfg.exports[0].default_coding.cs_codec_type,
-			 REFFS_CODEC_RS_VANDERMONDE);
+	ck_assert_int_eq(cfg.exports[0].default_coding.cs_encoding_type,
+			 REFFS_ENCODING_RS_VANDERMONDE);
 	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_k, 30);
 	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_m, 2);
 	unlink(path);
@@ -1314,7 +1314,7 @@ Suite *config_suite(void)
 	tcase_add_test(tc_load, test_config_default_coding_passthrough);
 	tcase_add_test(tc_load, test_config_default_coding_rs_4_2);
 	tcase_add_test(tc_load, test_config_default_coding_mojette_sys_8_2);
-	tcase_add_test(tc_load, test_config_default_coding_invalid_codec);
+	tcase_add_test(tc_load, test_config_default_coding_invalid_encoding);
 	tcase_add_test(tc_load, test_config_default_coding_invalid_format);
 	tcase_add_test(tc_load, test_config_default_coding_max_k_m);
 	tcase_add_test(tc_load, test_load_data_server_single);

@@ -217,9 +217,9 @@ int chunk_store_transition(struct chunk_store *cs, uint64_t offset,
 		struct chunk_block *blk = &cs->cs_blocks[off];
 
 		/*
-		 * Skip EMPTY blocks in the requested range.  Codecs with
+		 * Skip EMPTY blocks in the requested range.  Encodings with
 		 * variable-size shards (Mojette systematic; any future
-		 * projection codec) write sparsely: a data shard may
+		 * projection encoding) write sparsely: a data shard may
 		 * write 1 block per stripe while the largest parity
 		 * shard writes 4, leaving 3 holes per stripe in the data
 		 * shard's file.  FINALIZE / COMMIT span the full nominal

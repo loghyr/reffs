@@ -74,7 +74,7 @@ static void usage(const char *prog)
 	printf("  -F  --flavors=LIST           Comma-separated: sys,krb5,krb5i,krb5p,tls\n");
 	printf("  -D  --dstores=LIST           Comma-separated dstore IDs (sb-set-dstores)\n");
 	printf("  -U  --stripe-unit=N          Stripe unit in bytes, power of 2 (sb-set-stripe-unit)\n");
-	printf("  -C  --default-coding=SPEC    Codec spec: \"passthrough\" | \"rs:K+M\" | "
+	printf("  -C  --default-coding=SPEC    Encoding spec: \"passthrough\" | \"rs:K+M\" | "
 	       "\"mojette-sys:K+M\" | \"mojette-nonsys:K+M\" (sb-set-default-coding); "
 	       "\"unset\" or omit to clear\n");
 	printf("  -g  --program=pgm            Probe this program \"pgm\"\n");
@@ -139,7 +139,7 @@ uint32_t cli_dstore_id = 0;
  * error from the dispatch step rather than silently clearing.
  */
 bool cli_coding_set = false;
-uint32_t cli_coding_codec = 0;
+uint32_t cli_coding_encoding = 0;
 uint32_t cli_coding_k = 0;
 uint32_t cli_coding_m = 0;
 
@@ -176,43 +176,43 @@ static void parse_dstores(const char *arg)
 static void parse_default_coding(const char *arg)
 {
 	cli_coding_set = true;
-	cli_coding_codec = 0;
+	cli_coding_encoding = 0;
 	cli_coding_k = 0;
 	cli_coding_m = 0;
 
 	if (!arg || arg[0] == '\0' || strcmp(arg, "unset") == 0)
 		return;
 
-	char codec_name[32];
+	char encoding_name[32];
 	unsigned int k = 0;
 	unsigned int m = 0;
-	int n = sscanf(arg, "%31[^:]:%u+%u", codec_name, &k, &m);
+	int n = sscanf(arg, "%31[^:]:%u+%u", encoding_name, &k, &m);
 
 	if (n == 1) {
-		if (strcmp(codec_name, "passthrough") == 0) {
-			cli_coding_codec = REFFS_CODEC_PASSTHROUGH;
+		if (strcmp(encoding_name, "passthrough") == 0) {
+			cli_coding_encoding = REFFS_ENCODING_PASSTHROUGH;
 			return;
 		}
-		LOG("default-coding: bare codec name only accepted for "
+		LOG("default-coding: bare encoding name only accepted for "
 		    "passthrough, got %s",
-		    codec_name);
+		    encoding_name);
 		cli_coding_set = false;
 		return;
 	}
 	if (n != 3) {
-		LOG("default-coding: expected \"<codec>:K+M\", got %s", arg);
+		LOG("default-coding: expected \"<encoding>:K+M\", got %s", arg);
 		cli_coding_set = false;
 		return;
 	}
 
-	if (strcmp(codec_name, "rs") == 0)
-		cli_coding_codec = REFFS_CODEC_RS_VANDERMONDE;
-	else if (strcmp(codec_name, "mojette-sys") == 0)
-		cli_coding_codec = REFFS_CODEC_MOJETTE_SYSTEMATIC;
-	else if (strcmp(codec_name, "mojette-nonsys") == 0)
-		cli_coding_codec = REFFS_CODEC_MOJETTE_NON_SYSTEMATIC;
+	if (strcmp(encoding_name, "rs") == 0)
+		cli_coding_encoding = REFFS_ENCODING_RS_VANDERMONDE;
+	else if (strcmp(encoding_name, "mojette-sys") == 0)
+		cli_coding_encoding = REFFS_ENCODING_MOJETTE_SYSTEMATIC;
+	else if (strcmp(encoding_name, "mojette-nonsys") == 0)
+		cli_coding_encoding = REFFS_ENCODING_MOJETTE_NON_SYSTEMATIC;
 	else {
-		LOG("default-coding: unknown codec name %s", codec_name);
+		LOG("default-coding: unknown encoding name %s", encoding_name);
 		cli_coding_set = false;
 		return;
 	}
@@ -432,7 +432,7 @@ int main(int argc, char *argv[])
 			    "--default-coding=unset to clear)");
 		} else {
 			rt = probe1_client_op_sb_set_default_coding(
-				sb_id, cli_coding_codec, cli_coding_k,
+				sb_id, cli_coding_encoding, cli_coding_k,
 				cli_coding_m);
 		}
 	} else if (!strcmp(op, "sb-get-default-coding")) {

@@ -941,20 +941,20 @@ int super_block_set_default_coding(struct super_block *sb,
 		return 0;
 	}
 
-	/* cs_codec_type must be a known REFFS_CODEC_* value. */
-	switch (spec->cs_codec_type) {
-	case REFFS_CODEC_PASSTHROUGH:
-	case REFFS_CODEC_MOJETTE_SYSTEMATIC:
-	case REFFS_CODEC_MOJETTE_NON_SYSTEMATIC:
-	case REFFS_CODEC_RS_VANDERMONDE:
-	case REFFS_CODEC_MIRRORED:
+	/* cs_encoding_type must be a known REFFS_ENCODING_* value. */
+	switch (spec->cs_encoding_type) {
+	case REFFS_ENCODING_PASSTHROUGH:
+	case REFFS_ENCODING_MOJETTE_SYSTEMATIC:
+	case REFFS_ENCODING_MOJETTE_NON_SYSTEMATIC:
+	case REFFS_ENCODING_RS_VANDERMONDE:
+	case REFFS_ENCODING_MIRRORED:
 		break;
 	default:
 		return -EINVAL;
 	}
 
 	/*
-	 * Explicit PASSTHROUGH carries no codec geometry of its own
+	 * Explicit PASSTHROUGH carries no encoding geometry of its own
 	 * (the runway-pop count IS ls_k at LAYOUTGET time -- see
 	 * default_coding_resolve_segment) so k and m both stay zero,
 	 * which would fail the k >= 1 bound below.  The TOML parser
@@ -965,7 +965,7 @@ int super_block_set_default_coding(struct super_block *sb,
 	 * (unset)" -- both share the legacy resolve path but the
 	 * intent surfaces differently in audit / TOML round-trip.
 	 */
-	if (spec->cs_codec_type == REFFS_CODEC_PASSTHROUGH) {
+	if (spec->cs_encoding_type == REFFS_ENCODING_PASSTHROUGH) {
 		if (spec->cs_m != 0)
 			return -EINVAL; /* PASSTHROUGH carries no parity */
 		if (spec->cs_k > LAYOUT_SEG_MAX_FILES)
@@ -979,7 +979,7 @@ int super_block_set_default_coding(struct super_block *sb,
 	if (spec->cs_m > LAYOUT_SEG_MAX_FILES - spec->cs_k)
 		return -EINVAL;
 
-	/* Non-PASSTHROUGH codecs all require m > 0 (otherwise they
+	/* Non-PASSTHROUGH encodings all require m > 0 (otherwise they
 	 * collapse to the legacy path which is what PASSTHROUGH is
 	 * for).  Reject the degenerate "rs:4+0" / "mojette-sys:8+0"
 	 * shape at the admin boundary. */

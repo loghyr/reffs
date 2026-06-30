@@ -6,7 +6,7 @@
 #endif
 
 /*
- * Pure-striping codec -- identity encode/decode, no redundancy.
+ * Pure-striping encoding -- identity encode/decode, no redundancy.
  *
  * Used for benchmarking parallel I/O throughput without any coding
  * overhead.  Data is split into k equal stripes across k DSes.
@@ -18,7 +18,7 @@
 
 #include "reffs/ec.h"
 
-static int stripe_encode(struct ec_codec *codec __attribute__((unused)),
+static int stripe_encode(struct ec_encoding *encoding __attribute__((unused)),
 			 uint8_t **data __attribute__((unused)),
 			 uint8_t **parity __attribute__((unused)),
 			 size_t shard_len __attribute__((unused)))
@@ -27,35 +27,35 @@ static int stripe_encode(struct ec_codec *codec __attribute__((unused)),
 	return 0;
 }
 
-static int stripe_decode(struct ec_codec *codec __attribute__((unused)),
+static int stripe_decode(struct ec_encoding *encoding __attribute__((unused)),
 			 uint8_t **shards __attribute__((unused)),
 			 const bool *present,
 			 size_t shard_len __attribute__((unused)))
 {
 	/* Any missing stripe is unrecoverable (m=0). */
-	for (int i = 0; i < codec->ec_k; i++) {
+	for (int i = 0; i < encoding->ec_k; i++) {
 		if (!present[i])
 			return -EIO;
 	}
 	return 0;
 }
 
-struct ec_codec *ec_stripe_create(int k)
+struct ec_encoding *ec_stripe_create(int k)
 {
-	struct ec_codec *codec;
+	struct ec_encoding *encoding;
 
 	if (k < 1 || k > 255)
 		return NULL;
 
-	codec = calloc(1, sizeof(*codec));
-	if (!codec)
+	encoding = calloc(1, sizeof(*encoding));
+	if (!encoding)
 		return NULL;
 
-	codec->ec_name = "stripe";
-	codec->ec_k = k;
-	codec->ec_m = 0;
-	codec->ec_encode = stripe_encode;
-	codec->ec_decode = stripe_decode;
+	encoding->ec_name = "stripe";
+	encoding->ec_k = k;
+	encoding->ec_m = 0;
+	encoding->ec_encode = stripe_encode;
+	encoding->ec_decode = stripe_decode;
 
-	return codec;
+	return encoding;
 }
