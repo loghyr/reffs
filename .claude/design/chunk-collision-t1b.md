@@ -78,13 +78,13 @@ exercise the chunk-collision surface this slice cares about.
 
 ### Two new functions in lib/nfs4/client/ec_client.h
 
-Mirror of `ec_write_codec` / `ec_read_codec` (`verify` reuses
-`ec_read_codec`'s by-FH variant under the hood), with explicit
+Mirror of `ec_write_encoding` / `ec_read_encoding` (`verify` reuses
+`ec_read_encoding`'s by-FH variant under the hood), with explicit
 `offset` and `length`:
 
 ```c
 /*
- * Partial-range variant of ec_write_codec.  Writes
+ * Partial-range variant of ec_write_encoding.  Writes
  * data[0 .. length) into the MDS file at byte offset `offset`.
  * Computes the stripe span covered by [offset, offset+length),
  * walks fully-dirty stripes via ec_write_stripe_with_file, and
@@ -96,20 +96,20 @@ Mirror of `ec_write_codec` / `ec_read_codec` (`verify` reuses
  * for the prefix / suffix RMW path to succeed (sparse RMW is
  * NOT_NOW_BROWN_COW per ec_read_stripe_with_file).
  */
-int ec_write_codec_range(struct mds_session *ms, const char *path,
+int ec_write_encoding_range(struct mds_session *ms, const char *path,
                          const uint8_t *data, size_t length,
                          uint64_t offset, int k, int m,
-                         enum ec_codec_type codec_type,
+                         enum ec_encoding_type encoding_type,
                          layouttype4 layout_type,
                          size_t shard_size);
 
 /*
- * Partial-range variant of ec_read_codec.  Reads `length` bytes
+ * Partial-range variant of ec_read_encoding.  Reads `length` bytes
  * from the MDS file starting at `offset` into `buf`.
  */
-int ec_read_codec_range(struct mds_session *ms, const char *path,
+int ec_read_encoding_range(struct mds_session *ms, const char *path,
                         uint8_t *buf, size_t length, uint64_t offset,
-                        int k, int m, enum ec_codec_type codec_type,
+                        int k, int m, enum ec_encoding_type encoding_type,
                         layouttype4 layout_type,
                         uint64_t skip_ds_mask, size_t shard_size);
 ```
@@ -138,7 +138,7 @@ Internally each one:
    contained in one stripe) -- one RMW round-trip total.
 7. CLOSE the file.
 
-For `ec_read_codec_range`: walk the covered stripes via
+For `ec_read_encoding_range`: walk the covered stripes via
 `ec_read_stripe_with_file`, then `memcpy` only the
 `[offset, offset+length)` byte slice into `buf`.
 
@@ -219,7 +219,7 @@ The harness prints these deltas alongside the verify result.
 This slice adds new code and new tests.  No existing test is
 modified.  Specifically:
 
-- `ec_write_codec` / `ec_read_codec` keep their full-file
+- `ec_write_encoding` / `ec_read_encoding` keep their full-file
   signatures.  ec_demo `write` with no `--offset` / `--length`
   still routes to them, bit-for-bit identical to today.
 - `ec_write_stripe_with_file` / `ec_read_stripe_with_file` are

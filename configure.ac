@@ -478,7 +478,7 @@ AS_IF([test "x$enable_all_trace_categories" = "xyes"],
 
 AC_ARG_ENABLE(noscalar-vec,
 [  --enable-noscalar-vec   Disable compiler auto-vectorization of the
-                          scalar codec paths (lib/ec/*.c).  Used by the
+                          scalar encoding paths (lib/ec/*.c).  Used by the
                           SIMD-vs-scalar honest comparison in
                           experiments/03-larger-shards: without these
                           flags the compiler may auto-vectorize the

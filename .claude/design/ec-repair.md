@@ -457,7 +457,7 @@ iteration; 0.5 day reviewer-agent pass.)
 The subcommand drives the full repair: LAYOUTGET -> CHUNK_READ
 all (k+m) shards -> detect loss (NFS4ERR_PAYLOAD_LOST or CRC
 mismatch on the client side) -> decode peers via existing
-`ec_pipeline` codec to reconstruct the missing shards ->
+`ec_pipeline` encoding to reconstruct the missing shards ->
 CHUNK_WRITE_REPAIR + CHUNK_FINALIZE + CHUNK_COMMIT to each
 affected DS -> CHUNK_REPAIRED to the MDS -> LAYOUTRETURN.
 
@@ -479,7 +479,7 @@ Functional-level testing only.
 | `test_repair_no_loss_noop` | Run `ec_demo write` then `ec_demo repair` with no `--shard-loss`; verify it's a no-op |
 | `test_repair_one_shard_rs_42` | Write 1 MB file via RS 4+2; `ec_demo repair --shard-loss 0x1`; verify `ec_demo verify` succeeds; verify `reffs-probe.py sb-get` shows `cs_repair_completed` bumped |
 | `test_repair_two_shards_rs_42` | Same but `--shard-loss 0x3`; verify reconstruction recovers both |
-| `test_repair_mojette_systematic_42` | Same as one-shard test but `--codec mojette-sys` |
+| `test_repair_mojette_systematic_42` | Same as one-shard test but `--encoding mojette-sys` |
 | `test_repair_idempotent` | Run `ec_demo repair` twice in a row; second run is no-op |
 | `test_repair_3_shards_unrecoverable` | `--shard-loss 0x7` on RS 4+2 (only m=2 parity); verify exits non-zero with "unrecoverable" message |
 | `test_repair_clears_repair_flag_in_layout` | After repair, run `ec_demo read` and verify LAYOUTGET ffv2ds_flags have no REPAIR set |
@@ -495,26 +495,26 @@ test, see Open Question 5.
 
 | File | Change | New / Modified |
 |------|--------|----------------|
-| `lib/nfs4/ps/ec_pipeline.c` | Add public function `ec_repair_codec(struct mds_session *ms, const char *path, int k, int m, enum ec_codec_type, layouttype4, uint64_t shard_loss_mask, size_t shard_size, struct ec_repair_stats *out_stats)` -- LAYOUTGET, ec_resolve_mirrors, CHUNK_READ (or skip per `shard_loss_mask`), ec_decode to reconstruct missing shards, for each mirror with a "lost" shard call `ec_chunk_write_repair`, CHUNK_FINALIZE, CHUNK_COMMIT, then call `mds_chunk_repaired(ms, mf, cpa_offset, cpa_count, owner)`, then mds_layout_return.  Populate `out_stats` for the bench. | Modified (~250 LOC: ~50 for ec_chunk_write_repair, ~100 for mds_chunk_repaired builder, ~100 for the orchestration) |
+| `lib/nfs4/ps/ec_pipeline.c` | Add public function `ec_repair_encoding(struct mds_session *ms, const char *path, int k, int m, enum ec_encoding_type, layouttype4, uint64_t shard_loss_mask, size_t shard_size, struct ec_repair_stats *out_stats)` -- LAYOUTGET, ec_resolve_mirrors, CHUNK_READ (or skip per `shard_loss_mask`), ec_decode to reconstruct missing shards, for each mirror with a "lost" shard call `ec_chunk_write_repair`, CHUNK_FINALIZE, CHUNK_COMMIT, then call `mds_chunk_repaired(ms, mf, cpa_offset, cpa_count, owner)`, then mds_layout_return.  Populate `out_stats` for the bench. | Modified (~250 LOC: ~50 for ec_chunk_write_repair, ~100 for mds_chunk_repaired builder, ~100 for the orchestration) |
 | `lib/nfs4/ps/ec_pipeline_internal.h` | Declare `ec_chunk_write_repair` (sibling of `ec_chunk_write` at line 100) | Modified (5 lines) |
-| `lib/nfs4/client/ec_client.h` | Declare `ec_repair_codec` and `struct ec_repair_stats` | Modified (15 lines) |
+| `lib/nfs4/client/ec_client.h` | Declare `ec_repair_encoding` and `struct ec_repair_stats` | Modified (15 lines) |
 | `lib/nfs4/client/mds_layout.c` (or new `mds_chunk_repaired.c`) | Build the COMPOUND for CHUNK_REPAIRED: `SEQ + PUTFH(mds_fh) + CHUNK_REPAIRED(cpa_*)` and parse result | Modified or NEW (~80 LOC) |
 | `tools/ec_demo.c` | Add `cmd_repair` static function (around line 720 alongside `cmd_read`); add dispatch in main (after `cmd_verify` at line 1956); add `--shard-loss <mask>` flag as alias for existing `--skip-ds`; print summary stats from `ec_repair_stats`.  Update `usage()`. | Modified (~150 LOC) |
 | `scripts/test_ec_repair.sh` | NEW -- see test table above | NEW (~300 LOC shell) |
-| `scripts/ec_repair_bench.sh` | NEW -- drives the 4 sizes x 2 codecs x 2 loss patterns x 5 iters = 80 cells, emits CSV | NEW (~200 LOC) |
+| `scripts/ec_repair_bench.sh` | NEW -- drives the 4 sizes x 2 encodings x 2 loss patterns x 5 iters = 80 cells, emits CSV | NEW (~200 LOC) |
 
 Implementation order: (1) `ec_chunk_write_repair` helper in
 ec_pipeline.c (mechanical clone of `ec_chunk_write`, swap the
 op number) -- gated by Slice 1 being merged; (2)
 `mds_chunk_repaired` compound builder -- gated by Slice 2; (3)
-`ec_repair_codec` orchestration; (4) `cmd_repair` subcommand;
+`ec_repair_encoding` orchestration; (4) `cmd_repair` subcommand;
 (5) shell tests.
 
 ### Days estimate: 5 days
 
 (1.0 day `ec_chunk_write_repair` + `mds_chunk_repaired`; 1.5
-days `ec_repair_codec` orchestration; 1.0 day `cmd_repair` +
-flag wiring; 1.0 day shell tests + cross-codec verification;
+days `ec_repair_encoding` orchestration; 1.0 day `cmd_repair` +
+flag wiring; 1.0 day shell tests + cross-encoding verification;
 0.5 day reviewer-agent pass + style.)
 
 ## 9. Test impact on existing tests
@@ -547,12 +547,12 @@ No existing test is expected to BREAK.
 Carry-over from `ec-repair-bench.md` Sec "Measurement plan".
 Tier 2 replaces Tier 1's "fake repair via plain CHUNK_WRITE"
 with the real wire ops.  The bench cells are identical: 4
-sizes (4 KB, 64 KB, 1 MB, 16 MB) x 2 codecs (RS 4+2, Mojette
+sizes (4 KB, 64 KB, 1 MB, 16 MB) x 2 encodings (RS 4+2, Mojette
 sys 4+2) x 2 loss patterns (1 shard, 2 shards) x 5 iters = 80
 cells.
 
 `scripts/ec_repair_bench.sh` emits a CSV with columns:
-`size,codec,loss_mask,iter,layoutget_ms,read_ms,decode_ms,
+`size,encoding,loss_mask,iter,layoutget_ms,read_ms,decode_ms,
 write_repair_ms,finalize_ms,commit_ms,chunk_repaired_ms,
 layoutreturn_ms,total_ms,bytes_repaired`.  The slide table
 reports median per cell of `total_ms` and the derived
@@ -637,7 +637,7 @@ the single-slot MDS-to-DS session bug noted in
 
 8. **`ldf_flags` interaction with the proxy-server delegation
    path.**  `ps_proxy_ops.c` consumes layouts via
-   `ec_read_codec_with_file` etc. -- the proxy server reads
+   `ec_read_encoding_with_file` etc. -- the proxy server reads
    `ffv2ds_flags` and could mis-route a read to a
    REPAIR-flagged mirror.  The current PS code does not
    interpret REPAIR specifically.  Out of scope for this slice

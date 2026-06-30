@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 # Experiment 5: Cross-PS Write-Read Coherence
 
 Closes (or would close, when runnable) progress_report.md §3.4 /
-§3.7: the PS-as-codec-layer claim that PSes are deployed
+§3.7: the PS-as-encoding-layer claim that PSes are deployed
 alongside DSes and a client connects to whichever is nearest.
 This experiment measures the visibility latency when a write
 goes through PS1 and the read goes through PS2.
@@ -91,8 +91,8 @@ The diagnostic LOGs were reverted before commit.
 Concrete still-TODO items (deeper deliverables, not in this
 slice):
 
-  * Codec-ignorant Linux NFSv3 client mount through a PS:
-    closes the deck slide 17 codec-burden claim end-to-end.
+  * Encoding-ignorant Linux NFSv3 client mount through a PS:
+    closes the deck slide 17 encoding-burden claim end-to-end.
     Needs the bench client topology to mount `127.0.0.1:4098`
     as NFSv3 and read+write a file written through ec_demo
     against PS A.  Not gated on protocol; gated on harness

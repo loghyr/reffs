@@ -22,9 +22,9 @@ dd if=/dev/urandom of=/tmp/Y bs=$SIZE count=1 2>/dev/null
 
 # Phase 1: write X to file, verify
 "$EC_DEMO" write --mds "$MDS" --file "$FILE" --input /tmp/X \
-    --k 4 --m 2 --codec rs --layout v1 2>/dev/null
+    --k 4 --m 2 --encoding rs --layout v1 2>/dev/null
 "$EC_DEMO" read --mds "$MDS" --file "$FILE" --output /tmp/check_X \
-    --k 4 --m 2 --codec rs --size $SIZE --layout v1 2>/dev/null
+    --k 4 --m 2 --encoding rs --size $SIZE --layout v1 2>/dev/null
 if ! cmp -s /tmp/X /tmp/check_X; then
     echo "BASELINE_FAIL: pre-write X did not round-trip"
     exit 1
@@ -32,7 +32,7 @@ fi
 
 # Phase 2: start writing Y in background; kill after KILL_MS ms
 "$EC_DEMO" write --mds "$MDS" --file "$FILE" --input /tmp/Y \
-    --k 4 --m 2 --codec rs --layout v1 >/tmp/wr.out 2>/tmp/wr.err &
+    --k 4 --m 2 --encoding rs --layout v1 >/tmp/wr.out 2>/tmp/wr.err &
 WPID=$!
 sleep $(awk -v ms=$KILL_MS 'BEGIN{printf "%.3f\n", ms/1000.0}')
 kill -9 $WPID 2>/dev/null
@@ -44,7 +44,7 @@ sleep $LEASE_S
 
 # Phase 4: read back, classify
 if "$EC_DEMO" read --mds "$MDS" --file "$FILE" --output /tmp/post \
-    --k 4 --m 2 --codec rs --size $SIZE --layout v1 2>/tmp/rd.err; then
+    --k 4 --m 2 --encoding rs --size $SIZE --layout v1 2>/tmp/rd.err; then
     READ_OK=1
 else
     READ_OK=0

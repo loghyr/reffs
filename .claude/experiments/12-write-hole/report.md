@@ -14,7 +14,7 @@ writer's lease expires.
 
 ## TL;DR
 
-**v2 (CHUNK ops) eliminates the codec-level write hole.  v1
+**v2 (CHUNK ops) eliminates the encoding-level write hole.  v1
 (NFSv3 to DSes) does not.**
 
 | kill_ms | v1 outcome | v2 outcome |
@@ -31,7 +31,7 @@ writer's lease expires.
   followed by leftover X bytes.  Readers see whatever the
   writer happened to commit before death.  Standard NFS
   no-atomicity-on-overwrite semantics; not a RAID-class write
-  hole (codec reads succeed), but a write hole in the broad
+  hole (encoding reads succeed), but a write hole in the broad
   sense (post-write reader sees partial state).
 
 - **v2**: the CHUNK_WRITE -> CHUNK_FINALIZE -> CHUNK_COMMIT state
@@ -50,7 +50,7 @@ historically been most worried about.
 - Single-host bench docker stack on adept (Intel N100, Fedora
   43, tmpfs storage).  Same MDS + 10 DSes used in experiments 3
   and 4.
-- 1 MB sequential write via `ec_demo write --codec rs -k 4 -m 2`
+- 1 MB sequential write via `ec_demo write --encoding rs -k 4 -m 2`
   with `--layout v1` or `--layout v2`.
 - Pre-write file content `X`; mid-write content `Y`.  Both
   random 1 MB blobs.
@@ -96,7 +96,7 @@ post-crash inconsistency.
 | kill_ms | outcome | mechanism |
 |---------|---------|-----------|
 | 50  | PRE_WRITE_X  | Writer killed before any CHUNK_WRITE finished landing on disk; no chunks transitioned to PENDING; reader sees the previous COMMITTED state |
-| 150 | READ_FAILED  | Some chunks PENDING/FINALIZED but never COMMITTED; codec sees inconsistent block states and refuses to return data |
+| 150 | READ_FAILED  | Some chunks PENDING/FINALIZED but never COMMITTED; encoding sees inconsistent block states and refuses to return data |
 | 300 | POST_WRITE_Y | Write completed before kill; all chunks COMMITTED |
 | 450 | POST_WRITE_Y | Same |
 | 600 | POST_WRITE_Y | Same |
@@ -117,7 +117,7 @@ is in a state where:
 - The lease expired (95 s wait).  But there is no lease-driven
   rollback in the present codebase: the PENDING state stays.
 
-So the reader sees blocks in PENDING state and the codec
+So the reader sees blocks in PENDING state and the encoding
 correctly refuses to return them.  This is **not** the v1
 write-hole (no MIXED visible), but it IS a liveness concern --
 the file becomes unreadable for that range until something

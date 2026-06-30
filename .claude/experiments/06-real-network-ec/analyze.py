@@ -43,14 +43,14 @@ def load(path: str):
             # column.  ec_benchmark_full.sh occasionally interleaves status
             # lines and on bench abort the last row may be truncated
             # mid-write.
-            if (not r or r[0] == "codec" or r[0].startswith("#") or
+            if (not r or r[0] == "encoding" or r[0].startswith("#") or
                     len(r) < 9):
                 continue
             if r[6] != "OK":
                 continue
             try:
                 rows.append({
-                    "codec": r[0], "geom": r[1], "size": int(r[2]),
+                    "encoding": r[0], "geom": r[1], "size": int(r[2]),
                     "run": int(r[3]),
                     "write_ms": int(r[4]), "read_ms": int(r[5]),
                     "mode": r[7], "layout": r[8],
@@ -64,16 +64,16 @@ def median(rs, key):
     return int(statistics.median(r[key] for r in rs))
 
 
-def group_v1(rows, codec, geom, size, mode):
+def group_v1(rows, encoding, geom, size, mode):
     return [r for r in rows
-            if r["codec"] == codec and r["geom"] == geom
+            if r["encoding"] == encoding and r["geom"] == geom
             and r["size"] == size and r["mode"] == mode
             and r["layout"] == "v1"]
 
 
-def group(rows, codec, geom, size, mode, layout):
+def group(rows, encoding, geom, size, mode, layout):
     return [r for r in rows
-            if r["codec"] == codec and r["geom"] == geom
+            if r["encoding"] == encoding and r["geom"] == geom
             and r["size"] == size and r["mode"] == mode
             and r["layout"] == layout]
 
@@ -85,25 +85,25 @@ def main():
 
     sizes = sorted({r["size"] for r in rows})
     layouts = sorted({r["layout"] for r in rows})
-    codecs_4p2 = ["plain", "rs", "mojette-sys", "mojette-nonsys"]
+    encodings_4p2 = ["plain", "rs", "mojette-sys", "mojette-nonsys"]
 
     print("## Topology\n")
     print("- Client + MDS: adept (Intel N100, AVX2, Fedora 43)")
     print("- 10 DSes (id 1..10): shadow (Intel i5-9500, Fedora 43), each on")
     print("  port 2050+i, registered_with_rpcbind=false, host network")
     print("- Network: 1 GbE LAN, 0.86 ms RTT adept <-> shadow")
-    print("- 5 runs per (codec, geom, size, mode, layout)")
+    print("- 5 runs per (encoding, geom, size, mode, layout)")
     print(f"- Sizes: {sizes}")
     print(f"- Layouts: {layouts}\n")
 
     print("## Cross-host vs loopback at 1 MB / 4+2 / v1 / healthy\n")
     print("Loopback baseline = Fedora 43 aarch64 single-host bridge "
           "network (ec_benchmark_full_report.md §5.3).\n")
-    print("| codec | loopback w | xhost w | w ratio | "
+    print("| encoding | loopback w | xhost w | w ratio | "
           "loopback r | xhost r | r ratio |")
     print("|-------|-----------:|--------:|--------:|"
           "-----------:|--------:|--------:|")
-    for c in codecs_4p2:
+    for c in encodings_4p2:
         if c == "plain":
             lw, lr = LOOPBACK_FEDORA_1MB_4P2[c]
             xrows = group_v1(rows, "plain", "1+0", 1048576, "healthy")
@@ -119,7 +119,7 @@ def main():
         print(f"| {c} | {lw} | {xw} | {wr:.1f}x | "
               f"{lr} | {xr} | {rr:.1f}x |")
 
-    print("\n## Codec ordering preservation (v1, healthy, 4+2)\n")
+    print("\n## Encoding ordering preservation (v1, healthy, 4+2)\n")
     print("| size | RS read | Msys read | Mnsys read | order preserved? |")
     print("|------|--------:|----------:|-----------:|------------------|")
     for size in sizes:
@@ -150,7 +150,7 @@ def main():
         print(f"| {size//1024} KiB | {hr} | {dr} | {ovh:+.1f}% |")
 
     print("\n## v2 vs v1 write overhead (4+2, healthy)\n")
-    print("| codec | size | v1 w | v2 w | overhead |")
+    print("| encoding | size | v1 w | v2 w | overhead |")
     print("|-------|------|-----:|-----:|---------:|")
     for c in ["rs", "mojette-sys", "mojette-nonsys"]:
         for size in sizes:

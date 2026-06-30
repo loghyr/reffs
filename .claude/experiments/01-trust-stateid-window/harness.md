@@ -28,7 +28,7 @@ Per round, the harness records:
 |---|---|---|
 | `round` | loop counter | 1..N |
 | `layout` | --layout flag | v1 or v2 |
-| `codec` | --codec flag | rs / mojette-sys / mojette-nonsys |
+| `encoding` | --encoding flag | rs / mojette-sys / mojette-nonsys |
 | `k`, `m` | --k / --m | shard counts |
 | `size_mb` | --size | client buffer size |
 | `delay_ms` | --delay-ms | gap between A start and B start |
@@ -52,7 +52,7 @@ N runs:
 
 `a_first_fail_stripe = N/A` with `a_rc = 0` is itself a finding:
 it means A wrote the entire file before B's request landed —
-either the delay was too long, or the codec was too fast.  The
+either the delay was too long, or the encoding was too fast.  The
 sweep script can flag this and suggest a smaller `--delay-ms`.
 
 ## Two scripts, mirroring exp 12
@@ -60,12 +60,12 @@ sweep script can flag this and suggest a smaller `--delay-ms`.
 - `exp01_race_harness.sh` (single round)
   - Replaces both `exp01_race_v1.sh` and `exp01_race_v2.sh`.
   - Takes `--layout v1|v2`, `--delay-ms M`, `--size-mb S`,
-    `--codec C`, `--k K`, `--m M`, `--round N`,
+    `--encoding C`, `--k K`, `--m M`, `--round N`,
     `--mds HOST[:PORT]`.
   - Emits one `RESULT` line on stdout, parseable by the sweep
     script.  Format:
     ```
-    RESULT round=$N layout=$L codec=$C k=$K m=$M size_mb=$S \
+    RESULT round=$N layout=$L encoding=$C k=$K m=$M size_mb=$S \
            delay_ms=$D a_rc=$ARC b_rc=$BRC \
            a_stripes_ok=$AS a_first_fail_stripe=$AFS \
            b_stripes_ok=$BS final_winner=$FW \
@@ -118,7 +118,7 @@ the bench-trigger isolation work tracked in
 No reffs source change.  No CI change.  The harness scripts live
 under `.claude/experiments/01-trust-stateid-window/` and emit
 CSV into `data/`, which is **tracked** in git (one CSV per sweep
-configuration, named `race_<layout>_N<runs>_<k>plus<m>_<codec>_<size>MB.csv`),
+configuration, named `race_<layout>_N<runs>_<k>plus<m>_<encoding>_<size>MB.csv`),
 consistent with exp 12.  The v1 sweep runs on adept against the
 existing bench docker stack with no code changes.
 
@@ -128,7 +128,7 @@ existing bench docker stack with no code changes.
 2. Verify on adept against bench stack: `--layout v1 --round 1`
    reproduces the existing v1 result (`report.md` §v1 detail).
 3. Write `exp01_race_sweep.sh` — multi-round CSV emitter.
-4. Run `--layout v1 --runs 20 --size-mb 100 --codec rs` on adept,
+4. Run `--layout v1 --runs 20 --size-mb 100 --encoding rs` on adept,
    commit the CSV under `data/`.
 5. Append the multi-run result to `report.md` (replacing the
    "Single race observation; no statistical distribution" caveat

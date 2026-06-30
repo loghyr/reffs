@@ -5,14 +5,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Erasure Coding Design
 
-## Codec Architecture
+## Encoding Architecture
 
-The codec interface (`lib/include/reffs/ec.h`) is designed for
-swappability.  Reed-Solomon is the proof-of-concept codec to
+The encoding interface (`lib/include/reffs/ec.h`) is designed for
+swappability.  Reed-Solomon is the proof-of-concept encoding to
 demonstrate that the pNFS architecture is encoding-agnostic.
 
 ```c
-struct ec_codec {
+struct ec_encoding {
     const char *ec_name;
     int ec_k;           /* data shards */
     int ec_m;           /* parity shards */
@@ -22,7 +22,7 @@ struct ec_codec {
 };
 ```
 
-Any codec that satisfies this interface can be plugged in.
+Any encoding that satisfies this interface can be plugged in.
 
 ## Reed-Solomon Implementation
 

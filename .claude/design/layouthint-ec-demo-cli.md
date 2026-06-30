@@ -39,7 +39,7 @@ is the slide evidence for the IETF 126 deck row 22h.
 
 4. **CLI flags are file-creation scoped, not session scoped.**
    ec_demo subcommands that create files (put, ec_write,
-   ec_write_codec_*) accept the flags.  Subcommands that only
+   ec_write_encoding_*) accept the flags.  Subcommands that only
    read or operate on existing files (get, check) ignore them
    even if passed.  The hint applies to the LAYOUTGET that
    *follows* the file create -- pre-existing files already
@@ -73,9 +73,9 @@ OPEN args:
 ```
 
 `ffv2lh_supported_types` is hardcoded to RS_VANDERMONDE because
-ec_demo always uses RS (the codec is fixed per
-`--codec` and the slide cares about the size+stripe hint, not
-the codec negotiation surface).  `ffv2lh_preferred_protection`
+ec_demo always uses RS (the encoding is fixed per
+`--encoding` and the slide cares about the size+stripe hint, not
+the encoding negotiation surface).  `ffv2lh_preferred_protection`
 mirrors ec_demo's existing `--K` / `--M` geometry flags.  The
 two new flags fill `ffv2lh_stripe_unit` and
 `ffv2lh_expected_file_size`.
@@ -111,7 +111,7 @@ New `tools/ec_demo.c` long options:
 | `--expected-size-hint=BYTES` | uint64 | ffv2lh_expected_file_size |
 
 Help text additions land in the usage block near the existing
-codec / geometry flags.  Parsing accepts bare bytes and the
+encoding / geometry flags.  Parsing accepts bare bytes and the
 common KB/MB/GB suffixes (existing `parse_size()` helper if it
 exists; else inline strtoull + suffix).
 

@@ -16,7 +16,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 The MDS currently hard-codes `seg.ls_m = 0` at LAYOUTGET-time
 layout-segment creation (`lib/nfs4/server/layout.c:1267`) and
 uses `ls_k = nfiles` (line 1266) where `nfiles` is whatever
-the runway managed to pop -- which silently degrades codec
+the runway managed to pop -- which silently degrades encoding
 geometry if the runway is short.  That selects
 `FFV2_ENCODING_PASSTHROUGH` for every layout the MDS issues
 for files created over a kernel mount (see
@@ -26,7 +26,7 @@ Wire protocol reference: FFv2 `ffm_coding_type` is defined in
 `draft-haynes-nfsv4-flexfiles-v2` -- the user is the draft
 author.  No NFSv4.2 protocol wire change in this slice;
 `probe1_xdr.x` is internal.  ec_demo bypasses the
-issue by passing `--codec rs/...` directly and ignoring the
+issue by passing `--encoding rs/...` directly and ignoring the
 wire `ffm_coding_type` (which is "advisory only" per the
 comment at line 599-608).
 
@@ -35,11 +35,11 @@ PS EC), the PS needs to receive an EC layout from the MDS --
 no per-file negotiation mechanism exists yet
 (`ffv2_layouthint4` is a NOT_NOW_BROWN_COW per the layout.c
 comment).  Until the layouthint lands, the cheap interim is a
-**per-export default codec** configured at the MDS:
+**per-export default encoding** configured at the MDS:
 
 - TOML `[[export]] default_coding = "rs:4+2"`
 - Probe op `SB_SET_DEFAULT_CODING` for runtime modification
-- Layout segments created on that export inherit the codec
+- Layout segments created on that export inherit the encoding
   + (k, m) values, so any client (ec_demo, kernel, PS) gets
   the same coding type back from LAYOUTGET
 
@@ -57,10 +57,10 @@ NFSv4.2 wire (probe XDR only, which is internal).
 
 | Test | Intent |
 |------|--------|
-| `test_config_default_coding_passthrough` | `default_coding = "passthrough"` parses to (codec=PASSTHROUGH, k=stripe_count, m=0) |
-| `test_config_default_coding_rs_4_2` | `default_coding = "rs:4+2"` parses to (codec=RS_VANDERMONDE, k=4, m=2) |
-| `test_config_default_coding_mojette_sys_8_2` | `default_coding = "mojette-sys:8+2"` parses to (codec=MOJETTE_SYSTEMATIC, k=8, m=2) |
-| `test_config_default_coding_invalid_codec` | `default_coding = "bogus:4+2"` -> parse error |
+| `test_config_default_coding_passthrough` | `default_coding = "passthrough"` parses to (encoding=PASSTHROUGH, k=stripe_count, m=0) |
+| `test_config_default_coding_rs_4_2` | `default_coding = "rs:4+2"` parses to (encoding=RS_VANDERMONDE, k=4, m=2) |
+| `test_config_default_coding_mojette_sys_8_2` | `default_coding = "mojette-sys:8+2"` parses to (encoding=MOJETTE_SYSTEMATIC, k=8, m=2) |
+| `test_config_default_coding_invalid_encoding` | `default_coding = "bogus:4+2"` -> parse error |
 | `test_config_default_coding_invalid_format` | `default_coding = "rs"` (missing geometry) -> parse error; `"rs:4"` (missing m) -> parse error; `"rs:0+2"` (k=0) -> parse error |
 | `test_config_default_coding_absent` | No `default_coding` field -> defaults to PASSTHROUGH with k = layout_width, m = 0 (today's behaviour) |
 | `test_config_default_coding_max_k_m` | `"rs:128+64"` -> parse error (exceeds LAYOUT_SEG_MAX_FILES = 16 -- enforce sb cap) |
@@ -94,7 +94,7 @@ NFSv4.2 wire (probe XDR only, which is internal).
 | `sb_path_conflict_test.c` | PASS -- path-conflict logic untouched |
 | `config_test.c` | **EXTEND** -- add tests above; existing `[[export]]` tests still pass |
 | `sb_persistence_test.c` | **EXTEND** -- registry round-trip extended with new field |
-| ec_demo bench tests | PASS -- ec_demo passes `--codec` directly; new field is opt-in via TOML |
+| ec_demo bench tests | PASS -- ec_demo passes `--encoding` directly; new field is opt-in via TOML |
 | Track 1b chunk-collision tests | PASS -- those use ec_demo too |
 | `bat_export_setup.sh` | PASS -- existing bat exports do not set `default_coding`; default behavior is unchanged |
 
@@ -102,7 +102,7 @@ NFSv4.2 wire (probe XDR only, which is internal).
 
 After the unit tests pass:
 
-1. **Single-codec kernel mount**: configure MDS with
+1. **Single-encoding kernel mount**: configure MDS with
    `default_coding = "rs:4+2"`.  Restart MDS.  Kernel-mount
    MDS, write 1 MB.  Verify DS0..5 see the WRITE traffic (via
    `--op gather`).  Verify file reads back correctly.
@@ -114,7 +114,7 @@ After the unit tests pass:
 
 3. **Mixed exports**: two `[[export]]` blocks with different
    `default_coding` settings; verify LAYOUTGET on a file in
-   each returns the export-appropriate codec.
+   each returns the export-appropriate encoding.
 
 ### CI tests
 
@@ -130,7 +130,7 @@ No new state machine -- this is configuration that drives
 LAYOUTGET-time decisions.
 
 Persistence: extend `sb_registry_entry` with
-`sre_default_coding` (codec, k, m as fixed-size fields).
+`sre_default_coding` (encoding, k, m as fixed-size fields).
 SB_REGISTRY_VERSION stays at 1 (no deployed persistent
 storage per CLAUDE.md); zero-initialized = PASSTHROUGH legacy.
 
@@ -155,7 +155,7 @@ Three admin paths:
        probe_coding_spec1        scda_coding;
    };
    struct probe_coding_spec1 {
-       unsigned int  pcs_codec_type;  /* PASSTHROUGH/RS/MOJ-SYS/MOJ-NONSYS */
+       unsigned int  pcs_encoding_type;  /* PASSTHROUGH/RS/MOJ-SYS/MOJ-NONSYS */
        unsigned int  pcs_k;
        unsigned int  pcs_m;
    };
@@ -165,9 +165,9 @@ Three admin paths:
    - `pcs_k > 0`
    - `pcs_k + pcs_m <= LAYOUT_SEG_MAX_FILES` (32, per
      `lib/include/reffs/layout_segment.h:28`)
-   - codec known
+   - encoding known
    - **If `sb_layout_types & SB_LAYOUT_FILE`**: refuse any
-     non-PASSTHROUGH codec OR any `m > 0` -- file layouts
+     non-PASSTHROUGH encoding OR any `m > 0` -- file layouts
      require single-DS per the per-export-dstore.md design
      rule "file layouts = single DS per export".  Return
      `PROBE1ERR_INVAL`.
@@ -194,7 +194,7 @@ Both setter and getter persist to the registry.
 | 2 | TOML parser for `default_coding` string + 5 test cases | `lib/config/config.c`, `config_test.c` | ~60 | 5 unit tests |
 | 3 | Add `sb_default_coding` field to `struct super_block` + setter `super_block_set_default_coding()` | `lib/include/reffs/super_block.h`, `lib/fs/super_block.c` | ~30 | mechanical (covered by tests below) |
 | 4 | Registry persistence: add `sre_default_coding` to `sb_registry_entry`; save/load round-trip + 2 test cases | `lib/include/reffs/sb_registry.h`, `lib/fs/sb_registry.c`, `sb_persistence_test.c` | ~40 | 2 unit tests |
-| 5 | LAYOUTGET dispatch (real shape per plan-review B2): (a) compute `target = sb->sb_default_coding.k + m` upfront (before `lines 1190-1195` runway-pop count derivation); (b) if `nfiles < target` after runway pop, return `NFS4ERR_LAYOUTUNAVAILABLE` instead of accepting degraded `nfiles` as `ls_k`; (c) set `ls_k = sb->sb_default_coding.k` and `ls_m = sb->sb_default_coding.m` from config, NOT from `nfiles`; (d) drive `ffm_coding_type` selection at `layout.c:610-613` from `sb_default_coding.codec` instead of the `ls_m==0` heuristic.  Step-5 tests can call `super_block_set_default_coding()` directly without depending on probe wiring (steps 6+); flag this in the test setup. | `lib/nfs4/server/layout.c`, `layoutget_default_coding_test.c` | ~80 (was 50; +30 LOC for runway-target work) | 6 unit tests (passthrough, rs 4+2, moj-sys 8+2, runway-target, insufficient, dstore-drop) |
+| 5 | LAYOUTGET dispatch (real shape per plan-review B2): (a) compute `target = sb->sb_default_coding.k + m` upfront (before `lines 1190-1195` runway-pop count derivation); (b) if `nfiles < target` after runway pop, return `NFS4ERR_LAYOUTUNAVAILABLE` instead of accepting degraded `nfiles` as `ls_k`; (c) set `ls_k = sb->sb_default_coding.k` and `ls_m = sb->sb_default_coding.m` from config, NOT from `nfiles`; (d) drive `ffm_coding_type` selection at `layout.c:610-613` from `sb_default_coding.encoding` instead of the `ls_m==0` heuristic.  Step-5 tests can call `super_block_set_default_coding()` directly without depending on probe wiring (steps 6+); flag this in the test setup. | `lib/nfs4/server/layout.c`, `layoutget_default_coding_test.c` | ~80 (was 50; +30 LOC for runway-target work) | 6 unit tests (passthrough, rs 4+2, moj-sys 8+2, runway-target, insufficient, dstore-drop) |
 | 6 | Probe XDR: `probe_coding_spec1`, `SB_SET_DEFAULT_CODING1args/res`, op 28, extend `probe_sb_info1` with `psi_default_coding` | `lib/xdr/probe1_xdr.x` | ~30 | XDR-only; tests via C/Python clients below |
 | 7 | Probe server handlers `probe1_op_sb_set_default_coding` (op 28) AND `probe1_op_sb_get_default_coding` (op 29) + validation (incl. file-layout-single-DS check per B3) | `lib/probe1/probe1_server.c` | ~80 (was 50; +30 for getter + file-layout check) | one Python integration test |
 | 8 | Probe C client wrappers (setter + getter) + CLI flag | `lib/probe1/probe1_client.c`, `src/probe1_client.c` | ~60 (was 40; +20 for getter) | covered by integration test |
@@ -217,7 +217,7 @@ same `sb_registry_entry` struct.
 
 ## Coding spec format
 
-The TOML string format is `"<codec>:<k>+<m>"`:
+The TOML string format is `"<encoding>:<k>+<m>"`:
 
 - `"passthrough"` (alone, no `:<k>+<m>`) -- legacy / explicit
   PASSTHROUGH; k = `ss_layout_width` (server-wide), m = 0
@@ -231,10 +231,10 @@ LAYOUT_SEG_MAX_FILES = 32 (per
 `lib/include/reffs/layout_segment.h:28`; **not** 16 as an
 earlier draft of this design said).
 
-Implementation note: pair the TOML parser's codec-name lookup
+Implementation note: pair the TOML parser's encoding-name lookup
 with a `_Static_assert` linking the parser's string table to
-the `enum ec_codec_type` values in `lib/include/reffs/ec.h`,
-so a future codec addition cannot silently desync.
+the `enum ec_encoding_type` values in `lib/include/reffs/ec.h`,
+so a future encoding addition cannot silently desync.
 
 ## Backward compatibility
 
@@ -248,7 +248,7 @@ so a future codec addition cannot silently desync.
   `srh_version` stays at 1; do NOT bump (per CLAUDE.md
   no-deployed-storage rule).  `test_registry_default_coding_absent_legacy`
   also asserts `srh_version == 1`.
-- ec_demo `--codec rs/mojette-sys/...` still drives codec
+- ec_demo `--encoding rs/mojette-sys/...` still drives encoding
   client-side regardless of MDS default (ec_demo ignores the
   layout's coding type per existing convention)
 - PS / `ec_pipeline`: when the MDS issues a non-PASSTHROUGH
@@ -267,12 +267,12 @@ so a future codec addition cannot silently desync.
   slice is the interim; the layout-hint work proceeds
   independently and superscribes default_coding on a per-file
   basis when it lands.
-- **Per-byte-range coding** (different codecs for different
+- **Per-byte-range coding** (different encodings for different
   parts of a file).  Out of scope.
 - **Runway pool that pre-allocates k+m FHs per default_coding**
   -- the current runway is per-dstore; for k+m allocation it
   walks the dstore list at LAYOUTGET time.  May need a runway
-  warmup pass for non-default codecs in steady state; not in
+  warmup pass for non-default encodings in steady state; not in
   this slice.
 
 ## Reviewer agent gating
@@ -321,14 +321,14 @@ above.  The diff vs the original v1 design:
 | Tag | Finding | Where applied |
 |-----|---------|---------------|
 | B1 | `LAYOUT_SEG_MAX_FILES` is 32, not 16 | Coding-spec section, Reference list |
-| B2 | Step 5 conflates target with `nfiles`; today's code silently degrades codec geometry when runway is short | Step 5 table row rewritten (~80 LOC, was ~50); 2 new test cases (`test_layoutget_runway_target_drives_k_m`, `test_layoutget_dstore_count_drops`); `test_layoutget_insufficient_dstores` reframed from "existing behavior" to "corrected behavior" |
+| B2 | Step 5 conflates target with `nfiles`; today's code silently degrades encoding geometry when runway is short | Step 5 table row rewritten (~80 LOC, was ~50); 2 new test cases (`test_layoutget_runway_target_drives_k_m`, `test_layoutget_dstore_count_drops`); `test_layoutget_insufficient_dstores` reframed from "existing behavior" to "corrected behavior" |
 | B3 | Missing cross-validation: file layouts require single DS per `per-export-dstore.md` | Admin Interface op 28 validation; new test `test_layoutget_file_layout_rejects_ec_default`; Step 7 LOC bumped +30 for the file-layout check |
 | W1 | `layout_width` is server-wide (`ss_layout_width`), not per-sb | Backward-compatibility section corrected |
 | W2 | Add `SB_GET_DEFAULT_CODING` op for symmetry + integration testing | New op 29 in Admin Interface; Steps 7-9 LOC bumped (+30/+20/+10) |
 | W4 | PS / `ec_pipeline` interaction unmentioned | Backward-compatibility section names the PS path |
 | W5 | Test impact should cover registry header version unchanged | `test_registry_default_coding_absent_legacy` extended to assert `srh_version == 1` |
 | N1 | +2 day buffer realistic | Total estimate now 12 working days (was 10) |
-| N2 | `_Static_assert` linking parser to ec.h codec enum | Coding-spec format section |
+| N2 | `_Static_assert` linking parser to ec.h encoding enum | Coding-spec format section |
 | N3 | RFC compliance citation | "Why" section adds draft-haynes-nfsv4-flexfiles-v2 reference |
 | N4 | `test_layoutget_dstore_count_drops` edge case | Added to LAYOUTGET unit test set |
 

@@ -45,7 +45,7 @@ follow-up.
   `race_target` with distinct `--id`:
   - Client A: random 100 MiB blob `/tmp/A`, started first.
   - Client B: random 100 MiB blob `/tmp/B`, started 0.5 s later.
-- Codec RS 4+2, layout v1, 4 KiB shards.
+- Encoding RS 4+2, layout v1, 4 KiB shards.
 
 The 0.5 s delay was chosen empirically: 100 MiB write takes
 ~60 s on adept, so 0.5 s puts B's request well inside A's

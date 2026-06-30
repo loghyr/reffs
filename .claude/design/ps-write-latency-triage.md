@@ -18,7 +18,7 @@ d,rs,4+2,1048576,1,61979,10445,OK,...,2026-06-04T17:27:53Z
 Both 4 KB and 1 MB writes finished within ~130 ms of each other.
 Uniform-cost write that ignores byte count = fixed-overhead per
 file lifecycle, not per-byte cost.  Prereq #5/#6 would mostly
-measure that fixed cost, not codec/geometry/size effects, so this
+measure that fixed cost, not encoding/geometry/size effects, so this
 gates further bench work.
 
 ## Root cause (definitive, instrumented)
@@ -133,7 +133,7 @@ The 60 s appears per cell, not just per mount.
 
 | Option | Effort | What it buys |
 |--------|--------|--------------|
-| **Make DS DESTROY_CLIENTID return NFS4_OK for unknown clientid (Recommended)** | ~10 LOC reffs change | RFC-compliant interpretation: "the clientid is gone" can be expressed as NFS4_OK (already-not-there) instead of NFS4ERR_STALE_CLIENTID.  Linux kernel will stop retrying.  Per-dd cost drops to actual codec/IO time.  Lowest-risk single-file change. |
+| **Make DS DESTROY_CLIENTID return NFS4_OK for unknown clientid (Recommended)** | ~10 LOC reffs change | RFC-compliant interpretation: "the clientid is gone" can be expressed as NFS4_OK (already-not-there) instead of NFS4ERR_STALE_CLIENTID.  Linux kernel will stop retrying.  Per-dd cost drops to actual encoding/IO time.  Lowest-risk single-file change. |
 | Find / disable the Linux kernel retry behaviour | unknown | Maybe a /proc/sys/sunrpc tunable, maybe not.  Worth trying as a configuration workaround before a code change.  E.g., `/sys/module/nfs/parameters/`, `sysctl sunrpc.tcp_*`. |
 | Use NFSv3 DSes instead of NFSv4 DSes for the bench | medium | NFSv3 has no DESTROY_CLIENTID concept.  Bench docker-compose's DSes are reffsd configured to register NFSv3 unconditionally (per memory note); a layout pointing at NFSv3 ds-port would avoid the storm.  But variant-d's whole point is the FFv2 tightly-coupled path which is NFSv4-CHUNK on DSes -- swapping breaks the variant. |
 | Pre-bench-cell EXCHANGE_ID handshake the kernel will accept | unknown | Hard to engineer without kernel cooperation. |

@@ -24,7 +24,7 @@
 #
 # Usage example:
 #   ./run-realnet-harness.sh \
-#       --codecs rs,mojette-sys \
+#       --encodings rs,mojette-sys \
 #       --geometries 4+2,8+2 \
 #       --sizes 4096,65536,1048576 \
 #       --iters 3 \
@@ -63,7 +63,7 @@ usage() {
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-    --codecs)        CODECS="$2";        shift 2 ;;
+    --encodings)        CODECS="$2";        shift 2 ;;
     --geometries)    GEOMETRIES="$2";    shift 2 ;;
     --sizes)         SIZES="$2";         shift 2 ;;
     --iters)         ITERS="$2";         shift 2 ;;
@@ -129,7 +129,7 @@ fi
 # extensions are appended (column order is contract for CSV
 # tooling).
 if [ ! -f "$OUT" ]; then
-    echo "variant,codec,geometry,size_bytes,iter,write_ms,read_ms,verify,note,topology,client_host,ps_host,ds_mds_host,timestamp,bytes_per_sec_write,bytes_per_sec_read" \
+    echo "variant,encoding,geometry,size_bytes,iter,write_ms,read_ms,verify,note,topology,client_host,ps_host,ds_mds_host,timestamp,bytes_per_sec_write,bytes_per_sec_read" \
         > "$OUT"
 fi
 echo "[harness] writing CSV to $OUT"
@@ -140,7 +140,7 @@ echo "[harness] writing CSV to $OUT"
 # notes; the note column is the only one that might legitimately
 # contain commas in error messages, so we sanitise it.
 emit_row() {
-    local variant=$1 codec=$2 geom=$3 size=$4 iter=$5
+    local variant=$1 encoding=$2 geom=$3 size=$4 iter=$5
     local write_ms=$6 read_ms=$7 verify=$8 note=$9 ts=${10}
     local bps_w=0 bps_r=0
 
@@ -173,7 +173,7 @@ emit_row() {
     note="${note//,/;}"
 
     printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
-        "$variant" "$codec" "$geom" "$size" "$iter" \
+        "$variant" "$encoding" "$geom" "$size" "$iter" \
         "$write_ms" "$read_ms" "$verify" "$note" \
         "realnet-3host" "$CLIENT_HOST" "$PS_HOST" "$DS_MDS_HOST" \
         "$ts" "$bps_w" "$bps_r" \
@@ -183,15 +183,15 @@ emit_row() {
 # Set the MDS's per-export default coding via probe RPC.  Run
 # inside the bench MDS container -- the probe binary lives there
 # alongside python3/reply-xdr.  Reffs-probe.py takes the spec
-# as a single "codec:K+M" string (.claude/design/per-export-
+# as a single "encoding:K+M" string (.claude/design/per-export-
 # default-coding.md step 9 grammar).
 PROBE_CMD="sudo docker exec reffs-bench-mds \
     /shared/build/scripts/reffs-probe.py \
     --host 127.0.0.1 --port 20490"
 
 set_default_coding() {
-    local codec=$1 k=$2 m=$3
-    local spec="${codec}:${k}+${m}"
+    local encoding=$1 k=$2 m=$3
+    local spec="${encoding}:${k}+${m}"
 
     ssh "$DS_MDS_HOST" "$PROBE_CMD sb-set-default-coding \
         --id 1 --default-coding $spec" >/dev/null 2>&1
@@ -409,29 +409,29 @@ case "$VARIANTS" in
 *a*|*b*|*c*) mount_variants_abc ;;
 esac
 
-# Iteration order: variants outer, then codecs, then geoms, then
-# sizes, then iters.  Switching codec/geom between cells (the
+# Iteration order: variants outer, then encodings, then geoms, then
+# sizes, then iters.  Switching encoding/geom between cells (the
 # per-cell set_default_coding) is the slow axis (probe round-trip);
-# iterating sizes within a (codec, geom) amortizes the switch.
+# iterating sizes within a (encoding, geom) amortizes the switch.
 IFS=',' read -ra VARIANT_ARR <<<"$VARIANTS"
 IFS=',' read -ra CODEC_ARR <<<"$CODECS"
 IFS=',' read -ra GEOM_ARR <<<"$GEOMETRIES"
 IFS=',' read -ra SIZE_ARR <<<"$SIZES"
 
 for variant in "${VARIANT_ARR[@]}"; do
-    for codec in "${CODEC_ARR[@]}"; do
+    for encoding in "${CODEC_ARR[@]}"; do
         for geom in "${GEOM_ARR[@]}"; do
             # Parse "K+M" into K and M.
             k=${geom%+*}
             m=${geom#*+}
 
-            # Switch MDS default coding once per (codec, geom).
+            # Switch MDS default coding once per (encoding, geom).
             # Only variant d uses the MDS path through the PS,
             # so skip the probe when running stub variants.  If
             # the probe fails (MDS gone, container died, probe
             # CLI grammar drift) every subsequent variant-d cell
-            # in this (codec, geom) iteration would otherwise be
-            # labelled with the *requested* codec/geom while the
+            # in this (encoding, geom) iteration would otherwise be
+            # labelled with the *requested* encoding/geom while the
             # MDS continues issuing layouts under whatever coding
             # it had before -- silent data corruption in the CSV.
             # Skip the cells with verify=FAIL note=
@@ -439,8 +439,8 @@ for variant in "${VARIANT_ARR[@]}"; do
             # sees the gap explicitly.
             coding_ok=1
             if [ "$variant" = "d" ]; then
-                if ! set_default_coding "$codec" "$k" "$m"; then
-                    echo "WARN: set_default_coding $codec/$k+$m failed -- skipping cells" >&2
+                if ! set_default_coding "$encoding" "$k" "$m"; then
+                    echo "WARN: set_default_coding $encoding/$k+$m failed -- skipping cells" >&2
                     coding_ok=0
                 fi
             fi
@@ -448,7 +448,7 @@ for variant in "${VARIANT_ARR[@]}"; do
             for size in "${SIZE_ARR[@]}"; do
                 for iter in $(seq 1 "$ITERS"); do
                     total_cells=$((total_cells + 1))
-                    cell_id="${variant}_${codec}_${k}_${m}_${size}_${iter}"
+                    cell_id="${variant}_${encoding}_${k}_${m}_${size}_${iter}"
                     ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
                     if [ "$coding_ok" = "0" ]; then
@@ -474,7 +474,7 @@ for variant in "${VARIANT_ARR[@]}"; do
                     read -r write_ms read_ms verify note <<<"$result"
                     note=${note:-}
 
-                    emit_row "$variant" "$codec" "$geom" "$size" \
+                    emit_row "$variant" "$encoding" "$geom" "$size" \
                         "$iter" "$write_ms" "$read_ms" \
                         "$verify" "$note" "$ts"
 

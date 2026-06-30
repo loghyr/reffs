@@ -30,7 +30,7 @@ report rather than avoided.
   no LAYOUTGET).  Writes traverse client -> MDS -> MDS-local
   storage.  No DS layer involved in the I/O path even though DSes
   are running.
-- **B "distributed"**: `ec_demo write --codec rs -k 4 -m 2
+- **B "distributed"**: `ec_demo write --encoding rs -k 4 -m 2
   --layout v1`.  Writes traverse client -> MDS LAYOUTGET -> direct
   to DSes via NFSv3.  Six DSes serve the layout.
 - **Workload**: each client writes 4 MiB files in a loop for 30 s.
@@ -42,7 +42,7 @@ report rather than avoided.
 
 Same hardware budget for both A1 and B -- only the access pattern
 differs.  Storage is tmpfs (no NVMe variance), so the comparison
-isolates the protocol/codec cost.
+isolates the protocol/encoding cost.
 
 ## Results
 
@@ -67,7 +67,7 @@ DS fan-out keeps absorbing additional load.
 
 At N=32, rs degrades back to 10.4 MB/s with ~10% per-worker
 error rate (33/32 errors).  Concurrent-session overhead at the
-client side starts dominating once the codec parallelism budget
+client side starts dominating once the encoding parallelism budget
 is saturated.  Plain continues climbing at N=32 (12.27 MB/s).
 
 ### Plain saturation point (A1 hypothesis)

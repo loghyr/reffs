@@ -10,7 +10,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 - **Platform**: Fedora 43, Linux 6.19.8, aarch64 (Apple M4 via VMware Fusion)
 - **Setup**: 7 Docker containers on a bridge network (1 MDS + 6 DSes)
 - **File sizes**: 4 KB, 16 KB, 64 KB, 256 KB, 1 MB
-- **Runs**: 5 measured runs per codec per size (2 warmup discarded)
+- **Runs**: 5 measured runs per encoding per size (2 warmup discarded)
 - **Shard size**: 4 KB (io_uring large-message workaround)
 - **Layout**: Flex Files v1 (NFSv3 DS I/O)
 
@@ -61,7 +61,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ### Write overhead (vs plain baseline)
 
-| Codec | Write (ms) | Overhead vs plain | Overhead vs stripe |
+| Encoding | Write (ms) | Overhead vs plain | Overhead vs stripe |
 |-------|-----------|-------------------|-------------------|
 | plain | 64.4      | --                | --                |
 | stripe | 71.2     | +11%              | --                |
@@ -71,7 +71,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ### Read overhead (vs plain baseline)
 
-| Codec | Read (ms) | Overhead vs plain | Overhead vs stripe |
+| Encoding | Read (ms) | Overhead vs plain | Overhead vs stripe |
 |-------|----------|-------------------|-------------------|
 | plain | 59.4     | --                | --                |
 | stripe | 64.8    | +9%               | --                |
@@ -81,7 +81,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ### Degraded-1 overhead (vs healthy read)
 
-| Codec | Healthy | Degraded-1 | Overhead |
+| Encoding | Healthy | Degraded-1 | Overhead |
 |-------|---------|------------|----------|
 | RS    | 86.8    | 98.6       | +14%     |
 | Mojette-sys | 89.4 | 94.2  | +5%      |
@@ -114,11 +114,11 @@ stripe reads (65ms) are only 9% more than plain (59ms).
 Even compared to the stripe ceiling (no coding overhead at all),
 RS degraded reads at 1 MB (99ms) add only 52% over stripe (65ms) --
 and that includes both the reconstruction math AND reading from 5 DSes
-instead of 6.  For systematic codecs, reconstruction is a non-event.
+instead of 6.  For systematic encodings, reconstruction is a non-event.
 
 ### 5. The bottleneck is network I/O, not CPU
 
-All five codecs converge at small sizes (4-16 KB) where per-RPC
+All five encodings converge at small sizes (4-16 KB) where per-RPC
 overhead dominates.  The coding math only becomes visible at 256 KB+
 where data volume makes the per-byte encoding cost measurable.
 
@@ -136,7 +136,7 @@ where data volume makes the per-byte encoding cost measurable.
    over healthy reads.  A failed DS does not meaningfully impact read
    performance.
 
-4. **Systematic codecs (RS, Mojette-sys) are the right choice** --
+4. **Systematic encodings (RS, Mojette-sys) are the right choice** --
    non-systematic Mojette has 4x the read overhead at 1 MB because it
-   always does a full inverse transform.  Systematic codecs read data
+   always does a full inverse transform.  Systematic encodings read data
    shards directly and only invoke the decoder on failure.

@@ -366,8 +366,8 @@ Useful options:
 | Option | Meaning |
 |---|---|
 | `--size <bytes>` | Bytes per file (default 10 MB) |
-| `--k <K> --m <M>` | EC geometry; default `1 0` with the `mirror` codec (matches one-DS-per-share targets).  For RS 4+2 pass `--codec rs --k 4 --m 2` and the target share must back the layout with at least 6 DSes. |
-| `--codec rs\|mojette-sys\|mojette-nonsys\|stripe\|mirror` | Erasure-coding codec. `mirror` is the default. |
+| `--k <K> --m <M>` | EC geometry; default `1 0` with the `mirror` encoding (matches one-DS-per-share targets).  For RS 4+2 pass `--encoding rs --k 4 --m 2` and the target share must back the layout with at least 6 DSes. |
+| `--encoding rs\|mojette-sys\|mojette-nonsys\|stripe\|mirror` | Erasure-coding encoding. `mirror` is the default. |
 | `--nconnect <N>` | Number of TCP transports per session (NFSv4 multi-pathing).  Default 1.  See "Running at scale" below. |
 | `--source-ip <IP>` | Bind outgoing sockets to a specific local IP.  Useful when the test client has multiple addresses and you need to spread workers across them.  See "Running at scale" below. |
 | `--sec <flavor>` | Security flavor (default `krb5`). |
@@ -523,12 +523,12 @@ result and printed just above the failed-call line.
 | `session create failed: -121` (EREMOTEIO) | Server returned an NFS4 error on the COMPOUND.  The line just above will name the op and the status: `mds_compound_send: COMPOUND tag="..." op[N]=OP_<op>(NN) status=NFS4ERR_<NAME>` | Decode the `NFS4ERR_<NAME>` and address it.  Common ones below. |
 | `... status=NFS4ERR_PERM` on `EXCHANGE_ID` or `BIND_CONN_TO_SESSION` | Server's strict port checking rejected an unprivileged source port; or principal-to-uid mapping rejected the client | Check whether the server is using a reserved-port-required mount stance.  Check the server's idmap chain. |
 | `... status=NFS4ERR_DELAY` on `LAYOUTGET` | Server is busy or the layout placement path is throttling | Wait and retry; if persistent, server-side investigation -- look at the server's per-share layout state. |
-| `... status=NFS4ERR_LAYOUTUNAVAILABLE` on `LAYOUTGET` | No layout can be issued for the share, often because the requested EC geometry (`--k`/`--m`) exceeds the share's DS count | Match the geometry to the share.  Try `--codec mirror --k 1 --m 0` (the default) against a one-DS share; `--codec rs --k 4 --m 2` needs at least 6 DSes. |
-| `ec_write: need 6 mirrors, got 1` | Same as `LAYOUTUNAVAILABLE` -- the layout returned has fewer DSes than the codec requires | Use `--codec mirror --k 1 --m 0`, or move to a multi-DS share. |
+| `... status=NFS4ERR_LAYOUTUNAVAILABLE` on `LAYOUTGET` | No layout can be issued for the share, often because the requested EC geometry (`--k`/`--m`) exceeds the share's DS count | Match the geometry to the share.  Try `--encoding mirror --k 1 --m 0` (the default) against a one-DS share; `--encoding rs --k 4 --m 2` needs at least 6 DSes. |
+| `ec_write: need 6 mirrors, got 1` | Same as `LAYOUTUNAVAILABLE` -- the layout returned has fewer DSes than the encoding requires | Use `--encoding mirror --k 1 --m 0`, or move to a multi-DS share. |
 | `ec_read: stripe N shard[K] ds_read ... ret=-5` (EIO) followed by `ec_decode ret=-5` | DS-side I/O error returned to the client | Server-side / DS-side investigation. |
 | `ds_read: clnt_call failed: rpc_stat=N (RPC: ...)` | Transport-level failure on the DS (connection drop, timeout, server RST) | Check network reachability of the DS, and the DS's load. |
 | `ds_read: NFS3 error: status=N (NFS3ERR_<NAME>)` | DS returned an explicit NFS3 error | Decode `NFS3ERR_<NAME>` (IO, JUKEBOX, STALE, ACCES, ...). |
-| `ec_demo: invalid k=1 m=0` | Codec doesn't permit `m=0`, or the binary predates the `mirror` codec | Update to a current build (the default now uses `mirror`/k=1/m=0); for RS pass `--codec rs --k 4 --m 2`. |
+| `ec_demo: invalid k=1 m=0` | Encoding doesn't permit `m=0`, or the binary predates the `mirror` encoding | Update to a current build (the default now uses `mirror`/k=1/m=0); for RS pass `--encoding rs --k 4 --m 2`. |
 | Workers hang, no error printed | Intermittent network path (firewall, MTU mismatch, packet loss); or KDC unreachable mid-handshake | Run `tshark`/`tcpdump` filtered on the server IP + NFS port; correlate to worker stderr timestamps.  Check `kinit` works from the test client; check the krb5 trace if needed (`KRB5_TRACE=/dev/stderr kinit ...`). |
 
 **Server-side errors are server-side problems.**  When the

@@ -10,9 +10,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 - **Platform**: Fedora 43, Linux 6.19.8, aarch64 (Apple M4 via VMware Fusion)
 - **Setup**: 7 Docker containers on a bridge network (1 MDS + 6 DSes)
 - **Geometry**: 4+2 (k=4 data shards, m=2 parity shards)
-- **Codecs tested**: plain (no EC), Reed-Solomon, Mojette systematic, Mojette non-systematic
+- **Encodings tested**: plain (no EC), Reed-Solomon, Mojette systematic, Mojette non-systematic
 - **File sizes**: 4 KB, 16 KB, 64 KB, 256 KB, 1 MB
-- **Runs**: 5 measured runs per codec per size (2 warmup runs discarded)
+- **Runs**: 5 measured runs per encoding per size (2 warmup runs discarded)
 - **Shard size**: 4 KB (io_uring large-message workaround)
 - **Layout**: Flex Files v1 (NFSv3 DS I/O)
 
@@ -21,9 +21,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Each test file is **written once** with all 6 DSes healthy, then **read twice**:
 
 1. **Healthy read** -- all 6 DSes respond normally
-2. **Degraded-1 read** -- data shard 0 is skipped (simulated failure via `--skip-ds 0`), forcing the codec to reconstruct the missing shard from the remaining 5 shards
+2. **Degraded-1 read** -- data shard 0 is skipped (simulated failure via `--skip-ds 0`), forcing the encoding to reconstruct the missing shard from the remaining 5 shards
 
-Skipping a **data shard** (not parity) forces real reconstruction work for systematic codecs. Plain mirroring has no reconstruction capability and is excluded from the degraded pass.
+Skipping a **data shard** (not parity) forces real reconstruction work for systematic encodings. Plain mirroring has no reconstruction capability and is excluded from the degraded pass.
 
 All degraded reads verified correct (byte-for-byte match against the original input).
 
@@ -71,13 +71,13 @@ All degraded reads verified correct (byte-for-byte match against the original in
 
 ## Key Findings
 
-1. **Reconstruction overhead is negligible.** At 1 MB, degraded reads add 1-3% latency for all three codecs. The reconstruction CPU cost is dwarfed by the network I/O to the remaining 5 DSes.
+1. **Reconstruction overhead is negligible.** At 1 MB, degraded reads add 1-3% latency for all three encodings. The reconstruction CPU cost is dwarfed by the network I/O to the remaining 5 DSes.
 
-2. **Systematic codecs show near-zero penalty.** RS and Mojette-sys degraded reads are statistically indistinguishable from healthy reads at 256 KB and 1 MB. The saved I/O from skipping one DS roughly offsets the decode math.
+2. **Systematic encodings show near-zero penalty.** RS and Mojette-sys degraded reads are statistically indistinguishable from healthy reads at 256 KB and 1 MB. The saved I/O from skipping one DS roughly offsets the decode math.
 
-3. **Mojette non-systematic remains consistent.** The high baseline read latency (full inverse transform on every read) means reconstruction adds no meaningful additional cost -- the codec always does the same amount of work regardless of which shards are present.
+3. **Mojette non-systematic remains consistent.** The high baseline read latency (full inverse transform on every read) means reconstruction adds no meaningful additional cost -- the encoding always does the same amount of work regardless of which shards are present.
 
-4. **All reconstructions verified correct.** 75 degraded reads across 3 codecs and 5 sizes, all byte-for-byte correct.
+4. **All reconstructions verified correct.** 75 degraded reads across 3 encodings and 5 sizes, all byte-for-byte correct.
 
 5. **Negative overhead values** at some sizes reflect measurement noise (single-digit millisecond differences) and the I/O savings from reading 5 shards instead of 6.
 

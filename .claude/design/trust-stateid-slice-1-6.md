@@ -30,7 +30,7 @@ NFS4ERR_BAD_STATEID three times with 50/100/200 ms backoff,
 reporting LAYOUTERROR to the MDS each time, and on exhaustion
 returns -ESTALE.  The header comment is explicit: "After 3
 failed attempts, return -ESTALE so the caller can LAYOUTRETURN."
-That caller (the stripe loop in `ec_write_codec`) does NOT
+That caller (the stripe loop in `ec_write_encoding`) does NOT
 currently catch -ESTALE -- it just propagates the failure up
 and aborts the whole write.
 
@@ -40,7 +40,7 @@ stateid stays BAD_STATEID until the client gets a fresh
 layout from the MDS.  That's slice 1.6's job.
 
 When the per-stripe write or read returns -ESTALE (i.e., the
-inner retry exhausted), the codec layer:
+inner retry exhausted), the encoding layer:
 
 1. Releases the current layout state (LAYOUTRETURN-equivalent
    client-side cleanup; we do NOT send LAYOUTRETURN to the
@@ -141,7 +141,7 @@ the contract the slice 1.6 outer retry consumes.
 
 ### Step 2: Factor the per-stripe write into its own helper
 
-The current `ec_write_codec` stripe loop is ~80 lines inline.
+The current `ec_write_encoding` stripe loop is ~80 lines inline.
 Extract `ec_write_one_stripe(struct ec_context *ctx, ...)`
 to make the retry-around-the-stripe wrapping clean.  No
 behavior change in this step alone.
@@ -181,7 +181,7 @@ for (size_t s = 0; s < nstripes; s++) {
 
 ### Step 4: Mirror the same retry on the read path
 
-`ec_read_codec` has the symmetric structure.  Reads can also
+`ec_read_encoding` has the symmetric structure.  Reads can also
 hit BAD_STATEID if the layout is recalled mid-read.  Apply the
 same retry wrapper.
 

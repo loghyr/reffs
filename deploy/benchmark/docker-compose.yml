@@ -244,13 +244,13 @@ services:
       - ../../:/reffs:ro,z
     # NB: single logical line -- see bench-shards comment below.
     command: >
-      /bin/bash -c "exec /reffs/deploy/benchmark/run_chunk_collision.sh --ec_demo /shared/build/tools/ec_demo --mds reffs-mds --n 4 --codec rs --layout v2 --iterations 20"
+      /bin/bash -c "exec /reffs/deploy/benchmark/run_chunk_collision.sh --ec_demo /shared/build/tools/ec_demo --mds reffs-mds --n 4 --encoding rs --layout v2 --iterations 20"
     profiles:
       - collision
 
   # experiment 03 -- larger-shard SIMD-vs-scalar matrix.
   # Uses both /shared/build (SIMD) and /shared/build-noscalar-vec
-  # (scalar-honest, no-vec compile flags on the codec sources).
+  # (scalar-honest, no-vec compile flags on the encoding sources).
   # See reffs-docs/experiments/03-larger-shards.md.
   bench-shards:
     container_name: reffs-bench-shards

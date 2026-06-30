@@ -112,8 +112,8 @@ Mirrors chunk-collision-validation.md "Verification methodology":
 | `coll_t2_ior_reorder` | adds `-C` (reorderTasks) | zero mismatches; cross-rank read pairs clean |
 | `coll_t2_ior_scaled` | scale to 8 ranks / 8 PSes | same; architecture scales |
 
-`coll_t2_ps_codec_translate` (mixed-codec in-flight translation)
-is deferred -- it needs a per-file codec-shift trigger that does
+`coll_t2_ps_encoding_translate` (mixed-encoding in-flight translation)
+is deferred -- it needs a per-file encoding-shift trigger that does
 not exist yet.  Tracked as NOT_NOW_BROWN_COW.
 
 ## Design
@@ -142,7 +142,7 @@ file proxied through N different PSes.
 `ior -a POSIX` does ordinary `open`/`write`/`read` on the NFS
 mount.  The kernel NFS client talks NFSv4.2 to the PS :4098
 listener; the PS's `REFFS_DATA_PROXY` backend runs LAYOUTGET +
-CHUNK I/O + codec transform against the real MDS+DSes.  This is
+CHUNK I/O + encoding transform against the real MDS+DSes.  This is
 the Phase 3/4 proxy data path, now driven by a real kernel client
 instead of `ec_demo`.
 
@@ -291,8 +291,8 @@ test infrastructure and the image rebuild.  Concrete risks:
 
 ## Deferred / NOT_NOW_BROWN_COW
 
-- `coll_t2_ps_codec_translate` -- needs an in-flight per-file
-  codec-shift trigger that does not exist.
+- `coll_t2_ps_encoding_translate` -- needs an in-flight per-file
+  encoding-shift trigger that does not exist.
 - Multi-host MPI (`--hostfile`) -- a single-host container run is
   sufficient for correctness; multi-host is a perf-scaling
   concern for the deploy/benchmark side.

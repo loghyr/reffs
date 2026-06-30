@@ -37,43 +37,43 @@ wants quantified.  Variant C bounds the question from below
 
 ## Cells
 
-For each (codec, geometry, size, variant) tuple we run N
+For each (encoding, geometry, size, variant) tuple we run N
 iterations (default 5) and record:
 
 - `write_ms` -- wall-clock write latency including final sync
 - `read_ms` -- wall-clock read latency
 - `verify` -- OK or FAIL (bytes match what we wrote)
 
-Codec / geometry axis (applies to variants A and B; variant C
-has no codec axis):
+Encoding / geometry axis (applies to variants A and B; variant C
+has no encoding axis):
 
-- Codec: `rs`, `mojette-sys`, `mojette-nonsys`
+- Encoding: `rs`, `mojette-sys`, `mojette-nonsys`
 - Geometry: `4+2`, `8+2`
 
 Size axis (applies to all three variants):
 
 - 4 KB, 16 KB, 64 KB, 256 KB, 1 MB
 
-Matrix size: 3 codecs * 2 geom * 5 sizes * 5 iter * 2 variants
+Matrix size: 3 encodings * 2 geom * 5 sizes * 5 iter * 2 variants
 (A, B) = 300 cells for A+B; plus 5 sizes * 5 iter * 1 variant
 (C) = 25 cells.  **325 cells total.**  At ~1 s per cell that
 is ~5 min wall clock, ignoring container start-up.
 
-## MVP scoping decision: operator-configured MDS codec for variant B
+## MVP scoping decision: operator-configured MDS encoding for variant B
 
-The PS uses whatever codec the MDS specifies in the layout it
+The PS uses whatever encoding the MDS specifies in the layout it
 returns at LAYOUTGET time -- the PS does not choose.  Three
 options for handling that in the harness:
 
-1. **Operator-configures MDS codec; harness assumes it** -- the
-   harness takes a `--codec` argument, passes it to ec_demo for
+1. **Operator-configures MDS encoding; harness assumes it** -- the
+   harness takes a `--encoding` argument, passes it to ec_demo for
    variant A, and assumes the operator has already configured
-   the MDS to issue that codec for variant B's test files (via
+   the MDS to issue that encoding for variant B's test files (via
    per-export TOML or via probe ops set out of band).
-   Single-codec-per-run; loop externally for the full matrix.
+   Single-encoding-per-run; loop externally for the full matrix.
 
-2. **Harness orchestrates MDS codec via probe ops between
-   cells** -- needs a probe op for per-export codec selection
+2. **Harness orchestrates MDS encoding via probe ops between
+   cells** -- needs a probe op for per-export encoding selection
    (does not currently exist).
 
 3. **Use ffv2_layouthint4 per-file from the client side** -- the
@@ -82,9 +82,9 @@ options for handling that in the harness:
 
 **Choice for this design: option 1 (MVP).**  Smallest
 deliverable that closes the WG question with real numbers.  The
-harness drives one (codec, geometry) per invocation; an outer
+harness drives one (encoding, geometry) per invocation; an outer
 loop in CI sweeps the full matrix.  Operator pre-configures the
-MDS to issue the named codec for variant B's test files via
+MDS to issue the named encoding for variant B's test files via
 existing `[[export]]` TOML.
 
 Followups:
@@ -117,7 +117,7 @@ Wall-clock latency comes from the JSON output's
 `jobs[0].write.lat_ns.mean` and `read.lat_ns.mean`.  The
 harness extracts those, divides by 10^6, and writes the cell.
 
-For variant A, ec_demo is invoked with the same `--codec
+For variant A, ec_demo is invoked with the same `--encoding
 --k --m --layout v2 --shard-size 4096` arguments today's
 ec_benchmark.sh uses.  Timing is the wall-clock around the
 ec_demo command (read 'real' from `time -p`).
@@ -146,19 +146,19 @@ The harness:
 ## CSV output
 
 ```
-variant,codec,geometry,size_bytes,iter,write_ms,read_ms,verify,note
+variant,encoding,geometry,size_bytes,iter,write_ms,read_ms,verify,note
 A,rs,4+2,1048576,1,113,80,OK,
 B,rs,4+2,1048576,1,128,95,OK,
 C,-,-,1048576,1,116,95,OK,
 ```
 
 `note` carries any anomalies (mount failure, fio error, etc.).
-`-` in codec/geometry for variant C indicates the axis does not
+`-` in encoding/geometry for variant C indicates the axis does not
 apply.
 
 ## Success criteria for the scaffold
 
-1. Harness runs end-to-end for one (codec, geometry) tuple and
+1. Harness runs end-to-end for one (encoding, geometry) tuple and
    produces a CSV with all three variants populated for the
    full size sweep.
 2. Verify column reads OK for every cell.
@@ -171,7 +171,7 @@ apply.
 
 ## Out of scope for the scaffold
 
-- Automated MDS codec orchestration (NOT_NOW_BROWN_COW per the
+- Automated MDS encoding orchestration (NOT_NOW_BROWN_COW per the
   scoping decision above).
 - Multi-iteration averaging beyond N=5 per cell (the harness
   supports `--iters` but cell-to-cell variance is a separate
@@ -196,20 +196,20 @@ tests live in the individual layers below (PS unit tests,
 ec_demo unit tests, MDS unit tests).  The harness is validated
 end-to-end:
 
-1. **Smoke run**: one (codec=rs, geometry=4+2, size=1 MB,
+1. **Smoke run**: one (encoding=rs, geometry=4+2, size=1 MB,
    iter=1) cell across all three variants.  CSV has 3 rows;
    verify=OK on all; latencies in plausible band.
-2. **Single-codec full sweep**: one (codec=rs, geometry=4+2)
+2. **Single-encoding full sweep**: one (encoding=rs, geometry=4+2)
    tuple, full size sweep, iter=5.  CSV has 5 sizes * 5 iter *
    3 variants = 75 rows.
 3. **Full matrix** (manual orchestration, outer loop sweeps
-   codec/geometry): 325 rows.  Reserved for the actual
+   encoding/geometry): 325 rows.  Reserved for the actual
    bench-data-collection slice, not for the scaffold delivery.
 
-## Findings from the 2026-06-02 smoke + single-codec sweep on shadow
+## Findings from the 2026-06-02 smoke + single-encoding sweep on shadow
 
 CSV: `~/Documents/reffs-docs/experiments/ps_vs_client_bench-shadow-2026-06-02.csv`
-(75 cells, 5 sizes × 5 iters × 3 variants, codec=rs, k=4 m=2,
+(75 cells, 5 sizes × 5 iters × 3 variants, encoding=rs, k=4 m=2,
 0 FAIL).
 
 Write / read medians (ms) per (variant, size):
@@ -372,14 +372,14 @@ to A at the same encoding.
 ### Next slice: unblock variant B
 
 To get the WG-relevant comparison (client-EC vs PS-EC at
-matched codec/geometry), the MDS needs a path to issue an
+matched encoding/geometry), the MDS needs a path to issue an
 EC layout for the test file.  Two paths the layout.c
 NOT_NOW_BROWN_COW at line 599-608 already identifies:
 
 1. `fattr4_layout_hint` SETATTR (RFC 8881 attribute 63).
    Standard attribute, no protocol extension.  Client opens
    the file, SETATTR sets the hint, subsequent LAYOUTGET on
-   the file returns a layout with the hinted codec.  The PS
+   the file returns a layout with the hinted encoding.  The PS
    path would honour this transparently because the PS does
    LAYOUTGET on behalf of the kernel client and gets the
    hint-derived layout.
@@ -394,7 +394,7 @@ not enumerate attribute 63 as supported.  Tracked
 separately.
 
 In the meantime, a low-effort interim: configure-time
-default codec at the MDS level (per-export TOML field
+default encoding at the MDS level (per-export TOML field
 `default_coding = "rs:4+2"`).  Sets `ls_m` to the configured
 parity count at runway pool-file creation.  Bench can then
 toggle between B-with-plain (today) and B-with-EC by
@@ -405,10 +405,10 @@ long-term answer but cheap; ~50 LOC, no XDR change.
 
 - Scaffold (this design + the harness script): **shipped**
   (reffs commit `f16fff1cda26`).
-- Smoke + single-codec sweep on shadow: **shipped**
+- Smoke + single-encoding sweep on shadow: **shipped**
   (CSV persisted to reffs-docs).
 - Variant B as "PS EC" measurement: **blocked on MDS
-  codec selection mechanism** -- see Next slice above.
+  encoding selection mechanism** -- see Next slice above.
 - Bucket 2 slide 22 on the deck: leave the placeholder
   ("Slide upgrades to live medians once the dreamer / garbo
   run completes") as-is; the data this slice produced is

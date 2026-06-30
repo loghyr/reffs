@@ -13,7 +13,7 @@ Across two x86 hosts (adept N100 + shadow i5-9500), the full matrix
 exposes three findings that are independent of hardware:
 
 1. **Compiler auto-vectorisation contributes essentially nothing
-   to the codec read path.**  Across every codec, geometry,
+   to the encoding read path.**  Across every encoding, geometry,
    file_size, and shard_size combination at >= 16 KiB shards, the
    `--enable-noscalar-vec` build (compiler auto-vec disabled on
    `lib/ec/`) reads within ±10% of the default SIMD build.  This is
@@ -36,7 +36,7 @@ exposes three findings that are independent of hardware:
    needs 59.0s -- a 4.3x slowdown on the *beefier* CPU.  The same
    tuple at 64 KiB shards finishes in ~75s on both, and at 256 KiB
    in ~280s on both (within 7%).  The 4 KiB regime is dominated by
-   per-shard syscall/RPC/state-machine cost, NOT codec compute --
+   per-shard syscall/RPC/state-machine cost, NOT encoding compute --
    so the hardware that wins there is the one with cheapest
    per-op cost, not the one with highest compute throughput.
 
@@ -45,9 +45,9 @@ exposes three findings that are independent of hardware:
 - **Patent-safe scalar GF arithmetic is the right call.**  The
   data validates the no-SIMD-GF rule from `.claude/standards.md` --
   there is no measurable performance loss vs auto-vec on these
-  codecs at production-relevant shard sizes.  Earlier "SIMD-vs-
+  encodings at production-relevant shard sizes.  Earlier "SIMD-vs-
   scalar" gaps reported in benchmarks (~1.2-1.5x at 1 MiB shards
-  in the demo data) were therefore from peripheral non-codec
+  in the demo data) were therefore from peripheral non-encoding
   code paths, not the GF inner loops.
 - **Recommend shard_size in the 64 KiB - 256 KiB band.**  Below
   16 KiB, per-shard overhead dominates everything else.  Above
@@ -71,12 +71,12 @@ exposes three findings that are independent of hardware:
 
 ## Read-side speedup (SIMD vs scalar)
 
-Median `read_ms` from healthy reads, grouped by (codec, geometry, file_size, shard_size).  Speedup = scalar / simd (higher = SIMD wins by more).
+Median `read_ms` from healthy reads, grouped by (encoding, geometry, file_size, shard_size).  Speedup = scalar / simd (higher = SIMD wins by more).
 
 
 ### adept (Intel N100, AVX2)
 
-| codec | geom | file_size | shard_size | simd read_ms | scalar read_ms | speedup |
+| encoding | geom | file_size | shard_size | simd read_ms | scalar read_ms | speedup |
 |-------|------|-----------|------------|--------------|----------------|---------|
 | mojette-nonsys | 4+2 | 64 KiB | 4 KiB | 99 | 105 | 1.06x |
 | mojette-nonsys | 4+2 | 64 KiB | 16 KiB | 129 | 130 | 1.01x |
@@ -221,7 +221,7 @@ Median `read_ms` from healthy reads, grouped by (codec, geometry, file_size, sha
 
 ### shadow (Intel i5-9500, AVX2)
 
-| codec | geom | file_size | shard_size | simd read_ms | scalar read_ms | speedup |
+| encoding | geom | file_size | shard_size | simd read_ms | scalar read_ms | speedup |
 |-------|------|-----------|------------|--------------|----------------|---------|
 | mojette-nonsys | 4+2 | 64 KiB | 4 KiB | 264 | 381 | 1.44x |
 | mojette-nonsys | 4+2 | 64 KiB | 16 KiB | 305 | 286 | 0.94x |
@@ -366,7 +366,7 @@ Median `read_ms` from healthy reads, grouped by (codec, geometry, file_size, sha
 
 ## Cross-host x86 reproducibility (SIMD arm)
 
-| codec | geom | file_size | shard_size | adept (N100) | shadow (i5-9500) | shadow/adept |
+| encoding | geom | file_size | shard_size | adept (N100) | shadow (i5-9500) | shadow/adept |
 |-------|------|-----------|------------|--------------|------------------|--------------|
 | mojette-nonsys | 4+2 | 64 KiB | 4 KiB | 99 | 264 | 2.67x |
 | mojette-nonsys | 4+2 | 64 KiB | 16 KiB | 129 | 305 | 2.36x |
@@ -516,7 +516,7 @@ Each cell is (scalar median read_ms) / (SIMD median read_ms) for the matching tu
 
 ### adept (Intel N100, AVX2) — speedup vs shard size (1 MiB files)
 
-| codec | geom | 4 KiB | 16 KiB | 64 KiB | 256 KiB |
+| encoding | geom | 4 KiB | 16 KiB | 64 KiB | 256 KiB |
 |-------|------|-------|--------|--------|---------|
 | mojette-nonsys | 4+2 | 1.06x | 1.00x | 1.00x | 1.01x |
 | mojette-nonsys | 8+2 | 1.01x | 1.00x | 1.00x | 0.97x |
@@ -528,7 +528,7 @@ Each cell is (scalar median read_ms) / (SIMD median read_ms) for the matching tu
 
 *16 MiB files*
 
-| codec | geom | 4 KiB | 16 KiB | 64 KiB | 256 KiB |
+| encoding | geom | 4 KiB | 16 KiB | 64 KiB | 256 KiB |
 |-------|------|-------|--------|--------|---------|
 | mojette-nonsys | 4+2 | 0.96x | 1.01x | 0.99x | 1.00x |
 | mojette-nonsys | 8+2 | 1.00x | 1.00x | 1.01x | 0.99x |
@@ -540,7 +540,7 @@ Each cell is (scalar median read_ms) / (SIMD median read_ms) for the matching tu
 
 ### shadow (Intel i5-9500, AVX2) — speedup vs shard size (1 MiB files)
 
-| codec | geom | 4 KiB | 16 KiB | 64 KiB | 256 KiB |
+| encoding | geom | 4 KiB | 16 KiB | 64 KiB | 256 KiB |
 |-------|------|-------|--------|--------|---------|
 | mojette-nonsys | 4+2 | 1.36x | 0.95x | 0.99x | 1.00x |
 | mojette-nonsys | 8+2 | 1.61x | 0.96x | 1.00x | 1.00x |
@@ -552,7 +552,7 @@ Each cell is (scalar median read_ms) / (SIMD median read_ms) for the matching tu
 
 *16 MiB files*
 
-| codec | geom | 4 KiB | 16 KiB | 64 KiB | 256 KiB |
+| encoding | geom | 4 KiB | 16 KiB | 64 KiB | 256 KiB |
 |-------|------|-------|--------|--------|---------|
 | mojette-nonsys | 4+2 | 1.03x | 0.94x | 1.00x | 1.00x |
 | mojette-nonsys | 8+2 | 1.06x | 0.96x | 1.00x | 1.00x |

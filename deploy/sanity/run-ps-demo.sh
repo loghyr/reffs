@@ -41,7 +41,7 @@ run_one() {
     local layout="$2"
     local write_op="$3"
     shift 3
-    local codec_args=( "$@" )
+    local encoding_args=( "$@" )
 
     local label="$sb_path"
     SB_ORDER+=("$label")
@@ -52,13 +52,13 @@ run_one() {
     local logr="/tmp/logr_${sb_path//\//_}.txt"
     rm -f "$out"
 
-    echo "--- $label  layout=$layout  ${codec_args[*]} ---"
+    echo "--- $label  layout=$layout  ${encoding_args[*]} ---"
     echo "    write via PS-A ($PS_A)"
 
     if ! "$EC_DEMO" "$write_op" \
             --mds "$PS_A" --layout "$layout" \
             --file "$fname" --input "$PAYLOAD" \
-            "${codec_args[@]}" \
+            "${encoding_args[@]}" \
             >"$logw" 2>&1; then
         echo "  WRITE FAILED via PS-A -- log:"
         sed 's/^/    /' "$logw"
@@ -79,7 +79,7 @@ run_one() {
     if ! "$EC_DEMO" "$read_op" \
             --mds "$PS_B" --layout "$layout" \
             --file "$fname" --output "$out" --size "$PAYLOAD_SIZE" \
-            "${codec_args[@]}" \
+            "${encoding_args[@]}" \
             >"$logr" 2>&1; then
         echo "  READ FAILED via PS-B -- log:"
         sed 's/^/    /' "$logr"
@@ -108,9 +108,9 @@ main() {
 
     # Skip /ffv2-mj per task #147 (unrelated mojette-sys CHUNK_READ bug).
     run_one /ffv1-csm     v1   put
-    run_one /ffv1-stripes v1   write --codec stripe      --k 6 --m 0
+    run_one /ffv1-stripes v1   write --encoding stripe      --k 6 --m 0
     run_one /ffv2-csm     v2   put
-    run_one /ffv2-rs      v2   write --codec rs          --k 4 --m 2
+    run_one /ffv2-rs      v2   write --encoding rs          --k 4 --m 2
 
     echo
     echo "=== PS-demo result matrix ==="

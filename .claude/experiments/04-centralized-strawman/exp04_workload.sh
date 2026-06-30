@@ -23,7 +23,7 @@ worker() {
         --input /tmp/in 2>>/tmp/wl-$id.err
     else
       "$EC_DEMO" write --mds "$MDS" --file "exp04_${VARIANT}_${id}_${count}" \
-        --input /tmp/in --k 4 --m 2 --codec rs --layout v1 \
+        --input /tmp/in --k 4 --m 2 --encoding rs --layout v1 \
         2>>/tmp/wl-$id.err
     fi
     if [ $? -eq 0 ]; then count=$((count+1)); else errs=$((errs+1)); fi

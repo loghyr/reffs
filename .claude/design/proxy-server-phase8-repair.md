@@ -116,7 +116,7 @@ the integration test flip it on explicitly.
 - PS-side: new handler that processes `proxy_assignment4`
   records with `pa_kind == PROXY_OP_REPAIR` arriving in
   `PROXY_PROGRESS` replies.
-- PS-side: drive the existing `ec_repair_codec()` entry point
+- PS-side: drive the existing `ec_repair_encoding()` entry point
   in `lib/nfs4/ps/ec_pipeline.c`.
 - PS-side: on completion, issue `OP_CHUNK_REPAIRED` to the
   MDS then `PROXY_DONE(proxy_stateid, status)`.
@@ -200,7 +200,7 @@ Transitions:
               |             +--------------+
               |             |  RUNNING     |
               v             |  (ec_repair_ |
-        +----------+        |   codec())   |
+        +----------+        |   encoding())   |
         | QUEUED   | -----> +------+-------+
         +----------+               |
                                    +--------------+--------------+--------------+
@@ -230,8 +230,8 @@ Transitions:
 |------|----|---------|--------------|
 | (no state) | `QUEUED` | `PROXY_PROGRESS` reply parsed; assignment added to per-PS queue | Bump `ps_assignments_queued` |
 | `QUEUED` | `RUNNING` | Worker thread picks up | `_Atomic` cancel flag initialised to 0 |
-| `RUNNING` | `DONE` | `ec_repair_codec()` returns 0 + verify-back succeeds | Send `OP_CHUNK_REPAIRED` to MDS; on success send `PROXY_DONE(NFS4_OK)` |
-| `RUNNING` | `FAILED` | `ec_repair_codec()` returns non-zero, or `OP_CHUNK_REPAIRED` fails | Send `PROXY_DONE(<error>)`; do NOT send `OP_CHUNK_REPAIRED` for a failed repair |
+| `RUNNING` | `DONE` | `ec_repair_encoding()` returns 0 + verify-back succeeds | Send `OP_CHUNK_REPAIRED` to MDS; on success send `PROXY_DONE(NFS4_OK)` |
+| `RUNNING` | `FAILED` | `ec_repair_encoding()` returns non-zero, or `OP_CHUNK_REPAIRED` fails | Send `PROXY_DONE(<error>)`; do NOT send `OP_CHUNK_REPAIRED` for a failed repair |
 | `RUNNING` | `CANCELLED` | Cancel flag set (by polling between stripes after a fresh `PROXY_PROGRESS` carried a `PROXY_OP_CANCEL_PRIOR` for this `pa_stateid`) | Stop work ASAP; send `PROXY_DONE(NFS4ERR_DELAY)` to signal cancelled-not-broken |
 | `RUNNING` | `LEASE_EXPIRED` | PS-side detects its registration lease lapsed | Stop work; do NOT send `PROXY_DONE` (the session is dead); MDS-side migration reaper retires |
 
@@ -494,9 +494,9 @@ N7 + N3):
 | Test | Intent |
 |------|--------|
 | `test_handler_decodes_repair_assignment` | Synthetic `PROXY_PROGRESS` reply with one REPAIR assignment -> handler queues it, returns to poll loop |
-| `test_handler_drives_ec_repair_codec` | Mocked `ec_repair_codec` -> assertion that it is called with the assignment's source/target deviceids |
+| `test_handler_drives_ec_repair_encoding` | Mocked `ec_repair_encoding` -> assertion that it is called with the assignment's source/target deviceids |
 | `test_handler_sends_chunk_repaired_then_done_on_success` | Successful repair -> first OP_CHUNK_REPAIRED, then PROXY_DONE(NFS4_OK), in that order |
-| `test_handler_sends_only_done_on_failure` | Mocked `ec_repair_codec` failure -> no OP_CHUNK_REPAIRED, PROXY_DONE(<errno>) only |
+| `test_handler_sends_only_done_on_failure` | Mocked `ec_repair_encoding` failure -> no OP_CHUNK_REPAIRED, PROXY_DONE(<errno>) only |
 | `test_handler_cancel_flag_stops_mid_repair` | Set cancel atomic mid-repair -> worker exits at next stripe boundary, sends PROXY_DONE(NFS4ERR_DELAY) |
 | `test_handler_lease_expiry_silent` | Mocked lease lapse -> worker stops without sending PROXY_DONE (MDS-side reaper retires) |
 
@@ -509,7 +509,7 @@ N7 + N3):
 - `lib/nfs4/ps/proxy_poll_client.c` (NEW if not extant):
   the PS-side `PROXY_PROGRESS` poll loop that decodes
   assignments and dispatches by `pa_kind`.
-- Re-uses `lib/nfs4/ps/ec_pipeline.c::ec_repair_codec()`
+- Re-uses `lib/nfs4/ps/ec_pipeline.c::ec_repair_encoding()`
   (shipped 2026-06-10).
 - New PS-side stats: `ps_repair_attempted`,
   `ps_repair_succeeded`, `ps_repair_failed`,
@@ -587,7 +587,7 @@ on-disk, or cross-layer line.  Reviewer should focus on:
   (additive ops only).
 - **Slice 3**: PS-side worker thread C11 atomic ordering on
   the cancel flag (acquire/release per `.claude/standards.md`).
-  Re-entrancy of `ec_repair_codec()` (per `proxy-server.md`
+  Re-entrancy of `ec_repair_encoding()` (per `proxy-server.md`
   Action Item 1, the deeper `lib/nfs4/client/` refactor was
   declared a "do before declaring PS demo done" item; this
   slice is a forcing function -- the reviewer should call

@@ -261,7 +261,7 @@ files referenced are the existing ones that already encode
 
 ### Smoke tests (per prereq #5 of the 4-variant design)
 
-- SSH to dreamer, run `ec_demo --layout v2 --codec rs --k 4
+- SSH to dreamer, run `ec_demo --layout v2 --encoding rs --k 4
   --m 2 --mds SHADOW_LAN_IP --size 1MB` and verify the
   written file reads back byte-identical.  This is the
   variant-c surrogate.

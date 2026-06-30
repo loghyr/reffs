@@ -7,11 +7,11 @@
 # writer's payload survives a `verify`.
 #
 # Uses ec_demo write/verify (not put/check) because put/check are
-# the plain-mirrored subcommands and silently ignore --codec; this
+# the plain-mirrored subcommands and silently ignore --encoding; this
 # slice has to actually drive the RS / Mojette CHUNK paths to be
 # diagnostic of bug surfaces 2 and 7 in
 # .claude/design/chunk-collision-validation.md (CRC vs payload
-# divergence, codec divergence under contention).
+# divergence, encoding divergence under contention).
 #
 # Per .claude/design/chunk-collision-validation.md.  Runs against
 # the deploy/benchmark/ topology (1 MDS + 10 DSes).  Each ec_demo
@@ -19,7 +19,7 @@
 # clientids contending on the same file.
 #
 # Usage:
-#   run_chunk_collision.sh [--n N] [--codec rs|mojette-sys|mojette-nonsys]
+#   run_chunk_collision.sh [--n N] [--encoding rs|mojette-sys|mojette-nonsys]
 #                          [--layout v1|v2] [--size BYTES]
 #                          [--iterations N] [--mds HOST]
 #                          [--ec_demo PATH] [--inv1-report] [--probe PATH]
@@ -40,7 +40,7 @@
 set -euo pipefail
 
 N=4
-CODEC="rs"
+ENCODING="rs"
 LAYOUT="v2"
 SIZE=$((4 * 1024 * 1024))   # 4 MiB
 ITER=20
@@ -53,7 +53,7 @@ DS_LIST=""
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--n)          N="$2";          shift 2 ;;
-		--codec)      CODEC="$2";      shift 2 ;;
+		--encoding)      ENCODING="$2";      shift 2 ;;
 		--layout)     LAYOUT="$2";     shift 2 ;;
 		--size)       SIZE="$2";       shift 2 ;;
 		--iterations) ITER="$2";       shift 2 ;;
@@ -112,11 +112,11 @@ for i in $(seq 0 $((N-1))); do
 done
 
 # Include $$ in the filename to disambiguate parallel-run-in-same-second.
-NFS_FILE="coll_${CODEC}_${LAYOUT}_$(date +%s)_$$.dat"
+NFS_FILE="coll_${ENCODING}_${LAYOUT}_$(date +%s)_$$.dat"
 
 echo "=== chunk-collision Track 1 ==="
 echo "  N writers: ${N}"
-echo "  codec:     ${CODEC}"
+echo "  encoding:     ${ENCODING}"
 echo "  layout:    ${LAYOUT}"
 echo "  size:      ${SIZE} bytes"
 echo "  iters:     ${ITER}"
@@ -138,7 +138,7 @@ for it in $(seq 1 "${ITER}"); do
 			--mds   "${MDS}" \
 			--file  "${NFS_FILE}" \
 			--input "${LOCAL_INPUTS[$i]}" \
-			--codec "${CODEC}" \
+			--encoding "${ENCODING}" \
 			--layout "${LAYOUT}" \
 			--id    "${ID}" \
 			>"${WORKDIR}/write-it${it}-r${i}.log" 2>&1 &
@@ -179,7 +179,7 @@ for it in $(seq 1 "${ITER}"); do
 			--mds   "${MDS}" \
 			--file  "${NFS_FILE}" \
 			--input "${LOCAL_INPUTS[$i]}" \
-			--codec "${CODEC}" \
+			--encoding "${ENCODING}" \
 			--layout "${LAYOUT}" \
 			--id    "coll-verify-it${it}" \
 			>"${WORKDIR}/verify-it${it}-r${i}.log" 2>&1; then

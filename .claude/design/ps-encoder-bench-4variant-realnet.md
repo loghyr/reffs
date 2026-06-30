@@ -11,7 +11,7 @@ The 2026-06-02 single-host-loopback A/B/C harness (see
 `ps-encoder-bench.md`) hit two scoping limits at once:
 
 1. **Variant B doesn't actually do PS-side EC** because the
-   MDS keys FFv2 codec selection off `ls_m`, which defaults
+   MDS keys FFv2 encoding selection off `ls_m`, which defaults
    to 0 (PASSTHROUGH) for files created over a kernel mount.
 2. **Variant C doesn't actually do pNFS** because the bench
    DSes are NFSv4.2-only and the kernel's FFv1 fallback
@@ -46,7 +46,7 @@ unimplemented upstream.  Two paths to a real (c) measurement:
 1. **ec_demo as the client surrogate.**  It speaks FFv2.
    Variant (c) becomes ec_demo direct to MDS+DSes.  This
    is what variant A in the A/B/C harness already measures,
-   so (c) is effectively in hand for the codecs ec_demo
+   so (c) is effectively in hand for the encodings ec_demo
    supports.
 2. **A native FFv2 kernel client implementation.**  Out of
    scope for this experiment; it is its own multi-year
@@ -75,7 +75,7 @@ of these by construction.
 
 Variant (d) is what variant B in the A/B/C harness was
 *supposed* to measure but couldn't because of the layout-
-codec-control limitation.  Unblocking (d) requires the same
+encoding-control limitation.  Unblocking (d) requires the same
 fix queued in `ps-encoder-bench.md` "Next slice: unblock
 variant B" -- either `fattr4_layout_hint` SETATTR
 (RFC 8881 attr 63) or a per-export `default_coding` TOML
@@ -163,10 +163,10 @@ swap (DSes per host == 1 instead of DSes per host == N).
 
 ## Cell matrix
 
-For each variant in {a, b, c, d}, per (codec, geometry,
+For each variant in {a, b, c, d}, per (encoding, geometry,
 size, iter) tuple:
 
-- Codec axis (variants c, d only; a, b have no codec):
+- Encoding axis (variants c, d only; a, b have no encoding):
   rs, mojette-sys, mojette-nonsys.  (mojette-nonsys is
   declared unsuitable for read-heavy workloads but
   recorded for completeness.)
@@ -175,10 +175,10 @@ size, iter) tuple:
 - Iter: 5 per cell (median + spread).
 
 Cell count:
-- a: 7 sizes * 5 iter = 35 cells (no codec/geometry axes)
-- b: 2 geom * 7 sizes * 5 iter = 70 cells (no codec axis)
-- c: 3 codecs * 2 geom * 7 sizes * 5 iter = 210 cells
-- d: 3 codecs * 2 geom * 7 sizes * 5 iter = 210 cells
+- a: 7 sizes * 5 iter = 35 cells (no encoding/geometry axes)
+- b: 2 geom * 7 sizes * 5 iter = 70 cells (no encoding axis)
+- c: 3 encodings * 2 geom * 7 sizes * 5 iter = 210 cells
+- d: 3 encodings * 2 geom * 7 sizes * 5 iter = 210 cells
 
 Total: 525 cells.  Wall-clock at ~2 s/cell (real-network
 latency adds to per-cell time): ~17 min sustained.  Tear-up
@@ -192,12 +192,12 @@ To run any of variants a, b, c, d on real-network topology:
    to `ds.toml` (server-side change, ~no LOC).  Without this,
    variants (a) and (b) can't happen.
 
-2. **MDS must issue per-codec FFv2 layouts.**  Currently
+2. **MDS must issue per-encoding FFv2 layouts.**  Currently
    `layout.c:610-613` keys coding type off `ls_m` only.
    Wire either:
    - `fattr4_layout_hint` SETATTR support (RFC 8881 attr 63)
      -- standard mechanism, needs server-side attribute
-     handler + runway-side codec selector
+     handler + runway-side encoding selector
    - per-export `default_coding` TOML field -- ~50 LOC,
      interim, no XDR change
 
@@ -222,7 +222,7 @@ Items, in dependency order:
 | # | Item | Effort | Blocker for |
 |---|------|--------|-------------|
 | 1 | *(WITHDRAWN 2026-06-02)*  NFSv3 listener is already on; no DS-side work needed. | -- | -- |
-| 2 | Per-export `default_coding` TOML field (interim codec selector) | ~1 week | variant d |
+| 2 | Per-export `default_coding` TOML field (interim encoding selector) | ~1 week | variant d |
 | 3 | Multi-host bringup script (option 1: 3-host) | 2-3 days | all variants on real network |
 | 4 | 4-variant harness script + CSV schema | 2-3 days | data collection |
 | 5 | First real-network smoke run | 0.5 day | sanity check |
@@ -249,7 +249,7 @@ network experiment lands, slide 22 gets:
 - The 4-variant write/read latency table at 1 MB (the
   headline size).
 - The variant-d-vs-variant-c head-to-head (server EC vs
-  client EC at matched codec).
+  client EC at matched encoding).
 - Explicit topology note: which option (1 or 2), how many
   hosts, network type.
 - A subordinate slide acknowledging that single-host loopback
@@ -279,7 +279,7 @@ What slide 22 will NOT claim from this experiment:
 - `.claude/design/ps-encoder-bench.md` -- the original A/B/C
   scaffold and the 2026-06-02 single-host findings.
 - `~/Documents/reffs-docs/experiments/ps_vs_client_bench-shadow-2026-06-02.csv`
-  -- the 75-cell single-host single-codec sweep that
+  -- the 75-cell single-host single-encoding sweep that
   surfaced the limitations addressed here.
 - `lib/nfs4/server/layout.c:610-613` -- the `ls_m`-keyed
   PASSTHROUGH / RS_VANDERMONDE selection that variant (d)

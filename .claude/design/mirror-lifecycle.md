@@ -14,7 +14,7 @@ the dstore-drain workflow that reuses it.  The user-visible operations:
 - drain a dstore (no new placements + migrate existing instances off)
 - destroy a drained dstore
 
-All of this leaves the file's name unchanged in the namespace.  Codec
+All of this leaves the file's name unchanged in the namespace.  Encoding
 change (e.g. MIRRORED -> RS, or RS k+m -> different k+m) rides on the
 same op surface and lands as the last slice once the underlying
 ec_pipeline is callable from MDS-internal context.
@@ -61,7 +61,7 @@ this doc in the same commit that touches the file.
   (the reconstructed shard must be written for the SPECIFIC missing
   slot; without an explicit ordinal, REPAIR would have to assume
   array-index-implies-slot, which breaks when DSTORE_LOST drops an
-  entry and the array compacts).  Required by slice F's codec-change
+  entry and the array compacts).  Required by slice F's encoding-change
   encoding when the new layout is RS.  No SB_REGISTRY version bump
   per CLAUDE.md "Deployment Status: No persistent storage has been
   deployed."  Old reffsd reading a newer file would mis-parse one
@@ -203,7 +203,7 @@ reffs-probe.py dstore-instance-count      --id 5
 reffs-probe.py dstore-watch               --id 5      # CLI sugar -- polls instance-count
 reffs-probe.py dstore-lost                --id 5 [--force]
 reffs-probe.py dstore-destroy             --id 5
-reffs-probe.py inode-layout-change-codec  --path /foo --codec rs --k 4 --m 2 --expected-gen 20
+reffs-probe.py inode-layout-change-encoding  --path /foo --encoding rs --k 4 --m 2 --expected-gen 20
 ```
 
 ## Reverse index
@@ -1078,7 +1078,7 @@ RFC: RFC 8435 S5.1 (FlexFiles mirror semantics), RFC 8881 S18.43
 NOT_NOW_BROWN_COW:
 - Async copy with progress reporting (sync inline today; large files
   block the probe op for the duration of the byte copy)
-- Cross-codec change in this op (defer to F)
+- Cross-encoding change in this op (defer to F)
 
 ### Slice D: INODE_LAYOUT_REMOVE_MIRROR + bracketed CB_LAYOUTRECALL
 
@@ -1240,10 +1240,10 @@ NOT_NOW_BROWN_COW:
 ### Slice F: INODE_LAYOUT_CHANGE_CODEC
 
 Tests:
-- `test_change_codec_rs_to_mojette_sys`
-- `test_change_codec_rejects_in_flight_io` (WWWL guard)
-- `test_change_codec_atomic_swap`
-- `test_change_codec_rejects_stale_gen`
+- `test_change_encoding_rs_to_mojette_sys`
+- `test_change_encoding_rejects_in_flight_io` (WWWL guard)
+- `test_change_encoding_atomic_swap`
+- `test_change_encoding_rejects_stale_gen`
 
 Op flow: similar to ADD+REMOVE in spirit -- read all bytes via
 existing layout, re-encode via ec_pipeline, write new shards to
@@ -1265,15 +1265,15 @@ RFC: draft-haynes-nfsv4-flexfiles-v2 S5 (FFV2 encoding types), RFC
 8435 S5.1 (mirror vs encoding).
 
 NOT_NOW_BROWN_COW:
-- Codec change for files with pending CHUNK_WRITE (return
+- Encoding change for files with pending CHUNK_WRITE (return
   `PROBE1ERR_BUSY`)
-- Partial-range codec change (whole-file only)
+- Partial-range encoding change (whole-file only)
 
 ### Slice G: DSTORE_LOST + REPAIR + INODE_BROKEN
 
 Distinct from drain because the dstore is **gone** -- bytes can't be
 read off it for migration.  Triage decides per-inode whether the
-file is recoverable (surviving instances cover the codec's quorum)
+file is recoverable (surviving instances cover the encoding's quorum)
 or BROKEN (not recoverable).  Recoverable inodes are repaired by
 copying / re-encoding from surviving instances onto a chosen target.
 
@@ -1399,7 +1399,7 @@ a natural fit for PS-driven background work (proxy-server.md phase
 a follow-up matching the slice E pattern.
 
 RFC: RFC 8881 S12.5.5 (LAYOUTRECALL), RFC 8435 S5.4 (mirror
-repair), draft-haynes-nfsv4-flexfiles-v2 S5 (FFV2 codec semantics
+repair), draft-haynes-nfsv4-flexfiles-v2 S5 (FFV2 encoding semantics
 for RS reconstruction).
 
 NOT_NOW_BROWN_COW:
@@ -1569,20 +1569,20 @@ WRONGSEC concerns from .claude/standards.md don't apply.
 
 - POSIX backend impl of dstore index ops
 - Async copy in ADD_MIRROR (sync inline today)
-- Cross-codec change in ADD_MIRROR (defer to slice F)
+- Cross-encoding change in ADD_MIRROR (defer to slice F)
 - Drain timeout / auto-undrain
 - Revoke-on-CB_LAYOUTRECALL-timeout (today: fence-and-proceed)
 - Rate limiting / parallelism cap on autopilot
 - Multi-PS coordination
 - Rebalancing op surface (vs straight drain)
-- Codec change for files with pending CHUNK_WRITE (returns BUSY)
-- Partial-range codec change (whole-file only)
+- Encoding change for files with pending CHUNK_WRITE (returns BUSY)
+- Partial-range encoding change (whole-file only)
 - Orphan index GC when dstore removed from TOML without DRAIN
 - `[[allowed_admin]]` allowlist for destructive probe ops
 - Background runway replenishment (existing TODO)
 - DSTORE_DRAIN_PROGRESS detail probe op (rely on
   DSTORE_INSTANCE_COUNT or DSTORE_LIST for now)
-- Codec change for files with active CHUNK locks
+- Encoding change for files with active CHUNK locks
 - `INODE_BROKEN` clearing path (today: sticky until REMOVE)
 - Alerting integration for BROKEN inodes (today: poll
   `INODE_LIST_BROKEN`)

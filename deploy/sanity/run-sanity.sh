@@ -2,11 +2,11 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Multi-codec sanity test: per-SB write -> read -> byte-exact diff.
+# Multi-encoding sanity test: per-SB write -> read -> byte-exact diff.
 #
 # For each provisioned SB, write a fixed-size random payload, read
 # it back through ec_demo, cmp -s for an exact match.  Per-SB the
-# layout type and codec choice differ:
+# layout type and encoding choice differ:
 #
 #   /ffv1-csm     v1   plain  (single mirror per write)
 #   /ffv1-stripes v1   stripe k=6 m=0 (across all 6 DSes)
@@ -113,16 +113,16 @@ main() {
     run_one /ffv1-csm     v1   put
 
     # /ffv1-stripes: v1 striped k=6 m=0
-    run_one /ffv1-stripes v1   write --codec stripe      --k 6 --m 0
+    run_one /ffv1-stripes v1   write --encoding stripe      --k 6 --m 0
 
     # /ffv2-csm: v2 plain mirror via 'put'
     run_one /ffv2-csm     v2   put
 
     # /ffv2-rs: v2 RS 4+2
-    run_one /ffv2-rs      v2   write --codec rs          --k 4 --m 2
+    run_one /ffv2-rs      v2   write --encoding rs          --k 4 --m 2
 
     # /ffv2-mj: v2 Mojette-sys 4+2
-    run_one /ffv2-mj      v2   write --codec mojette-sys --k 4 --m 2
+    run_one /ffv2-mj      v2   write --encoding mojette-sys --k 4 --m 2
 
     echo
     echo "=== Sanity result matrix ==="

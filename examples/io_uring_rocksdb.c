@@ -29,7 +29,7 @@ struct reffs_thread_pool;
 struct reffs_task_queue;
 struct reffs_kv_batch;
 
-/* Callback and codec function types */
+/* Callback and encoder function types */
 typedef void (*reffs_kv_completion_cb)(struct reffs_kv_op *op, int status);
 typedef int (*reffs_key_encoder)(const void *key, size_t key_len,
 				 void **encoded_key, size_t *encoded_key_len);

@@ -27,7 +27,7 @@
 #
 # Usage:
 #   run_chunk_collision_t1b.sh [--mode disjoint|chunk-split|overlap|subchunk]
-#                              [--codec rs|mojette-sys|mojette-nonsys]
+#                              [--encoding rs|mojette-sys|mojette-nonsys]
 #                              [--layout v2] [--k K] [--m M]
 #                              [--shard-size BYTES]
 #                              [--mds HOST] [--ec_demo PATH]
@@ -36,12 +36,12 @@
 #
 # Layout defaults to v2 (CHUNK ops); the partial-range path goes
 # through the per-stripe primitives that only exist on v2.
-# Codec defaults to rs (Reed-Solomon).
+# Encoding defaults to rs (Reed-Solomon).
 
 set -euo pipefail
 
 MODE="disjoint"
-CODEC="rs"
+ENCODING="rs"
 LAYOUT="v2"
 K=4
 M=2
@@ -71,7 +71,7 @@ export UBSAN_OPTIONS="${UBSAN_OPTIONS:-halt_on_error=0}"
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--mode)        MODE="$2";        shift 2 ;;
-		--codec)       CODEC="$2";       shift 2 ;;
+		--encoding)       ENCODING="$2";       shift 2 ;;
 		--layout)      LAYOUT="$2";      shift 2 ;;
 		--k)           K="$2";           shift 2 ;;
 		--m)           M="$2";           shift 2 ;;
@@ -249,11 +249,11 @@ done
 PREFILL="${WORKDIR}/prefill.bin"
 dd if=/dev/zero of="${PREFILL}" bs=1 count="${FILE_SIZE}" status=none
 
-NFS_FILE="coll_t1b_${MODE}_${CODEC}_${LAYOUT}_$(date +%s)_$$.dat"
+NFS_FILE="coll_t1b_${MODE}_${ENCODING}_${LAYOUT}_$(date +%s)_$$.dat"
 
 echo "=== chunk-collision Track 1b -- mode=${MODE} ==="
 echo "  N writers:    ${N}"
-echo "  codec:        ${CODEC}"
+echo "  encoding:        ${ENCODING}"
 echo "  layout:       ${LAYOUT}"
 echo "  k:            ${K}"
 echo "  m:            ${M}"
@@ -289,7 +289,7 @@ echo ">>> Pre-fill: full-file write of ${FILE_SIZE} bytes"
 "${EC_DEMO}" write \
 	--mds "${MDS}" --file "${NFS_FILE}" \
 	--input "${PREFILL}" --k "${K}" --m "${M}" \
-	--codec "${CODEC}" --layout "${LAYOUT}" \
+	--encoding "${ENCODING}" --layout "${LAYOUT}" \
 	--shard-size "${SHARD_SIZE}" \
 	--id "prefill" \
 	>"${WORKDIR}/prefill.log" 2>&1
@@ -332,7 +332,7 @@ for i in $(seq 0 $((N - 1))); do
 		"${EC_DEMO}" write \
 			--mds "${MDS}" --file "${NFS_FILE}" \
 			--input "${src}" --k "${K}" --m "${M}" \
-			--codec "${CODEC}" --layout "${LAYOUT}" \
+			--encoding "${ENCODING}" --layout "${LAYOUT}" \
 			--shard-size "${SHARD_SIZE}" \
 			--id "writer${i}" \
 			--offset "${OFF}" --length "${LEN}" \
@@ -382,7 +382,7 @@ if [[ "${MODE}" == "overlap" ]]; then
 	if "${EC_DEMO}" read \
 		--mds "${MDS}" --file "${NFS_FILE}" \
 		--output "${out}" --k "${K}" --m "${M}" \
-		--codec "${CODEC}" --layout "${LAYOUT}" \
+		--encoding "${ENCODING}" --layout "${LAYOUT}" \
 		--shard-size "${SHARD_SIZE}" \
 		--id "verify-anyof" \
 		--size "${FILE_SIZE}" \
@@ -470,7 +470,7 @@ else
 		if "${EC_DEMO}" verify \
 			--mds "${MDS}" --file "${NFS_FILE}" \
 			--input "${src}" --k "${K}" --m "${M}" \
-			--codec "${CODEC}" --layout "${LAYOUT}" \
+			--encoding "${ENCODING}" --layout "${LAYOUT}" \
 			--shard-size "${SHARD_SIZE}" \
 			--id "verify${i}" \
 			--offset "${OFF}" --length "${LEN}" \

@@ -8,7 +8,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Closes the long-standing hedge in `progress_report.md` §2.6 and
 `ec_benchmark_full_report.md` §6: *"single-host bridge network
 (near-zero network latency); ratios are expected to hold."*  This
-experiment validates that on a real LAN the codec ordering and
+experiment validates that on a real LAN the encoding ordering and
 overhead structure documented in the loopback baseline reproduce
 -- and surfaces one place they don't.
 
@@ -31,7 +31,7 @@ overhead structure documented in the loopback baseline reproduce
   `bdde4f6539db` (v1 NFSv3 client port-bypass), `e45ffbed434d`
   (v2 NFSv4.2 client `host:port`).  All backward-compatible
   (default port=0 → existing portmap path).
-- 5 runs per (codec, geometry, file_size, mode, layout).
+- 5 runs per (encoding, geometry, file_size, mode, layout).
 - Layouts: v1 (NFSv3 DS I/O) and v2 (CHUNK ops over NFSv4.2).
 - Modes: healthy, degraded-1.
 - Sizes: 4, 16, 64, 256, 1024 KiB.
@@ -42,7 +42,7 @@ Raw CSV: `data/larger-shards-xhost-v2fixed.csv`.  The
 prior-run CSV with the broken v2 path is preserved as
 `larger-shards-xhost-adept-shadow.csv` for diff reference.
 
-## Headline 1: codec ordering preserved at every file size
+## Headline 1: encoding ordering preserved at every file size
 
 Mojette non-systematic remains the slowest read path at every
 size; RS and Mojette systematic land within ~7% of each other on
@@ -77,13 +77,13 @@ below the +10% acceptance threshold.
 
 ## Headline 3: cross-host vs loopback multiplier at 1 MB is 4.8-6.5×
 
-Within the spec's 1.5×-5× acceptance band for the larger codecs;
+Within the spec's 1.5×-5× acceptance band for the larger encodings;
 mojette-sys reads land slightly above (6.5×).  The multiplier is
 dominated by per-shard RTT cost: each shard adds ~0.86 ms × N
 round-trips that the loopback baseline didn't pay.  On 10 GbE
 with sub-100 µs RTT, the multiplier collapses toward 1.5-2×.
 
-| codec | loopback w (ms) | xhost w (ms) | w ratio | loopback r | xhost r | r ratio |
+| encoding | loopback w (ms) | xhost w (ms) | w ratio | loopback r | xhost r | r ratio |
 |-------|----------------:|-------------:|--------:|-----------:|--------:|--------:|
 | plain | 65 | 415 | 6.4× | 63 | 377 | 6.0× |
 | RS 4+2 | 110 | 663 | 6.0× | 96 | 569 | 5.9× |
@@ -99,7 +99,7 @@ The loopback report measured v2-vs-v1 write overhead at +7-22%.
 On the LAN that overhead **balloons at small file sizes and
 collapses at large ones**:
 
-| codec | size | v1 w (ms) | v2 w (ms) | overhead |
+| encoding | size | v1 w (ms) | v2 w (ms) | overhead |
 |-------|------|----------:|----------:|---------:|
 | RS 4+2 | 4 KiB | 81 | 152 | +88% |
 | RS 4+2 | 16 KiB | 79 | 163 | +106% |
@@ -111,7 +111,7 @@ collapses at large ones**:
 | Mnsys 4+2 | 4 KiB | 80 | 152 | +90% |
 | Mnsys 4+2 | 1024 KiB | 685 | 663 | **-3%** |
 
-The pattern is consistent across all three codecs: at 1 MiB the
+The pattern is consistent across all three encodings: at 1 MiB the
 v2 cost converges to v1 (within ±3%); below that, fixed-cost
 CHUNK_FINALIZE + CHUNK_COMMIT round-trips dominate.  Each extra
 RTT costs ~1 ms on the LAN where loopback paid almost nothing.
@@ -132,8 +132,8 @@ implication for FFv2 deployments:
 ## Implications for the FFv2 progress story
 
 - **§2.6's "loopback only" hedge can be retired for v1 numbers
-  and for codec/reconstruction findings.**  Cross-host LAN
-  preserves codec ordering, preserves reconstruction near-zero,
+  and for encoding/reconstruction findings.**  Cross-host LAN
+  preserves encoding ordering, preserves reconstruction near-zero,
   and the absolute multiplier sits in the expected 1 GbE band.
 - **§1.2's v2-vs-v1 "+7-22% writes" claim needs a small caveat
   for the small-file regime cross-host.**  Suggest adding one
@@ -147,7 +147,7 @@ implication for FFv2 deployments:
 
 | criterion | required | observed | result |
 |-----------|----------|----------|--------|
-| Codec ordering preserved | every file size | every file size | PASS |
+| Encoding ordering preserved | every file size | every file size | PASS |
 | Msys 8+2 reconstruction | < +10% | -3 to -7% | PASS |
 | v2 write overhead | < +30% | +3% at 1 MiB / +44-106% < 256 KiB | PASS at ≥1 MiB; FAIL small-file cross-host |
 | Cross-host / loopback at 1 MB | 1.5-5× | 4.8-6.5× | MARGINAL (1 GbE; 10 GbE expected to land squarely) |

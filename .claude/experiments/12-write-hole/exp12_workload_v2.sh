@@ -14,13 +14,13 @@ dd if=/dev/urandom of=/tmp/X bs=$SIZE count=1 2>/dev/null
 dd if=/dev/urandom of=/tmp/Y bs=$SIZE count=1 2>/dev/null
 
 "$EC" write --mds "$MDS" --file "$FILE" --input /tmp/X \
-    --k 4 --m 2 --codec rs --layout v2 2>/dev/null
+    --k 4 --m 2 --encoding rs --layout v2 2>/dev/null
 "$EC" read --mds "$MDS" --file "$FILE" --output /tmp/cX \
-    --k 4 --m 2 --codec rs --size $SIZE --layout v2 2>/dev/null
+    --k 4 --m 2 --encoding rs --size $SIZE --layout v2 2>/dev/null
 cmp -s /tmp/X /tmp/cX || { echo "BASELINE_FAIL"; exit 1; }
 
 "$EC" write --mds "$MDS" --file "$FILE" --input /tmp/Y \
-    --k 4 --m 2 --codec rs --layout v2 >/tmp/wr.out 2>/tmp/wr.err &
+    --k 4 --m 2 --encoding rs --layout v2 >/tmp/wr.out 2>/tmp/wr.err &
 WPID=$!
 sleep $(awk -v ms=$KILL_MS 'BEGIN{printf "%.3f\n", ms/1000.0}')
 kill -9 $WPID 2>/dev/null; wait $WPID 2>/dev/null
@@ -29,7 +29,7 @@ echo "[v2 kill_ms=$KILL_MS] waiting ${LEASE_S}s for lease/CHUNK cleanup..."
 sleep $LEASE_S
 
 if "$EC" read --mds "$MDS" --file "$FILE" --output /tmp/post \
-    --k 4 --m 2 --codec rs --size $SIZE --layout v2 2>/tmp/rd.err; then
+    --k 4 --m 2 --encoding rs --size $SIZE --layout v2 2>/tmp/rd.err; then
     READ_OK=1
 else
     READ_OK=0

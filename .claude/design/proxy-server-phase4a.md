@@ -17,7 +17,7 @@ buffer-and-flush pipeline.  Slices shipped:
 
 | Slice | Commit          | Step | What                                                                      |
 |-------|-----------------|------|---------------------------------------------------------------------------|
-| 4a.1  | `8d56911b90df`  | 1    | `ec_write_codec_with_file` factor-out + creds threading                   |
+| 4a.1  | `8d56911b90df`  | 1    | `ec_write_encoding_with_file` factor-out + creds threading                   |
 | 4a.2a | `61aa4b600091`  | 3    | Write-buffer table + per-listener lifecycle (quiesce protocol)            |
 | 4a.2b | `b60dabdbfbad`  | 4    | `ps_proxy_pipeline_write` shim                                            |
 | 4a.2c | `44274cf98fa8`  | 5    | `ps_proxy_pipeline_commit` shim                                           |
@@ -49,7 +49,7 @@ test files specifically for Phase 4a slices.
 
 Wire client WRITE on proxy-SB files through the EC pipeline by
 buffering NFSv4 WRITE traffic per `(open stateid, upstream FH)` and
-flushing the buffer through `ec_write_codec_with_file` on COMMIT (or
+flushing the buffer through `ec_write_encoding_with_file` on COMMIT (or
 on CLOSE if the client never issues an explicit COMMIT).  All WRITEs
 return `committed = UNSTABLE4` and a PS-minted write verifier; the
 encode + DS-side CHUNK_WRITE + FINALIZE + COMMIT happens at flush
@@ -80,21 +80,21 @@ and `lib/nfs4/ps/tests/ps_proxy_pipeline_write_test.c` (NEW).
 | `test_write_buffer_overwrite_replaces` | WRITE at offset 0 followed by WRITE at offset 0 with different bytes leaves the second writer's bytes in the buffer. |
 | `test_write_buffer_size_cap_returns_delay` | A WRITE that would push the buffer past the configured cap returns NFS4ERR_DELAY; the prior buffer state is unchanged. |
 | `test_write_returns_unstable_with_verifier` | Every WRITE reply has `committed = UNSTABLE4` and a non-zero PS-listener verifier. |
-| `test_commit_flushes_buffer_via_pipeline` | COMMIT on a buffered file invokes `ec_write_codec_with_file` exactly once with the buffer's contents and the file's upstream FH + stateid. |
+| `test_commit_flushes_buffer_via_pipeline` | COMMIT on a buffered file invokes `ec_write_encoding_with_file` exactly once with the buffer's contents and the file's upstream FH + stateid. |
 | `test_commit_returns_same_verifier_as_writes` | COMMIT's `writeverf` matches the verifier returned on prior WRITEs (within the same listener generation). |
 | `test_commit_drops_buffer_on_success` | After successful COMMIT the buffer entry is freed; a subsequent WRITE allocates a fresh buffer. |
-| `test_commit_keeps_buffer_on_failure` | On `ec_write_codec_with_file` failure, COMMIT returns NFS4ERR_IO and the buffer is **not** freed (client may retry COMMIT). |
+| `test_commit_keeps_buffer_on_failure` | On `ec_write_encoding_with_file` failure, COMMIT returns NFS4ERR_IO and the buffer is **not** freed (client may retry COMMIT). |
 | `test_close_implicit_flush` | CLOSE on a stateid with a non-empty buffer triggers the same flush as COMMIT; CLOSE returns OK iff flush succeeded. |
 | `test_close_drops_buffer_after_implicit_flush` | After CLOSE-driven flush the buffer entry is freed even if the client never sent COMMIT. |
 | `test_close_buffer_cleanup_on_error` | If implicit flush fails on CLOSE, the buffer is freed anyway (CLOSE has no retry surface) and a TRACE line records the loss. |
-| `test_write_codec_with_file_smoke` | `ec_write_codec_with_file` against a mock MDS+DS stack: encodes, sends CHUNK_WRITE + FINALIZE + COMMIT, returns 0. |
-| `test_write_codec_with_file_propagates_creds` | The compound stream sees the supplied `authunix_parms` on every LAYOUTGET / LAYOUTRETURN (mirror of slice b2's read-side test). |
-| `test_write_codec_with_file_null_creds_default_auth` | `creds == NULL` falls back to the session's default auth (PS service identity) -- bit-identical to pre-Phase-3.5 behaviour. |
+| `test_write_encoding_with_file_smoke` | `ec_write_encoding_with_file` against a mock MDS+DS stack: encodes, sends CHUNK_WRITE + FINALIZE + COMMIT, returns 0. |
+| `test_write_encoding_with_file_propagates_creds` | The compound stream sees the supplied `authunix_parms` on every LAYOUTGET / LAYOUTRETURN (mirror of slice b2's read-side test). |
+| `test_write_encoding_with_file_null_creds_default_auth` | `creds == NULL` falls back to the session's default auth (PS service identity) -- bit-identical to pre-Phase-3.5 behaviour. |
 | `test_listener_shutdown_drains_buffers` | On `ps_listener_stop`, all buffered writes are dropped (no pipeline flush attempted) and the buffer table is emptied; no leaks under valgrind. |
-| `test_listener_shutdown_waits_for_inflight_commit` | One thread is mid-`ec_write_codec_with_file` holding a find ref; another calls `ps_listener_stop`. Teardown blocks on `pls_active_buffer_refs`, completes after the COMMIT thread drops its ref. No UAF under TSAN; verifier or NFS4ERR_DELAY observed by client, never freed memory access. |
-| `test_listener_shutdown_quiesce_deterministic` | Companion to the TSAN race test, using a test-only hook (see "Test-hook injection" below): the test thread arms a condvar inside `ec_write_codec_with_file`, calls `ps_listener_stop` on a second thread, asserts the second thread is blocked in `pthread_cond_wait` on `pls_drain_cv`, signals the codec to proceed, asserts teardown unblocks within 1 s and the table is empty.  Deterministic counterpart so we have a regression test for the quiesce ordering even without TSAN. |
+| `test_listener_shutdown_waits_for_inflight_commit` | One thread is mid-`ec_write_encoding_with_file` holding a find ref; another calls `ps_listener_stop`. Teardown blocks on `pls_active_buffer_refs`, completes after the COMMIT thread drops its ref. No UAF under TSAN; verifier or NFS4ERR_DELAY observed by client, never freed memory access. |
+| `test_listener_shutdown_quiesce_deterministic` | Companion to the TSAN race test, using a test-only hook (see "Test-hook injection" below): the test thread arms a condvar inside `ec_write_encoding_with_file`, calls `ps_listener_stop` on a second thread, asserts the second thread is blocked in `pthread_cond_wait` on `pls_drain_cv`, signals the encoding to proceed, asserts teardown unblocks within 1 s and the table is empty.  Deterministic counterpart so we have a regression test for the quiesce ordering even without TSAN. |
 | `test_listener_toctou_state_check_after_increment` | Whitebox: function-pointer hook (see "Test-hook injection") inserts a CPU pause between `enter_quiesce_or_bail`'s `fetch_add` and the `pls_state` load; teardown sets DRAINING during the pause; verify the op handler observes DRAINING on re-load, decrements via leave_quiesce, and returns NFS4ERR_DELAY without taking a find ref.  Pins the TOCTOU fix from verdict-2 BLOCKER NEW-2. |
-| `test_close_flush_timeout_proceeds_to_forward` | Test-only hook stalls `ec_write_codec_with_file` past `REFFS_PS_FLUSH_TIMEOUT_NS`; verify CLOSE drops the buffer, logs the timeout, increments `close_flush_timeouts_total`, and still invokes `ps_proxy_forward_close` (so the upstream stateid is released). |
+| `test_close_flush_timeout_proceeds_to_forward` | Test-only hook stalls `ec_write_encoding_with_file` past `REFFS_PS_FLUSH_TIMEOUT_NS`; verify CLOSE drops the buffer, logs the timeout, increments `close_flush_timeouts_total`, and still invokes `ps_proxy_forward_close` (so the upstream stateid is released). |
 | `test_forward_read_on_draining_returns_delay` | After listener teardown sets `pls_state = DRAINING`, a forward READ (non-pipeline path from prior slices) calling `ps_listener_session_borrow` observes NULL and the dispatcher maps to NFS4ERR_DELAY -- pins the new listener-borrow contract for non-pipeline callers. |
 | `test_listener_draining_state_returns_delay` | After teardown sets `pls_state = DRAINING`, a fresh WRITE / COMMIT on the listener returns NFS4ERR_DELAY without entering the buffer table. |
 | `test_concurrent_writes_same_stateid_serialize` | Two threads issuing WRITEs on the same stateid serialise on the per-buffer mutex; final buffer state matches the well-defined ordering. |
@@ -114,7 +114,7 @@ slots, default-initialised to NULL:
 
 ```c
 extern _Atomic(void (*)(void)) ps_test_hook_pre_state_load;
-extern _Atomic(void (*)(void)) ps_test_hook_in_codec_flush;
+extern _Atomic(void (*)(void)) ps_test_hook_in_encoding_flush;
 extern _Atomic(uint64_t (*)(void)) ps_test_hook_clock_now_ns;
 ```
 
@@ -207,7 +207,7 @@ configurable via `[[ps]] write_buffer_max_bytes` in `reffs.toml`).
 Flush timeout: `REFFS_PS_FLUSH_TIMEOUT_NS` (default 30 s,
 configurable via `[[ps]] flush_timeout_ms`).  Used by
 CLOSE-flush to bound the time spent in
-`ec_write_codec_with_file` before giving up and proceeding to the
+`ec_write_encoding_with_file` before giving up and proceeding to the
 forward CLOSE -- prevents the client-CLOSE timeout from leaking
 the upstream open stateid (see Risk #7).
 Two distinct cap-overflow cases:
@@ -475,9 +475,9 @@ COMMIT arrives:
   /* Phase 4a: flush the entire buffered prefix regardless of
    * args.offset / args.count.  Spec permits the server to commit
    * more than the requested range. */
-  ret = ec_write_codec_with_file(ms, &mf, buffer.pwb_data,
+  ret = ec_write_encoding_with_file(ms, &mf, buffer.pwb_data,
                                  buffer.pwb_high_water,
-                                 k=4, m=2, EC_CODEC_RS,
+                                 k=4, m=2, EC_ENCODING_RS,
                                  LAYOUT4_FLEX_FILES_V2,
                                  shard_size=4096, creds)
 
@@ -636,35 +636,35 @@ a thread-cancellation point and cannot interrupt a single
 `mds_compound_send_with_auth` mid-RPC.  The 30 s
 `REFFS_PS_FLUSH_TIMEOUT_NS` budget is enforced per-compound:
 
-- `ec_write_codec_with_file` is parameterised with a deadline
+- `ec_write_encoding_with_file` is parameterised with a deadline
   (`uint64_t deadline_ns`); on `deadline_ns == 0` the existing
   unbounded behaviour applies (ec_demo path).
 - **Implementation: watchdog-thread close-on-deadline.**
   `mds_compound_send_with_auth` is a libtirpc wrapper and does
   not itself accept a deadline parameter; modifying it would
   ripple through every existing caller (ec_demo, layout fan-out,
-  the reconnect-arc work).  Instead, the codec spawns a
+  the reconnect-arc work).  Instead, the encoding spawns a
   lightweight watchdog **pthread** at flush entry (Phase 4a
   chooses the pthread over the timerfd-on-io_uring variant for
   simplicity; revisit if profiling shows the thread create/join
   cost dominates).  The watchdog holds a weak reference to the
   session's xprt; on deadline expiry it closes the xprt fd,
   which causes the in-flight `CLNT_CALL` to return RPC_TIMEDOUT.
-  The codec then sees -ETIMEDOUT and bails to the caller.  This
+  The encoding then sees -ETIMEDOUT and bails to the caller.  This
   is the standard libtirpc-cancellation idiom and is already
   used in `ds_session_create` for connection-attempt timeouts.
 
-  **Cleanup discipline.**  The codec joins the watchdog on the
+  **Cleanup discipline.**  The encoding joins the watchdog on the
   way out (both happy and error paths) -- never detached.  The
-  watchdog's `close(xprt_fd)` is idempotent: if the codec
+  watchdog's `close(xprt_fd)` is idempotent: if the encoding
   finished and joined before the deadline, the watchdog wakes,
-  checks a "codec done" flag, and exits without touching the
-  fd.  If the watchdog fired and closed the fd first, the codec
+  checks a "encoding done" flag, and exits without touching the
+  fd.  If the watchdog fired and closed the fd first, the encoding
   observes RPC_TIMEDOUT, treats it as a flush failure, and the
   subsequent join is a no-op.  No leaked thread, no
   double-close.
 - Each compound checks the remaining budget BEFORE issuing the
-  next RPC; if `now >= deadline_ns` the codec returns -ETIMEDOUT
+  next RPC; if `now >= deadline_ns` the encoding returns -ETIMEDOUT
   without issuing the call, so deadline overshoot is bounded by
   the longest single RPC's actual completion time.
 - A single hung CHUNK_WRITE on a wedged DS can still consume the
@@ -691,7 +691,7 @@ verifier mismatch on COMMIT and rewrite.
 - Same gating as Phase 3 READ: GSS compounds refused with
   NFS4ERR_WRONGSEC; AUTH_NONE refused at the op handler.
 - Forwarded creds (`compound->c_ap`) are passed verbatim to
-  `ec_write_codec_with_file`, which threads them through the
+  `ec_write_encoding_with_file`, which threads them through the
   pipeline compounds (LAYOUTGET / LAYOUTRETURN; CHUNK_WRITE/FINALIZE/
   COMMIT use the DS session's auth as today).  Mirror of slice b2.
 - Buffer table is per-listener; one client's buffers are not visible
@@ -771,21 +771,21 @@ step 11; per memory `feedback_reffs_preslice_checks.md`):
   "Workflow rules" criteria (this slice does -- lock ordering,
   RCU lifecycle, cross-layer boundaries all touched).
 
-1. **`ec_write_codec_with_file` variant** in `lib/nfs4/ps/ec_pipeline.c`.
-   Tests it unblocks: `test_write_codec_with_file_smoke`,
-   `test_write_codec_with_file_propagates_creds`,
-   `test_write_codec_with_file_null_creds_default_auth`.
-   - Refactor `ec_write_codec` to factor the OPEN+LAYOUTGET prelude
-     out into `ec_write_codec_with_file(ms, mf, ...)`.
-   - The current `ec_write_codec(ms, path, ...)` becomes a thin
+1. **`ec_write_encoding_with_file` variant** in `lib/nfs4/ps/ec_pipeline.c`.
+   Tests it unblocks: `test_write_encoding_with_file_smoke`,
+   `test_write_encoding_with_file_propagates_creds`,
+   `test_write_encoding_with_file_null_creds_default_auth`.
+   - Refactor `ec_write_encoding` to factor the OPEN+LAYOUTGET prelude
+     out into `ec_write_encoding_with_file(ms, mf, ...)`.
+   - The current `ec_write_encoding(ms, path, ...)` becomes a thin
      wrapper that does mds_file_open then calls the new entry.
-     This **matches the read-side pattern**: `ec_read_codec` at
+     This **matches the read-side pattern**: `ec_read_encoding` at
      `ec_pipeline.c:1140` is already a wrapper around
-     `ec_read_codec_with_file` at line 927.  Keeping the wrapper
+     `ec_read_encoding_with_file` at line 927.  Keeping the wrapper
      leaves ec_demo's existing call sites untouched.
    - Add `creds` parameter (last positional) and thread it to the
      LAYOUTGET / LAYOUTRETURN calls -- same pattern as slice b2.
-   - Update the `ec_write_codec` wrapper to pass NULL for creds
+   - Update the `ec_write_encoding` wrapper to pass NULL for creds
      (preserves existing test-call behaviour, identical to the
      read-side handling).
 2. **`proxy_data_pipeline_write` helper** in `lib/backends/proxy_data.c`.
@@ -908,8 +908,8 @@ step 11; per memory `feedback_reffs_preslice_checks.md`):
 
 | File | Change |
 |------|--------|
-| `lib/nfs4/ps/ec_pipeline.c` | Factor `ec_write_codec_with_file`; add `creds` parameter (mirror of read-side wrapper at `ec_pipeline.c:1140`) |
-| `lib/nfs4/client/ec_client.h` | Declare `ec_write_codec_with_file`; document creds positional |
+| `lib/nfs4/ps/ec_pipeline.c` | Factor `ec_write_encoding_with_file`; add `creds` parameter (mirror of read-side wrapper at `ec_pipeline.c:1140`) |
+| `lib/nfs4/client/ec_client.h` | Declare `ec_write_encoding_with_file`; document creds positional |
 | `lib/backends/proxy_data.c` | Add `proxy_data_pipeline_write` helper; document why `db_write` stays -ENOSYS |
 | `lib/nfs4/ps/ps_state.h`, `ps_state.c` | Per-listener write buffer table, `pls_state` enum, `pls_boot_gen`, `pls_active_buffer_refs`, drain CV.  Plus `ps_listener_session_borrow`: gate on `pls_state == RUNNING` (returns NULL otherwise -- contract change visible to all forward callers, see "Listener-borrow contract" section) |
 | `lib/nfs4/ps/ps_write_buffer.c` | NEW -- `struct ps_write_buffer` lifecycle (Rule 6 lifecycle) |
@@ -991,7 +991,7 @@ All new files carry the standard SPDX header per
 1. **Whole-file buffer model is wrong for Track 2** (acknowledged
    up front).  Phase 4a does NOT close the chunk-collision-
    validation Track 2 gate.  Phase 4b does.  This slice's value
-   is the wiring (db_write hook, pipeline shim, codec_with_file
+   is the wiring (db_write hook, pipeline shim, encoding_with_file
    variant, creds threading) which 4b reuses.
 
 2. **Buffer cap interaction with large IOR runs.**  IOR `-F 1
@@ -1027,15 +1027,15 @@ All new files carry the standard SPDX header per
 4. **Multi-writer-shared-file in 4a is broken.**  Two clients with
    distinct stateids writing the same file via the same PS: each
    gets its own buffer, COMMITs independently, the second COMMIT's
-   `ec_write_codec_with_file` overwrites the first's stripes.
+   `ec_write_encoding_with_file` overwrites the first's stripes.
    This is a known wrong outcome; the bench harness for 4a must
    not run shared-file workloads (use `-F 1`, not `-F 0`).
    Phase 4b is the real fix.
 
-5. **`ec_write_codec_with_file` refactor risk.**  Factoring the
-   prelude out of `ec_write_codec` could subtly change error-path
+5. **`ec_write_encoding_with_file` refactor risk.**  Factoring the
+   prelude out of `ec_write_encoding` could subtly change error-path
    ordering for ec_demo's existing callers.  Mitigation: the
-   `ec_write_codec` wrapper preserves bit-identical behaviour for
+   `ec_write_encoding` wrapper preserves bit-identical behaviour for
    NULL creds; ec_demo continues to use the wrapper, not the new
    entry.  Test `ec_demo write` smoke against the unmodified bench
    topology before declaring the refactor done.

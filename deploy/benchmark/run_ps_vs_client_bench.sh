@@ -14,7 +14,7 @@
 #
 # Usage:
 #   sudo ./run_ps_vs_client_bench.sh \
-#       [--codec rs|mojette-sys|mojette-nonsys] \
+#       [--encoding rs|mojette-sys|mojette-nonsys] \
 #       [--k K] [--m M] \
 #       [--sizes "4096 16384 65536 262144 1048576"] \
 #       [--iters N] \
@@ -23,23 +23,23 @@
 #       [--bring-up] \
 #       [--keep-up]
 #
-# Defaults: codec=rs, k=4 m=2, all sizes, iters=5, all variants,
+# Defaults: encoding=rs, k=4 m=2, all sizes, iters=5, all variants,
 # out=results/ps_vs_client/results-<host>-<timestamp>.csv.
 #
 # --bring-up runs run-ps-bench-bringup.sh NPS=1 first.  Otherwise
 # the bench is assumed up already.
 # --keep-up leaves the bench up after the run for re-runs.
 #
-# Codec scoping note (per design MVP decision): operator MUST
-# pre-configure the MDS to issue --codec for variant B's test
-# files.  Variant A passes --codec directly to ec_demo.  This
-# harness does not orchestrate MDS codec config; a probe-protocol
+# Encoding scoping note (per design MVP decision): operator MUST
+# pre-configure the MDS to issue --encoding for variant B's test
+# files.  Variant A passes --encoding directly to ec_demo.  This
+# harness does not orchestrate MDS encoding config; a probe-protocol
 # extension for that is NOT_NOW_BROWN_COW.
 
 set -euo pipefail
 
 # -- defaults ---------------------------------------------------------
-CODEC="rs"
+ENCODING="rs"
 K=4
 M=2
 SIZES="4096 16384 65536 262144 1048576"
@@ -53,7 +53,7 @@ KEEP_UP=0
 # -- arg parse --------------------------------------------------------
 while [[ $# -gt 0 ]]; do
 	case "$1" in
-	--codec)    CODEC="$2";    shift 2 ;;
+	--encoding)    ENCODING="$2";    shift 2 ;;
 	--k)        K="$2";        shift 2 ;;
 	--m)        M="$2";        shift 2 ;;
 	--sizes)    SIZES="$2";    shift 2 ;;
@@ -81,9 +81,9 @@ if ! command -v sudo >/dev/null 2>&1; then
 	echo "      docker access for the kernel-mount client." >&2
 	exit 1
 fi
-case "$CODEC" in
+case "$ENCODING" in
 rs|mojette-sys|mojette-nonsys) ;;
-*) echo "FAIL: --codec must be rs|mojette-sys|mojette-nonsys" >&2; exit 1 ;;
+*) echo "FAIL: --encoding must be rs|mojette-sys|mojette-nonsys" >&2; exit 1 ;;
 esac
 
 # -- ec_demo discovery -----------------------------------------------
@@ -116,7 +116,7 @@ if [ -z "${OUT}" ]; then
 	OUT="${HERE}/results/ps_vs_client/results-${host}-${ts}.csv"
 fi
 if [ ! -f "${OUT}" ]; then
-	echo "variant,codec,geometry,size_bytes,iter,write_ms,read_ms,verify,note" \
+	echo "variant,encoding,geometry,size_bytes,iter,write_ms,read_ms,verify,note" \
 	    >"${OUT}"
 fi
 
@@ -138,7 +138,7 @@ fi
 # Wall-clock is measured by `date +%s%N` around the call so we
 # don't depend on ec_demo's internal timing.
 run_variant_A() {
-	local size="$1" iter="$2" cell_id="A_${CODEC}_${K}_${M}_${size}_${iter}"
+	local size="$1" iter="$2" cell_id="A_${ENCODING}_${K}_${M}_${size}_${iter}"
 	local fname="ps_bench_${cell_id}.dat"
 	local input="/tmp/ec_bench_in_${size}.bin"
 	local output="/tmp/ec_bench_out_${cell_id}.bin"
@@ -155,11 +155,11 @@ run_variant_A() {
 	t0=$(date +%s%N)
 	if ! "${EC_DEMO}" write --mds 127.0.0.1:2049 --file "${fname}" \
 	     --input "${input}" --k "${K}" --m "${M}" \
-	     --codec "${CODEC}" --layout v2 --shard-size 4096 \
+	     --encoding "${ENCODING}" --layout v2 --shard-size 4096 \
 	     --id "psbench_A_${cell_id}" \
 	     >/tmp/ps_bench_write.log 2>&1; then
 		note="ec_demo_write_failed"; verify="FAIL"
-		echo "A,${CODEC},${K}+${M},${size},${iter},0,0,${verify},${note}" \
+		echo "A,${ENCODING},${K}+${M},${size},${iter},0,0,${verify},${note}" \
 		    >>"${OUT}"
 		return
 	fi
@@ -169,12 +169,12 @@ run_variant_A() {
 	t0=$(date +%s%N)
 	if ! "${EC_DEMO}" read --mds 127.0.0.1:2049 --file "${fname}" \
 	     --output "${output}" --k "${K}" --m "${M}" \
-	     --codec "${CODEC}" --layout v2 --shard-size 4096 \
+	     --encoding "${ENCODING}" --layout v2 --shard-size 4096 \
 	     --size "${size}" \
 	     --id "psbench_A_${cell_id}_r" \
 	     >/tmp/ps_bench_read.log 2>&1; then
 		note="ec_demo_read_failed"; verify="FAIL"
-		echo "A,${CODEC},${K}+${M},${size},${iter},${write_ms},0,${verify},${note}" \
+		echo "A,${ENCODING},${K}+${M},${size},${iter},${write_ms},0,${verify},${note}" \
 		    >>"${OUT}"
 		return
 	fi
@@ -186,7 +186,7 @@ run_variant_A() {
 	fi
 	rm -f "${output}"
 
-	echo "A,${CODEC},${K}+${M},${size},${iter},${write_ms},${read_ms},${verify},${note}" \
+	echo "A,${ENCODING},${K}+${M},${size},${iter},${write_ms},${read_ms},${verify},${note}" \
 	    >>"${OUT}"
 }
 
@@ -199,8 +199,8 @@ run_variant_A() {
 # count cells it equals the wall-clock duration.  We extract it
 # from the JSON output.
 #
-# Variant C has no codec axis (MDS handles the bytes directly
-# with no EC); the CSV uses '-' in the codec/geometry columns.
+# Variant C has no encoding axis (MDS handles the bytes directly
+# with no EC); the CSV uses '-' in the encoding/geometry columns.
 
 CLIENT_CONTAINER="reffs-ps-bench-client"
 
@@ -324,9 +324,9 @@ fio_cell() {
 
 run_variant_B() {
 	local size="$1" iter="$2"
-	local cell_id="B_${CODEC}_${K}_${M}_${size}_${iter}"
+	local cell_id="B_${ENCODING}_${K}_${M}_${size}_${iter}"
 	read -r write_ms read_ms verify note < <(fio_cell ps "${size}" "${cell_id}")
-	echo "B,${CODEC},${K}+${M},${size},${iter},${write_ms},${read_ms},${verify},${note}" \
+	echo "B,${ENCODING},${K}+${M},${size},${iter},${write_ms},${read_ms},${verify},${note}" \
 	    >>"${OUT}"
 }
 
@@ -339,7 +339,7 @@ run_variant_C() {
 }
 
 # -- main loop --------------------------------------------------------
-echo "[ps-bench] config: codec=${CODEC} k=${K} m=${M}"
+echo "[ps-bench] config: encoding=${ENCODING} k=${K} m=${M}"
 echo "[ps-bench]         sizes=${SIZES}"
 echo "[ps-bench]         iters=${ITERS}  variants=${VARIANTS}"
 echo "[ps-bench]         ec_demo=${EC_DEMO}"

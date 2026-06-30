@@ -7,7 +7,7 @@ Reads the per-host CSVs produced by `make run-larger-shards` and emits
 two views for the progress-report:
 
   1. SIMD-vs-scalar speedup table (median read_ms ratio) across
-     (codec, geom, file_size, shard_size) for each host.
+     (encoding, geom, file_size, shard_size) for each host.
   2. Cross-host x86 reproducibility check (adept N100 vs shadow i5-9500).
   3. NEON corroboration where the partial dreamer CSV has both arms.
 
@@ -36,22 +36,22 @@ def load_rows(path: str) -> List[dict]:
 
     The CSV has two record shapes:
       - 14 cols: stripe rows (no shard_size).
-      - 15 cols: every other codec, with shard_size at col 14.
+      - 15 cols: every other encoding, with shard_size at col 14.
 
-    Both share columns 0-9 for: codec,geom,file_size,run,write_ms,
+    Both share columns 0-9 for: encoding,geom,file_size,run,write_ms,
     read_ms,verify,mode,layout,arch.  We don't need anything past
     that except shard_size and simd_mode.
     """
     rows: List[dict] = []
     with open(path, newline="") as fh:
         for raw in csv.reader(fh):
-            if not raw or raw[0] == "codec":
+            if not raw or raw[0] == "encoding":
                 continue
             n = len(raw)
             if n == 14:
                 # stripe row: no shard_size
                 d = {
-                    "codec": raw[0], "geom": raw[1],
+                    "encoding": raw[0], "geom": raw[1],
                     "size": int(raw[2]), "run": int(raw[3]),
                     "write_ms": int(raw[4]), "read_ms": int(raw[5]),
                     "verify": raw[6], "mode": raw[7],
@@ -60,7 +60,7 @@ def load_rows(path: str) -> List[dict]:
                 }
             elif n == 15:
                 d = {
-                    "codec": raw[0], "geom": raw[1],
+                    "encoding": raw[0], "geom": raw[1],
                     "size": int(raw[2]), "run": int(raw[3]),
                     "write_ms": int(raw[4]), "read_ms": int(raw[5]),
                     "verify": raw[6], "mode": raw[7],
@@ -80,7 +80,7 @@ def median_ms(rows: List[dict], key: str) -> int:
 
 
 def speedup_table(host_rows: List[dict], host_label: str) -> str:
-    """Median read_ms (simd) vs (scalar) for each (codec, geom, size, shard).
+    """Median read_ms (simd) vs (scalar) for each (encoding, geom, size, shard).
 
     Restricted to mode=healthy (no degraded reads complicating things).
     """
@@ -93,16 +93,16 @@ def speedup_table(host_rows: List[dict], host_label: str) -> str:
         # Earlier runs label scalar arm as "scalar"; some shards as
         # "scalar(forced)".  Treat both as scalar.
         mode = "simd" if r["simd_mode"] == "simd" else "scalar"
-        key = (r["codec"], r["geom"], r["size"], r["shard_size"])
+        key = (r["encoding"], r["geom"], r["size"], r["shard_size"])
         grouped[key][mode].append(r)
 
     lines = [f"\n### {host_label}\n",
-             "| codec | geom | file_size | shard_size | "
+             "| encoding | geom | file_size | shard_size | "
              "simd read_ms | scalar read_ms | speedup |",
              "|-------|------|-----------|------------|"
              "--------------|----------------|---------|"]
     for key in sorted(grouped.keys()):
-        codec, geom, size, shard = key
+        encoding, geom, size, shard = key
         bucket = grouped[key]
         if "simd" not in bucket or "scalar" not in bucket:
             continue
@@ -110,13 +110,13 @@ def speedup_table(host_rows: List[dict], host_label: str) -> str:
         sc = median_ms(bucket["scalar"], "read_ms")
         ratio = (sc / sm) if sm > 0 else float("inf")
         lines.append(
-            f"| {codec} | {geom} | {size//1024} KiB | {shard//1024} KiB | "
+            f"| {encoding} | {geom} | {size//1024} KiB | {shard//1024} KiB | "
             f"{sm} | {sc} | {ratio:.2f}x |")
     return "\n".join(lines)
 
 
 def cross_host_table(host_rows_map: Dict[str, List[dict]]) -> str:
-    """SIMD-mode median read_ms per (codec, geom, file_size, shard_size).
+    """SIMD-mode median read_ms per (encoding, geom, file_size, shard_size).
 
     Shows adept (N100 AVX2) vs shadow (i5-9500 AVX2) -- same ISA,
     different microarchitecture, useful as an x86 reproducibility
@@ -129,16 +129,16 @@ def cross_host_table(host_rows_map: Dict[str, List[dict]]) -> str:
             if (r["mode"] != "healthy" or r["shard_size"] is None or
                     r["simd_mode"] != "simd"):
                 continue
-            key = (r["codec"], r["geom"], r["size"], r["shard_size"])
+            key = (r["encoding"], r["geom"], r["size"], r["shard_size"])
             grouped[key][host].append(r)
 
     lines = ["\n## Cross-host x86 reproducibility (SIMD arm)\n",
-             "| codec | geom | file_size | shard_size | "
+             "| encoding | geom | file_size | shard_size | "
              "adept (N100) | shadow (i5-9500) | shadow/adept |",
              "|-------|------|-----------|------------|"
              "--------------|------------------|--------------|"]
     for key in sorted(grouped.keys()):
-        codec, geom, size, shard = key
+        encoding, geom, size, shard = key
         bucket = grouped[key]
         if "adept" not in bucket or "shadow" not in bucket:
             continue
@@ -146,35 +146,35 @@ def cross_host_table(host_rows_map: Dict[str, List[dict]]) -> str:
         s = median_ms(bucket["shadow"], "read_ms")
         ratio = (s / a) if a > 0 else float("inf")
         lines.append(
-            f"| {codec} | {geom} | {size//1024} KiB | {shard//1024} KiB | "
+            f"| {encoding} | {geom} | {size//1024} KiB | {shard//1024} KiB | "
             f"{a} | {s} | {ratio:.2f}x |")
     return "\n".join(lines)
 
 
 def shard_scaling(host_rows: List[dict], host_label: str) -> str:
-    """How does SIMD vs scalar gap scale with shard_size at fixed (codec,
+    """How does SIMD vs scalar gap scale with shard_size at fixed (encoding,
     geom, file_size)?  This is the headline experiment 3 result.
     """
     # pick a single file_size for clarity (1 MiB and 16 MiB)
     out = [f"\n### {host_label} — speedup vs shard size (1 MiB files)\n",
-           "| codec | geom | 4 KiB | 16 KiB | 64 KiB | 256 KiB |",
+           "| encoding | geom | 4 KiB | 16 KiB | 64 KiB | 256 KiB |",
            "|-------|------|-------|--------|--------|---------|"]
     for size in [1048576, 16777216]:
         if size != 1048576:
             out.append(f"\n*{size//1024//1024} MiB files*\n")
-            out.append("| codec | geom | 4 KiB | 16 KiB | 64 KiB | 256 KiB |")
+            out.append("| encoding | geom | 4 KiB | 16 KiB | 64 KiB | 256 KiB |")
             out.append("|-------|------|-------|--------|--------|---------|")
-        per_codec_geom: Dict[Tuple, Dict[int, Dict[str, List[dict]]]] = (
+        per_encoding_geom: Dict[Tuple, Dict[int, Dict[str, List[dict]]]] = (
             defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
         for r in host_rows:
             if (r["mode"] != "healthy" or r["shard_size"] is None or
                     r["size"] != size):
                 continue
             mode = "simd" if r["simd_mode"] == "simd" else "scalar"
-            per_codec_geom[(r["codec"], r["geom"])][r["shard_size"]][mode] \
+            per_encoding_geom[(r["encoding"], r["geom"])][r["shard_size"]][mode] \
                 .append(r)
-        for (codec, geom), shards in sorted(per_codec_geom.items()):
-            cells = [codec, geom]
+        for (encoding, geom), shards in sorted(per_encoding_geom.items()):
+            cells = [encoding, geom]
             for shard in [4096, 16384, 65536, 262144]:
                 bucket = shards.get(shard, {})
                 if "simd" in bucket and "scalar" in bucket:
@@ -204,7 +204,7 @@ def main():
 
     print("\n## Read-side speedup (SIMD vs scalar)\n")
     print("Median `read_ms` from healthy reads, grouped by "
-          "(codec, geometry, file_size, shard_size).  Speedup = "
+          "(encoding, geometry, file_size, shard_size).  Speedup = "
           "scalar / simd (higher = SIMD wins by more).\n")
     for h, _, cpu, isa in HOSTS:
         if len(host_rows[h]) > 1500:

@@ -10,7 +10,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 - **Platform**: Fedora 43, Linux 6.19.8, aarch64 (Apple M4 via VMware Fusion)
 - **Setup**: 11 Docker containers on a bridge network (1 MDS + 10 DSes)
 - **Geometries**: 4+2, 8+2 (plus plain 1+0 and stripe 10+0 baselines)
-- **Codecs**: plain, stripe, RS, Mojette-sys, Mojette-nonsys
+- **Encodings**: plain, stripe, RS, Mojette-sys, Mojette-nonsys
 - **File sizes**: 4 KB, 16 KB, 64 KB, 256 KB, 1 MB
 - **Runs**: 5 measured (2 warmup), with --degrade 1
 - **Shard size**: 4 KB
@@ -63,7 +63,7 @@ shards vs 1/4th.  Each individual RPC is smaller, and 8+2 benefits
 from wider parallelism across 10 DSes.  This validates the scaling
 model prediction that write overhead scales with m, not k.
 
-### 2. Systematic codecs scale well from 4+2 to 8+2
+### 2. Systematic encodings scale well from 4+2 to 8+2
 
 RS and Mojette-sys both improve at 8+2: smaller shards, same parity
 count, wider parallelism.  Writes improve 6-16%, reads improve 4-13%.
@@ -73,11 +73,11 @@ count, wider parallelism.  Writes improve 6-16%, reads improve 4-13%.
 Mnsys 8+2 reads are 60% slower than 4+2 (395 vs 246ms at 1 MB).
 The inverse Mojette transform scales with grid size (8 rows × P columns
 vs 4 rows), making the CPU cost of reconstruction proportionally worse.
-This codec should not be used at wide geometries.
+This encoding should not be used at wide geometries.
 
-### 4. Reconstruction overhead remains small for systematic codecs
+### 4. Reconstruction overhead remains small for systematic encodings
 
-| Codec | 8+2 Healthy | 8+2 Degraded-1 | Overhead |
+| Encoding | 8+2 Healthy | 8+2 Degraded-1 | Overhead |
 |-------|-------------|-----------------|----------|
 | RS    | 71.2        | 109.8           | +54%     |
 | Msys  | 80.6        | 84.2            | +4%      |
@@ -98,7 +98,7 @@ on this same-host Docker network.
 
 The goals.md predicted:
 - 8+2 write overhead ≈ 4+2 write overhead (both have m=2)
-- 8+2 healthy reads near-plain for systematic codecs
+- 8+2 healthy reads near-plain for systematic encodings
 
 Results confirm:
 - RS write: 4+2 = 103ms, 8+2 = 96ms (same ballpark, 8+2 slightly better)

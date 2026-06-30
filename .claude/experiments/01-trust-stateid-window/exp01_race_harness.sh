@@ -8,7 +8,7 @@
 # the sweep wrapper can drive it N times and accumulate CSV.
 #
 # Emits a single line on stdout of the form:
-#   RESULT round=$N layout=$L codec=$C k=$K m=$M size_mb=$S \
+#   RESULT round=$N layout=$L encoding=$C k=$K m=$M size_mb=$S \
 #          delay_ms=$D a_rc=$ARC b_rc=$BRC \
 #          a_stripes_ok=$AS a_first_fail_stripe=$AFS \
 #          b_stripes_ok=$BS final_winner=$FW \
@@ -23,7 +23,7 @@ usage() {
 Usage: $0 [options]
 
   --layout v1|v2        Layout type (required)
-  --codec rs|mojette-sys|mojette-nonsys  (default: rs)
+  --encoding rs|mojette-sys|mojette-nonsys  (default: rs)
   --k K                 Data shards (default: 4)
   --m M                 Parity shards (default: 2)
   --size-mb S           Per-client input size in MiB (default: 100)
@@ -41,7 +41,7 @@ EOF
 }
 
 LAYOUT=""
-CODEC=rs
+ENCODING=rs
 K=4
 M=2
 SIZE_MB=100
@@ -56,7 +56,7 @@ KEEP_TMP=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --layout) LAYOUT=$2; shift 2 ;;
-        --codec) CODEC=$2; shift 2 ;;
+        --encoding) ENCODING=$2; shift 2 ;;
         --k) K=$2; shift 2 ;;
         --m) M=$2; shift 2 ;;
         --size-mb) SIZE_MB=$2; shift 2 ;;
@@ -107,7 +107,7 @@ dd if=/dev/urandom of="$BPATH" bs="$SIZE" count=1 2>/dev/null
 
 # Start client A.
 "$EC_DEMO" write --mds "$MDS" --file "$FILE" --input "$APATH" \
-    --k "$K" --m "$M" --codec "$CODEC" --layout "$LAYOUT" \
+    --k "$K" --m "$M" --encoding "$ENCODING" --layout "$LAYOUT" \
     --id "clientA_r${ROUND}" \
     >"$AOUT" 2>"$AERR" &
 APID=$!
@@ -118,7 +118,7 @@ sleep "$SLEEP_SEC"
 
 # Start client B.
 "$EC_DEMO" write --mds "$MDS" --file "$FILE" --input "$BPATH" \
-    --k "$K" --m "$M" --codec "$CODEC" --layout "$LAYOUT" \
+    --k "$K" --m "$M" --encoding "$ENCODING" --layout "$LAYOUT" \
     --id "clientB_r${ROUND}" \
     >"$BOUT" 2>"$BERR" &
 BPID=$!
@@ -137,7 +137,7 @@ fi
 # Read back to determine the final file state.  Use a fresh reader
 # id so it cannot be confused with either writer.
 "$EC_DEMO" read --mds "$MDS" --file "$FILE" --output "$POSTPATH" \
-    --k "$K" --m "$M" --codec "$CODEC" --size "$SIZE" \
+    --k "$K" --m "$M" --encoding "$ENCODING" --size "$SIZE" \
     --layout "$LAYOUT" --id "clientReader_r${ROUND}" \
     2>"$RERR"
 RR=$?
@@ -188,7 +188,7 @@ AFS=$(awk '
 ' "$AERR" 2>/dev/null)
 [ -z "$AFS" ] && AFS=NA
 
-echo "RESULT round=$ROUND layout=$LAYOUT codec=$CODEC k=$K m=$M" \
+echo "RESULT round=$ROUND layout=$LAYOUT encoding=$ENCODING k=$K m=$M" \
      "size_mb=$SIZE_MB delay_ms=$DELAY_MS" \
      "a_rc=$ARC b_rc=$BRC" \
      "a_stripes_ok=$AS a_first_fail_stripe=$AFS" \

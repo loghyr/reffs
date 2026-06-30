@@ -5,7 +5,7 @@
 # Sweep wrapper: drive exp01_race_harness.sh N times, emit CSV.
 #
 # CSV columns match the RESULT line fields from the harness:
-#   round,layout,codec,k,m,size_mb,delay_ms,a_rc,b_rc,
+#   round,layout,encoding,k,m,size_mb,delay_ms,a_rc,b_rc,
 #   a_stripes_ok,a_first_fail_stripe,b_stripes_ok,final_winner,
 #   mixed_diff_a,mixed_diff_b
 #
@@ -23,8 +23,8 @@ Usage: $0 [options]
 
   --runs N              Number of rounds (default: 20)
   --layout v1|v2        Layout type (required)
-  --codec C             Codec (default: rs)
-  --k K --m M           Codec geometry (default: 4 / 2)
+  --encoding C             Encoding (default: rs)
+  --k K --m M           Encoding geometry (default: 4 / 2)
   --size-mb S           Per-client input size (default: 100)
   --delay-ms D          A->B start gap (default: 500)
   --mds HOST[:PORT]     MDS endpoint (default: reffs-mds)
@@ -39,7 +39,7 @@ EOF
 
 RUNS=20
 LAYOUT=""
-CODEC=rs
+ENCODING=rs
 K=4
 M=2
 SIZE_MB=100
@@ -54,7 +54,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --runs) RUNS=$2; shift 2 ;;
         --layout) LAYOUT=$2; shift 2 ;;
-        --codec) CODEC=$2; shift 2 ;;
+        --encoding) ENCODING=$2; shift 2 ;;
         --k) K=$2; shift 2 ;;
         --m) M=$2; shift 2 ;;
         --size-mb) SIZE_MB=$2; shift 2 ;;
@@ -82,7 +82,7 @@ if [ ! -x "$HARNESS" ]; then
     exit 2
 fi
 
-HEADER="round,layout,codec,k,m,size_mb,delay_ms,a_rc,b_rc,a_stripes_ok,a_first_fail_stripe,b_stripes_ok,final_winner,mixed_diff_a,mixed_diff_b"
+HEADER="round,layout,encoding,k,m,size_mb,delay_ms,a_rc,b_rc,a_stripes_ok,a_first_fail_stripe,b_stripes_ok,final_winner,mixed_diff_a,mixed_diff_b"
 
 emit_csv_line() {
     if [ -n "$CSV" ]; then
@@ -107,7 +107,7 @@ KEEP_FLAG=""
 
 for r in $(seq 1 "$RUNS"); do
     LINE=$("$HARNESS" \
-        --layout "$LAYOUT" --codec "$CODEC" --k "$K" --m "$M" \
+        --layout "$LAYOUT" --encoding "$ENCODING" --k "$K" --m "$M" \
         --size-mb "$SIZE_MB" --delay-ms "$DELAY_MS" \
         --round "$r" --mds "$MDS" --ec-demo "$EC_DEMO" \
         --tmp "$TMPDIR_" $KEEP_FLAG \
@@ -115,7 +115,7 @@ for r in $(seq 1 "$RUNS"); do
 
     if [ -z "$LINE" ]; then
         echo "round $r: no RESULT line" >&2
-        emit_csv_line "$r,$LAYOUT,$CODEC,$K,$M,$SIZE_MB,$DELAY_MS,,,,NA,,HARNESS_FAIL,NA,NA"
+        emit_csv_line "$r,$LAYOUT,$ENCODING,$K,$M,$SIZE_MB,$DELAY_MS,,,,NA,,HARNESS_FAIL,NA,NA"
         continue
     fi
 
@@ -126,7 +126,7 @@ for r in $(seq 1 "$RUNS"); do
         | sed 's/=\(.*\)$/="\1"/' \
         | sed 's/^/V_/')"
 
-    emit_csv_line "$V_round,$V_layout,$V_codec,$V_k,$V_m,$V_size_mb,$V_delay_ms,$V_a_rc,$V_b_rc,$V_a_stripes_ok,$V_a_first_fail_stripe,$V_b_stripes_ok,$V_final_winner,$V_mixed_diff_a,$V_mixed_diff_b"
+    emit_csv_line "$V_round,$V_layout,$V_encoding,$V_k,$V_m,$V_size_mb,$V_delay_ms,$V_a_rc,$V_b_rc,$V_a_stripes_ok,$V_a_first_fail_stripe,$V_b_stripes_ok,$V_final_winner,$V_mixed_diff_a,$V_mixed_diff_b"
 
     case "$V_final_winner" in
         A) a_won=$((a_won + 1)) ;;

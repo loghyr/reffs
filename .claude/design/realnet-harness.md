@@ -52,7 +52,7 @@ What this slice does NOT ship:
 Reuses the proven header from `run_ps_vs_client_bench.sh`:
 
 ```
-variant,codec,geometry,size_bytes,iter,write_ms,read_ms,verify,note
+variant,encoding,geometry,size_bytes,iter,write_ms,read_ms,verify,note
 ```
 
 Extensions for realnet bench (appended for column-stability with
@@ -75,7 +75,7 @@ Why the extensions:
 | `bytes_per_sec_read` | size / (read_ms / 1000); ditto |
 
 The `gen_benchmark_report.py` HTML report keys on
-`variant,codec,geometry,size_bytes` and tolerates extra columns
+`variant,encoding,geometry,size_bytes` and tolerates extra columns
 -- the realnet extensions are additive, not breaking.
 
 ## Cell matrix (variant d only this slice)
@@ -84,14 +84,14 @@ Same matrix as the 4-variant design document, restricted to d:
 
 | Axis | Values | Count |
 |------|--------|-------|
-| Codec | rs, mojette-sys, mojette-nonsys | 3 |
+| Encoding | rs, mojette-sys, mojette-nonsys | 3 |
 | Geometry | 4+2, 8+2 | 2 |
 | Size | 4 KB, 16 KB, 64 KB, 256 KB, 1 MB, 4 MB, 16 MB | 7 |
 | Iter | 5 per cell | 5 |
 
 **Variant d cell count: 210.**  At ~2 s per cell (real network
 latency), the full sweep is ~7 min sustained.  Smoke runs use
-`--codec rs --geometry 4+2 --sizes 4096,1048576 --iters 2` for
+`--encoding rs --geometry 4+2 --sizes 4096,1048576 --iters 2` for
 ~30 s end-to-end.
 
 The full 4-variant matrix (525 cells) lands when variants a/b/c
@@ -123,7 +123,7 @@ topology orchestration can wrap both scripts.
 deploy/benchmark/run-realnet-harness.sh [options]
 
 Options:
-  --codecs LIST        Codecs to test (default: rs)
+  --encodings LIST        Encodings to test (default: rs)
                        Comma-separated: rs,mojette-sys,mojette-nonsys
   --geometries LIST    K+M pairs (default: 4+2)
                        Comma-separated: 4+2,8+2
@@ -144,9 +144,9 @@ sweeps.
 
 ## Per-cell flow (variant d)
 
-For each (codec, geometry, size, iter):
+For each (encoding, geometry, size, iter):
 
-1. Generate `cell_id = "d_<codec>_<k>_<m>_<size>_<iter>"`.
+1. Generate `cell_id = "d_<encoding>_<k>_<m>_<size>_<iter>"`.
 2. Pre-create random input on client host:
    `/tmp/realnet_in_<size>.bin` (one per size, cached).
 3. **Write timing**: wall-clock around
@@ -158,7 +158,7 @@ For each (codec, geometry, size, iter):
    `dd if=<mountpoint>/<cell_id>.bin of=<output> bs=<size>`.
    Drop client page cache between write and read:
    `echo 3 > /proc/sys/vm/drop_caches`.  Without this the read
-   measures cache latency, not the codec round-trip.
+   measures cache latency, not the encoding round-trip.
 5. **Verify**: `cmp -s input output` -> "OK" or "FAIL"; on FAIL
    include the first-diff offset in the `note` column.
 6. Compute `bytes_per_sec_*` and emit CSV row.
@@ -174,27 +174,27 @@ Per-cell rationale:
   ensures the COMMIT round-trip is part of the measured
   duration.
 
-## Codec / geometry plumbing
+## Encoding / geometry plumbing
 
-The MDS issues the codec from its per-export `default_coding`
+The MDS issues the encoding from its per-export `default_coding`
 config (`.claude/design/per-export-default-coding.md`, shipped
 in `default-coding-toml` slice 2026-06-03).  The bench MDS
 config has `default_coding = "rs:4+2"` -- the harness either:
 
-(a) Accepts the MDS's default and runs only that codec/geometry
+(a) Accepts the MDS's default and runs only that encoding/geometry
     combination, OR
 (b) Sends `SB_SET_DEFAULT_CODING` probe RPCs to the MDS to
-    switch codec/geometry between cells.
+    switch encoding/geometry between cells.
 
 For this slice: **(b)**.  Between cell iterations the harness
-invokes `reffs-probe.py sb-set-default-coding --id 1 --codec
-<codec> --k <k> --m <m>` against `MDS:20490`.  The probe op
+invokes `reffs-probe.py sb-set-default-coding --id 1 --encoding
+<encoding> --k <k> --m <m>` against `MDS:20490`.  The probe op
 already exists (per-export-default-coding step 9 / sb_set_default_coding
 client RPC).
 
-Why (b): without it, multi-codec sweeps require restarting the
-MDS between codecs to pick up a new config -- 15-30 s of dead
-time per codec, breaks the cell-matrix structure of the sweep.
+Why (b): without it, multi-encoding sweeps require restarting the
+MDS between encodings to pick up a new config -- 15-30 s of dead
+time per encoding, breaks the cell-matrix structure of the sweep.
 
 Failure mode: if the probe RPC fails (e.g., MDS is gone), the
 harness emits `note=set_default_coding_failed` and skips the
@@ -243,7 +243,7 @@ Filename pattern: `realnet-<variants>-<ds_mds_host>-<utc_ts>.csv`.
 Multiple invocations accumulate in the same directory.  No
 roll-up / merge tooling in this slice -- a follow-up
 `scripts/realnet_merge_csv.py` can stitch and dedupe by
-`(variant, codec, geometry, size_bytes, iter, timestamp)`.
+`(variant, encoding, geometry, size_bytes, iter, timestamp)`.
 
 ## Test plan
 
@@ -255,7 +255,7 @@ No code in `lib/` moves, no XDR, no probe ops added.
 ### Smoke (run as part of slice shipping)
 
 1. Confirm realnet topology is up (`nc -zv` checks).
-2. Run harness with `--codecs rs --geometries 4+2 --sizes 4096,1048576 --iters 2 --variants d`.
+2. Run harness with `--encodings rs --geometries 4+2 --sizes 4096,1048576 --iters 2 --variants d`.
    8 cells (2 sizes * 2 iters * 2 ops + iter overhead = ~30 s).
 3. Open the CSV and verify:
    - 4 rows (2 sizes * 2 iters, one row per cell).
@@ -284,7 +284,7 @@ above + the future full-sweep numbers.
 | `dd write` fails                 | non-zero exit                                | row with `verify=FAIL, note=dd_write_failed_<rc>` |
 | `dd read` fails                  | non-zero exit                                | row with `verify=FAIL, note=dd_read_failed_<rc>` |
 | `cmp` reports diff               | `cmp` non-zero                               | row with `verify=FAIL, note=bytes_mismatch` |
-| `reffs-probe sb-set-default-coding` fails | probe exit non-zero | row with `verify=FAIL, note=set_default_coding_failed` for every cell in the affected (codec, geom) iteration |
+| `reffs-probe sb-set-default-coding` fails | probe exit non-zero | row with `verify=FAIL, note=set_default_coding_failed` for every cell in the affected (encoding, geom) iteration |
 | `drop_caches` fails              | sudo tee non-zero (typically permission)     | note column gets `drop_caches_failed`; verify stays OK; read timing is cache-influenced |
 | Result line stripped / non-numeric | regex `^[0-9]+$` fails in emit_row          | row with `verify=FAIL, note=parse_failed` (belt-and-suspenders guard) |
 
@@ -318,7 +318,7 @@ Initial 4-cell smoke (rs/4+2/{4 KB,1 MB}/2 iters) against the
 live realnet topology returned:
 
 ```
-variant,codec,geometry,size_bytes,iter,write_ms,read_ms,verify
+variant,encoding,geometry,size_bytes,iter,write_ms,read_ms,verify
 d,rs,4+2,4096,1,61915,10487,OK
 d,rs,4+2,4096,2,61912,10383,OK
 d,rs,4+2,1048576,1,61999,10458,OK
@@ -338,7 +338,7 @@ Two things to note for downstream analysis:
    Investigating that is downstream of this slice.
 2. **Read timings are also uniform** (~10.4 s) regardless of
    size, suggesting similar per-op overhead dominates the
-   real-network round-trip.  Either codec-decode buffering or
+   real-network round-trip.  Either encoding-decode buffering or
    the PS<->DS session steady state.
 
 Neither is a harness bug; they ARE the first variant-d realnet
@@ -357,4 +357,4 @@ latency on realnet.
   single-host A/B/C harness this slice's CSV schema and timing
   model derive from.
 - `.claude/design/per-export-default-coding.md` -- the probe op
-  the harness uses to switch codec/geometry between cells.
+  the harness uses to switch encoding/geometry between cells.

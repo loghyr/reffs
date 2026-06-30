@@ -19,7 +19,7 @@ dd if=/dev/urandom of=/tmp/B bs=$SIZE count=1 2>/dev/null
 # Start client A in background
 echo "[A] start at $(date +%H:%M:%S.%N)"
 "$EC" write --mds "$MDS" --file "$FILE" --input /tmp/A \
-    --k 4 --m 2 --codec rs --layout v1 --id clientA \
+    --k 4 --m 2 --encoding rs --layout v1 --id clientA \
     >/tmp/A.out 2>/tmp/A.err &
 APID=$!
 
@@ -29,7 +29,7 @@ sleep 0.5
 # Start client B
 echo "[B] start at $(date +%H:%M:%S.%N)"
 "$EC" write --mds "$MDS" --file "$FILE" --input /tmp/B \
-    --k 4 --m 2 --codec rs --layout v1 --id clientB \
+    --k 4 --m 2 --encoding rs --layout v1 --id clientB \
     >/tmp/B.out 2>/tmp/B.err &
 BPID=$!
 
@@ -47,7 +47,7 @@ tail -5 /tmp/B.err
 # Read file back, see whose content won
 sleep 1
 "$EC" read --mds "$MDS" --file "$FILE" --output /tmp/post \
-    --k 4 --m 2 --codec rs --size $SIZE --layout v1 \
+    --k 4 --m 2 --encoding rs --size $SIZE --layout v1 \
     --id clientReader 2>/tmp/R.err
 RR=$?
 echo "--- read rc=$RR ---"

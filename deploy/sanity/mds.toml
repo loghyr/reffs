@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# MDS config for the multi-codec sanity test (deploy/sanity).
+# MDS config for the multi-encoding sanity test (deploy/sanity).
 # 1 MDS + 6 DSes.  SBs are NOT created here -- per
 # .claude/design/sb-registry-v3.md ([[export]] is root-only since
 # the registry-v3 work).  Slice setup-sbs.sh creates the 5 sanity

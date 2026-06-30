@@ -23,7 +23,7 @@ Flex Files v2 + erasure coding demonstrated end-to-end (2026-03-24):
 2. Client writes data with RS/Mojette encoding (4+2), distributing
    data + parity chunks across data servers via NFSv3 or CHUNK ops
 3. Client reads back and reconstructs from any sufficient subset
-4. Tier 1 benchmark data collected (4 codecs × 5 file sizes)
+4. Tier 1 benchmark data collected (4 encodings × 5 file sizes)
 
 Remaining for the demo deadline:
 - Tier 2 benchmarks (data center VMs with real network latency)
@@ -67,25 +67,25 @@ All layout operations implemented in `lib/nfs4/server/layout.c`:
   LAYOUTRETURN, LAYOUTERROR)
 - DS I/O: NFSv3 READ/WRITE with synthetic AUTH_SYS credentials
 - DS I/O: NFSv4.2 CHUNK_WRITE/READ/FINALIZE/COMMIT (v2 path)
-- Codecs: Reed-Solomon, Mojette systematic, Mojette non-systematic
-- RS codec integration (ec_write/ec_read with stripe padding)
+- Encodings: Reed-Solomon, Mojette systematic, Mojette non-systematic
+- RS encoding integration (ec_write/ec_read with stripe padding)
 - Mojette clean-room from published papers (no RozoFS code — GPL-2.0 incompatible)
 - Plain (non-EC) put/get/check for single-mirror testing
-- --codec flag: rs, mojette-sys, mojette-nonsys
+- --encoding flag: rs, mojette-sys, mojette-nonsys
 - --layout flag: v1 (NFSv3), v2 (CHUNK ops)
 - --id flag: unique client owner per concurrent instance
 - DS connection dedup: mirrors on same host share one connection
 - Variable shard stride for Mojette non-systematic projections
 - 29 unit tests (compound builder, stripe math, Mojette transform,
-  Mojette codec, RS codec)
+  Mojette encoding, RS encoding)
 
 **2026-03-23: plain put/get/check verified against run-combined.**
 **2026-03-23: full git CI test passed against Flex Files v1.**
-**2026-03-24: all 4 codecs verified end-to-end on combined mode:**
+**2026-03-24: all 4 encodings verified end-to-end on combined mode:**
   plain, RS 4+2, Mojette-sys 4+2, Mojette-nonsys 4+2.
 
 **2026-05-04: Mojette algebra switched to (GF(2)^64, XOR).** Forward,
-peel inverse, codec, and SIMD paths (NEON/SSE2/AVX2) converted from
+peel inverse, encoding, and SIMD paths (NEON/SSE2/AVX2) converted from
 mod-2^64 addition. XOR has no carry chain and scales straightforwardly
 to 128-/256-/512-bit SIMD lanes; matches the broader Mojette
 literature.
@@ -169,9 +169,9 @@ ec_demo, `inverse=peel|gd` axis in ec_benchmark_full.sh.
 
 #### Key Benchmark Findings (2026-03-27)
 
-**v1 (NFSv3) codec comparison at 1 MB, mana M4 NEON:**
+**v1 (NFSv3) encoding comparison at 1 MB, mana M4 NEON:**
 
-| Codec | 4+2 write | 4+2 read | 8+2 write | 8+2 read |
+| Encoding | 4+2 write | 4+2 read | 8+2 write | 8+2 read |
 |-------|-----------|----------|-----------|----------|
 | Plain | 86 ms | 58 ms | — | — |
 | RS | 108 ms | 89 ms | 99 ms | 81 ms |

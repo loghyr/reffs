@@ -445,7 +445,7 @@ cat <<EOF
 
 To smoke variant c from $DREAMER_HOST:
 
-    ssh $DREAMER_HOST '/path/to/ec_demo --layout v2 --codec rs \\
+    ssh $DREAMER_HOST '/path/to/ec_demo --layout v2 --encoding rs \\
         --k 4 --m 2 --mds $SHADOW_LAN_IP --size 1MB ...'
 
 To smoke variant d from $DREAMER_HOST:
