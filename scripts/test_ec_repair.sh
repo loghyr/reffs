@@ -45,17 +45,17 @@ NFS_FILE="/test_ec_repair.bin"
 SIZE=$((1024 * 1024)) # 1 MiB
 K=4
 M=2
-CODEC=rs
+ENCODING=rs
 LAYOUT=v2
 LOSS=0x1 # shard 0 lost
 
 dd if=/dev/urandom of="$INPUT" bs="$SIZE" count=1 status=none 2>/dev/null
 
-echo "test_ec_repair: write $NFS_FILE ($SIZE bytes, $K+$M $CODEC, $LAYOUT)"
+echo "test_ec_repair: write $NFS_FILE ($SIZE bytes, $K+$M $ENCODING, $LAYOUT)"
 "$EC_DEMO" write \
     --mds "$MDS" --file "$NFS_FILE" \
     --input "$INPUT" \
-    --layout "$LAYOUT" --codec "$CODEC" \
+    --layout "$LAYOUT" --encoding "$ENCODING" \
     --k "$K" --m "$M"
 
 # Capture pre-repair counters via the probe protocol if available.
@@ -78,7 +78,7 @@ echo "test_ec_repair: repair $NFS_FILE --skip-ds $LOSS"
 line=$("$EC_DEMO" repair \
     --mds "$MDS" --file "$NFS_FILE" \
     --size "$SIZE" --skip-ds "$LOSS" \
-    --layout "$LAYOUT" --codec "$CODEC" \
+    --layout "$LAYOUT" --encoding "$ENCODING" \
     --k "$K" --m "$M")
 
 echo "test_ec_repair: $line"
@@ -103,7 +103,7 @@ echo "test_ec_repair: verify $NFS_FILE -- file content must match input"
 if ! "$EC_DEMO" verify \
         --mds "$MDS" --file "$NFS_FILE" \
         --input "$INPUT" \
-        --layout "$LAYOUT" --codec "$CODEC" \
+        --layout "$LAYOUT" --encoding "$ENCODING" \
         --k "$K" --m "$M"; then
     echo "test_ec_repair: FAIL -- verify mismatch after repair" >&2
     exit 1

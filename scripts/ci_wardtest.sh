@@ -15,7 +15,7 @@
 #   --duration N      Total run time in seconds (default: 60)
 #   --iterations N    Iterations per client (default: 0, use duration)
 #   --clients N       Threads per client process (default: 2)
-#   --codec TYPE      xor or rs (default: xor)
+#   --encoding TYPE      xor or rs (default: xor)
 #   --k N             Data shards (default: 4)
 #   --m N             Parity shards (default: 1)
 #   --crash           Enable crash testing (SIGKILL every 30s)
@@ -31,7 +31,7 @@ set -euo pipefail
 DURATION=60
 ITERATIONS=0
 NCLIENTS=2
-CODEC="xor"
+ENCODING="xor"
 K=4
 M=1
 CRASH=0
@@ -54,7 +54,7 @@ while [[ $# -gt 0 ]]; do
         --duration)       DURATION="$2"; shift 2 ;;
         --iterations)     ITERATIONS="$2"; shift 2 ;;
         --clients)        NCLIENTS="$2"; shift 2 ;;
-        --codec)          CODEC="$2"; shift 2 ;;
+        --encoding)          ENCODING="$2"; shift 2 ;;
         --k)              K="$2"; shift 2 ;;
         --m)              M="$2"; shift 2 ;;
         --crash)          CRASH=1; shift ;;
@@ -155,7 +155,7 @@ start_server() {
 
 # -- Print config --
 echo "=== wardtest CI test ==="
-echo "  codec:    ${CODEC} k=${K} m=${M}"
+echo "  encoding:    ${ENCODING} k=${K} m=${M}"
 echo "  clients:  ${NUM_WRITERS} x ${NCLIENTS} threads"
 if [[ ${ITERATIONS} -gt 0 ]]; then
     echo "  mode:     ${ITERATIONS} iterations per client"
@@ -187,7 +187,7 @@ COMMON_ARGS="--data ${MOUNT_DIR}/wardtest/data \
     --meta ${MOUNT_DIR}/wardtest/meta \
     --history ${MOUNT_DIR}/wardtest/history \
     --clients ${NCLIENTS} \
-    --codec ${CODEC} --k ${K} --m ${M} \
+    --encoding ${ENCODING} --k ${K} --m ${M} \
     --report 10"
 
 if [[ ${ITERATIONS} -gt 0 ]]; then

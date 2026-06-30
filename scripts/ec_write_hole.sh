@@ -28,7 +28,7 @@
 #                       MUST be 0/N for the success criterion.
 #
 # Output: CSV row per cell appended to --out:
-#   codec,geometry,kill_ms,iteration,outcome,read_latency_ms,note
+#   encoding,geometry,kill_ms,iteration,outcome,read_latency_ms,note
 
 set -uo pipefail
 
@@ -47,7 +47,7 @@ LEASE_WAIT_SEC="${LEASE_WAIT_SEC:-90}"   # 45s lease * 1.5 + reaper + safety
 KILL_MS_LIST="${KILL_MS_LIST:-100 250 500 750 900}"
 
 if [[ ! -f "${OUT}" ]]; then
-	echo "codec,geometry,kill_ms,iteration,outcome,read_latency_ms,note" >"${OUT}"
+	echo "encoding,geometry,kill_ms,iteration,outcome,read_latency_ms,note" >"${OUT}"
 fi
 
 # Stable random payloads X (pre-fill) and Y (mid-write target).
@@ -70,7 +70,7 @@ run_one() {
 	# Pre-fill: write X.  Uses a unique --id so this client's
 	# clientid doesn't collide with the killed Y-writer.
 	"${EC_DEMO}" write --mds "${MDS}" --file "${fname}" \
-		--input "${X}" --k 4 --m 2 --codec rs --layout v2 \
+		--input "${X}" --k 4 --m 2 --encoding rs --layout v2 \
 		--shard-size 4096 --id "exp12_prefill_$$_${iter}" \
 		>/tmp/exp12_prefill.log 2>&1 || {
 			echo "rs,4:2,${kill_ms},${iter},NO_CONTENT,0,prefill_failed" >>"${OUT}"
@@ -80,7 +80,7 @@ run_one() {
 	# Mid-write kill: launch Y-writer in background; sleep
 	# kill_ms; SIGKILL.
 	"${EC_DEMO}" write --mds "${MDS}" --file "${fname}" \
-		--input "${Y}" --k 4 --m 2 --codec rs --layout v2 \
+		--input "${Y}" --k 4 --m 2 --encoding rs --layout v2 \
 		--shard-size 4096 --id "exp12_killer_$$_${kill_ms}_${iter}" \
 		>/tmp/exp12_killer.log 2>&1 &
 	local killer_pid=$!
@@ -97,7 +97,7 @@ run_one() {
 	rm -f "${output}"
 	local read_rc=0
 	"${EC_DEMO}" read --mds "${MDS}" --file "${fname}" \
-		--output "${output}" --k 4 --m 2 --codec rs --layout v2 \
+		--output "${output}" --k 4 --m 2 --encoding rs --layout v2 \
 		--shard-size 4096 --size "${SIZE}" \
 		--id "exp12_reader_$$_${iter}" \
 		>/tmp/exp12_reader.log 2>&1 || read_rc=$?

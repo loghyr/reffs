@@ -7,7 +7,7 @@
 #
 # Stands up a combined-mode reffsd with N loopback dstores (so the
 # MDS allocates N mirrors per layout), then runs ec_demo `write`
-# followed by `verify` against it with --codec mirror --k N --m 0.
+# followed by `verify` against it with --encoding mirror --k N --m 0.
 # Asserts both invocations exit 0 -- i.e., the data fanned out to N
 # replicas via CHUNK_WRITE, was readable back via CHUNK_READ from
 # any of those replicas, and byte-compared identical to the input.
@@ -146,12 +146,12 @@ sleep 0.5  # brief grace post-listen, matches other local tests
 head -c "$SIZE" /dev/urandom >"$run_dir/input.bin" ||
 	die "could not generate $SIZE bytes of input"
 
-echo "=== ec_demo write --codec mirror --k $MIRRORS --m 0 ($SIZE bytes) ==="
+echo "=== ec_demo write --encoding mirror --k $MIRRORS --m 0 ($SIZE bytes) ==="
 if ! "$EC_DEMO" write \
 	--mds "127.0.0.1:$NFS_PORT" \
 	--file "/test_mirror" \
 	--input "$run_dir/input.bin" \
-	--codec mirror \
+	--encoding mirror \
 	--k "$MIRRORS" \
 	--m 0 \
 	--layout v2 \
@@ -166,12 +166,12 @@ if ! "$EC_DEMO" write \
 	exit 1
 fi
 
-echo "=== ec_demo verify --codec mirror --k $MIRRORS --m 0 ==="
+echo "=== ec_demo verify --encoding mirror --k $MIRRORS --m 0 ==="
 if ! "$EC_DEMO" verify \
 	--mds "127.0.0.1:$NFS_PORT" \
 	--file "/test_mirror" \
 	--input "$run_dir/input.bin" \
-	--codec mirror \
+	--encoding mirror \
 	--k "$MIRRORS" \
 	--m 0 \
 	--layout v2 \
@@ -188,7 +188,7 @@ fi
 
 # --- 3. degraded read: drop one replica via --skip-ds --------------
 #
-# Confirm that the mirror codec recovers when one replica is
+# Confirm that the mirror encoding recovers when one replica is
 # unavailable.  With N mirrors, MIRRORED tolerates up to N-1 losses;
 # this test drops one and asserts the read still verifies.
 echo "=== ec_demo verify --skip-ds 0 (one mirror dropped) ==="
@@ -196,7 +196,7 @@ if ! "$EC_DEMO" verify \
 	--mds "127.0.0.1:$NFS_PORT" \
 	--file "/test_mirror" \
 	--input "$run_dir/input.bin" \
-	--codec mirror \
+	--encoding mirror \
 	--k "$MIRRORS" \
 	--m 0 \
 	--layout v2 \
@@ -212,4 +212,4 @@ if ! "$EC_DEMO" verify \
 	exit 1
 fi
 
-echo "PASS: ec_demo write+verify+degraded against combined reffsd, N=$MIRRORS, codec=mirror"
+echo "PASS: ec_demo write+verify+degraded against combined reffsd, N=$MIRRORS, encoding=mirror"

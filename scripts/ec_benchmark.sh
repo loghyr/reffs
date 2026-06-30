@@ -2,11 +2,11 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# EC Benchmark -- compare encoding overhead across codecs and geometries.
+# EC Benchmark -- compare encoding overhead across encodings and geometries.
 #
 # Usage: ec_benchmark.sh [OPTIONS] <ec_demo_path> <mds_host>
 #
-# Runs write/verify cycles for each codec at several file sizes,
+# Runs write/verify cycles for each encoding at several file sizes,
 # measuring wall-clock time.  Output is CSV to stdout.
 #
 # --degrade N      After each healthy read, re-read with N data shards
@@ -111,12 +111,12 @@ build_skip_list() {
 }
 
 # ------------------------------------------------------------------ #
-# Benchmark one codec + size + geometry combination                    #
+# Benchmark one encoding + size + geometry combination                    #
 # ------------------------------------------------------------------ #
 
-# bench_one <codec> <k> <m> <sz> <run> <mode> [skip_ds_list]
+# bench_one <encoding> <k> <m> <sz> <run> <mode> [skip_ds_list]
 bench_one() {
-    local codec="$1"
+    local encoding="$1"
     local k="$2"
     local m="$3"
     local sz="$4"
@@ -128,7 +128,7 @@ bench_one() {
     [ -n "$FORCE_SCALAR" ] && stag="n"
     local itag="p"
     [ -n "$FORCE_GD" ] && itag="g"
-    local fname="bench_${LAYOUT_TAG}_${stag}${itag}_${codec}_${geom}_${sz}_${run}"
+    local fname="bench_${LAYOUT_TAG}_${stag}${itag}_${encoding}_${geom}_${sz}_${run}"
     local input="/tmp/bench_${sz}"
     local skip_arg=""
     [ -n "$skip_ds" ] && skip_arg="--skip-ds $skip_ds"
@@ -141,7 +141,7 @@ bench_one() {
         t0=$(now_ms)
         # shellcheck disable=SC2086
         "$EC_DEMO" write --mds "$MDS" --file "$fname" --input "$input" \
-            --k "$k" --m "$m" --codec "$codec" \
+            --k "$k" --m "$m" --encoding "$encoding" \
             $FORCE_SCALAR $FORCE_GD $LAYOUT_ARG $SHARD_SIZE_ARG 2>/dev/null
         local t1
         t1=$(now_ms)
@@ -150,13 +150,13 @@ bench_one() {
 
     # Clear the output file before every read.
     #
-    # If we don't, a leftover output file from a previous codec /
+    # If we don't, a leftover output file from a previous encoding /
     # iteration / size masquerades as a successful read when the
     # current ec_demo invocation fails: ec_demo on read failure
     # exits non-zero and does NOT write the output file, so the
     # subsequent `cmp -s "$input" "/tmp/out_${sz}"` ends up
     # comparing the input against the stale file.  If the prior
-    # codec succeeded (and ec_demo wrote the same input back),
+    # encoding succeeded (and ec_demo wrote the same input back),
     # the cmp matches and verify=OK is reported -- a false
     # positive that hides the failure.
     #
@@ -173,7 +173,7 @@ bench_one() {
     t0=$(now_ms)
     # shellcheck disable=SC2086
     "$EC_DEMO" read --mds "$MDS" --file "$fname" --output "/tmp/out_${sz}" \
-        --k "$k" --m "$m" --codec "$codec" --size "$sz" \
+        --k "$k" --m "$m" --encoding "$encoding" --size "$sz" \
         $skip_arg $FORCE_SCALAR $FORCE_GD $LAYOUT_ARG $SHARD_SIZE_ARG \
         2>>/tmp/ec_bench_err.log
     local t1
@@ -193,7 +193,7 @@ bench_one() {
     # visible by inspection without having to trace control flow.
     rm -f "/tmp/out_${sz}"
 
-    echo "${codec},${geom},${sz},${run},${write_ms},${read_ms},${verify},${mode},${LAYOUT_TAG},${CPU_INFO},${INVERSE_TAG},${SHARD_SIZE_TAG}"
+    echo "${encoding},${geom},${sz},${run},${write_ms},${read_ms},${verify},${mode},${LAYOUT_TAG},${CPU_INFO},${INVERSE_TAG},${SHARD_SIZE_TAG}"
 }
 
 # ------------------------------------------------------------------ #
@@ -230,9 +230,9 @@ bench_plain() {
         verify="FAIL"
     fi
 
-    # Shard size has no meaning for the plain (no-codec) path -- but
+    # Shard size has no meaning for the plain (no-encoding) path -- but
     # we still write it to keep the CSV column count uniform across
-    # codec and plain rows.
+    # encoding and plain rows.
     echo "plain,1+0,${sz},${run},${write_ms},${read_ms},${verify},healthy,${LAYOUT_TAG},${CPU_INFO},${INVERSE_TAG},${SHARD_SIZE_TAG}"
     rm -f "/tmp/out_${sz}"
 }
@@ -252,7 +252,7 @@ bench_stripe() {
     local t0
     t0=$(now_ms)
     "$EC_DEMO" write --mds "$MDS" --file "$fname" --input "$input" \
-        --k $NUM_DS --m 0 --codec stripe 2>/dev/null
+        --k $NUM_DS --m 0 --encoding stripe 2>/dev/null
     local t1
     t1=$(now_ms)
     local write_ms=$(( t1 - t0 ))
@@ -262,7 +262,7 @@ bench_stripe() {
 
     t0=$(now_ms)
     "$EC_DEMO" read --mds "$MDS" --file "$fname" --output "/tmp/out_${sz}" \
-        --k $NUM_DS --m 0 --codec stripe --size "$sz" 2>/dev/null
+        --k $NUM_DS --m 0 --encoding stripe --size "$sz" 2>/dev/null
     t1=$(now_ms)
     local read_ms=$(( t1 - t0 ))
 
@@ -322,17 +322,17 @@ wait_for_mds
 generate_test_files
 
 # CSV header
-echo "codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,layout,arch,cpu,kernel,simd,inverse,shard_size"
+echo "encoding,geometry,size_bytes,run,write_ms,read_ms,verify,mode,layout,arch,cpu,kernel,simd,inverse,shard_size"
 
 # gd only affects Mojette inverse paths.  In gd phases skip
 # plain/stripe/RS (their numbers are inverse-invariant) so the CSV
 # stays clean and runtime halves.
 if [ -n "$FORCE_GD" ]; then
     RUN_BASELINES=0
-    EC_CODECS="mojette-sys mojette-nonsys"
+    EC_ENCODINGS="mojette-sys mojette-nonsys"
 else
     RUN_BASELINES=1
-    EC_CODECS="rs mojette-sys mojette-nonsys"
+    EC_ENCODINGS="rs mojette-sys mojette-nonsys"
 fi
 
 for sz in $SIZES; do
@@ -347,8 +347,8 @@ for sz in $SIZES; do
         for geom in $GEOMETRIES; do
             k=${geom%%:*}
             m=${geom##*:}
-            for codec in $EC_CODECS; do
-                bench_one "$codec" "$k" "$m" "$sz" "w${w}" "healthy" "" \
+            for encoding in $EC_ENCODINGS; do
+                bench_one "$encoding" "$k" "$m" "$sz" "w${w}" "healthy" "" \
                     > /dev/null 2>&1 || true
             done
         done
@@ -368,18 +368,18 @@ for sz in $SIZES; do
             m=${geom##*:}
 
             # Healthy pass -- || true prevents set -e from killing
-            # the script when a codec/layout combination fails
+            # the script when a encoding/layout combination fails
             # (e.g., Mojette + v2 CHUNK variable chunk size mismatch).
-            for codec in $EC_CODECS; do
-                bench_one "$codec" "$k" "$m" "$sz" "$run" "healthy" "" \
+            for encoding in $EC_ENCODINGS; do
+                bench_one "$encoding" "$k" "$m" "$sz" "$run" "healthy" "" \
                     || true
             done
 
             # Degraded pass (skip plain and stripe -- no redundancy)
             if [ "$DEGRADE" -gt 0 ] && [ "$DEGRADE" -le "$m" ]; then
                 skip_list=$(build_skip_list "$DEGRADE")
-                for codec in $EC_CODECS; do
-                    bench_one "$codec" "$k" "$m" "$sz" "$run" \
+                for encoding in $EC_ENCODINGS; do
+                    bench_one "$encoding" "$k" "$m" "$sz" "$run" \
                         "degraded-${DEGRADE}" "$skip_list" || true
                 done
             fi

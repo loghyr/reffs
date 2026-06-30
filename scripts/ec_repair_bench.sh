@@ -6,14 +6,14 @@
 # "cost of collisions and repair" slide.  Companion to
 # reffs-docs/ec-repair-bench-tier2.md.
 #
-# For each cell (size x codec x loss-pattern x iter): write a file
-# of `size` bytes through the codec, then run `ec_demo repair` with
+# For each cell (size x encoding x loss-pattern x iter): write a file
+# of `size` bytes through the encoding, then run `ec_demo repair` with
 # the loss mask, parse the per-phase timing line ec_demo prints,
 # emit a CSV row.
 #
 # Cells default to the IETF spec:
 #   sizes:  4k, 64k, 1m, 16m
-#   codecs: rs, mojette-sys
+#   encodings: rs, mojette-sys
 #   losses: 1 shard (mask 0x1), 2 shards (mask 0x3)
 #   iters:  5
 #
@@ -24,7 +24,7 @@
 #
 # Options:
 #   --sizes "4k 64k 1m"      Override the size axis (space-separated).
-#   --codecs "rs mojette-sys"  Override the codec axis.
+#   --encodings "rs mojette-sys"  Override the encoding axis.
 #   --losses "0x1 0x3"       Override the loss mask axis.
 #   --iters N                Override iteration count (default 5).
 #   --k K                    Data shards (default 4).
@@ -34,7 +34,7 @@
 #   --tmp-prefix PFX         NFS-side path prefix for test files.
 #
 # Output CSV columns (header on first line):
-#   size_bytes,codec,k,m,loss_mask,iter,layoutget_ms,read_ms,
+#   size_bytes,encoding,k,m,loss_mask,iter,layoutget_ms,read_ms,
 #   decode_ms,write_repair_ms,finalize_ms,commit_ms,
 #   chunk_repaired_ms,layoutreturn_ms,total_ms,bytes_repaired,
 #   shards_repaired,stripes_processed,verify_ok
@@ -58,7 +58,7 @@ TMP_PREFIX="/repair_bench"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --sizes)       SIZES="$2";       shift 2 ;;
-        --codecs)      CODECS="$2";      shift 2 ;;
+        --encodings)      CODECS="$2";      shift 2 ;;
         --losses)      LOSSES="$2";      shift 2 ;;
         --iters)       ITERS="$2";       shift 2 ;;
         --k)           K="$2";           shift 2 ;;
@@ -106,7 +106,7 @@ size_to_bytes() {
 # Header + per-cell loop
 # ------------------------------------------------------------------
 
-echo "size_bytes,codec,k,m,loss_mask,iter,layoutget_ms,read_ms,decode_ms,write_repair_ms,finalize_ms,commit_ms,chunk_repaired_ms,layoutreturn_ms,total_ms,bytes_repaired,shards_repaired,stripes_processed,verify_ok"
+echo "size_bytes,encoding,k,m,loss_mask,iter,layoutget_ms,read_ms,decode_ms,write_repair_ms,finalize_ms,commit_ms,chunk_repaired_ms,layoutreturn_ms,total_ms,bytes_repaired,shards_repaired,stripes_processed,verify_ok"
 
 TMPDIR=$(mktemp -d -t ec_repair_bench.XXXXXX)
 trap 'rm -rf "$TMPDIR"' EXIT
@@ -117,10 +117,10 @@ for size in $SIZES; do
     dd if=/dev/urandom of="$local_input" bs="$bytes" count=1 \
         status=none 2>/dev/null
 
-    for codec in $CODECS; do
+    for encoding in $CODECS; do
         for loss in $LOSSES; do
             for iter in $(seq 1 "$ITERS"); do
-                nfs_file="${TMP_PREFIX}.${codec}.${size}.${loss}.${iter}"
+                nfs_file="${TMP_PREFIX}.${encoding}.${size}.${loss}.${iter}"
 
                 # Fresh write per cell so repair always starts from
                 # a known-good baseline.
@@ -128,11 +128,11 @@ for size in $SIZES; do
                     --mds "$MDS" --file "$nfs_file" \
                     --input "$local_input" \
                     --layout "$LAYOUT" \
-                    --codec "$codec" \
+                    --encoding "$encoding" \
                     --k "$K" --m "$M" \
                     --shard-size "$SHARD_SIZE" \
                     >/dev/null 2>&1 || {
-                        echo "$bytes,$codec,$K,$M,$loss,$iter,,,,,,,,,,,,,write_failed" >&2
+                        echo "$bytes,$encoding,$K,$M,$loss,$iter,,,,,,,,,,,,,write_failed" >&2
                         continue
                     }
 
@@ -142,13 +142,13 @@ for size in $SIZES; do
                         --size "$bytes" \
                         --skip-ds "$loss" \
                         --layout "$LAYOUT" \
-                        --codec "$codec" \
+                        --encoding "$encoding" \
                         --k "$K" --m "$M" \
                         --shard-size "$SHARD_SIZE" \
                         2>/dev/null || echo "REPAIR_FAILED")
 
                 if [[ "$line" == "REPAIR_FAILED" ]]; then
-                    echo "$bytes,$codec,$K,$M,$loss,$iter,,,,,,,,,,,,,repair_failed"
+                    echo "$bytes,$encoding,$K,$M,$loss,$iter,,,,,,,,,,,,,repair_failed"
                     continue
                 fi
 
@@ -173,14 +173,14 @@ for size in $SIZES; do
                         --mds "$MDS" --file "$nfs_file" \
                         --input "$local_input" \
                         --layout "$LAYOUT" \
-                        --codec "$codec" \
+                        --encoding "$encoding" \
                         --k "$K" --m "$M" \
                         --shard-size "$SHARD_SIZE" \
                         >/dev/null 2>&1; then
                     verify_ok="yes"
                 fi
 
-                echo "$bytes,$codec,$K,$M,$loss,$iter,$lg,$rd,$dc,$wr,$fn,$cm,$cr,$lr,$tt,$br,$sh,$sp,$verify_ok"
+                echo "$bytes,$encoding,$K,$M,$loss,$iter,$lg,$rd,$dc,$wr,$fn,$cm,$cr,$lr,$tt,$br,$sh,$sp,$verify_ok"
             done
         done
     done

@@ -202,7 +202,7 @@ if ! "$STRESS" \
 	--principals "$princs" \
 	--ec-demo "$EC_DEMO" \
 	--k 1 --m 0 \
-	--codec stripe; then
+	--encoding stripe; then
 	keep_dir=1
 	echo "----- reffsd.log -----" >&2
 	tail -60 "$run_dir/reffsd.log" >&2

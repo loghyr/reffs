@@ -169,7 +169,7 @@ def main():
 
     # ── Title + Executive Summary ────────────────────────────────────
     p("<h1>Erasure Coding for pNFS Flex Files</h1>")
-    p('<p class="sub">Benchmark report: codec comparison, geometry scaling, '
+    p('<p class="sub">Benchmark report: encoding comparison, geometry scaling, '
       'degraded reads, SIMD acceleration, and chunk metadata persistence</p>')
 
     p("<h2>Executive Summary</h2>")
@@ -181,7 +181,7 @@ Tests span five file sizes (4&nbsp;KB&ndash;1&nbsp;MB) on four platforms coverin
 degraded-1 reads to measure reconstruction overhead.  Each result is the mean of five runs.</p>""")
 
     p("""<p>Central findings: (1)&nbsp;EC write overhead is modest at small-to-mid sizes;
-(2)&nbsp;degraded reads carry negligible overhead for systematic codecs;
+(2)&nbsp;degraded reads carry negligible overhead for systematic encodings;
 (3)&nbsp;at 8+2, Mojette systematic reconstruction stays near-zero while RS grows substantially;
 (4)&nbsp;overhead ratios are consistent across four platforms and two ISAs;
 (5)&nbsp;SIMD vs scalar differences are within noise at the current 4&nbsp;KB shard size
@@ -201,8 +201,8 @@ CSV identifies the path.  DSes are Docker containers on a single-host bridge net
 network latency).  Shard size is 4&nbsp;KB (io_uring large-message workaround).
 Zero verification failures across all 2,600 test operations.</p>""")
 
-    # ── 1. Codec Comparison (mana, NEON) ─────────────────────────────
-    p("<h2>1. Codec Comparison at 4+2</h2>")
+    # ── 1. Encoding Comparison (mana, NEON) ─────────────────────────────
+    p("<h2>1. Encoding Comparison at 4+2</h2>")
     p("<p>Primary platform: mana (Apple M4, NEON).  4+2 geometry: 4 data + 2 parity shards.</p>")
 
     p("<h3>1.1 Write latency</h3>")
@@ -221,7 +221,7 @@ Zero verification failures across all 2,600 test operations.</p>""")
 
     p("<h3>1.3 Overhead at key sizes</h3>")
     pw, pr = n["w"]["plain"], n["r"]["plain"]
-    p(tbl(["Codec","Write OH @ 64 KB","Write OH @ 1 MB","Read OH @ 64 KB","Read OH @ 1 MB"],
+    p(tbl(["Encoding","Write OH @ 64 KB","Write OH @ 1 MB","Read OH @ 64 KB","Read OH @ 1 MB"],
         [[f"<strong>{nm}</strong>", oh(n["w"][k][2],pw[2]), oh(n["w"][k][4],pw[4]),
           oh(n["r"][k][2],pr[2]), oh(n["r"][k][4],pr[4])]
          for nm,k in [("RS","rs42"),("Mojette-sys","msys42"),("Mojette-nonsys","mnsys42")]]))
@@ -280,7 +280,7 @@ Zero verification failures across all 2,600 test operations.</p>""")
     ax.legend(fontsize=9); fig.tight_layout()
     p(img(fig_to_b64(fig), "Figure 5 — Reconstruction overhead at 1 MB."))
 
-    p(tbl(["Codec/Geom","Healthy","Degraded-1","Overhead"],
+    p(tbl(["Encoding/Geom","Healthy","Degraded-1","Overhead"],
         [["<strong>RS 4+2</strong>","88.8","98.8",oh(98.8,88.8)],
          ["<strong>RS 8+2</strong>","81.2","114.0",oh(114.0,81.2)],
          ["<strong>Msys 4+2</strong>","92.2","91.4","&minus;1%"],
@@ -308,7 +308,7 @@ differ 2&ndash;6x; the question is whether overhead ratios are stable.</p>""")
 
     # Cross-platform read overhead chart
     fig, ax = plt.subplots(figsize=(9,4.5))
-    codecs = ["RS 4+2","Msys 4+2","Msys 8+2","Mnsys 4+2"]
+    encodings = ["RS 4+2","Msys 4+2","Msys 8+2","Mnsys 4+2"]
     bars_data = []
     for name, d in plat_1m.items():
         bars_data.append((name, d["simd"], [
@@ -317,15 +317,15 @@ differ 2&ndash;6x; the question is whether overhead ratios are stable.</p>""")
             (d["msys82_r"]/d["plain_r"]-1)*100,
             (d["mnsys42_r"]/d["plain_r"]-1)*100]))
     plat_colors = ["#ff9800","#4caf50","#2196f3","#9c27b0"]
-    x = np.arange(len(codecs)); w=0.18
+    x = np.arange(len(encodings)); w=0.18
     for j,(nm,simd,vals) in enumerate(bars_data):
         ax.bar(x+(j-1.5)*w, vals, w, label=f"{nm} ({simd})", color=plat_colors[j])
-    ax.set_xticks(x); ax.set_xticklabels(codecs, fontsize=9)
+    ax.set_xticks(x); ax.set_xticklabels(encodings, fontsize=9)
     ax.set_ylabel("% over plain"); ax.set_title("Read overhead (%) at 1 MB — four platforms", fontsize=11)
     ax.legend(fontsize=7, loc="upper left"); fig.tight_layout()
     p(img(fig_to_b64(fig), "Figure 6 — Read overhead (%) vs plain at 1 MB."))
 
-    p("<p>Codec ordering and overhead percentages are consistent across all platforms.  "
+    p("<p>Encoding ordering and overhead percentages are consistent across all platforms.  "
       "The NEON and AVX2 SIMD paths produce equivalent overhead profiles.</p>")
 
     # ── 5. SIMD Acceleration ─────────────────────────────────────────
@@ -420,7 +420,7 @@ When RocksDB replaces the POSIX backend, the persistence layer changes from file
 computation per chunk on the client, CRC32 validation on the server, two extra
 round-trips per DS (CHUNK_FINALIZE + CHUNK_COMMIT), and metadata persistence I/O
 (write-temp/fdatasync/rename per inode).  RS works correctly under v2 at all sizes;
-Mojette codecs fail under v2 at small sizes due to a variable projection size vs
+Mojette encodings fail under v2 at small sizes due to a variable projection size vs
 fixed chunk granularity mismatch (a design issue, not a persistence bug).</p>""")
 
     # v1 vs v2 chart
@@ -476,10 +476,10 @@ the cost of end-to-end data integrity that v1 lacks.</p>""")
     # ── 7. Conclusions ───────────────────────────────────────────────
     p("<h2>7. Conclusions</h2>")
 
-    p("<p><strong>EC overhead is affordable.</strong> At 4&ndash;64&nbsp;KB, all EC codecs add "
+    p("<p><strong>EC overhead is affordable.</strong> At 4&ndash;64&nbsp;KB, all EC encodings add "
       "14&ndash;37% write overhead.  At 1&nbsp;MB, RS and Mojette-sys reach +53&ndash;60%.</p>")
 
-    p("<p><strong>Reconstruction is essentially free for systematic codecs.</strong> "
+    p("<p><strong>Reconstruction is essentially free for systematic encodings.</strong> "
       "Mojette-sys at 8+2 adds +2% to degraded reads.  RS reconstruction grows with k but "
       "at I/O-dominated shard sizes the effect is small.</p>")
 

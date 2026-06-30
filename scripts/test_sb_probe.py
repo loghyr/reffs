@@ -293,8 +293,8 @@ def test_sb_default_coding(client, sb_id):
     get_res = client.sb_get_default_coding(sb_id)
     check_status_ok(get_res.sgda_status, "sb_get_default_coding status")
     coding = get_res.sgda_resok.sgda_coding
-    check(coding.pcs_codec_type == 4,
-          f"rs:4+2 codec_type=4 (got {coding.pcs_codec_type})")
+    check(coding.pcs_encoding_type == 4,
+          f"rs:4+2 encoding_type=4 (got {coding.pcs_encoding_type})")
     check(coding.pcs_k == 4, f"rs:4+2 k=4 (got {coding.pcs_k})")
     check(coding.pcs_m == 2, f"rs:4+2 m=2 (got {coding.pcs_m})")
 
@@ -302,7 +302,7 @@ def test_sb_default_coding(client, sb_id):
     info_res = client.sb_get(sb_id)
     check_status_ok(info_res.sgr_status, "sb_get for default_coding")
     info_coding = info_res.sgr_resok.psi_default_coding
-    check(info_coding.pcs_codec_type == 4 and info_coding.pcs_k == 4 and
+    check(info_coding.pcs_encoding_type == 4 and info_coding.pcs_k == 4 and
           info_coding.pcs_m == 2,
           f"sb_get psi_default_coding matches set rs:4+2")
 
@@ -311,7 +311,7 @@ def test_sb_default_coding(client, sb_id):
     check_status_ok(set_res2, "sb_set_default_coding mojette-sys:8+2")
     get_res2 = client.sb_get_default_coding(sb_id)
     coding2 = get_res2.sgda_resok.sgda_coding
-    check(coding2.pcs_codec_type == 2 and coding2.pcs_k == 8 and
+    check(coding2.pcs_encoding_type == 2 and coding2.pcs_k == 8 and
           coding2.pcs_m == 2,
           f"sb_get_default_coding mojette-sys:8+2 round-trips")
 
@@ -320,7 +320,7 @@ def test_sb_default_coding(client, sb_id):
     check_status_ok(clear_res, "sb_set_default_coding clear")
     get_res3 = client.sb_get_default_coding(sb_id)
     coding3 = get_res3.sgda_resok.sgda_coding
-    check(coding3.pcs_codec_type == 0 and coding3.pcs_k == 0 and
+    check(coding3.pcs_encoding_type == 0 and coding3.pcs_k == 0 and
           coding3.pcs_m == 0,
           f"clear sentinel persists (all-zero spec)")
 
@@ -333,10 +333,10 @@ def test_sb_default_coding(client, sb_id):
     bad2 = client.sb_set_default_coding(sb_id, 1, 4, 2)
     check(bad2 != 0,
           f"PASSTHROUGH with m=2 rejected (status={bad2}, want non-zero)")
-    #    - Unknown codec_type
+    #    - Unknown encoding_type
     bad3 = client.sb_set_default_coding(sb_id, 99, 4, 2)
     check(bad3 != 0,
-          f"codec_type=99 rejected (status={bad3}, want non-zero)")
+          f"encoding_type=99 rejected (status={bad3}, want non-zero)")
 
     # 6) Plan-review B3 cross-check: file-layout sb (SB_LAYOUT_FILE
     #    = 1U << 0) must refuse any EC spec.  File layouts are
