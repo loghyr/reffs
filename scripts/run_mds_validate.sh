@@ -44,6 +44,12 @@
 #                     this host.
 #   --data DIR        Runtime data/state/config dir
 #                     (default: /tmp/reffs-mds-validate).
+#   --fresh           Wipe MDS data/state before launch (DEFAULT) -- a
+#                     clean server each run.  Avoids stale persisted DS
+#                     filehandles that cause NFS3ERR_STALE LAYOUTGET
+#                     loops after you change the DS setup.
+#   --keep            Preserve MDS data/state across runs (for
+#                     restart-recovery testing).
 #   --rebuild         Force a clean rebuild of reffsd before launch.
 #   --dry-run         Generate the config and print it; do not build
 #                     or launch.
@@ -60,6 +66,7 @@ DATA_DIR="/tmp/reffs-mds-validate"
 LAYOUT_TYPES="ffv1"
 REBUILD=0
 DRY_RUN=0
+FRESH=1
 DS_SPECS=()
 
 usage() { sed -n '4,/^set -euo pipefail/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
@@ -72,6 +79,8 @@ while [[ $# -gt 0 ]]; do
 	--data)    DATA_DIR="$2"; shift 2 ;;
 	--rebuild) REBUILD=1; shift ;;
 	--dry-run) DRY_RUN=1; shift ;;
+	--fresh)   FRESH=1; shift ;;
+	--keep)    FRESH=0; shift ;;
 	-h|--help) usage; exit 0 ;;
 	*)         echo "Unknown option: $1" >&2; usage; exit 1 ;;
 	esac
@@ -186,6 +195,16 @@ if [[ "$DRY_RUN" == 1 ]]; then
 	exit 0
 fi
 
+# -- Fresh state (default) ------------------------------------------
+# Wipe MDS data/state so stale persisted DS filehandles from a prior
+# DS setup don't cause NFS3ERR_STALE LAYOUTGET loops.  --keep preserves
+# state for restart-recovery testing.  Only the MDS side is wiped; the
+# external DS is yours.
+if [[ "$FRESH" == 1 ]]; then
+	rm -rf "$DATA_DIR/data" "$DATA_DIR/state"
+	mkdir -p "$DATA_DIR/data" "$DATA_DIR/state"
+fi
+
 # -- Resource limits ------------------------------------------------
 # reffsd's io_uring rings need locked memory; the --privileged
 # container had memlock unlimited, but a bare-metal shell often caps it
@@ -208,7 +227,7 @@ echo " reffs MDS (no rpcbind) for external-client validation"
 echo "   port      : $PORT"
 echo "   config    : $CONFIG"
 echo "   trace     : $TRACE"
-echo "   data/state: $DATA_DIR/{data,state}"
+echo "   data/state: $DATA_DIR/{data,state}  ($([[ "$FRESH" == 1 ]] && echo "fresh" || echo "kept"))"
 if [[ ${#DS_SPECS[@]} -gt 0 ]]; then
 	echo "   dstores   : ${DS_SPECS[*]}  (layout_types: $LAYOUT_TYPES)"
 else
