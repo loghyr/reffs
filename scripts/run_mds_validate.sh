@@ -186,6 +186,21 @@ if [[ "$DRY_RUN" == 1 ]]; then
 	exit 0
 fi
 
+# -- Resource limits ------------------------------------------------
+# reffsd's io_uring rings need locked memory; the --privileged
+# container had memlock unlimited, but a bare-metal shell often caps it
+# low, which makes io_handler_init fail with "Cannot allocate memory".
+# Raise the soft limits toward the hard cap (best effort).
+ulimit -l unlimited 2>/dev/null || ulimit -l 65536 2>/dev/null || true
+ulimit -n 65536 2>/dev/null || true
+cur_memlock=$(ulimit -l)
+if [[ "$cur_memlock" != "unlimited" ]] && ((cur_memlock < 4096)); then
+	echo "WARN: memlock limit (ulimit -l = ${cur_memlock} KB) is low; reffsd" >&2
+	echo "      io_uring may fail with 'Cannot allocate memory'.  Raise the" >&2
+	echo "      hard cap (root): limits.conf '* - memlock unlimited', or run" >&2
+	echo "      under systemd-run --scope -p LimitMEMLOCK=infinity." >&2
+fi
+
 # -- Launch (foreground; Ctrl-C stops reffsd) -----------------------
 echo
 echo "==================================================================="
