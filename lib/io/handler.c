@@ -68,9 +68,16 @@ static int setup_io_uring(struct ring_context *rc)
 	params.flags = IORING_SETUP_CQSIZE;
 	params.cq_entries = 4 * QUEUE_DEPTH;
 
-	if (io_uring_queue_init_params(QUEUE_DEPTH, &rc->rc_ring, &params) <
-	    0) {
-		LOG("io_uring_queue_init_params: %s", strerror(errno));
+	/*
+	 * io_uring_queue_init_params returns a negative errno directly and
+	 * does NOT set errno -- print the return value, not strerror(errno)
+	 * (which would misleadingly read "Success").
+	 */
+	int qret =
+		io_uring_queue_init_params(QUEUE_DEPTH, &rc->rc_ring, &params);
+	if (qret < 0) {
+		LOG("io_uring_queue_init_params(qd=%d, cq=%u): %s", QUEUE_DEPTH,
+		    params.cq_entries, strerror(-qret));
 		return -1;
 	}
 
