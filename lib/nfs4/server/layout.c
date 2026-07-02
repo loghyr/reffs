@@ -464,73 +464,112 @@ static nfsstat4 layoutget_build_file(struct layout_segment *seg,
 	return NFS4_OK;
 }
 
-static nfsstat4 layoutget_build_v1(struct layout_segment *seg, char **out_body,
+static nfsstat4 layoutget_build_v1(struct layout_segment *seg,
+				   uint32_t stripe_width, char **out_body,
 				   u_long *out_size)
 {
 	ff_layout4 ffl;
 
+	/*
+	 * Lay the segment's data files out as an M x W grid: M mirrors
+	 * (replicas), each striped across W = stripe_width data
+	 * servers (RFC 8435 sect. 5.1: the stripe count is the number
+	 * of elements in ffm_data_servers; sect. 6 sparse mapping).
+	 * stripe_width == 1 reproduces the historical mirror-only
+	 * layout.  Remainder files (ls_nfiles % W) are not referenced
+	 * by the layout.
+	 */
+	uint32_t width = stripe_width;
+
+	if (width < 1)
+		width = 1;
+	if (width > seg->ls_nfiles)
+		width = seg->ls_nfiles ? seg->ls_nfiles : 1;
+
+	uint32_t nmirrors = seg->ls_nfiles / width;
+
+	if (seg->ls_nfiles % width)
+		TRACE("layoutget_build_v1: stripe_width %u drops %u of %u data files",
+		      width, seg->ls_nfiles % width, seg->ls_nfiles);
+
 	memset(&ffl, 0, sizeof(ffl));
-	ffl.ffl_stripe_unit = seg->ls_stripe_unit;
+	/*
+	 * RFC 8435 sect. 5.1: with a single stripe the stripe unit
+	 * MUST be zero.  With W > 1 a zero unit would degenerate the
+	 * sparse mapping (S = W * 0), so fall back to a default when
+	 * the sb does not set one.
+	 */
+	if (width == 1)
+		ffl.ffl_stripe_unit = 0;
+	else
+		ffl.ffl_stripe_unit = seg->ls_stripe_unit ?
+					      seg->ls_stripe_unit :
+					      REFFS_FFV1_STRIPE_UNIT_DEFAULT;
 	ffl.ffl_flags = FF_FLAGS_NO_LAYOUTCOMMIT | FF_FLAGS_NO_IO_THRU_MDS;
 	ffl.ffl_stats_collect_hint = 0;
 
-	ffl.ffl_mirrors.ffl_mirrors_len = seg->ls_nfiles;
-	ffl.ffl_mirrors.ffl_mirrors_val =
-		calloc(seg->ls_nfiles, sizeof(ff_mirror4));
+	ffl.ffl_mirrors.ffl_mirrors_len = nmirrors;
+	ffl.ffl_mirrors.ffl_mirrors_val = calloc(nmirrors, sizeof(ff_mirror4));
 	if (!ffl.ffl_mirrors.ffl_mirrors_val)
 		return NFS4ERR_DELAY;
 
 	nfsstat4 ret = NFS4_OK; /* used only for error path */
 
-	for (uint32_t i = 0; i < seg->ls_nfiles; i++) {
-		struct layout_data_file *ldf = &seg->ls_files[i];
-		ff_mirror4 *mirror = &ffl.ffl_mirrors.ffl_mirrors_val[i];
+	for (uint32_t m = 0; m < nmirrors; m++) {
+		ff_mirror4 *mirror = &ffl.ffl_mirrors.ffl_mirrors_val[m];
 
-		mirror->ffm_data_servers.ffm_data_servers_len = 1;
+		mirror->ffm_data_servers.ffm_data_servers_len = width;
 		mirror->ffm_data_servers.ffm_data_servers_val =
-			calloc(1, sizeof(ff_data_server4));
+			calloc(width, sizeof(ff_data_server4));
 		if (!mirror->ffm_data_servers.ffm_data_servers_val) {
 			ret = NFS4ERR_DELAY;
 			goto out_v1;
 		}
 
-		ff_data_server4 *ffds =
-			mirror->ffm_data_servers.ffm_data_servers_val;
+		for (uint32_t w = 0; w < width; w++) {
+			struct layout_data_file *ldf =
+				&seg->ls_files[m * width + w];
+			ff_data_server4 *ffds =
+				&mirror->ffm_data_servers
+					 .ffm_data_servers_val[w];
 
-		deviceid_from_dstore(ffds->ffds_deviceid, ldf->ldf_dstore_id);
+			deviceid_from_dstore(ffds->ffds_deviceid,
+					     ldf->ldf_dstore_id);
 
-		struct dstore *ds = dstore_find(ldf->ldf_dstore_id);
+			struct dstore *ds = dstore_find(ldf->ldf_dstore_id);
 
-		ffds->ffds_efficiency =
-			(ds && ds->ds_ops == &dstore_ops_local) ? 255 : 1;
-		dstore_put(ds);
+			ffds->ffds_efficiency =
+				(ds && ds->ds_ops == &dstore_ops_local) ? 255 :
+									  1;
+			dstore_put(ds);
 
-		ffds->ffds_fh_vers.ffds_fh_vers_len = 1;
-		ffds->ffds_fh_vers.ffds_fh_vers_val =
-			calloc(1, sizeof(nfs_fh4));
-		if (!ffds->ffds_fh_vers.ffds_fh_vers_val) {
-			ret = NFS4ERR_DELAY;
-			goto out_v1;
+			ffds->ffds_fh_vers.ffds_fh_vers_len = 1;
+			ffds->ffds_fh_vers.ffds_fh_vers_val =
+				calloc(1, sizeof(nfs_fh4));
+			if (!ffds->ffds_fh_vers.ffds_fh_vers_val) {
+				ret = NFS4ERR_DELAY;
+				goto out_v1;
+			}
+
+			nfs_fh4 *fh = &ffds->ffds_fh_vers.ffds_fh_vers_val[0];
+
+			fh->nfs_fh4_len = ldf->ldf_fh_len;
+			fh->nfs_fh4_val = calloc(1, ldf->ldf_fh_len);
+			if (!fh->nfs_fh4_val) {
+				ret = NFS4ERR_DELAY;
+				goto out_v1;
+			}
+			memcpy(fh->nfs_fh4_val, ldf->ldf_fh, ldf->ldf_fh_len);
+
+			char uid_str[16], gid_str[16];
+
+			snprintf(uid_str, sizeof(uid_str), "%u", ldf->ldf_uid);
+			snprintf(gid_str, sizeof(gid_str), "%u", ldf->ldf_gid);
+			ffds->ffds_user.utf8string_len = strlen(uid_str);
+			ffds->ffds_user.utf8string_val = strdup(uid_str);
+			ffds->ffds_group.utf8string_len = strlen(gid_str);
+			ffds->ffds_group.utf8string_val = strdup(gid_str);
 		}
-
-		nfs_fh4 *fh = &ffds->ffds_fh_vers.ffds_fh_vers_val[0];
-
-		fh->nfs_fh4_len = ldf->ldf_fh_len;
-		fh->nfs_fh4_val = calloc(1, ldf->ldf_fh_len);
-		if (!fh->nfs_fh4_val) {
-			ret = NFS4ERR_DELAY;
-			goto out_v1;
-		}
-		memcpy(fh->nfs_fh4_val, ldf->ldf_fh, ldf->ldf_fh_len);
-
-		char uid_str[16], gid_str[16];
-
-		snprintf(uid_str, sizeof(uid_str), "%u", ldf->ldf_uid);
-		snprintf(gid_str, sizeof(gid_str), "%u", ldf->ldf_gid);
-		ffds->ffds_user.utf8string_len = strlen(uid_str);
-		ffds->ffds_user.utf8string_val = strdup(uid_str);
-		ffds->ffds_group.utf8string_len = strlen(gid_str);
-		ffds->ffds_group.utf8string_val = strdup(gid_str);
 	}
 
 	u_long xdr_size = xdr_sizeof((xdrproc_t)xdr_ff_layout4, &ffl);
@@ -556,11 +595,16 @@ static nfsstat4 layoutget_build_v1(struct layout_segment *seg, char **out_body,
 	*out_size = xdr_size;
 
 out_v1:
-	for (uint32_t i = 0; i < seg->ls_nfiles; i++) {
-		ff_data_server4 *ffds =
-			ffl.ffl_mirrors.ffl_mirrors_val[i]
-				.ffm_data_servers.ffm_data_servers_val;
-		if (ffds) {
+	for (uint32_t m = 0; m < nmirrors; m++) {
+		ff_mirror4 *mirror = &ffl.ffl_mirrors.ffl_mirrors_val[m];
+		ff_data_server4 *dsv =
+			mirror->ffm_data_servers.ffm_data_servers_val;
+
+		if (!dsv)
+			continue;
+		for (uint32_t w = 0; w < width; w++) {
+			ff_data_server4 *ffds = &dsv[w];
+
 			if (ffds->ffds_fh_vers.ffds_fh_vers_val) {
 				free(ffds->ffds_fh_vers.ffds_fh_vers_val[0]
 					     .nfs_fh4_val);
@@ -568,8 +612,8 @@ out_v1:
 			}
 			free(ffds->ffds_user.utf8string_val);
 			free(ffds->ffds_group.utf8string_val);
-			free(ffds);
 		}
+		free(dsv);
 	}
 	free(ffl.ffl_mirrors.ffl_mirrors_val);
 	return ret;
@@ -1582,7 +1626,9 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		*status = layoutget_build_v2(build_seg, coding_type, &body,
 					     &xdr_size);
 	} else {
-		*status = layoutget_build_v1(build_seg, &body, &xdr_size);
+		*status = layoutget_build_v1(
+			build_seg, compound->c_server_state->ss_stripe_width,
+			&body, &xdr_size);
 	}
 
 	if (*status != NFS4_OK) {
