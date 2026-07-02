@@ -125,6 +125,7 @@ struct server_state {
 	uint32_t ss_fence_uid_min;
 	uint32_t ss_fence_uid_max;
 	unsigned int ss_layout_width;
+	unsigned int ss_stripe_width;
 
 	/* NFSv4 owner string domain (e.g., "EXAMPLE.COM"). */
 	char ss_nfs4_domain[256];
