@@ -440,6 +440,7 @@ int main(int argc, char *argv[])
 	ss->ss_fence_uid_min = cfg.fence_uid_min;
 	ss->ss_fence_uid_max = cfg.fence_uid_max;
 	ss->ss_layout_width = cfg.layout_width;
+	ss->ss_stripe_width = cfg.stripe_width;
 	strncpy(ss->ss_nfs4_domain, cfg.nfs4_domain,
 		sizeof(ss->ss_nfs4_domain) - 1);
 

@@ -133,6 +133,7 @@ void reffs_config_defaults(struct reffs_config *cfg)
 	cfg->fence_uid_min = REFFS_FENCE_UID_MIN_DEFAULT;
 	cfg->fence_uid_max = REFFS_FENCE_UID_MAX_DEFAULT;
 	cfg->layout_width = 6; /* RS(4,2) default */
+	cfg->stripe_width = REFFS_STRIPE_WIDTH_DEFAULT;
 
 	/* [backend] */
 	cfg->backend_type = REFFS_BACKEND_RAM;
@@ -317,6 +318,10 @@ static void parse_server(struct reffs_config *cfg, toml_table_t *srv)
 	d = toml_int_in(srv, "layout_width");
 	if (d.ok && d.u.i > 0)
 		cfg->layout_width = (unsigned int)d.u.i;
+
+	d = toml_int_in(srv, "stripe_width");
+	if (d.ok && d.u.i > 0)
+		cfg->stripe_width = (unsigned int)d.u.i;
 }
 
 /* Parse [backend] table. */

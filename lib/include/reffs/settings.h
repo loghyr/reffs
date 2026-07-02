@@ -36,6 +36,13 @@
 #define REFFS_FENCE_UID_MIN_DEFAULT 1024
 #define REFFS_FENCE_UID_MAX_DEFAULT 2048
 #define REFFS_LAYOUT_WIDTH_DEFAULT 6 /* RS(4,2): 4 data + 2 parity */
+#define REFFS_STRIPE_WIDTH_DEFAULT 1 /* ffv1: mirror-only (no striping) */
+/*
+ * ffv1 stripe unit when striping (stripe_width > 1) and the sb does
+ * not set one.  Matches the v2 builder's ffm_striping_unit_size; a
+ * page-sized unit keeps striping observable on small test I/O.
+ */
+#define REFFS_FFV1_STRIPE_UNIT_DEFAULT 4096
 
 /* Maximum number of IO worker threads (also in io.h MAX_WORKER_THREADS). */
 #define REFFS_MAX_WORKER_THREADS 64
@@ -312,6 +319,14 @@ struct reffs_config {
 	 * across the available set.  Default: 6 (RS 4+2).
 	 */
 	unsigned int layout_width;
+
+	/*
+	 * ffv1 (RFC 8435) stripe width -- data servers per mirror.
+	 * The layout's data files are laid out as
+	 * (layout_width / stripe_width) mirrors x stripe_width
+	 * stripes.  Default: 1 (mirror-only, the historical layout).
+	 */
+	unsigned int stripe_width;
 
 	/* [[data_server]] -- only used when role = mds or combined */
 	struct reffs_data_server_config
