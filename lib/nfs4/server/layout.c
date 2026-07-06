@@ -302,7 +302,8 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	}
 
 	if (compound->c_nfs4_client &&
-	    nfs4_client_dev_notify_set(compound->c_nfs4_client, dstore_id,
+	    nfs4_client_dev_notify_set(compound->c_nfs4_client,
+				       args->gdia_layout_type, dstore_id,
 				       granted) < 0) {
 		/* echoing a grant we failed to record breaks the contract */
 		free(resok->gdir_notification.bitmap4_val);
