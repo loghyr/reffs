@@ -271,8 +271,53 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	}
 	xdr_destroy(&xdrs);
 
-	TRACE("GETDEVICEINFO: dstore[%u] addr=%s type=%u", dstore_id, uaddr,
-	      args->gdia_layout_type);
+	/*
+	 * RFC 8881 sec 18.40: grant the requested device-notification
+	 * types we support, record the subscription, and echo the
+	 * granted set in gdir_notification.  Last bitmap wins; an empty
+	 * or unsupported bitmap turns notifications off.  Flexfiles
+	 * only until the CB_NOTIFY_DEVICEID sender covers FILES
+	 * layouts.  Advertising precedes the send path landing -- do
+	 * not run invalidation tests against this commit alone.
+	 */
+	uint32_t requested = args->gdia_notify_types.bitmap4_len >= 1 ?
+				     args->gdia_notify_types.bitmap4_val[0] :
+				     0;
+	uint32_t granted = 0;
+
+	if (args->gdia_layout_type != LAYOUT4_NFSV4_1_FILES)
+		granted = requested & ((1u << NOTIFY_DEVICEID4_CHANGE) |
+				       (1u << NOTIFY_DEVICEID4_DELETE));
+
+	if (granted) {
+		uint32_t *word = calloc(1, sizeof(*word));
+
+		if (!word)
+			granted = 0; /* no echo -> no subscription */
+		else {
+			*word = granted;
+			resok->gdir_notification.bitmap4_val = word;
+			resok->gdir_notification.bitmap4_len = 1;
+		}
+	}
+
+	if (compound->c_nfs4_client &&
+	    nfs4_client_dev_notify_set(compound->c_nfs4_client, dstore_id,
+				       granted) < 0) {
+		/* echoing a grant we failed to record breaks the contract */
+		free(resok->gdir_notification.bitmap4_val);
+		resok->gdir_notification.bitmap4_val = NULL;
+		resok->gdir_notification.bitmap4_len = 0;
+		free(resok->gdir_device_addr.da_addr_body.da_addr_body_val);
+		resok->gdir_device_addr.da_addr_body.da_addr_body_val = NULL;
+		resok->gdir_device_addr.da_addr_body.da_addr_body_len = 0;
+		dstore_put(ds);
+		*status = NFS4ERR_DELAY;
+		return 0;
+	}
+
+	TRACE("GETDEVICEINFO: dstore[%u] addr=%s type=%u notify=0x%x",
+	      dstore_id, uaddr, args->gdia_layout_type, granted);
 	dstore_put(ds);
 
 	return 0;

@@ -204,6 +204,7 @@ TESTS = \
 	delegation_lifecycle \
 	errors \
 	file_ops \
+	getdeviceinfo_notify_test \
 	layout_conflict_scan_test \
 	lock_test \
 	nfs4_client_persist \

@@ -102,6 +102,16 @@ struct nfs4_client {
 	struct cds_list_head nc_lock_owners;
 	pthread_mutex_t nc_lock_owners_mutex;
 
+	/*
+	 * Device-notification subscriptions (RFC 8881 sec 18.40): one
+	 * entry per deviceID this client asked GETDEVICEINFO to notify
+	 * it about.  Guarded by nc_dev_notify_mutex; entries live until
+	 * overwritten (last bitmap wins), cleared by an empty bitmap, or
+	 * the client is freed.
+	 */
+	struct cds_list_head nc_dev_notify;
+	pthread_mutex_t nc_dev_notify_mutex;
+
 	/* Per-op NFS4 statistics -- client scope (ephemeral). */
 	struct reffs_op_stats nc_op_stats[REFFS_NFS4_OP_MAX];
 
@@ -279,6 +289,44 @@ struct nfs4_client *nfs4_client_find_by_owner(struct server_state *ss,
 					      uint16_t boot_seq,
 					      const client_owner4 *owner,
 					      uint32_t *out_slot);
+
+/* ------------------------------------------------------------------ */
+/* Device-notification subscriptions (RFC 8881 sec 18.40)              */
+
+/*
+ * One subscription: notify this client about the deviceID that maps
+ * to dn_dstore_id (deviceid_to_dstore bijection) for the events in
+ * dn_mask (bit positions from notify_deviceid_type4, so
+ * 1 << NOTIFY_DEVICEID4_CHANGE and/or 1 << NOTIFY_DEVICEID4_DELETE).
+ * Keyed on (dn_layout_type, dn_dstore_id): a deviceID may be shared
+ * by layout types with different mappings (RFC 8881 sec 20.12), and
+ * the CB_NOTIFY_DEVICEID sender must echo the type the client cached
+ * under.
+ */
+struct nfs4_dev_notify {
+	struct cds_list_head dn_list;
+	layouttype4 dn_layout_type;
+	uint32_t dn_dstore_id;
+	uint32_t dn_mask;
+};
+
+/*
+ * nfs4_client_dev_notify_set - upsert or clear a subscription.
+ *
+ * mask != 0: insert or overwrite the entry for (layout_type,
+ * dstore_id) (last bitmap wins).  mask == 0: remove any entry
+ * (notifications off).  Returns 0, or -ENOMEM on allocation failure.
+ */
+int nfs4_client_dev_notify_set(struct nfs4_client *nc, layouttype4 layout_type,
+			       uint32_t dstore_id, uint32_t mask);
+
+/*
+ * nfs4_client_dev_notify_mask - granted mask for (layout_type,
+ * dstore_id), 0 if the client has no subscription for it.
+ */
+uint32_t nfs4_client_dev_notify_mask(struct nfs4_client *nc,
+				     layouttype4 layout_type,
+				     uint32_t dstore_id);
 
 /* ------------------------------------------------------------------ */
 /* clientid4 bit-packing                                               */
