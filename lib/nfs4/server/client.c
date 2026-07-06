@@ -35,6 +35,7 @@ static void nfs4_client_free_rcu(struct rcu_head *rcu)
 	struct client *client = caa_container_of(rcu, struct client, c_rcu);
 	struct nfs4_client *nc = client_to_nfs4(client);
 	struct nfs4_lock_owner *lo, *tmp;
+	struct nfs4_dev_notify *dn, *dn_tmp;
 
 	cds_list_for_each_entry_safe(lo, tmp, &nc->nc_lock_owners,
 				     lo_base.lo_list) {
@@ -43,6 +44,13 @@ static void nfs4_client_free_rcu(struct rcu_head *rcu)
 	}
 
 	pthread_mutex_destroy(&nc->nc_lock_owners_mutex);
+
+	cds_list_for_each_entry_safe(dn, dn_tmp, &nc->nc_dev_notify, dn_list) {
+		cds_list_del(&dn->dn_list);
+		free(dn);
+	}
+
+	pthread_mutex_destroy(&nc->nc_dev_notify_mutex);
 
 	free(nc->nc_create_reply);
 
@@ -173,11 +181,14 @@ struct nfs4_client *nfs4_client_alloc(const verifier4 *verifier,
 
 	CDS_INIT_LIST_HEAD(&nc->nc_lock_owners);
 	pthread_mutex_init(&nc->nc_lock_owners_mutex, NULL);
+	CDS_INIT_LIST_HEAD(&nc->nc_dev_notify);
+	pthread_mutex_init(&nc->nc_dev_notify_mutex, NULL);
 
 	ret = client_assign(&nc->nc_client, (uint64_t)assigned_id,
 			    nfs4_client_free_rcu, nfs4_client_release);
 	if (ret) {
 		pthread_mutex_destroy(&nc->nc_lock_owners_mutex);
+		pthread_mutex_destroy(&nc->nc_dev_notify_mutex);
 		free(nc);
 		return NULL;
 	}
@@ -265,4 +276,60 @@ struct nfs4_client *nfs4_client_find_by_owner(struct server_state *ss,
 	}
 
 	return nc;
+}
+
+/* ------------------------------------------------------------------ */
+/* Device-notification subscriptions (RFC 8881 sec 18.40)              */
+
+int nfs4_client_dev_notify_set(struct nfs4_client *nc, layouttype4 layout_type,
+			       uint32_t dstore_id, uint32_t mask)
+{
+	struct nfs4_dev_notify *dn;
+
+	pthread_mutex_lock(&nc->nc_dev_notify_mutex);
+	cds_list_for_each_entry(dn, &nc->nc_dev_notify, dn_list) {
+		if (dn->dn_layout_type != layout_type ||
+		    dn->dn_dstore_id != dstore_id)
+			continue;
+		if (mask)
+			dn->dn_mask = mask; /* last bitmap wins */
+		else {
+			cds_list_del(&dn->dn_list); /* empty turns off */
+			free(dn);
+		}
+		pthread_mutex_unlock(&nc->nc_dev_notify_mutex);
+		return 0;
+	}
+	if (mask) {
+		dn = calloc(1, sizeof(*dn));
+		if (!dn) {
+			pthread_mutex_unlock(&nc->nc_dev_notify_mutex);
+			return -ENOMEM;
+		}
+		dn->dn_layout_type = layout_type;
+		dn->dn_dstore_id = dstore_id;
+		dn->dn_mask = mask;
+		cds_list_add(&dn->dn_list, &nc->nc_dev_notify);
+	}
+	pthread_mutex_unlock(&nc->nc_dev_notify_mutex);
+	return 0;
+}
+
+uint32_t nfs4_client_dev_notify_mask(struct nfs4_client *nc,
+				     layouttype4 layout_type,
+				     uint32_t dstore_id)
+{
+	struct nfs4_dev_notify *dn;
+	uint32_t mask = 0;
+
+	pthread_mutex_lock(&nc->nc_dev_notify_mutex);
+	cds_list_for_each_entry(dn, &nc->nc_dev_notify, dn_list) {
+		if (dn->dn_layout_type == layout_type &&
+		    dn->dn_dstore_id == dstore_id) {
+			mask = dn->dn_mask;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&nc->nc_dev_notify_mutex);
+	return mask;
 }
