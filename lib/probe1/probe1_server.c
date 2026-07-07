@@ -40,6 +40,7 @@
 #include "reffs/fs.h"
 #include "reffs/identity_map.h"
 #include "reffs/probe1.h"
+#include "nfs4/cb.h"
 #include "reffs/server.h"
 #include "reffs/coding_spec.h"
 #include "reffs/super_block.h"
@@ -2410,6 +2411,52 @@ static int probe1_op_identity_map_remove(struct rpc_trans *rt)
 	return 0;
 }
 
+/*
+ * NOTIFY_DEVICEID -- deterministic CB_NOTIFY_DEVICEID test trigger.
+ * Fans the requested CHANGE/DELETE out to every subscribed client
+ * via nfs4_notify_deviceid_subscribers().  Deliberately does not
+ * check for held layouts (RFC 8881 sec 20.12) -- driving that
+ * non-conformant DELETE is the point of the op.
+ */
+static int probe1_op_notify_deviceid(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	NOTIFY_DEVICEID1args *args = ph->ph_args;
+	NOTIFY_DEVICEID1res *res = ph->ph_res;
+
+	if (args->nd_notify_type != PROBE1_NOTIFY_DEVICEID_CHANGE &&
+	    args->nd_notify_type != PROBE1_NOTIFY_DEVICEID_DELETE) {
+		res->ndr_status = PROBE1ERR_INVAL;
+		return res->ndr_status;
+	}
+
+	struct dstore *ds = dstore_find(args->nd_dstore_id);
+
+	if (!ds) {
+		res->ndr_status = PROBE1ERR_NOENT;
+		return res->ndr_status;
+	}
+	dstore_put(ds);
+
+	struct server_state *ss = server_state_find();
+
+	if (!ss) {
+		res->ndr_status = PROBE1ERR_NOENT;
+		return res->ndr_status;
+	}
+
+	layouttype4 lt = args->nd_layout_type ? args->nd_layout_type :
+						LAYOUT4_FLEX_FILES;
+	unsigned int queued = nfs4_notify_deviceid_subscribers(
+		ss, lt, (notify_deviceid_type4)args->nd_notify_type,
+		args->nd_dstore_id, args->nd_immediate);
+	server_state_put(ss);
+
+	res->ndr_status = PROBE1_OK;
+	res->NOTIFY_DEVICEID1res_u.ndr_resok.ndr_queued = queued;
+	return 0;
+}
+
 struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, NULL, NULL, NULL, NULL, NULL,
 			   probe1_op_null),
@@ -2538,6 +2585,10 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 		xdr_SB_GET_DEFAULT_CODING1args, SB_GET_DEFAULT_CODING1args,
 		xdr_SB_GET_DEFAULT_CODING1res, SB_GET_DEFAULT_CODING1res,
 		probe1_op_sb_get_default_coding),
+	RPC_OPERATION_INIT(PROBEPROC1, NOTIFY_DEVICEID,
+			   xdr_NOTIFY_DEVICEID1args, NOTIFY_DEVICEID1args,
+			   xdr_NOTIFY_DEVICEID1res, NOTIFY_DEVICEID1res,
+			   probe1_op_notify_deviceid),
 };
 
 static struct rpc_program_handler *probe1_handler;
@@ -2603,6 +2654,13 @@ int probe1_protocol_register(void)
 	static_assert(PROBE1_IO_CONTEXT_TLS_BIO_PROCESSED ==
 			      (uint64_t)IO_CONTEXT_TLS_BIO_PROCESSED,
 		      "IO_CONTEXT flags out of sync");
+
+	static_assert((int)PROBE1_NOTIFY_DEVICEID_CHANGE ==
+			      (int)NOTIFY_DEVICEID4_CHANGE,
+		      "notify_deviceid type out of sync");
+	static_assert((int)PROBE1_NOTIFY_DEVICEID_DELETE ==
+			      (int)NOTIFY_DEVICEID4_DELETE,
+		      "notify_deviceid type out of sync");
 
 	probev1_registered = 1;
 
