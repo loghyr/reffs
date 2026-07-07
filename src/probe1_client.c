@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include "probe1_xdr.h"
+#include "nfsv42_xdr.h"
 #include "reffs/log.h"
 #include "reffs/coding_spec.h"
 #include "reffs/io.h"
@@ -90,6 +91,10 @@ static void usage(const char *prog)
 	printf("                                     5 - FS\n");
 	printf("                                     6 - LOG\n");
 	printf("  -H  --human                  Human readable output\n");
+	printf("      --notify-type change|delete  CB_NOTIFY_DEVICEID type\n");
+	printf("                               (op notify-deviceid, with -S)\n");
+	printf("      --immediate true|false   ndc_immediate for CHANGE\n");
+	printf("      --layout-type ff|ffv2    layout type (default ff)\n");
 }
 
 static struct option long_opts[] = {
@@ -111,6 +116,9 @@ static struct option long_opts[] = {
 	{ "default-coding", required_argument, 0, 'C' },
 	{ "inum", required_argument, 0, 'N' },
 	{ "dstore-id", required_argument, 0, 'S' },
+	{ "notify-type", required_argument, 0, 256 },
+	{ "immediate", required_argument, 0, 257 },
+	{ "layout-type", required_argument, 0, 258 },
 	{ NULL, 0, NULL, 0 },
 };
 
@@ -130,6 +138,9 @@ uint32_t cli_ndstores = 0;
 uint32_t cli_stripe_unit = 0;
 uint64_t cli_inum = 0;
 uint32_t cli_dstore_id = 0;
+probe_notify_deviceid_type1 cli_notify_type = 0;
+bool cli_notify_immediate = false;
+uint32_t cli_notify_layout_type = 0;
 
 /*
  * Parsed --default-coding spec.  cli_coding_set means the user
@@ -334,6 +345,37 @@ int main(int argc, char *argv[])
 		case 'S':
 			cli_dstore_id = (uint32_t)strtoul(optarg, NULL, 0);
 			break;
+		case 256:
+			if (!strcmp(optarg, "change"))
+				cli_notify_type = PROBE1_NOTIFY_DEVICEID_CHANGE;
+			else if (!strcmp(optarg, "delete"))
+				cli_notify_type = PROBE1_NOTIFY_DEVICEID_DELETE;
+			else {
+				LOG("--notify-type must be change|delete");
+				return 1;
+			}
+			break;
+		case 257:
+			if (!strcmp(optarg, "true") || !strcmp(optarg, "1"))
+				cli_notify_immediate = true;
+			else if (!strcmp(optarg, "false") ||
+				 !strcmp(optarg, "0"))
+				cli_notify_immediate = false;
+			else {
+				LOG("--immediate must be true|false");
+				return 1;
+			}
+			break;
+		case 258:
+			if (!strcmp(optarg, "ff"))
+				cli_notify_layout_type = LAYOUT4_FLEX_FILES;
+			else if (!strcmp(optarg, "ffv2"))
+				cli_notify_layout_type = LAYOUT4_FLEX_FILES_V2;
+			else {
+				LOG("--layout-type must be ff|ffv2");
+				return 1;
+			}
+			break;
 		}
 	}
 
@@ -451,6 +493,15 @@ int main(int argc, char *argv[])
 		rt = probe1_client_op_dstore_undrain(cli_dstore_id);
 	} else if (!strcmp(op, "dstore-instance-count")) {
 		rt = probe1_client_op_dstore_instance_count(cli_dstore_id);
+	} else if (!strcmp(op, "notify-deviceid")) {
+		if (!cli_notify_type) {
+			LOG("notify-deviceid requires --notify-type change|delete");
+			goto done;
+		}
+		rt = probe1_client_op_notify_deviceid(cli_dstore_id,
+						      cli_notify_type,
+						      cli_notify_immediate,
+						      cli_notify_layout_type);
 	} else {
 		LOG("op = \"%s\" is not supported", op);
 	}

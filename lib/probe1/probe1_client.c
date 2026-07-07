@@ -965,6 +965,54 @@ static int dstore_drain_cb(struct rpc_trans *rt)
 	return 0;
 }
 
+static int notify_deviceid_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	NOTIFY_DEVICEID1res *res = ph->ph_res;
+
+	if (res->ndr_status)
+		LOG("notify-deviceid error = %d", res->ndr_status);
+	else
+		printf("queued=%u\n",
+		       res->NOTIFY_DEVICEID1res_u.ndr_resok.ndr_queued);
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_notify_deviceid(uint32_t dstore_id,
+						   uint32_t notify_type,
+						   bool immediate,
+						   uint32_t layout_type)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_NOTIFY_DEVICEID;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	NOTIFY_DEVICEID1args *args = ph->ph_args;
+
+	args->nd_dstore_id = dstore_id;
+	args->nd_notify_type = (probe_notify_deviceid_type1)notify_type;
+	args->nd_immediate = immediate;
+	args->nd_layout_type = layout_type;
+	rt->rt_cb = notify_deviceid_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
 struct rpc_trans *probe1_client_op_dstore_drain(uint32_t dstore_id)
 {
 	int ret;

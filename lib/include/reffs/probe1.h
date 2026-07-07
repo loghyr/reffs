@@ -78,5 +78,9 @@ struct rpc_trans *probe1_client_op_dstore_list(void);
 struct rpc_trans *probe1_client_op_dstore_drain(uint32_t dstore_id);
 struct rpc_trans *probe1_client_op_dstore_undrain(uint32_t dstore_id);
 struct rpc_trans *probe1_client_op_dstore_instance_count(uint32_t dstore_id);
+struct rpc_trans *probe1_client_op_notify_deviceid(uint32_t dstore_id,
+						   uint32_t notify_type,
+						   bool immediate,
+						   uint32_t layout_type);
 
 #endif
