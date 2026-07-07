@@ -10,6 +10,7 @@
 #include <getopt.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -343,7 +344,11 @@ int main(int argc, char *argv[])
 			cli_inum = (uint64_t)strtoull(optarg, NULL, 0);
 			break;
 		case 'S':
-			cli_dstore_id = (uint32_t)strtoul(optarg, NULL, 0);
+			if (!strcmp(optarg, "all"))
+				cli_dstore_id = UINT32_MAX;
+			else
+				cli_dstore_id =
+					(uint32_t)strtoul(optarg, NULL, 0);
 			break;
 		case 256:
 			if (!strcmp(optarg, "change"))

@@ -315,6 +315,26 @@ int nfs4_client_dev_notify_set(struct nfs4_client *nc, layouttype4 layout_type,
 	return 0;
 }
 
+unsigned int nfs4_client_dev_notify_collect(struct nfs4_client *nc,
+					    layouttype4 layout_type,
+					    uint32_t type_bit, uint32_t *ids,
+					    unsigned int max)
+{
+	struct nfs4_dev_notify *dn;
+	unsigned int n = 0;
+
+	pthread_mutex_lock(&nc->nc_dev_notify_mutex);
+	cds_list_for_each_entry(dn, &nc->nc_dev_notify, dn_list) {
+		if (n >= max)
+			break;
+		if (dn->dn_layout_type == layout_type &&
+		    (dn->dn_mask & type_bit))
+			ids[n++] = dn->dn_dstore_id;
+	}
+	pthread_mutex_unlock(&nc->nc_dev_notify_mutex);
+	return n;
+}
+
 uint32_t nfs4_client_dev_notify_mask(struct nfs4_client *nc,
 				     layouttype4 layout_type,
 				     uint32_t dstore_id)
