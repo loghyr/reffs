@@ -86,6 +86,32 @@ int cb_reply_handler(struct rpc_trans *rt);
 int nfs4_cb_recall(struct nfs4_session *session, const stateid4 *stateid,
 		   const nfs_fh4 *fh, int truncate);
 
+/*
+ * One device-notification item for CB_NOTIFY_DEVICEID (RFC 8881
+ * sec 20.12).  cdn_immediate is consumed only when cdn_type is
+ * NOTIFY_DEVICEID4_CHANGE; DELETE bodies do not carry it.
+ */
+struct nfs4_cb_devnotify {
+	layouttype4 cdn_layout_type;
+	notify_deviceid_type4 cdn_type;
+	deviceid4 cdn_deviceid;
+	bool cdn_immediate;
+};
+
+/*
+ * nfs4_cb_notify_deviceid_send -- send one CB_COMPOUND{CB_SEQUENCE,
+ * CB_NOTIFY_DEVICEID} carrying `count` notify4 items, fire-and-forget
+ * (notifications are one-way; the client's status is not consulted).
+ *
+ * The server MUST NOT send DELETE while the client holds a layout
+ * referring to the deviceID (sec 20.12); that policy belongs to the
+ * caller -- the probe trigger deliberately violates it to drive
+ * client race handling, so this primitive does not enforce it.
+ */
+int nfs4_cb_notify_deviceid_send(struct nfs4_session *session,
+				 const struct nfs4_cb_devnotify *items,
+				 uint32_t count);
+
 /* ------------------------------------------------------------------ */
 /* Wait-for-reply callbacks                                            */
 /* ------------------------------------------------------------------ */
