@@ -319,6 +319,12 @@ struct reffs_config {
 	 * across the available set.  Default: 6 (RS 4+2).
 	 */
 	unsigned int layout_width;
+	/*
+	 * Pool files pre-created per dstore at startup (file runway).
+	 * 0 (default) = RUNWAY_DEFAULT_SIZE; small values make
+	 * many-dstore scale rigs start quickly.
+	 */
+	unsigned int runway_size;
 
 	/*
 	 * ffv1 (RFC 8435) stripe width -- data servers per mirror.

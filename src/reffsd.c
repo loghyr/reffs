@@ -967,8 +967,10 @@ int main(int argc, char *argv[])
 					dstore_put(ds);
 					continue;
 				}
-				ds->ds_runway =
-					runway_create(ds, RUNWAY_DEFAULT_SIZE);
+				ds->ds_runway = runway_create(
+					ds, cfg.runway_size ?
+						    cfg.runway_size :
+						    RUNWAY_DEFAULT_SIZE);
 				dstore_put(ds);
 			}
 		}
