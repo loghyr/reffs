@@ -360,6 +360,131 @@ int nfs4_cb_layoutrecall_fnf(struct nfs4_session *session,
 }
 
 /* ------------------------------------------------------------------ */
+/* CB_NOTIFY_DEVICEID -- fire-and-forget                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Encode one notify4: notify_mask is exactly one bitmap word holding
+ * 1 << notify_type, and notify_vals is the XDR-encoded
+ * notify_deviceid_change4 (24 bytes, with ndc_immediate) or
+ * notify_deviceid_delete4 (20 bytes) as a nested opaque -- the same
+ * pack-into-opaque pattern GETDEVICEINFO uses for da_addr_body.
+ * `word` must stay valid until the CB_COMPOUND is encoded.
+ */
+static int cb_build_notify4(notify4 *out, uint32_t *word,
+			    const struct nfs4_cb_devnotify *item)
+{
+	notify_deviceid_change4 ndc;
+	notify_deviceid_delete4 ndd;
+	xdrproc_t proc;
+	void *inner;
+	u_long sz;
+	XDR xdrs;
+
+	if (item->cdn_type == NOTIFY_DEVICEID4_CHANGE) {
+		memset(&ndc, 0, sizeof(ndc));
+		ndc.ndc_layouttype = item->cdn_layout_type;
+		memcpy(ndc.ndc_deviceid, item->cdn_deviceid, sizeof(deviceid4));
+		ndc.ndc_immediate = item->cdn_immediate;
+		proc = (xdrproc_t)xdr_notify_deviceid_change4;
+		inner = &ndc;
+	} else if (item->cdn_type == NOTIFY_DEVICEID4_DELETE) {
+		memset(&ndd, 0, sizeof(ndd));
+		ndd.ndd_layouttype = item->cdn_layout_type;
+		memcpy(ndd.ndd_deviceid, item->cdn_deviceid, sizeof(deviceid4));
+		proc = (xdrproc_t)xdr_notify_deviceid_delete4;
+		inner = &ndd;
+	} else {
+		return EINVAL;
+	}
+
+	sz = xdr_sizeof(proc, inner);
+	out->notify_vals.notifylist4_val = calloc(1, sz);
+	if (!out->notify_vals.notifylist4_val)
+		return ENOMEM;
+	out->notify_vals.notifylist4_len = (u_int)sz;
+
+	xdrmem_create(&xdrs, out->notify_vals.notifylist4_val, sz, XDR_ENCODE);
+	if (!proc(&xdrs, inner)) {
+		xdr_destroy(&xdrs);
+		free(out->notify_vals.notifylist4_val);
+		out->notify_vals.notifylist4_val = NULL;
+		out->notify_vals.notifylist4_len = 0;
+		return EINVAL;
+	}
+	xdr_destroy(&xdrs);
+
+	*word = 1u << item->cdn_type;
+	out->notify_mask.bitmap4_len = 1;
+	out->notify_mask.bitmap4_val = word;
+	return 0;
+}
+
+int nfs4_cb_notify_deviceid_send(struct nfs4_session *session,
+				 const struct nfs4_cb_devnotify *items,
+				 uint32_t count)
+{
+	CB_COMPOUND4args args = { 0 };
+	nfs_cb_argop4 ops[2] = { 0 };
+	CB_NOTIFY_DEVICEID4args *nda;
+	struct rpc_trans *cb_rt;
+	notify4 *changes;
+	uint32_t *words;
+	uint32_t built;
+	uint32_t xid;
+	int ret;
+
+	if (!session || !items || !count)
+		return EINVAL;
+	if (session->ns_cb_fd < 0)
+		return ENOTCONN;
+
+	changes = calloc(count, sizeof(*changes));
+	words = calloc(count, sizeof(*words));
+	if (!changes || !words) {
+		ret = ENOMEM;
+		built = 0;
+		goto out_free;
+	}
+
+	for (built = 0; built < count; built++) {
+		ret = cb_build_notify4(&changes[built], &words[built],
+				       &items[built]);
+		if (ret)
+			goto out_free;
+	}
+
+	args.tag.utf8string_val = (char *)"CB_NOTIFY_DEVICEID";
+	args.tag.utf8string_len = sizeof("CB_NOTIFY_DEVICEID") - 1;
+	args.minorversion = session->ns_minorversion;
+	args.callback_ident = session->ns_cb_program;
+	args.argarray.argarray_len = 2;
+	args.argarray.argarray_val = ops;
+
+	cb_fill_sequence(&ops[0], session);
+
+	ops[1].argop = OP_CB_NOTIFY_DEVICEID;
+	nda = &ops[1].nfs_cb_argop4_u.opcbnotify_deviceid;
+	nda->cnda_changes.cnda_changes_len = count;
+	nda->cnda_changes.cnda_changes_val = changes;
+
+	ret = cb_build_and_alloc(session, &args, &cb_rt, &xid);
+	if (ret)
+		goto out_free;
+
+	/* Fire-and-forget: don't register, don't wait for ack. */
+	ret = io_rpc_trans_cb(cb_rt);
+	rpc_protocol_free(cb_rt);
+
+out_free:
+	while (built--)
+		free(changes[built].notify_vals.notifylist4_val);
+	free(changes);
+	free(words);
+	return ret;
+}
+
+/* ------------------------------------------------------------------ */
 /* CB_GETATTR -- send and wait for reply                                */
 /* ------------------------------------------------------------------ */
 
