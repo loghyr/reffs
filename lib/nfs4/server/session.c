@@ -673,6 +673,7 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	 * having the program number already on hand.
 	 */
 	ns->ns_cb_program = args->csa_cb_program;
+	ns->ns_cb_maxreq = args->csa_back_chan_attrs.ca_maxrequestsize;
 	ns->ns_minorversion = compound->c_args->minorversion;
 	ns->ns_cb_seqid = 0;
 	if (args->csa_flags & CREATE_SESSION4_FLAG_CONN_BACK_CHAN)

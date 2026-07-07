@@ -442,8 +442,27 @@ unsigned int nfs4_notify_deviceid_subscribers_all(struct server_state *ss,
 			nfs4_session_find_for_client(ss, nc);
 
 		if (sess) {
-			if (nfs4_cb_notify_deviceid_send(sess, items, n) == 0)
-				queued++;
+			/*
+			 * Honor the client's negotiated back-channel
+			 * maximum request size (RFC 8881 sec 18.36) --
+			 * the Linux client's is ~1KB.  A CHANGE item
+			 * costs ~40 bytes on the wire; leave 256 for
+			 * the RPC and CB_SEQUENCE framing and chunk
+			 * the item array across compounds.
+			 */
+			uint32_t maxreq =
+				sess->ns_cb_maxreq ? sess->ns_cb_maxreq : 1024;
+			unsigned int per_cb =
+				maxreq > 296 ? (maxreq - 256) / 40 : 1;
+
+			for (unsigned int off = 0; off < n; off += per_cb) {
+				unsigned int cnt = n - off < per_cb ? n - off :
+								      per_cb;
+
+				if (nfs4_cb_notify_deviceid_send(
+					    sess, items + off, cnt) == 0)
+					queued++;
+			}
 			nfs4_session_put(sess);
 		}
 		if (type == NOTIFY_DEVICEID4_DELETE)
