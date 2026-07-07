@@ -951,6 +951,41 @@ struct IDENTITY_MAP_REMOVE1args {
         uint64_t        imr_from;
 };
 
+/*
+ * NOTIFY_DEVICEID (op 39) -- fire a CB_NOTIFY_DEVICEID at every
+ * client subscribed (via GETDEVICEINFO, RFC 8881 sec 18.40) to the
+ * deviceID backed by the selected dstore.  Test trigger: it does NOT
+ * check whether clients still hold layouts referring to the device,
+ * so a DELETE can deliberately violate the sec 20.12 prohibition to
+ * exercise client race handling.
+ *
+ * Enum values mirror notify_deviceid_type4 (CHANGE=1, DELETE=2);
+ * nd_immediate maps to ndc_immediate and is consumed only for
+ * CHANGE.  nd_layout_type 0 selects LAYOUT4_FLEX_FILES.
+ */
+enum probe_notify_deviceid_type1 {
+	PROBE1_NOTIFY_DEVICEID_CHANGE = 1,
+	PROBE1_NOTIFY_DEVICEID_DELETE = 2
+};
+
+struct NOTIFY_DEVICEID1args {
+	unsigned int			nd_dstore_id;
+	probe_notify_deviceid_type1	nd_notify_type;
+	bool				nd_immediate;
+	unsigned int			nd_layout_type;
+};
+
+struct NOTIFY_DEVICEID1resok {
+	unsigned int			ndr_queued;
+};
+
+union NOTIFY_DEVICEID1res switch (probe_stat1 ndr_status) {
+	case PROBE1_OK:
+		NOTIFY_DEVICEID1resok	ndr_resok;
+	default:
+		void;
+};
+
 const PROBE_PORT = 20490;
 
 /*
@@ -1035,5 +1070,9 @@ program PROBE_PROGRAM {
 		SB_GET_DEFAULT_CODING1res
 		PROBEPROC1_SB_GET_DEFAULT_CODING(
 			SB_GET_DEFAULT_CODING1args) = 32;
+
+		/* Deterministic CB_NOTIFY_DEVICEID test trigger */
+		NOTIFY_DEVICEID1res
+		PROBEPROC1_NOTIFY_DEVICEID(NOTIFY_DEVICEID1args) = 39;
 	} = 1;
 } = 211768;
