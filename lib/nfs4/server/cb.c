@@ -262,7 +262,7 @@ int nfs4_cb_recall(struct nfs4_session *session, const stateid4 *stateid,
 
 	args.tag.utf8string_val = (char *)"CB_RECALL";
 	args.tag.utf8string_len = sizeof("CB_RECALL") - 1;
-	args.minorversion = 1;
+	args.minorversion = session->ns_minorversion;
 	args.callback_ident = session->ns_cb_program;
 	args.argarray.argarray_len = 2;
 	args.argarray.argarray_val = ops;
@@ -326,7 +326,7 @@ int nfs4_cb_layoutrecall_fnf(struct nfs4_session *session,
 
 	args.tag.utf8string_val = (char *)"CB_LAYOUTRECALL";
 	args.tag.utf8string_len = sizeof("CB_LAYOUTRECALL") - 1;
-	args.minorversion = 1;
+	args.minorversion = session->ns_minorversion;
 	args.callback_ident = session->ns_cb_program;
 	args.argarray.argarray_len = 2;
 	args.argarray.argarray_val = ops;
@@ -380,7 +380,7 @@ int nfs4_cb_getattr_send(struct nfs4_session *session, const nfs_fh4 *fh,
 
 	args.tag.utf8string_val = (char *)"CB_GETATTR";
 	args.tag.utf8string_len = sizeof("CB_GETATTR") - 1;
-	args.minorversion = 1;
+	args.minorversion = session->ns_minorversion;
 	args.callback_ident = session->ns_cb_program;
 	args.argarray.argarray_len = 2;
 	args.argarray.argarray_val = ops;
@@ -455,7 +455,7 @@ int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
 
 	args.tag.utf8string_val = (char *)"CB_LAYOUTRECALL";
 	args.tag.utf8string_len = sizeof("CB_LAYOUTRECALL") - 1;
-	args.minorversion = 1;
+	args.minorversion = session->ns_minorversion;
 	args.callback_ident = session->ns_cb_program;
 	args.argarray.argarray_len = 2;
 	args.argarray.argarray_val = ops;

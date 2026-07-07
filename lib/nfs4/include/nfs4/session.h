@@ -89,6 +89,10 @@ struct nfs4_session {
 	struct nfs4_slot *ns_slots; /* calloc'd [0..ns_slot_count-1] */
 
 	/* Back channel */
+	uint32_t ns_minorversion; /* minorversion of the CREATE_SESSION
+				   * compound; CB_COMPOUNDs must carry the
+				   * same one (the Linux client matches
+				   * callbacks to clients by it) */
 	uint32_t ns_cb_program; /* csa_cb_program from CREATE_SESSION */
 	int ns_cb_fd; /* fd of the connection (fore-channel reused) */
 	sequenceid4 ns_cb_seqid; /* next CB_SEQUENCE sequenceid to send */
