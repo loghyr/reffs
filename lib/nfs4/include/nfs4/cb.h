@@ -124,6 +124,16 @@ unsigned int nfs4_notify_deviceid_subscribers(struct server_state *ss,
 					      uint32_t dstore_id,
 					      bool immediate);
 
+/*
+ * nfs4_notify_deviceid_subscribers_all -- one batched CB_COMPOUND per
+ * client covering every deviceID it subscribed to (multi-item
+ * notify4 array).  Returns callbacks queued.
+ */
+unsigned int nfs4_notify_deviceid_subscribers_all(struct server_state *ss,
+						  layouttype4 layout_type,
+						  notify_deviceid_type4 type,
+						  bool immediate);
+
 /* ------------------------------------------------------------------ */
 /* Wait-for-reply callbacks                                            */
 /* ------------------------------------------------------------------ */

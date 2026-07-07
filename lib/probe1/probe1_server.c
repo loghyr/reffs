@@ -2430,13 +2430,16 @@ static int probe1_op_notify_deviceid(struct rpc_trans *rt)
 		return res->ndr_status;
 	}
 
-	struct dstore *ds = dstore_find(args->nd_dstore_id);
+	/* UINT32_MAX: all subscribed devices, batched per client */
+	if (args->nd_dstore_id != UINT32_MAX) {
+		struct dstore *ds = dstore_find(args->nd_dstore_id);
 
-	if (!ds) {
-		res->ndr_status = PROBE1ERR_NOENT;
-		return res->ndr_status;
+		if (!ds) {
+			res->ndr_status = PROBE1ERR_NOENT;
+			return res->ndr_status;
+		}
+		dstore_put(ds);
 	}
-	dstore_put(ds);
 
 	struct server_state *ss = server_state_find();
 
@@ -2447,9 +2450,16 @@ static int probe1_op_notify_deviceid(struct rpc_trans *rt)
 
 	layouttype4 lt = args->nd_layout_type ? args->nd_layout_type :
 						LAYOUT4_FLEX_FILES;
-	unsigned int queued = nfs4_notify_deviceid_subscribers(
-		ss, lt, (notify_deviceid_type4)args->nd_notify_type,
-		args->nd_dstore_id, args->nd_immediate);
+	unsigned int queued;
+
+	if (args->nd_dstore_id == UINT32_MAX)
+		queued = nfs4_notify_deviceid_subscribers_all(
+			ss, lt, (notify_deviceid_type4)args->nd_notify_type,
+			args->nd_immediate);
+	else
+		queued = nfs4_notify_deviceid_subscribers(
+			ss, lt, (notify_deviceid_type4)args->nd_notify_type,
+			args->nd_dstore_id, args->nd_immediate);
 	server_state_put(ss);
 
 	res->ndr_status = PROBE1_OK;

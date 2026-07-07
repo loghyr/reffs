@@ -391,6 +391,74 @@ unsigned int nfs4_notify_deviceid_subscribers(struct server_state *ss,
 	return queued;
 }
 
+/*
+ * Fan one CHANGE/DELETE out for EVERY deviceID a client is
+ * subscribed to, batched as multiple notify4 items in a single
+ * CB_COMPOUND per client -- the multi-item decode case a
+ * single-device trigger cannot produce.  Returns callbacks queued
+ * (one per client reached).
+ */
+unsigned int nfs4_notify_deviceid_subscribers_all(struct server_state *ss,
+						  layouttype4 layout_type,
+						  notify_deviceid_type4 type,
+						  bool immediate)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	unsigned int queued = 0;
+
+	if (!ss || !ss->ss_client_ht)
+		return 0;
+
+	rcu_read_lock();
+	cds_lfht_first(ss->ss_client_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+		struct client *c =
+			caa_container_of(node, struct client, c_node);
+		struct nfs4_client *nc = client_to_nfs4(c);
+		uint32_t ids[REFFS_CONFIG_MAX_DSTORES];
+		struct nfs4_cb_devnotify items[REFFS_CONFIG_MAX_DSTORES];
+		unsigned int n;
+
+		cds_lfht_next(ss->ss_client_ht, &iter);
+
+		n = nfs4_client_dev_notify_collect(nc, layout_type, 1u << type,
+						   ids,
+						   REFFS_CONFIG_MAX_DSTORES);
+		if (!n)
+			continue;
+		if (!client_get(c))
+			continue; /* dying */
+
+		for (unsigned int i = 0; i < n; i++) {
+			memset(&items[i], 0, sizeof(items[i]));
+			items[i].cdn_layout_type = layout_type;
+			items[i].cdn_type = type;
+			items[i].cdn_immediate = immediate;
+			deviceid_from_dstore(items[i].cdn_deviceid, ids[i]);
+		}
+
+		struct nfs4_session *sess =
+			nfs4_session_find_for_client(ss, nc);
+
+		if (sess) {
+			if (nfs4_cb_notify_deviceid_send(sess, items, n) == 0)
+				queued++;
+			nfs4_session_put(sess);
+		}
+		if (type == NOTIFY_DEVICEID4_DELETE)
+			for (unsigned int i = 0; i < n; i++)
+				nfs4_client_dev_notify_set(nc, layout_type,
+							   ids[i], 0);
+		client_put(c);
+	}
+	rcu_read_unlock();
+
+	TRACE("CB_NOTIFY_DEVICEID: all-devices type=%u immediate=%d queued=%u",
+	      type, immediate, queued);
+	return queued;
+}
+
 /* ------------------------------------------------------------------ */
 /* Layout queries                                                      */
 /* ------------------------------------------------------------------ */

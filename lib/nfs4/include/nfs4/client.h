@@ -328,6 +328,16 @@ uint32_t nfs4_client_dev_notify_mask(struct nfs4_client *nc,
 				     layouttype4 layout_type,
 				     uint32_t dstore_id);
 
+/*
+ * nfs4_client_dev_notify_collect - dstore ids of every subscription
+ * matching layout_type whose mask includes type_bit, up to max.
+ * Returns the number stored in ids.
+ */
+unsigned int nfs4_client_dev_notify_collect(struct nfs4_client *nc,
+					    layouttype4 layout_type,
+					    uint32_t type_bit, uint32_t *ids,
+					    unsigned int max);
+
 /* ------------------------------------------------------------------ */
 /* clientid4 bit-packing                                               */
 
