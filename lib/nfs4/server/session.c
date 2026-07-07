@@ -677,6 +677,29 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	if (args->csa_flags & CREATE_SESSION4_FLAG_CONN_BACK_CHAN)
 		ns->ns_cb_fd = compound->c_rt->rt_fd;
 
+	/*
+	 * Capture the client's AUTH_SYS backchannel credential (RFC
+	 * 8881 sec 18.36: the server MUST use one of csa_sec_parms on
+	 * its CB calls).  First AUTH_SYS entry wins; without one, CB
+	 * calls fall back to AUTH_NONE, which the Linux client rejects
+	 * with AUTH_ERROR/badcred for everything but CB_NULL.
+	 */
+	for (uint32_t i = 0; i < args->csa_sec_parms.csa_sec_parms_len; i++) {
+		callback_sec_parms4 *sp =
+			&args->csa_sec_parms.csa_sec_parms_val[i];
+		XDR cx;
+
+		if (sp->cb_secflavor != AUTH_SYS)
+			continue;
+		xdrmem_create(&cx, (char *)ns->ns_cb_cred,
+			      sizeof(ns->ns_cb_cred), XDR_ENCODE);
+		if (xdr_authunix_parms(
+			    &cx, &sp->callback_sec_parms4_u.cbsp_sys_cred))
+			ns->ns_cb_cred_len = (uint32_t)xdr_getpos(&cx);
+		xdr_destroy(&cx);
+		break;
+	}
+
 	memcpy(resok->csr_sessionid, ns->ns_sessionid, sizeof(sessionid4));
 	resok->csr_sequence = args->csa_sequence;
 	/*

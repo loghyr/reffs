@@ -80,11 +80,24 @@ static int cb_build_and_alloc(struct nfs4_session *session,
 	uint32_t *p;
 	uint32_t body_len;
 	uint32_t xid;
+	uint32_t cred_len;
+	uint32_t cred_pad;
 	struct rpc_trans *cb_rt;
 	XDR xdrs = { 0 };
 
+	/*
+	 * RFC 8881 sec 18.36: backchannel calls carry one of the
+	 * client's csa_sec_parms credentials.  Use the AUTH_SYS body
+	 * captured at CREATE_SESSION; AUTH_NONE only when the client
+	 * offered no AUTH_SYS parm (the Linux client rejects AUTH_NONE
+	 * for real callback procedures with AUTH_ERROR/badcred).
+	 */
+	cred_len = session->ns_cb_cred_len;
+	cred_pad = (cred_len + 3u) & ~3u;
+
 	xdr_size = xdr_sizeof((xdrproc_t)xdr_CB_COMPOUND4args, args);
-	buf_len = RPC_CALL_HEADER_WORDS * sizeof(uint32_t) + xdr_size;
+	buf_len =
+		RPC_CALL_HEADER_WORDS * sizeof(uint32_t) + cred_pad + xdr_size;
 
 	buf = calloc(buf_len, 1);
 	if (!buf)
@@ -101,14 +114,16 @@ static int cb_build_and_alloc(struct nfs4_session *session,
 	*p++ = htonl(NFS4_CALLBACK);
 	*p++ = htonl(NFS_CB);
 	*p++ = htonl(CB_COMPOUND_PROC);
-	*p++ = htonl(AUTH_NONE);
-	*p++ = htonl(0); /* cred length */
+	*p++ = htonl(cred_len ? AUTH_SYS : AUTH_NONE);
+	*p++ = htonl(cred_len);
+	if (cred_len) {
+		memcpy(p, session->ns_cb_cred, cred_len);
+		p += cred_pad / sizeof(uint32_t);
+	}
 	*p++ = htonl(AUTH_NONE);
 	*p++ = htonl(0); /* verf length */
 
-	xdrmem_create(&xdrs, (char *)p,
-		      buf_len - RPC_CALL_HEADER_WORDS * sizeof(uint32_t),
-		      XDR_ENCODE);
+	xdrmem_create(&xdrs, (char *)p, xdr_size, XDR_ENCODE);
 	if (!xdr_CB_COMPOUND4args(&xdrs, args)) {
 		xdr_destroy(&xdrs);
 		free(buf);

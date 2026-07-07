@@ -93,6 +93,16 @@ struct nfs4_session {
 	int ns_cb_fd; /* fd of the connection (fore-channel reused) */
 	sequenceid4 ns_cb_seqid; /* next CB_SEQUENCE sequenceid to send */
 	pthread_mutex_t ns_cb_mutex; /* serializes CB sends on this session */
+	/*
+	 * Backchannel credential (RFC 8881 sec 18.36: the server MUST
+	 * use one of the client's csa_sec_parms on the backchannel).
+	 * The XDR-encoded AUTH_SYS cred body from CREATE_SESSION, sent
+	 * verbatim in every CB call's RPC header; len 0 -> AUTH_NONE
+	 * (the Linux client rejects AUTH_NONE for everything but
+	 * CB_NULL with AUTH_ERROR/badcred).
+	 */
+	uint8_t ns_cb_cred[400]; /* MAX_AUTH_BYTES (RFC 5531) */
+	uint32_t ns_cb_cred_len;
 
 	struct rcu_head ns_rcu;
 	struct urcu_ref ns_ref;
