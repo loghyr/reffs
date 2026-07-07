@@ -94,6 +94,7 @@ struct nfs4_session {
 				   * same one (the Linux client matches
 				   * callbacks to clients by it) */
 	uint32_t ns_cb_program; /* csa_cb_program from CREATE_SESSION */
+	uint32_t ns_cb_maxreq; /* back channel ca_maxrequestsize */
 	int ns_cb_fd; /* fd of the connection (fore-channel reused) */
 	sequenceid4 ns_cb_seqid; /* next CB_SEQUENCE sequenceid to send */
 	pthread_mutex_t ns_cb_mutex; /* serializes CB sends on this session */
