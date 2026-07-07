@@ -572,12 +572,20 @@ uint32_t nfs4_op_test_stateid(struct compound *compound)
 		}
 
 		/*
-		 * Look up the stateid in the inode's per-inode hash table.
-		 * A stateid present in the table is valid; one absent has
-		 * been freed, was never issued, or belongs to a different
-		 * inode (RFC 8881 S18.47.3).
+		 * Look up the stateid in the calling client's stateid
+		 * table.  TEST_STATEID has no current-filehandle
+		 * dependency (RFC 8881 S18.48.3: stateids are bound to
+		 * the client, and the Linux client sends the compound
+		 * with no PUTFH), so a per-inode lookup would wrongly
+		 * fail valid stateids.  A stateid absent from the client
+		 * table has been freed, was never issued, or belongs to
+		 * another client.
 		 */
-		struct stateid *found = stateid_find(compound->c_inode, id);
+		struct stateid *found = stateid_find_client(
+			compound->c_nfs4_client ?
+				nfs4_client_to_client(compound->c_nfs4_client) :
+				NULL,
+			id);
 
 		if (!found) {
 			res->TEST_STATEID4res_u.tsr_resok4.tsr_status_codes

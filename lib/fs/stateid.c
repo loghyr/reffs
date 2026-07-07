@@ -38,6 +38,16 @@ static int stateid_match(struct cds_lfht_node *ht_node, const void *vkey)
 	return *key == stid->s_id;
 }
 
+/* The client table hashes s_client_node; the container offset differs. */
+static int stateid_match_client(struct cds_lfht_node *ht_node, const void *vkey)
+{
+	struct stateid *stid =
+		caa_container_of(ht_node, struct stateid, s_client_node);
+	const uint32_t *key = vkey;
+
+	return *key == stid->s_id;
+}
+
 /* ------------------------------------------------------------------ */
 /* Internal assign                                                     */
 
@@ -139,7 +149,7 @@ int stateid_assign(struct stateid *stid, struct inode *inode,
 		rcu_read_lock();
 		stid->s_state |= STID_IS_CLIENT_HASHED;
 		node = cds_lfht_add_unique(client->c_stateids, hash,
-					   stateid_match, &stid->s_id,
+					   stateid_match_client, &stid->s_id,
 					   &stid->s_client_node);
 		rcu_read_unlock();
 
@@ -253,5 +263,30 @@ struct stateid *stateid_find(struct inode *inode, uint32_t id)
 
 	trace_fs_stateid(stid, __func__, __LINE__);
 
+	return stid;
+}
+
+struct stateid *stateid_find_client(struct client *client, uint32_t id)
+{
+	struct stateid *stid = NULL;
+	struct stateid *tmp;
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	unsigned long hash = XXH3_64bits(&id, sizeof(id));
+
+	if (!client || !client->c_stateids)
+		return NULL;
+
+	rcu_read_lock();
+	cds_lfht_lookup(client->c_stateids, hash, stateid_match_client, &id,
+			&iter);
+	node = cds_lfht_iter_get_node(&iter);
+	if (node) {
+		tmp = caa_container_of(node, struct stateid, s_client_node);
+		stid = stateid_get(tmp);
+	}
+	rcu_read_unlock();
+
+	trace_fs_stateid(stid, __func__, __LINE__);
 	return stid;
 }

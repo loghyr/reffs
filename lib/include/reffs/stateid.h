@@ -61,6 +61,13 @@ int stateid_assign(struct stateid *stid, struct inode *inode,
  */
 struct stateid *stateid_find(struct inode *inode, uint32_t id);
 
+/*
+ * stateid_find_client - look up by (client, wire id), independent of
+ * any filehandle.  Returns a ref-bumped pointer or NULL.  Caller must
+ * stateid_put() it.
+ */
+struct stateid *stateid_find_client(struct client *client, uint32_t id);
+
 /* Bump / drop ref */
 struct stateid *stateid_get(struct stateid *stid);
 void stateid_put(struct stateid *stid);
