@@ -1491,12 +1491,23 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		 * global pool for backward compatibility.
 		 */
 		if (isb->sb_ndstores > 0) {
+			/*
+			 * Rotate the collection window so successive new
+			 * files spread across the whole bound pool: with
+			 * more dstores than a segment consumes, a fixed
+			 * window would put every file on the same first
+			 * layout_width entries.
+			 */
+			uint32_t start = __atomic_load_n(&isb->sb_dstore_rotor,
+							 __ATOMIC_RELAXED);
+
 			nds = 0;
 			for (uint32_t d = 0;
-			     d < isb->sb_ndstores && d < LAYOUT_SEG_MAX_FILES;
+			     d < isb->sb_ndstores && nds < LAYOUT_SEG_MAX_FILES;
 			     d++) {
-				struct dstore *ds =
-					dstore_find(isb->sb_dstore_ids[d]);
+				struct dstore *ds = dstore_find(
+					isb->sb_dstore_ids[(start + d) %
+							   isb->sb_ndstores]);
 				if (ds)
 					dstores[nds++] = ds;
 			}
@@ -1573,6 +1584,10 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 
 		for (uint32_t i = 0; i < nds; i++)
 			dstore_put(dstores[i]);
+
+		if (isb->sb_ndstores > 0)
+			__atomic_fetch_add(&isb->sb_dstore_rotor, target,
+					   __ATOMIC_RELAXED);
 
 		if (nfiles == 0) {
 			free(files);

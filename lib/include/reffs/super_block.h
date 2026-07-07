@@ -178,6 +178,13 @@ struct super_block {
 	uint32_t sb_dstore_ids[SB_MAX_DSTORES];
 	uint32_t sb_ndstores;
 	/*
+	 * Allocation rotor: rotates the dstore collection window for
+	 * new layout segments so successive files spread across the
+	 * whole bound pool instead of always starting at entry 0.
+	 * Advanced with relaxed atomics; races only skew placement.
+	 */
+	uint32_t sb_dstore_rotor;
+	/*
 	 * FFv1 stripe unit in bytes.  0 = whole-file CSM (all mirrors
 	 * hold the same data).  Non-zero = RAID-0: client writes stripe i
 	 * to mirror i % ffl_mirrors_len.  Set via probe sb-set-stripe-unit.
