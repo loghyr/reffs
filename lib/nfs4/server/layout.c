@@ -34,8 +34,10 @@
 #include "reffs/stateid.h"
 #include "reffs/task.h"
 #include "nfs4/attr.h"
+#include "nfs4/cb.h"
 #include "nfs4/client.h"
 #include "nfs4/compound.h"
+#include "nfs4/session.h"
 #include "nfs4/migration_record.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
@@ -322,6 +324,71 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	dstore_put(ds);
 
 	return 0;
+}
+
+/*
+ * Fan a deviceID CHANGE/DELETE out to every client that subscribed
+ * via GETDEVICEINFO (RFC 8881 sec 18.40).  Same walk-and-send shape
+ * as migration_recall_layouts; a subscriber without a backchannel-
+ * capable session is skipped.  DELETE drops the subscription after
+ * notifying -- the deviceID no longer exists (sec 20.12).
+ *
+ * Lives here (not cb.c) so the deviceid <-> dstore bijection stays
+ * private to this file.  Returns the number of callbacks queued.
+ */
+unsigned int nfs4_notify_deviceid_subscribers(struct server_state *ss,
+					      layouttype4 layout_type,
+					      notify_deviceid_type4 type,
+					      uint32_t dstore_id,
+					      bool immediate)
+{
+	struct nfs4_cb_devnotify item;
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	unsigned int queued = 0;
+
+	if (!ss || !ss->ss_client_ht)
+		return 0;
+
+	memset(&item, 0, sizeof(item));
+	item.cdn_layout_type = layout_type;
+	item.cdn_type = type;
+	item.cdn_immediate = immediate;
+	deviceid_from_dstore(item.cdn_deviceid, dstore_id);
+
+	rcu_read_lock();
+	cds_lfht_first(ss->ss_client_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+		struct client *c =
+			caa_container_of(node, struct client, c_node);
+		struct nfs4_client *nc = client_to_nfs4(c);
+
+		cds_lfht_next(ss->ss_client_ht, &iter);
+
+		if (!(nfs4_client_dev_notify_mask(nc, layout_type, dstore_id) &
+		      (1u << type)))
+			continue;
+		if (!client_get(c))
+			continue; /* dying */
+
+		struct nfs4_session *sess =
+			nfs4_session_find_for_client(ss, nc);
+
+		if (sess) {
+			if (nfs4_cb_notify_deviceid_send(sess, &item, 1) == 0)
+				queued++;
+			nfs4_session_put(sess);
+		}
+		if (type == NOTIFY_DEVICEID4_DELETE)
+			nfs4_client_dev_notify_set(nc, layout_type, dstore_id,
+						   0);
+		client_put(c);
+	}
+	rcu_read_unlock();
+
+	TRACE("CB_NOTIFY_DEVICEID: dstore[%u] type=%u immediate=%d queued=%u",
+	      dstore_id, type, immediate, queued);
+	return queued;
 }
 
 /* ------------------------------------------------------------------ */

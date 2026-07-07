@@ -12,6 +12,7 @@
 #include "nfsv42_xdr.h"
 
 struct nfs4_session;
+struct server_state;
 struct task;
 struct compound;
 struct rpc_trans;
@@ -111,6 +112,17 @@ struct nfs4_cb_devnotify {
 int nfs4_cb_notify_deviceid_send(struct nfs4_session *session,
 				 const struct nfs4_cb_devnotify *items,
 				 uint32_t count);
+
+/*
+ * nfs4_notify_deviceid_subscribers -- fan one CHANGE/DELETE out to
+ * every subscribed client (defined in layout.c beside the
+ * deviceid <-> dstore mapping).  Returns callbacks queued.
+ */
+unsigned int nfs4_notify_deviceid_subscribers(struct server_state *ss,
+					      layouttype4 layout_type,
+					      notify_deviceid_type4 type,
+					      uint32_t dstore_id,
+					      bool immediate);
 
 /* ------------------------------------------------------------------ */
 /* Wait-for-reply callbacks                                            */
