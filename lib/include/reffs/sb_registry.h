@@ -31,7 +31,7 @@
 #define SB_REGISTRY_FILE "superblocks.registry"
 #define SB_REGISTRY_MAX_PATH 256
 #define SB_REGISTRY_MAX_FLAVORS 8
-#define SB_REGISTRY_MAX_DSTORES 16
+#define SB_REGISTRY_MAX_DSTORES 1024
 
 /*
  * Per-sb client rule file: <state_dir>/sb_<id>.clients
