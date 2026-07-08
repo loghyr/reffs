@@ -29,7 +29,7 @@
 #include "reffs/settings.h"
 
 #define DSTORE_MAX_FH 64 /* NFSv3 FHSIZE3 */
-#define DSTORE_REVOKE_MAX 64 /* max DSes to scan for bulk revoke */
+#define DSTORE_REVOKE_MAX REFFS_CONFIG_MAX_DSTORES /* bulk revoke scan bound */
 
 #define DSTORE_IS_HASHED (1ULL << 0)
 #define DSTORE_IS_MOUNTED (1ULL << 1)

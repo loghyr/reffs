@@ -219,7 +219,9 @@ int main(int argc, char *argv[])
 
 	struct server_state *ss = NULL;
 
-	struct reffs_config cfg;
+	/* static: 256 data-server entries make this ~1MB -- too big
+	 * for comfort on the stack */
+	static struct reffs_config cfg;
 	const char *config_file = NULL;
 
 	/* CLI overrides: -1/NULL means "not set on command line, use config" */

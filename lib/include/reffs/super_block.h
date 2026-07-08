@@ -174,7 +174,7 @@ struct super_block {
 	 * instead of the global pool when sb_ndstores > 0.
 	 * Set via probe sb-set-dstores, persisted in the registry.
 	 */
-#define SB_MAX_DSTORES 16
+#define SB_MAX_DSTORES 1024
 	uint32_t sb_dstore_ids[SB_MAX_DSTORES];
 	uint32_t sb_ndstores;
 	/*
