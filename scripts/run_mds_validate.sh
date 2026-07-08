@@ -42,6 +42,17 @@
 #                     ffv2 needs reffs DSes that speak the CHUNK ops.
 #   --port N          MDS NFS port (default: 2049).  Must be free on
 #                     this host.
+#   --stripe-width N  Data servers striped per mirror in ffv1 layouts
+#                     (default: server default, 1 = no striping).
+#                     Needs at least N --ds entries or LAYOUTGET falls
+#                     back to fewer stripes.
+#   --layout-width N  Total data files per layout segment (server
+#                     default 6).  Mirrors = layout-width / stripe-width;
+#                     set equal to --stripe-width for pure striping
+#                     (one mirror).
+#   --runway-size N   Pool files pre-created per dstore at startup
+#                     (server default 256).  Use a small value for
+#                     many-dstore scale rigs.
 #   --data DIR        Runtime data/state/config dir
 #                     (default: /tmp/reffs-mds-validate).
 #   --fresh           Wipe MDS data/state before launch (DEFAULT) -- a
@@ -67,6 +78,9 @@ LAYOUT_TYPES="ffv1"
 REBUILD=0
 DRY_RUN=0
 FRESH=1
+STRIPE_WIDTH=""
+LAYOUT_WIDTH=""
+RUNWAY_SIZE=""
 DS_SPECS=()
 
 usage() { sed -n '4,/^set -euo pipefail/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
@@ -76,6 +90,9 @@ while [[ $# -gt 0 ]]; do
 	--ds)      DS_SPECS+=("$2"); shift 2 ;;
 	--layout)  LAYOUT_TYPES="$2"; shift 2 ;;
 	--port)    PORT="$2"; shift 2 ;;
+	--stripe-width) STRIPE_WIDTH="$2"; shift 2 ;;
+	--layout-width) LAYOUT_WIDTH="$2"; shift 2 ;;
+	--runway-size) RUNWAY_SIZE="$2"; shift 2 ;;
 	--data)    DATA_DIR="$2"; shift 2 ;;
 	--rebuild) REBUILD=1; shift ;;
 	--dry-run) DRY_RUN=1; shift ;;
@@ -129,6 +146,9 @@ mkdir -p "$DATA_DIR/data" "$DATA_DIR/state"
 	echo "workers               = 8"
 	echo "max_session_slots     = 64"
 	echo 'log_level             = "info"'
+	[[ -n "$STRIPE_WIDTH" ]] && echo "stripe_width          = $STRIPE_WIDTH"
+	[[ -n "$LAYOUT_WIDTH" ]] && echo "layout_width          = $LAYOUT_WIDTH"
+	[[ -n "$RUNWAY_SIZE" ]] && echo "runway_size           = $RUNWAY_SIZE"
 	echo
 	echo "[backend]"
 	echo 'type            = "posix"'
@@ -230,6 +250,8 @@ echo "   trace     : $TRACE"
 echo "   data/state: $DATA_DIR/{data,state}  ($([[ "$FRESH" == 1 ]] && echo "fresh" || echo "kept"))"
 if [[ ${#DS_SPECS[@]} -gt 0 ]]; then
 	echo "   dstores   : ${DS_SPECS[*]}  (layout_types: $LAYOUT_TYPES)"
+	[[ -n "$STRIPE_WIDTH" ]] && echo "   stripes   : $STRIPE_WIDTH per mirror"
+	[[ -n "$LAYOUT_WIDTH" ]] && echo "   width     : $LAYOUT_WIDTH files/segment ($((LAYOUT_WIDTH / ${STRIPE_WIDTH:-1})) mirrors)"
 else
 	echo "   dstores   : none (server boots + mounts, but issues no layouts)"
 fi
