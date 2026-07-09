@@ -1871,6 +1871,26 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		goto out_stateid;
 	}
 
+	/*
+	 * RFC 8881 section 18.43.3: loga_maxcount is the maximum layout
+	 * size the client can accept; a layout that exceeds it MUST
+	 * draw NFS4ERR_TOOSMALL.  Count the encoded logr_layout array:
+	 * the array count word, the fixed layout4 fields (offset,
+	 * length, iomode, type, body length), and the XDR-padded body.
+	 */
+	u_long lo_enc_size = 4 + 28 + ((xdr_size + 3) & ~3UL);
+
+	if (lo_enc_size > args->loga_maxcount) {
+		TRACE("LAYOUTGET: ino=%" PRIu64 " encoded layout %lu exceeds "
+		      "loga_maxcount %u -- TOOSMALL",
+		      compound->c_inode->i_ino, lo_enc_size,
+		      args->loga_maxcount);
+		free(body);
+		migration_release_view(&view);
+		*status = NFS4ERR_TOOSMALL;
+		goto out_stateid;
+	}
+
 	/* Build the response. */
 	resok->logr_return_on_close = true;
 
