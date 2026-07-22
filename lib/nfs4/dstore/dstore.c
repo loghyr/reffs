@@ -777,10 +777,11 @@ void dstore_unload_all(void)
 	 * dstore_collect_all bumps each ref; we drop it explicitly
 	 * after the unhash.
 	 *
-	 * DSTORE_REVOKE_MAX (64) bound: the configured limit is
-	 * REFFS_CONFIG_MAX_DSTORES (16); 64 is the same bound the
-	 * renewal worker (ds_renewal.c) uses for an in-flight scan
-	 * and is well above any realistic deployment.
+	 * DSTORE_REVOKE_MAX bound: this is a compile-time alias for
+	 * REFFS_CONFIG_MAX_DSTORES (currently 1024) -- the same bound the
+	 * renewal worker (ds_renewal.c) uses for an in-flight scan.
+	 * A deployment that hits this bound is at the configured
+	 * per-server dstore ceiling and has other things to worry about.
 	 */
 	n = dstore_collect_all(snapshot, DSTORE_REVOKE_MAX);
 

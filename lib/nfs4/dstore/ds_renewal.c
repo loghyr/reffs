@@ -405,9 +405,11 @@ void ds_renewal_tick_one(struct dstore *ds, struct renewal_tick_ctx *ctx)
  * (refs bumped) so the per-dstore work runs outside RCU read-side
  * sections -- safe for blocking RPC and rwlock acquisitions.
  *
- * DSTORE_REVOKE_MAX (64) is the snapshot capacity.  No realistic
- * deployment has more dstores than that; if we ever do, this fanout
- * silently truncates -- the truncated dstores miss one renewal tick
+ * DSTORE_REVOKE_MAX (a compile-time alias for
+ * REFFS_CONFIG_MAX_DSTORES, currently 1024) is the snapshot
+ * capacity -- i.e., the per-server dstore ceiling.  A deployment
+ * that hits this bound is already at its configured limit; if the
+ * fanout truncates, the truncated dstores miss one renewal tick
  * but will be picked up on the next.  The same buffer size is used
  * by the lease-expiry bulk-revoke path (client_persist.c:122).
  */
