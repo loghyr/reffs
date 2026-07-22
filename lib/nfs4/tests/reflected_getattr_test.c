@@ -1616,6 +1616,22 @@ START_TEST(test_layoutget_build_v1_grid)
 
 	xdr_free((xdrproc_t)xdr_ff_layout4, (char *)&ffl);
 
+	/*
+	 * make_rg_ctx / free_rg_ctx do not walk the resarray to free
+	 * the nested op result -- fine for error-return tests but this
+	 * one reaches the success path.  Release the LAYOUTGET reply's
+	 * heap allocations before free_rg_ctx: the body buffer that
+	 * layoutget_build_v1 malloc'd and handed off to loc_body_val
+	 * (layout.c:1938), and the single-element logr_layout_val
+	 * calloc (layout.c:1923).  logr_stateid is a stateid4 embedded
+	 * in resok -- no free -- and the layout stateid itself is
+	 * dropped by free_rg_ctx via stateid_put(c_curr_stid).
+	 */
+	free(lo->lo_content.loc_body.loc_body_val);
+	free(resok->logr_layout.logr_layout_val);
+	resok->logr_layout.logr_layout_val = NULL;
+	resok->logr_layout.logr_layout_len = 0;
+
 	layout_segments_free(inode_a->i_layout_segments);
 	inode_a->i_layout_segments = NULL;
 	free_rg_ctx(ctx);
