@@ -27,6 +27,19 @@
  */
 
 #define SB_REGISTRY_MAGIC 0x53425247U /* "SBRG" */
+/*
+ * Per project policy (CLAUDE.md "no persistent storage deployed"),
+ * on-disk formats remain at version 1 with no migration code until
+ * the first deployment with persistent data ships.  A structural
+ * change to a persisted layout (e.g., SB_REGISTRY_MAX_DSTORES
+ * growing from 16 to 1024, which shifted sizeof(struct
+ * sb_registry_entry) by 4 KiB per entry) does NOT bump this
+ * constant; instead, sb_registry_load's length check
+ * (n != entries_sz at line 294) catches the mismatch and returns
+ * -EINVAL, forcing the operator to regenerate rather than
+ * deserializing into corrupt state.  When persistent storage
+ * ships, replace this comment with actual versioning.
+ */
 #define SB_REGISTRY_VERSION 1
 #define SB_REGISTRY_FILE "superblocks.registry"
 #define SB_REGISTRY_MAX_PATH 256
