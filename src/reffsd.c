@@ -219,8 +219,11 @@ int main(int argc, char *argv[])
 
 	struct server_state *ss = NULL;
 
-	/* static: 256 data-server entries make this ~1MB -- too big
-	 * for comfort on the stack */
+	/*
+	 * static: 1024 data-server entries make this ~5 MiB (4.4 KiB
+	 * per reffs_data_server_config x 1024, plus other fields) --
+	 * far too big for the stack.
+	 */
 	static struct reffs_config cfg;
 	const char *config_file = NULL;
 
