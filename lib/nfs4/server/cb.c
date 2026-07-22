@@ -484,8 +484,8 @@ int nfs4_cb_notify_deviceid_send(struct nfs4_session *session,
 	rpc_protocol_free(cb_rt);
 
 out_free:
-	while (built--)
-		free(changes[built].notify_vals.notifylist4_val);
+	for (uint32_t i = 0; i < built; i++)
+		free(changes[i].notify_vals.notifylist4_val);
 	free(changes);
 	free(words);
 	return ret;
