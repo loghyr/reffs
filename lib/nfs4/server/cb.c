@@ -405,7 +405,14 @@ static int cb_build_notify4(notify4 *out, uint32_t *word,
 	out->notify_vals.notifylist4_len = (u_int)sz;
 
 	xdrmem_create(&xdrs, out->notify_vals.notifylist4_val, sz, XDR_ENCODE);
-	if (!proc(&xdrs, inner)) {
+	/*
+	 * Portability: macOS's xdrproc_t is 3-arg
+	 * (bool_t (*)(XDR *, void *, unsigned int)); libtirpc's is
+	 * variadic.  Pass the trailing "size hint" explicitly (0 is
+	 * accepted by every reachable xdr_* target) so the call compiles
+	 * uniformly.
+	 */
+	if (!proc(&xdrs, inner, 0)) {
 		xdr_destroy(&xdrs);
 		free(out->notify_vals.notifylist4_val);
 		out->notify_vals.notifylist4_val = NULL;
