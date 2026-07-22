@@ -121,20 +121,98 @@ START_TEST(test_vandermonde_shape)
 	ck_assert_int_eq(v->rows, 6);
 	ck_assert_int_eq(v->cols, 4);
 
-	/* First column: i^0 = 1 for all rows. */
+	/* First column: alpha_i^0 = 1 for all rows. */
 	for (int r = 0; r < 6; r++)
 		ck_assert_uint_eq(gf_matrix_get(v, r, 0), 1);
 
-	/* Row 0: 0^j = 1 for j=0, 0 for j>0. */
-	ck_assert_uint_eq(gf_matrix_get(v, 0, 0), 1);
-	for (int c = 1; c < 4; c++)
-		ck_assert_uint_eq(gf_matrix_get(v, 0, c), 0);
-
-	/* Row 1: 1^j = 1 for all j. */
+	/*
+	 * Row 0: alpha_0 = 1, so (1, 1^1, 1^2, 1^3) = (1, 1, 1, 1).
+	 * Under the pre-fix formula this row was (1, 0, 0, 0).
+	 */
 	for (int c = 0; c < 4; c++)
-		ck_assert_uint_eq(gf_matrix_get(v, 1, c), 1);
+		ck_assert_uint_eq(gf_matrix_get(v, 0, c), 1);
+
+	/*
+	 * Row 1: alpha_1 = 2, so (1, 2, 4, 8) -- 2, 4, 8 all fit in
+	 * GF(2^8) without polynomial reduction.  Under the pre-fix
+	 * formula this row was (1, 1, 1, 1) (identical to row 0!),
+	 * which is the exact defect the fix eliminates: two identical
+	 * rows in a Vandermonde matrix means the sub-matrix on those
+	 * rows is singular, breaking the MDS property.
+	 */
+	ck_assert_uint_eq(gf_matrix_get(v, 1, 0), 1);
+	ck_assert_uint_eq(gf_matrix_get(v, 1, 1), 2);
+	ck_assert_uint_eq(gf_matrix_get(v, 1, 2), 4);
+	ck_assert_uint_eq(gf_matrix_get(v, 1, 3), 8);
 
 	gf_matrix_destroy(v);
+}
+END_TEST
+
+/*
+ * Spec-conformance test vector from draft-haynes-nfsv4-flexfiles-v2
+ * "RS Interoperability Test Vector" (k=2, m=1).  An encoder that
+ * matches this vector byte-for-byte agrees with the draft on the
+ * GF(2^8) representation (poly 0x11d), the evaluation-point
+ * assignment (alpha_i = i+1), and the matrix normalization
+ * (E = V * T^-1, systematic top).  This is the cross-implementation
+ * interop guardrail: if this test regresses, reffs's on-wire RS
+ * parity has diverged from the spec.
+ */
+START_TEST(test_vandermonde_draft_test_vector_k2m1)
+{
+	struct gf_matrix *v = gf_matrix_vandermonde(3, 2);
+	struct gf_matrix *top = gf_matrix_create(2, 2);
+	struct gf_matrix *top_inv = gf_matrix_create(2, 2);
+	struct gf_matrix *enc = gf_matrix_create(3, 2);
+
+	ck_assert_ptr_nonnull(v);
+	ck_assert_ptr_nonnull(top);
+	ck_assert_ptr_nonnull(top_inv);
+	ck_assert_ptr_nonnull(enc);
+
+	/*
+	 * Per draft: V = [[1,1], [1,2], [1,3]].
+	 * Row 2: alpha_2 = 3, so (1, 3).
+	 */
+	ck_assert_uint_eq(gf_matrix_get(v, 0, 0), 1);
+	ck_assert_uint_eq(gf_matrix_get(v, 0, 1), 1);
+	ck_assert_uint_eq(gf_matrix_get(v, 1, 0), 1);
+	ck_assert_uint_eq(gf_matrix_get(v, 1, 1), 2);
+	ck_assert_uint_eq(gf_matrix_get(v, 2, 0), 1);
+	ck_assert_uint_eq(gf_matrix_get(v, 2, 1), 3);
+
+	/* T = top 2x2 sub-matrix = [[1,1], [1,2]]. */
+	for (int r = 0; r < 2; r++)
+		for (int c = 0; c < 2; c++)
+			gf_matrix_set(top, r, c, gf_matrix_get(v, r, c));
+
+	/*
+	 * Per draft: T_inv = [[0xF5, 0xF4], [0xF4, 0xF4]].
+	 * det(T) = 3, 3^-1 = 0xF4 in GF(2^8) with polynomial 0x11d.
+	 */
+	ck_assert_int_eq(gf_matrix_invert(top, top_inv), 0);
+	ck_assert_uint_eq(gf_matrix_get(top_inv, 0, 0), 0xF5);
+	ck_assert_uint_eq(gf_matrix_get(top_inv, 0, 1), 0xF4);
+	ck_assert_uint_eq(gf_matrix_get(top_inv, 1, 0), 0xF4);
+	ck_assert_uint_eq(gf_matrix_get(top_inv, 1, 1), 0xF4);
+
+	/*
+	 * Per draft: E = V * T_inv has identity on top and parity
+	 * generator P = [0xF4, 0xF5] on bottom (row 2).
+	 */
+	ck_assert_int_eq(gf_matrix_mul(v, top_inv, enc), 0);
+	ck_assert_uint_eq(gf_matrix_get(enc, 0, 0), 0x01);
+	ck_assert_uint_eq(gf_matrix_get(enc, 0, 1), 0x00);
+	ck_assert_uint_eq(gf_matrix_get(enc, 1, 0), 0x00);
+	ck_assert_uint_eq(gf_matrix_get(enc, 1, 1), 0x01);
+	ck_assert_uint_eq(gf_matrix_get(enc, 2, 0), 0xF4);
+	ck_assert_uint_eq(gf_matrix_get(enc, 2, 1), 0xF5);
+
+	gf_matrix_destroy(v);
+	gf_matrix_destroy(top);
+	gf_matrix_destroy(top_inv);
+	gf_matrix_destroy(enc);
 }
 END_TEST
 
@@ -149,6 +227,7 @@ Suite *matrix_suite(void)
 	tcase_add_test(tc, test_invert_roundtrip);
 	tcase_add_test(tc, test_invert_singular);
 	tcase_add_test(tc, test_vandermonde_shape);
+	tcase_add_test(tc, test_vandermonde_draft_test_vector_k2m1);
 	suite_add_tcase(s, tc);
 
 	return s;

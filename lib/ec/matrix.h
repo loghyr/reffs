@@ -49,9 +49,15 @@ int gf_matrix_mul(const struct gf_matrix *a, const struct gf_matrix *b,
 int gf_matrix_invert(const struct gf_matrix *m, struct gf_matrix *out);
 
 /*
- * gf_matrix_vandermonde -- construct a rows x cols Vandermonde matrix.
- * Element [i][j] = i^j in GF(2^8).
- * Caller must ensure rows <= 256 and cols <= 256.
+ * gf_matrix_vandermonde -- construct a rows x cols Vandermonde matrix
+ * over GF(2^8), keyed on non-zero evaluation points.
+ * Element [i][j] = (i+1)^j (so alpha_i = i+1, taking values 1..rows).
+ * The all-non-zero-alpha choice guarantees any k distinct rows form an
+ * invertible k x k Vandermonde, which is the MDS-property foundation
+ * of the Reed-Solomon Vandermonde encoding defined in
+ * draft-haynes-nfsv4-flexfiles-v2.
+ * Caller MUST ensure rows <= 255 (255 non-zero points fit in
+ * GF(2^8) \ {0}) and cols <= 256.
  */
 struct gf_matrix *gf_matrix_vandermonde(int rows, int cols);
 

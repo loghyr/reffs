@@ -174,9 +174,20 @@ struct gf_matrix *gf_matrix_vandermonde(int rows, int cols)
 	if (!m)
 		return NULL;
 
+	/*
+	 * Evaluation points are alpha_i = i + 1 (values 1..rows), all
+	 * non-zero and distinct in GF(2^8).  Row i is a geometric
+	 * progression of alpha_i: (alpha_i^0, alpha_i^1, ..., alpha_i^(cols-1)).
+	 * See draft-haynes-nfsv4-flexfiles-v2, "Reed-Solomon Vandermonde
+	 * Encoding": using non-zero evaluation points guarantees any k
+	 * distinct rows form an invertible k x k Vandermonde (MDS
+	 * property).  Caller MUST ensure rows <= 255 (255 non-zero
+	 * points fit in GF(2^8) \ {0}).
+	 */
 	for (int r = 0; r < rows; r++)
 		for (int c = 0; c < cols; c++)
-			gf_matrix_set(m, r, c, gf_pow((uint8_t)r, (uint8_t)c));
+			gf_matrix_set(m, r, c,
+				      gf_pow((uint8_t)(r + 1), (uint8_t)c));
 
 	return m;
 }
