@@ -1510,6 +1510,121 @@ START_TEST(test_layoutget_toosmall)
 }
 END_TEST
 
+/*
+ * LAYOUTGET on an ffv1 export with stripe_width = W > 1 must return
+ * an ff_layout4 with M mirrors, each containing W ff_data_server4
+ * entries -- the RFC 8435 sect. 5.1 flat M x W grid layoutget_build_v1
+ * emits.  With N = M*W data files in the segment, the builder maps
+ * seg->ls_files[m*W + w] to mirror m, stripe w.  Test uses W = 3,
+ * N = 6 -> M = 2, decodes the response body as ff_layout4, and
+ * asserts the grid geometry.  Also verifies the RFC 8435 sect. 5.1
+ * invariant that W > 1 forces ffl_stripe_unit != 0.
+ */
+START_TEST(test_layoutget_build_v1_grid)
+{
+	struct dstore_mock *dm0 = dstore_mock_alloc(30);
+	struct dstore_mock *dm1 = dstore_mock_alloc(31);
+	struct dstore_mock *dm2 = dstore_mock_alloc(32);
+
+	ck_assert_ptr_nonnull(dm0);
+	ck_assert_ptr_nonnull(dm1);
+	ck_assert_ptr_nonnull(dm2);
+
+	struct layout_segments *lss = layout_segments_alloc();
+
+	ck_assert_ptr_nonnull(lss);
+
+	uint32_t dstore_ids[6] = { 30, 31, 32, 30, 31, 32 };
+	struct layout_data_file *files = calloc(6, sizeof(*files));
+
+	ck_assert_ptr_nonnull(files);
+	for (int i = 0; i < 6; i++) {
+		files[i].ldf_dstore_id = dstore_ids[i];
+		files[i].ldf_fh_len = 4;
+		files[i].ldf_fh[0] = (uint8_t)i;
+	}
+
+	struct layout_segment seg = {
+		.ls_nfiles = 6,
+		.ls_files = files,
+		.ls_stripe_unit = 4096,
+		.ls_layout_type = LAYOUT4_FLEX_FILES,
+	};
+	ck_assert_int_eq(layout_segments_add(lss, &seg), 0);
+	inode_a->i_layout_segments = lss;
+
+	test_sb->sb_layout_types |= SB_LAYOUT_FLEX_FILES;
+
+	struct rg_ctx *ctx = make_rg_ctx(1);
+	struct compound *c = ctx->compound;
+
+	unsigned int saved_stripe_width = c->c_server_state->ss_stripe_width;
+
+	c->c_server_state->ss_stripe_width = 3;
+
+	set_compound_current_inode(ctx, inode_a);
+	c->c_nfs4_client = g_nc;
+	c->c_curr_op = 0;
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUTGET;
+
+	LAYOUTGET4args *la =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.oplayoutget;
+	la->loga_layout_type = LAYOUT4_FLEX_FILES;
+	la->loga_minlength = 0;
+	la->loga_length = UINT64_MAX;
+	la->loga_iomode = LAYOUTIOMODE4_RW;
+	la->loga_maxcount = 65536;
+
+	uint32_t ret = nfs4_op_layoutget(c);
+
+	c->c_server_state->ss_stripe_width = saved_stripe_width;
+	test_sb->sb_layout_types &= ~SB_LAYOUT_FLEX_FILES;
+
+	ck_assert_uint_eq(ret, 0);
+
+	LAYOUTGET4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayoutget;
+	ck_assert_int_eq(res->logr_status, NFS4_OK);
+	LAYOUTGET4resok *resok = &res->LAYOUTGET4res_u.logr_resok4;
+
+	ck_assert_uint_eq(resok->logr_layout.logr_layout_len, 1);
+
+	layout4 *lo = &resok->logr_layout.logr_layout_val[0];
+
+	ck_assert_int_eq(lo->lo_content.loc_type, LAYOUT4_FLEX_FILES);
+
+	ff_layout4 ffl;
+
+	memset(&ffl, 0, sizeof(ffl));
+	XDR xdrs;
+
+	xdrmem_create(&xdrs, lo->lo_content.loc_body.loc_body_val,
+		      lo->lo_content.loc_body.loc_body_len, XDR_DECODE);
+	ck_assert(xdr_ff_layout4(&xdrs, &ffl));
+	xdr_destroy(&xdrs);
+
+	/* M mirrors x W = 3 data servers per mirror, N = M*W = 6 -> M = 2. */
+	ck_assert_uint_eq(ffl.ffl_mirrors.ffl_mirrors_len, 2);
+	for (uint32_t m = 0; m < ffl.ffl_mirrors.ffl_mirrors_len; m++) {
+		ff_mirror4 *mirror = &ffl.ffl_mirrors.ffl_mirrors_val[m];
+
+		ck_assert_uint_eq(mirror->ffm_data_servers.ffm_data_servers_len,
+				  3);
+	}
+	/* RFC 8435 sect. 5.1: W > 1 requires ffl_stripe_unit != 0. */
+	ck_assert_uint_ne(ffl.ffl_stripe_unit, 0);
+
+	xdr_free((xdrproc_t)xdr_ff_layout4, (char *)&ffl);
+
+	layout_segments_free(inode_a->i_layout_segments);
+	inode_a->i_layout_segments = NULL;
+	free_rg_ctx(ctx);
+	dstore_mock_free(dm2);
+	dstore_mock_free(dm1);
+	dstore_mock_free(dm0);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Group I: LAYOUT_WCC (RFC 9766)                                     */
 /* ------------------------------------------------------------------ */
@@ -1860,6 +1975,7 @@ Suite *reflected_getattr_suite(void)
 	tcase_add_test(tc_g, test_layoutget_layout_unavailable);
 	tcase_add_test(tc_g, test_layoutget_no_dstores);
 	tcase_add_test(tc_g, test_layoutget_toosmall);
+	tcase_add_test(tc_g, test_layoutget_build_v1_grid);
 	suite_add_tcase(s, tc_g);
 
 	/* Group H: LAYOUTCOMMIT (Option B). */
