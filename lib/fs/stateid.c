@@ -38,14 +38,29 @@ static int stateid_match(struct cds_lfht_node *ht_node, const void *vkey)
 	return *key == stid->s_id;
 }
 
+/*
+ * Client-table match key: (s_id, s_cookie).  The s_id counter is per-inode
+ * (see stateid_assign), so two stateids belonging to the SAME client on
+ * DIFFERENT inodes can share s_id; disambiguating on s_cookie -- the
+ * per-instance pointer hash -- keeps cds_lfht_add_unique from wrongly
+ * rejecting the second stateid, and keeps stateid_find_client from
+ * returning the wrong one when a client happens to hold two stateids with
+ * the same s_id.  The wire (other[0..3]=s_id, other[8..11]=s_cookie) makes
+ * every caller's lookup key trivially (s_id, s_cookie) too.
+ */
+struct stateid_client_key {
+	uint32_t s_id;
+	uint32_t s_cookie;
+};
+
 /* The client table hashes s_client_node; the container offset differs. */
 static int stateid_match_client(struct cds_lfht_node *ht_node, const void *vkey)
 {
 	struct stateid *stid =
 		caa_container_of(ht_node, struct stateid, s_client_node);
-	const uint32_t *key = vkey;
+	const struct stateid_client_key *key = vkey;
 
-	return *key == stid->s_id;
+	return key->s_id == stid->s_id && key->s_cookie == stid->s_cookie;
 }
 
 /* ------------------------------------------------------------------ */
@@ -146,10 +161,15 @@ int stateid_assign(struct stateid *stid, struct inode *inode,
 			return -ESHUTDOWN;
 		}
 
+		struct stateid_client_key ckey = {
+			.s_id = stid->s_id,
+			.s_cookie = stid->s_cookie,
+		};
+
 		rcu_read_lock();
 		stid->s_state |= STID_IS_CLIENT_HASHED;
 		node = cds_lfht_add_unique(client->c_stateids, hash,
-					   stateid_match_client, &stid->s_id,
+					   stateid_match_client, &ckey,
 					   &stid->s_client_node);
 		rcu_read_unlock();
 
@@ -266,19 +286,21 @@ struct stateid *stateid_find(struct inode *inode, uint32_t id)
 	return stid;
 }
 
-struct stateid *stateid_find_client(struct client *client, uint32_t id)
+struct stateid *stateid_find_client(struct client *client, uint32_t id,
+				    uint32_t cookie)
 {
 	struct stateid *stid = NULL;
 	struct stateid *tmp;
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
 	unsigned long hash = XXH3_64bits(&id, sizeof(id));
+	struct stateid_client_key key = { .s_id = id, .s_cookie = cookie };
 
 	if (!client || !client->c_stateids)
 		return NULL;
 
 	rcu_read_lock();
-	cds_lfht_lookup(client->c_stateids, hash, stateid_match_client, &id,
+	cds_lfht_lookup(client->c_stateids, hash, stateid_match_client, &key,
 			&iter);
 	node = cds_lfht_iter_get_node(&iter);
 	if (node) {

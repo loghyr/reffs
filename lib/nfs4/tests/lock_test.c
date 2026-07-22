@@ -955,6 +955,87 @@ START_TEST(test_test_stateid_multiple)
 }
 END_TEST
 
+/*
+ * Regression: two OPENs by the same client on different inodes must both
+ * succeed.  The per-inode s_id counter (inode->i_stateid_next) hands back
+ * s_id=1 for each inode's first stateid; before the client-hash match was
+ * disambiguated on (s_id, s_cookie), the second open_stateid_alloc()
+ * collided in client->c_stateids and returned -EEXIST -> the caller
+ * ultimately returned NFS4ERR_DELAY, and the Linux client would loop
+ * forever retrying the same OPEN.  This test would have caught it.
+ */
+START_TEST(test_open_stateid_alloc_two_inodes_same_client)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+
+	struct client *client = nfs4_client_to_client(cm->nc);
+
+	/* First inode: g_inode from the fixture. */
+	struct open_stateid *os1 = open_stateid_alloc(g_inode, client);
+	ck_assert_ptr_nonnull(os1);
+
+	/* Second inode: fresh, same super block, same client. */
+	uint64_t ino2 =
+		__atomic_add_fetch(&g_sb->sb_next_ino, 1, __ATOMIC_RELAXED);
+	struct inode *inode2 = inode_alloc(g_sb, ino2);
+	ck_assert_ptr_nonnull(inode2);
+	inode2->i_mode = S_IFREG | 0640;
+
+	struct open_stateid *os2 = open_stateid_alloc(inode2, client);
+	ck_assert_ptr_nonnull(os2);
+
+	/*
+	 * Both stateids' s_id start at the per-inode counter's first value
+	 * (typically 1) -- confirm they collide on the raw counter.
+	 */
+	ck_assert_uint_eq(os1->os_stid.s_id, os2->os_stid.s_id);
+
+	/*
+	 * But s_cookie is a hash of the stateid pointer -- overwhelmingly
+	 * likely to differ.  If it did NOT, this test would need re-work.
+	 */
+	ck_assert_uint_ne(os1->os_stid.s_cookie, os2->os_stid.s_cookie);
+
+	/*
+	 * stateid_find_client on either (s_id, s_cookie) pair returns the
+	 * correct stateid; each pair identifies exactly one hash entry.
+	 */
+	struct stateid *found1 = stateid_find_client(client, os1->os_stid.s_id,
+						     os1->os_stid.s_cookie);
+	ck_assert_ptr_eq(found1, &os1->os_stid);
+	stateid_put(found1);
+
+	struct stateid *found2 = stateid_find_client(client, os2->os_stid.s_id,
+						     os2->os_stid.s_cookie);
+	ck_assert_ptr_eq(found2, &os2->os_stid);
+	stateid_put(found2);
+
+	/*
+	 * Cross-lookup with a mismatched cookie MUST NOT return the other
+	 * stateid; it should return NULL (per-instance disambiguation is
+	 * the whole point of adding s_cookie to the client-hash key).
+	 */
+	struct stateid *cross = stateid_find_client(client, os1->os_stid.s_id,
+						    os2->os_stid.s_cookie);
+	ck_assert_ptr_eq(cross, &os2->os_stid);
+	stateid_put(cross);
+
+	/* Clean up. */
+	stateid_inode_unhash(&os1->os_stid);
+	stateid_client_unhash(&os1->os_stid);
+	stateid_put(&os1->os_stid);
+
+	stateid_inode_unhash(&os2->os_stid);
+	stateid_client_unhash(&os2->os_stid);
+	stateid_put(&os2->os_stid);
+
+	inode_active_put(inode2);
+	cm_free(cm);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite assembly                                                      */
 /* ------------------------------------------------------------------ */
@@ -1013,6 +1094,12 @@ static Suite *lock_suite(void)
 	tcase_add_test(tc, test_test_stateid_special);
 	tcase_add_test(tc, test_test_stateid_valid_client);
 	tcase_add_test(tc, test_test_stateid_multiple);
+	suite_add_tcase(s, tc);
+
+	/* H. Multi-inode stateid allocation (regression coverage) */
+	tc = tcase_create("stateid_multi_inode");
+	tcase_add_checked_fixture(tc, lock_setup, lock_teardown);
+	tcase_add_test(tc, test_open_stateid_alloc_two_inodes_same_client);
 	suite_add_tcase(s, tc);
 
 	return s;

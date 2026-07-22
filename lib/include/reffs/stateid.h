@@ -62,11 +62,16 @@ int stateid_assign(struct stateid *stid, struct inode *inode,
 struct stateid *stateid_find(struct inode *inode, uint32_t id);
 
 /*
- * stateid_find_client - look up by (client, wire id), independent of
- * any filehandle.  Returns a ref-bumped pointer or NULL.  Caller must
- * stateid_put() it.
+ * stateid_find_client - look up by (client, wire id, wire cookie),
+ * independent of any filehandle.  The (id, cookie) pair is what the
+ * client echoes back in stateid4.other[0..3] and other[8..11]; both are
+ * needed to disambiguate because s_id is a per-inode counter and a
+ * client holding stateids on multiple inodes can legitimately have
+ * multiple stateids with the same s_id (different s_cookie).  Returns
+ * a ref-bumped pointer or NULL.  Caller must stateid_put() it.
  */
-struct stateid *stateid_find_client(struct client *client, uint32_t id);
+struct stateid *stateid_find_client(struct client *client, uint32_t id,
+				    uint32_t cookie);
 
 /* Bump / drop ref */
 struct stateid *stateid_get(struct stateid *stid);

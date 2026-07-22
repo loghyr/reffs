@@ -585,7 +585,7 @@ uint32_t nfs4_op_test_stateid(struct compound *compound)
 			compound->c_nfs4_client ?
 				nfs4_client_to_client(compound->c_nfs4_client) :
 				NULL,
-			id);
+			id, cookie);
 
 		if (!found) {
 			res->TEST_STATEID4res_u.tsr_resok4.tsr_status_codes
