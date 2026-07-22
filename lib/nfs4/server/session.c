@@ -696,8 +696,22 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 		xdrmem_create(&cx, (char *)ns->ns_cb_cred,
 			      sizeof(ns->ns_cb_cred), XDR_ENCODE);
 		if (xdr_authunix_parms(
-			    &cx, &sp->callback_sec_parms4_u.cbsp_sys_cred))
+			    &cx, &sp->callback_sec_parms4_u.cbsp_sys_cred)) {
 			ns->ns_cb_cred_len = (uint32_t)xdr_getpos(&cx);
+		} else {
+			/*
+			 * XDR encode of the caller-supplied AUTH_SYS parm
+			 * did not fit in ns_cb_cred (a client with an
+			 * oversize machinename or grouplist).  Callbacks
+			 * fall back to AUTH_NONE, which Linux rejects with
+			 * badcred -- silently.  Log so operators see the
+			 * cause rather than only the downstream "no
+			 * callback ever accepted" symptom.
+			 */
+			TRACE("nfs4: AUTH_SYS callback cred too large (> %zu bytes), "
+			      "falling back to AUTH_NONE",
+			      sizeof(ns->ns_cb_cred));
+		}
 		xdr_destroy(&cx);
 		break;
 	}
