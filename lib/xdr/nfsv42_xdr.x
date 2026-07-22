@@ -4863,7 +4863,7 @@ struct ffv2_data_protection4 {
  * Replaced by ffv2_data_protection4 directly.
  */
 
-enum ffv2_striping {
+enum ffv2_striping4 {
     FFV2_STRIPING_NONE = 0,
     FFV2_STRIPING_SPARSE = 1,
     FFV2_STRIPING_DENSE = 2
@@ -4876,7 +4876,7 @@ struct ffv2_stripes4 {
 struct ffv2_mirror4 {
         ffv2_coding_type4       ffm_coding_type;
         ffv2_data_protection4   ffm_protection;
-        ffv2_striping           ffm_striping;
+        ffv2_striping4          ffm_striping;
         uint32_t                ffm_striping_unit_size; /* The minimum stripe unit size is 64 bytes. */
         uint32_t                ffm_client_id;
         checksum_algorithm4     ffm_checksum_algorithm;
