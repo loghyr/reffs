@@ -871,38 +871,42 @@ static void *bs_race_reader(void *arg)
 
 	for (int i = 0; i < a->iterations; i++) {
 		/*
-		 * The production caller (io_handle_read) follows the
-		 * "drain-can't-fire-while-I-hold-a-read-op" contract --
-		 * its read-op CQE is in flight, so ci_read_count > 0,
-		 * so conn_drain_if_idle_locked is gated.  The test
-		 * deliberately exercises the *lookup* under conn_mutex
-		 * without holding an in-flight op: any UAF this would
-		 * yield comes from the lookup path itself (e.g. reading
-		 * a freed conn_info), NOT from the post-lookup pointer
-		 * dereference -- because by the time we read bs_capacity
-		 * we have already released conn_mutex and any race-with-
-		 * free has either already happened (in which case the
-		 * pointer is NULL because the lookup serialised it) or
-		 * has not yet started (in which case the bs is still
-		 * live).  This is the same lock-protected-lookup pattern
-		 * used by the conn_lifecycle_race_test reader.
+		 * Mirror the production caller (io_handle_read): hold an
+		 * in-flight read op across the lookup+touch so
+		 * conn_drain_if_idle_locked cannot fire between the get
+		 * and the deref.  Without the read-op count, the pointer
+		 * returned by io_buffer_state_get is only valid *at the
+		 * moment* the internal conn_mutex is released; dropping
+		 * conn_mutex and then dereferencing it races the churn
+		 * thread's unregister-plus-drain and is a UAF -- ASAN
+		 * catches it in ~1-in-3 runs on reffs.ci.
 		 *
-		 * ASAN is the load-bearing oracle here: if any of the
-		 * 25,000 lookup+touch iterations triggers a use-after-
-		 * free or a torn pointer, ASAN aborts.  Running cleanly
-		 * is the regression signal.
+		 * If add_read_op fails, the slot is already in CLOSING
+		 * from a churn unregister that beat us here -- production
+		 * would have gotten a stale-CQE mismatch on its own
+		 * lookup path and dropped, so we skip too.
+		 *
+		 * ASAN is the load-bearing oracle: if any of the 20,000
+		 * lookup+touch iterations triggers a use-after-free or a
+		 * torn pointer, ASAN aborts.  Running cleanly is the
+		 * regression signal.
 		 */
+		if (io_conn_add_read_op(a->fd) != 0)
+			continue;
+
 		struct buffer_state *bs = io_buffer_state_get(a->fd);
 		if (bs) {
 			/*
 			 * bs_capacity is written once at create time and
 			 * never mutated for the lifetime of this bs, so
 			 * even with concurrent realloc on bs_data the
-			 * capacity field stays valid for our window.
+			 * capacity field stays valid.  With ci_read_count
+			 * > 0 the bs itself is not freed while we read it.
 			 */
 			volatile size_t cap = bs->bs_capacity;
 			(void)cap;
 		}
+		(void)io_conn_remove_read_op(a->fd);
 	}
 	return NULL;
 }
