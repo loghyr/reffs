@@ -8,6 +8,7 @@
 #endif
 
 #include <arpa/inet.h>
+#include <assert.h>
 #include <inttypes.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -303,8 +304,16 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 		}
 	}
 
-	if (compound->c_nfs4_client &&
-	    nfs4_client_dev_notify_set(compound->c_nfs4_client,
+	/*
+	 * GETDEVICEINFO runs post-SEQUENCE on a bound session, so
+	 * compound->c_nfs4_client is always set by the SEQUENCE handler.
+	 * assert rather than defensively silently skip -- silent skip
+	 * means we echoed a grant to the client without recording the
+	 * subscription, which breaks the contract we just claimed to
+	 * honor.
+	 */
+	assert(compound->c_nfs4_client != NULL);
+	if (nfs4_client_dev_notify_set(compound->c_nfs4_client,
 				       args->gdia_layout_type, dstore_id,
 				       granted) < 0) {
 		/* echoing a grant we failed to record breaks the contract */
