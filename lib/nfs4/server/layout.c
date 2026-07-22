@@ -1872,13 +1872,25 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	}
 
 	/*
-	 * RFC 8881 section 18.43.3: loga_maxcount is the maximum layout
-	 * size the client can accept; a layout that exceeds it MUST
-	 * draw NFS4ERR_TOOSMALL.  Count the encoded logr_layout array:
-	 * the array count word, the fixed layout4 fields (offset,
-	 * length, iomode, type, body length), and the XDR-padded body.
+	 * RFC 8881 S18.43.3: loga_maxcount is the maximum layout size
+	 * the client can accept; a layout that exceeds it MUST draw
+	 * NFS4ERR_TOOSMALL.  Count the encoded logr_layout<> array:
+	 * the array count word, the fixed layout4 fields (RFC 8881
+	 * S3.3.17: lo_offset + lo_length + lo_iomode + loc_type =
+	 * 8+8+4+4 = 24 bytes) plus the loc_body opaque<> count word
+	 * (S3.3.16: 4 bytes), plus the XDR-padded body.  N=1: reffs
+	 * emits a single-element logr_layout<>, so the outer array
+	 * accounting is a single fixed+body block; when multi-segment
+	 * replies are added, iterate + sum LOGR_LAYOUT_FIXED + padded
+	 * body across segments.
 	 */
-	u_long lo_enc_size = 4 + 28 + ((xdr_size + 3) & ~3UL);
+	enum {
+		LOGR_LAYOUT_ARR_HDR = 4, /* logr_layout<> count word */
+		LOGR_LAYOUT_FIXED = 28, /* lo_offset+length+iomode
+					   * +loc_type+loc_body count */
+	};
+	u_long lo_enc_size = LOGR_LAYOUT_ARR_HDR + LOGR_LAYOUT_FIXED +
+			     ((xdr_size + 3) & ~3UL);
 
 	if (lo_enc_size > args->loga_maxcount) {
 		TRACE("LAYOUTGET: ino=%" PRIu64 " encoded layout %lu exceeds "
