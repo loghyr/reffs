@@ -410,14 +410,31 @@ unsigned int nfs4_notify_deviceid_subscribers_all(struct server_state *ss,
 	if (!ss || !ss->ss_client_ht)
 		return 0;
 
+	/*
+	 * Heap-allocate the per-client collect + build buffers ONCE for
+	 * the walk rather than reserving REFFS_CONFIG_MAX_DSTORES-sized
+	 * arrays per stack frame.  At the current 1024 cap that saves
+	 * ~36 KiB of stack; more importantly, the next bump to the
+	 * constant does not silently multiply stack pressure.  Bail
+	 * quietly on OOM -- no notifications is safe (clients survive
+	 * missed DELETEs per RFC 8881 sec 18.40.4).
+	 */
+	uint32_t *ids = calloc(REFFS_CONFIG_MAX_DSTORES, sizeof(*ids));
+	struct nfs4_cb_devnotify *items =
+		calloc(REFFS_CONFIG_MAX_DSTORES, sizeof(*items));
+
+	if (!ids || !items) {
+		free(ids);
+		free(items);
+		return 0;
+	}
+
 	rcu_read_lock();
 	cds_lfht_first(ss->ss_client_ht, &iter);
 	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
 		struct client *c =
 			caa_container_of(node, struct client, c_node);
 		struct nfs4_client *nc = client_to_nfs4(c);
-		uint32_t ids[REFFS_CONFIG_MAX_DSTORES];
-		struct nfs4_cb_devnotify items[REFFS_CONFIG_MAX_DSTORES];
 		unsigned int n;
 
 		cds_lfht_next(ss->ss_client_ht, &iter);
@@ -472,6 +489,9 @@ unsigned int nfs4_notify_deviceid_subscribers_all(struct server_state *ss,
 		client_put(c);
 	}
 	rcu_read_unlock();
+
+	free(ids);
+	free(items);
 
 	TRACE("CB_NOTIFY_DEVICEID: all-devices type=%u immediate=%d queued=%u",
 	      type, immediate, queued);
