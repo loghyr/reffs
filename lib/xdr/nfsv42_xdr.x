@@ -3404,7 +3404,16 @@ const CHECKSUM_ALG_BLAKE3    = 6;
 
 struct checksum4 {
 	checksum_algorithm4   cs_algorithm;
-	opaque                cs_value<>;
+	/*
+	 * Bound: the longest cs_value in the initial Checksum
+	 * Algorithm Registry (draft-haynes-nfsv4-flexfiles-v2 IANA
+	 * S28) is SHA-512 at 64 bytes.  Bounding decoder allocation
+	 * before semantic validation is a defence-in-depth guard
+	 * (parent draft M4).  Registering an algorithm with a
+	 * longer output would require raising the bound in a
+	 * subsequent revision.
+	 */
+	opaque                cs_value<64>;
 };
 
 struct CHUNK_COMMIT4args {
