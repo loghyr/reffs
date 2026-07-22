@@ -1442,6 +1442,74 @@ START_TEST(test_layoutget_no_dstores)
 }
 END_TEST
 
+/*
+ * LAYOUTGET with loga_maxcount smaller than the encoded layout body
+ * must fail with NFS4ERR_TOOSMALL per RFC 8881 S18.43.3.  Attaches a
+ * pre-built segment on a single dstore mock so nfs4_op_layoutget skips
+ * on-demand creation (i_layout_segments != NULL branch in layout.c),
+ * builds a minimal ffv1 body, and then hits the TOOSMALL gate at the
+ * lo_enc_size > args->loga_maxcount check.
+ */
+START_TEST(test_layoutget_toosmall)
+{
+	struct dstore_mock *dm = dstore_mock_alloc(22);
+
+	ck_assert_ptr_nonnull(dm);
+
+	inode_a->i_layout_segments = mock_layout_segments_alloc(22, 0, NULL);
+	ck_assert_ptr_nonnull(inode_a->i_layout_segments);
+	/*
+	 * Match ls_layout_type with the compound's loga_layout_type
+	 * (LAYOUT4_FLEX_FILES set below) so the build dispatch at
+	 * layout.c:1849-1876 reaches layoutget_build_v1 and the
+	 * response's lo_content.loc_type is consistent with the
+	 * segment's layout type.  mock_layout_segments_alloc leaves
+	 * this field zero, which would also fall into build_v1 but
+	 * would leave the response mis-typed.
+	 */
+	inode_a->i_layout_segments->lss_segs[0].ls_layout_type =
+		LAYOUT4_FLEX_FILES;
+
+	test_sb->sb_layout_types |= SB_LAYOUT_FLEX_FILES;
+
+	struct rg_ctx *ctx = make_rg_ctx(1);
+	struct compound *c = ctx->compound;
+
+	set_compound_current_inode(ctx, inode_a);
+	c->c_nfs4_client = g_nc;
+	c->c_curr_op = 0;
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUTGET;
+
+	LAYOUTGET4args *la =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.oplayoutget;
+	la->loga_layout_type = LAYOUT4_FLEX_FILES;
+	la->loga_minlength = 0;
+	la->loga_length = UINT64_MAX;
+	la->loga_iomode = LAYOUTIOMODE4_RW;
+	/*
+	 * 1 byte cannot hold the outer array header (4 bytes) let alone
+	 * the layout4 fixed fields (28 bytes) or the ff_layout4 body;
+	 * guaranteed to trip the enforcement check.
+	 */
+	la->loga_maxcount = 1;
+
+	uint32_t ret = nfs4_op_layoutget(c);
+
+	test_sb->sb_layout_types &= ~SB_LAYOUT_FLEX_FILES;
+
+	ck_assert_uint_eq(ret, 0);
+
+	LAYOUTGET4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayoutget;
+	ck_assert_int_eq(res->logr_status, NFS4ERR_TOOSMALL);
+
+	layout_segments_free(inode_a->i_layout_segments);
+	inode_a->i_layout_segments = NULL;
+	free_rg_ctx(ctx);
+	dstore_mock_free(dm);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Group I: LAYOUT_WCC (RFC 9766)                                     */
 /* ------------------------------------------------------------------ */
@@ -1791,6 +1859,7 @@ Suite *reflected_getattr_suite(void)
 	tcase_add_test(tc_g, test_layoutget_no_fh);
 	tcase_add_test(tc_g, test_layoutget_layout_unavailable);
 	tcase_add_test(tc_g, test_layoutget_no_dstores);
+	tcase_add_test(tc_g, test_layoutget_toosmall);
 	suite_add_tcase(s, tc_g);
 
 	/* Group H: LAYOUTCOMMIT (Option B). */
