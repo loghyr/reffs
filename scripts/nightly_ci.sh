@@ -138,6 +138,40 @@ echo "=== Nightly CI: $HOSTNAME $DATE ==="
 echo "Repo: $REPO"
 echo "Results: $LOGDIR"
 
+# -----------------------------------------------------------------------
+# Log archive pruning
+#
+# reffsd rotates its trace log to $REPO/reffsd-YYYYMMDD-HHMMSS.log.zst
+# on every restart, and this nightly restarts reffsd several times per
+# run.  Without a rotation policy the archives grow ~100 MB per nightly
+# and eventually fill /: on reffs.ci we hit 100% root after ~11 months
+# (864 files, 40 GB), which then wedged nfs-conformance mid-run because
+# reffsd could not write.  Keep the LOG_ARCHIVE_KEEP most-recent
+# reffsd-*.log.zst files by mtime and drop the rest; same policy for
+# uncompressed reffsd-*.log leftovers from killed reffsds (which reffsd
+# never rotates on its own).
+#
+# Runs before any of this run's reffsds start, so no in-flight log is
+# at risk.  Guarded by the nightly LOCKFILE (above).  Override the
+# retention with LOG_ARCHIVE_KEEP=<n> in the environment; default is
+# 30 days.
+# -----------------------------------------------------------------------
+
+LOG_ARCHIVE_KEEP=${LOG_ARCHIVE_KEEP:-30}
+if [ -d "$REPO" ]; then
+    _pruned_zst=$(ls -t "$REPO"/reffsd-*.log.zst 2>/dev/null \
+        | tail -n +$((LOG_ARCHIVE_KEEP + 1)))
+    _pruned_raw=$(ls -t "$REPO"/reffsd-*.log 2>/dev/null \
+        | tail -n +$((LOG_ARCHIVE_KEEP + 1)))
+    _pruned_all=$(printf '%s\n%s\n' "$_pruned_zst" "$_pruned_raw" \
+        | sed '/^$/d')
+    if [ -n "$_pruned_all" ]; then
+        _pruned_n=$(echo "$_pruned_all" | wc -l)
+        echo "$_pruned_all" | xargs rm -f
+        echo "Log archive prune: dropped $_pruned_n files, kept ${LOG_ARCHIVE_KEEP} most recent"
+    fi
+fi
+
 PASSED=0
 FAILED=0
 SKIPPED=0
