@@ -153,6 +153,17 @@ AC_CHECK_DECLS([pipe2], [AC_DEFINE([HAVE_PIPE2], [1],
 # rather than link-test for the same reason as accept4 / pipe2 above.
 AC_CHECK_DECLS([fdatasync], [], [], [[#include <unistd.h>]])
 
+# HAVE_ASSEMBLY drives Andrea Mazzoleni's vendored SnapRAID raid/ library
+# (lib/ec/snapraid-raid/) -- his internal.h uses this to gate the
+# CONFIG_X86 / CONFIG_X86_64 / CONFIG_NEON compile-time enables and the
+# gfconst16 struct that the per-arch SIMD files reference.  reffs targets
+# platforms that all support inline asm, so we always enable it and let
+# Andrea's compiler-predefine autodetect (__x86_64__, __ARM_NEON, etc.)
+# pick the right dispatch tables.  Users who need to disable can rebuild
+# with -DHAVE_ASSEMBLY=0 in CFLAGS.
+AC_DEFINE([HAVE_ASSEMBLY], [1],
+    [Define to 1 to enable inline assembly in the vendored SnapRAID raid/ library.])
+
 AC_MSG_CHECKING([for C11 support])
 dnl Strip out the freaking -O2 by default!
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM([],[])],
@@ -846,6 +857,7 @@ AC_CONFIG_FILES([
 	lib/config/tests/Makefile
 	lib/backends/Makefile
 	lib/ec/Makefile
+	lib/ec/snapraid-raid/Makefile
 	lib/ec/tests/Makefile
 	lib/nfs4/common/Makefile
 	lib/nfs4/server/Makefile
