@@ -948,6 +948,7 @@ int super_block_set_default_coding(struct super_block *sb,
 	case REFFS_ENCODING_MOJETTE_NON_SYSTEMATIC:
 	case REFFS_ENCODING_RS_VANDERMONDE:
 	case REFFS_ENCODING_MIRRORED:
+	case REFFS_ENCODING_SNAPRAID_CAUCHY:
 		break;
 	default:
 		return -EINVAL;

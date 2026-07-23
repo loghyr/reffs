@@ -73,6 +73,33 @@ Then update the pinned SHA at the top of this file, and re-run
 original SPDX + copyright headers; the refresh script must
 preserve them.
 
+## Field polynomial
+
+Andrea's `raid.h:42-46` supports two GF(2^8) primitive polynomials
+gated on a compile-time `USE_RAID_AES` define:
+
+- **default (`USE_RAID_AES` undefined) -> `RAID_POLY = 0x1d`**
+  (x^8 + x^4 + x^3 + x^2 + 1) -- the standard Linux md RAID
+  polynomial and the same field reffs's ec_rs already uses.
+- opt-in `-DUSE_RAID_AES -> RAID_POLY = 0x1b` (x^8 + x^4 + x^3 +
+  x + 1) -- the AES polynomial.  Enables Intel GFNI's
+  `vgf2p8mulb` single-instruction GF(2^8) multiply on Ice Lake
+  and later CPUs, materially faster on GFNI hardware.  **Trade-
+  off: parity generated with one polynomial cannot be decoded
+  with the other**, and 0x1b is incompatible with every other
+  RAID / erasure implementation on the planet.
+
+reffs uses the default 0x1d.  We do NOT define `USE_RAID_AES`
+anywhere; the `#ifdef USE_RAID_AES` hits in `tables.c` and
+`gfni.c` are just Andrea's alternate branches sitting cold.
+
+Any future move to 0x1b would need to be spelled out in the
+IETF draft's on-wire encoding definition AND would break
+interop with every non-reffs FFv2 implementation, so this is a
+"never on-wire" flag for us.  If we ever want the GFNI single-
+instruction perf, it stays inside a client-only side channel
+that isn't part of the wire format.
+
 ## Reffs-side additions
 
 Files in this directory that are NOT from upstream:

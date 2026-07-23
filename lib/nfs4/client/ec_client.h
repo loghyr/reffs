@@ -852,6 +852,8 @@ enum ec_encoding_type {
 	EC_ENCODING_MOJETTE_NONSYS = 2, /* Mojette non-systematic */
 	EC_ENCODING_STRIPE = 3, /* pure striping, no redundancy */
 	EC_ENCODING_MIRROR = 4, /* N replicas via FFV2_ENCODING_MIRRORED */
+	EC_ENCODING_SNAPRAID =
+		5, /* SnapRAID Cauchy (vendored raid/, GF(2^8) poly 0x1d) */
 };
 
 int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,

@@ -872,6 +872,10 @@ _Static_assert(
 	"REFFS_ENCODING_RS_VANDERMONDE must match FFV2_ENCODING_RS_VANDERMONDE");
 _Static_assert((int)REFFS_ENCODING_MIRRORED == (int)FFV2_ENCODING_MIRRORED,
 	       "REFFS_ENCODING_MIRRORED must match FFV2_ENCODING_MIRRORED");
+_Static_assert(
+	(int)REFFS_ENCODING_SNAPRAID_CAUCHY ==
+		(int)FFV2_ENCODING_SNAPRAID_CAUCHY,
+	"REFFS_ENCODING_SNAPRAID_CAUCHY must match FFV2_ENCODING_SNAPRAID_CAUCHY");
 
 /*
  * Resolve the target layout width from the sb's default_coding,

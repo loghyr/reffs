@@ -496,6 +496,18 @@ ec_create_encoding(int k, int m, enum ec_encoding_type encoding_type)
 		 * on output.
 		 */
 		return ec_mirror_create(k);
+	case EC_ENCODING_SNAPRAID:
+		/*
+		 * Wire-side: FFV2_ENCODING_SNAPRAID_CAUCHY.  Extended
+		 * Cauchy matrix in GF(2^8) with primitive polynomial
+		 * 0x1d (see lib/ec/snapraid-raid/NOTICE.md for the
+		 * polynomial discussion and lib/ec/snapraid.c for the
+		 * ec_encoding wrapper).  Uniform shard sizes, so the
+		 * pipeline treats it the same as EC_ENCODING_RS on
+		 * the non-mirror / non-nonsys branches.  Caps: k <= 251,
+		 * m <= 6.
+		 */
+		return ec_snapraid_create(k, m);
 	default:
 		return NULL;
 	}
