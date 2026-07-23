@@ -129,6 +129,25 @@ struct ec_encoding *ec_stripe_create(int k);
 struct ec_encoding *ec_mirror_create(int k);
 
 /*
+ * ec_snapraid_create -- create a SnapRAID Cauchy encoding.  Wraps
+ * Andrea Mazzoleni's vendored raid/ library (lib/ec/snapraid-raid/,
+ * GPL-2.0-or-later).  Extended-Cauchy matrix in GF(2^8) with
+ * primitive polynomial 0x11d; first two rows reproduce Linux md
+ * RAID-5 / RAID-6 coefficients (compatible-superset property).
+ *
+ * k: number of data shards (1..251).
+ * m: number of parity shards (1..6).
+ *
+ * Returns an initialized encoding, or NULL on failure.  The caller
+ * must call ec_encoding_destroy() when done.
+ *
+ * See ~/Documents/reffs-docs/snapraid-evaluation.md for the license
+ * and adoption rationale, and lib/ec/snapraid-raid/NOTICE.md for the
+ * upstream pin.
+ */
+struct ec_encoding *ec_snapraid_create(int k, int m);
+
+/*
  * ec_encoding_destroy -- release a encoding and all internal state.
  */
 void ec_encoding_destroy(struct ec_encoding *encoding);
