@@ -12,16 +12,16 @@
  * SnapRAID Cauchy across a small (k, m, shard_size) sweep.  Reports
  * throughput in MB/s per encoding per cell.
  *
- * Motivation: Christoph flagged the RS numbers as "bad" at the
- * 2026-07-22 pre-IETF-126 meeting.  The existing ec_benchmark.sh
- * paths bake in reffsd + NFS RPC + TLS + layout-fetch cost, so a
- * throughput regression / advantage on the encoding side is buried
- * under transport noise.  This tool isolates the encoding call from
+ * Motivation: an IETF-126 pre-meeting review flagged the RS
+ * numbers as "bad".  The existing ec_benchmark.sh paths bake in
+ * reffsd + NFS RPC + TLS + layout-fetch cost, so a throughput
+ * regression / advantage on the encoding side is buried under
+ * transport noise.  This tool isolates the encoding call from
  * every non-arithmetic cost -- the same shape moj_bench uses for
  * Mojette.
  *
- * Also answers Christoph's "run ec_demo on local files as a
- * baseline" ask at a scope small enough to iterate on: same
+ * Also answers the "run ec_demo on local files as a baseline"
+ * review ask at a scope small enough to iterate on: same
  * pointer-array + heap-shard shape ec_pipeline uses, no file I/O,
  * no transport, no configuration.
  *
@@ -292,6 +292,8 @@ int main(int argc, char **argv)
 		 * NULL here just means "skip the XOR row for this geom". */
 		struct ec_encoding *xr = (g->m == 1) ? ec_xor_create(g->k) :
 						       NULL;
+		struct ec_encoding *md =
+			(g->m == 2) ? ec_linux_md_create(g->k) : NULL;
 
 		if (!rs || !sr) {
 			fprintf(stderr,
@@ -303,6 +305,8 @@ int main(int argc, char **argv)
 				ec_encoding_destroy(sr);
 			if (xr)
 				ec_encoding_destroy(xr);
+			if (md)
+				ec_encoding_destroy(md);
 			continue;
 		}
 		for (const size_t *sz = sizes; *sz; sz++) {
@@ -313,11 +317,16 @@ int main(int argc, char **argv)
 			if (xr)
 				bench_one("xor-parity", xr, g->k, 1, *sz, iters,
 					  warmup);
+			if (md)
+				bench_one("linux-md-raid6", md, g->k, 2, *sz,
+					  iters, warmup);
 		}
 		ec_encoding_destroy(rs);
 		ec_encoding_destroy(sr);
 		if (xr)
 			ec_encoding_destroy(xr);
+		if (md)
+			ec_encoding_destroy(md);
 		printf("\n");
 	}
 	return 0;

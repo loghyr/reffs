@@ -950,6 +950,7 @@ int super_block_set_default_coding(struct super_block *sb,
 	case REFFS_ENCODING_MIRRORED:
 	case REFFS_ENCODING_SNAPRAID_CAUCHY:
 	case REFFS_ENCODING_XOR_PARITY:
+	case REFFS_ENCODING_LINUX_MD_RAID:
 		break;
 	default:
 		return -EINVAL;

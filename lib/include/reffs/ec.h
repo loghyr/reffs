@@ -148,6 +148,24 @@ struct ec_encoding *ec_mirror_create(int k);
 struct ec_encoding *ec_xor_create(int k);
 
 /*
+ * ec_linux_md_create -- create a Linux md/raid6 P+Q double-parity
+ * encoding (FFV2_ENCODING_LINUX_MD_RAID on the wire).  Wraps the
+ * vendored Linux md raid6 library at lib/ec/linux-md-raid/
+ * (H. Peter Anvin 2002 onward, GPL-2.0-or-later).
+ *
+ * k: number of data shards (1..253).  Parity count is always 2
+ * (P = XOR of all data, Q = 2^i-weighted sum in GF(2^8)).  Field
+ * GF(2^8) with primitive polynomial 0x1d -- same field as
+ * ec_rs_create and ec_snapraid_create.
+ *
+ * Returns an initialized encoding, or NULL on failure.
+ *
+ * See ~/Documents/reffs-docs/ffv2-encoding-menu.md
+ * FFV2_ENCODING_LINUX_MD_RAID (proposed 0x8).
+ */
+struct ec_encoding *ec_linux_md_create(int k);
+
+/*
  * ec_snapraid_create -- create a SnapRAID Cauchy encoding.  Wraps
  * Andrea Mazzoleni's vendored raid/ library (lib/ec/snapraid-raid/,
  * GPL-2.0-or-later).  Extended-Cauchy matrix in GF(2^8) with

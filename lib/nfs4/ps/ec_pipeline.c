@@ -519,6 +519,17 @@ ec_create_encoding(int k, int m, enum ec_encoding_type encoding_type)
 		 * MTI rationale.
 		 */
 		return ec_xor_create(k);
+	case EC_ENCODING_LINUX_MD:
+		/*
+		 * Wire-side: FFV2_ENCODING_LINUX_MD_RAID (proposed
+		 * 0x8).  Linux md/raid6 P+Q double-parity from the
+		 * vendored library at lib/ec/linux-md-raid/.  m is
+		 * always 2 -- the caller's m argument is ignored
+		 * (see ec_linux_md_create).  Field GF(2^8) with
+		 * primitive polynomial 0x1d, same as RS_VANDERMONDE
+		 * and SNAPRAID_CAUCHY.
+		 */
+		return ec_linux_md_create(k);
 	default:
 		return NULL;
 	}
