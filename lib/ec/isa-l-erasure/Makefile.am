@@ -1,17 +1,113 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Vendored Intel ISA-L erasure_code/ subset (portable-C only,
-# no NASM).  Sources carry Intel's BSD-3-Clause -- see NOTICE.md.
+# Vendored Intel ISA-L erasure_code/ subset.  Sources carry
+# Intel's BSD-3-Clause -- see NOTICE.md.
 #
-# Slice 7.3 will add the SIMD tree + configure.ac AC_CHECK_PROG(NASM)
-# gate.  For now the build is portable-C uniformly.
+# Slice 7.1 landed portable-C only.  Slice 7.3 adds the x86
+# SIMD tree behind HAVE_ISA_L_X86_SIMD (host is x86_64 AND
+# NASM assembler is available).  aarch64 NEON is deferred to
+# a follow-up sub-slice.
 
 noinst_LTLIBRARIES = libreffs_isa_l_erasure.la
 
+# Portable-C baseline (Slice 7.1).  Always compiled.
 libreffs_isa_l_erasure_la_SOURCES = \
-	erasure_code/ec_base.c \
-	erasure_code/ec_base_aliases.c
+	erasure_code/ec_base.c
+
+# When SIMD is NOT active, ec_base_aliases.c aliases the public
+# API (ec_encode_data, ec_init_tables, gf_vect_*) to their
+# _base implementations.  When SIMD IS active, those aliases
+# collide with the multibinary dispatch entries in
+# ec_multibinary.asm / ec_highlevel_func.c, so drop them.
+if !HAVE_ISA_L_X86_SIMD
+libreffs_isa_l_erasure_la_SOURCES += erasure_code/ec_base_aliases.c
+endif
+
+# x86 SIMD path (Slice 7.3).  72 gf_*.asm files + the runtime
+# dispatcher (ec_multibinary.asm) + the high-level function
+# hooks (ec_highlevel_func.c).  Every .asm assembles through
+# NASM (see .asm.lo rule below); the .c compiles as normal.
+if HAVE_ISA_L_X86_SIMD
+libreffs_isa_l_erasure_la_SOURCES += \
+	erasure_code/ec_highlevel_func.c \
+	erasure_code/gf_vect_mul_sse.asm \
+	erasure_code/gf_vect_mul_avx.asm \
+	erasure_code/gf_vect_mul_avx2_gfni.asm \
+	erasure_code/gf_vect_dot_prod_sse.asm \
+	erasure_code/gf_vect_dot_prod_avx.asm \
+	erasure_code/gf_vect_dot_prod_avx2.asm \
+	erasure_code/gf_vect_dot_prod_avx2_gfni.asm \
+	erasure_code/gf_vect_dot_prod_avx512.asm \
+	erasure_code/gf_vect_dot_prod_avx512_gfni.asm \
+	erasure_code/gf_2vect_dot_prod_sse.asm \
+	erasure_code/gf_2vect_dot_prod_avx.asm \
+	erasure_code/gf_2vect_dot_prod_avx2.asm \
+	erasure_code/gf_2vect_dot_prod_avx2_gfni.asm \
+	erasure_code/gf_2vect_dot_prod_avx512.asm \
+	erasure_code/gf_2vect_dot_prod_avx512_gfni.asm \
+	erasure_code/gf_3vect_dot_prod_sse.asm \
+	erasure_code/gf_3vect_dot_prod_avx.asm \
+	erasure_code/gf_3vect_dot_prod_avx2.asm \
+	erasure_code/gf_3vect_dot_prod_avx2_gfni.asm \
+	erasure_code/gf_3vect_dot_prod_avx512.asm \
+	erasure_code/gf_3vect_dot_prod_avx512_gfni.asm \
+	erasure_code/gf_4vect_dot_prod_sse.asm \
+	erasure_code/gf_4vect_dot_prod_avx.asm \
+	erasure_code/gf_4vect_dot_prod_avx2.asm \
+	erasure_code/gf_4vect_dot_prod_avx2_gfni.asm \
+	erasure_code/gf_4vect_dot_prod_avx512.asm \
+	erasure_code/gf_4vect_dot_prod_avx512_gfni.asm \
+	erasure_code/gf_5vect_dot_prod_sse.asm \
+	erasure_code/gf_5vect_dot_prod_avx.asm \
+	erasure_code/gf_5vect_dot_prod_avx2.asm \
+	erasure_code/gf_5vect_dot_prod_avx2_gfni.asm \
+	erasure_code/gf_5vect_dot_prod_avx512.asm \
+	erasure_code/gf_5vect_dot_prod_avx512_gfni.asm \
+	erasure_code/gf_6vect_dot_prod_sse.asm \
+	erasure_code/gf_6vect_dot_prod_avx.asm \
+	erasure_code/gf_6vect_dot_prod_avx2.asm \
+	erasure_code/gf_6vect_dot_prod_avx2_gfni.asm \
+	erasure_code/gf_6vect_dot_prod_avx512.asm \
+	erasure_code/gf_6vect_dot_prod_avx512_gfni.asm \
+	erasure_code/gf_vect_mad_sse.asm \
+	erasure_code/gf_vect_mad_avx.asm \
+	erasure_code/gf_vect_mad_avx2.asm \
+	erasure_code/gf_vect_mad_avx2_gfni.asm \
+	erasure_code/gf_vect_mad_avx512.asm \
+	erasure_code/gf_vect_mad_avx512_gfni.asm \
+	erasure_code/gf_2vect_mad_sse.asm \
+	erasure_code/gf_2vect_mad_avx.asm \
+	erasure_code/gf_2vect_mad_avx2.asm \
+	erasure_code/gf_2vect_mad_avx2_gfni.asm \
+	erasure_code/gf_2vect_mad_avx512.asm \
+	erasure_code/gf_2vect_mad_avx512_gfni.asm \
+	erasure_code/gf_3vect_mad_sse.asm \
+	erasure_code/gf_3vect_mad_avx.asm \
+	erasure_code/gf_3vect_mad_avx2.asm \
+	erasure_code/gf_3vect_mad_avx2_gfni.asm \
+	erasure_code/gf_3vect_mad_avx512.asm \
+	erasure_code/gf_3vect_mad_avx512_gfni.asm \
+	erasure_code/gf_4vect_mad_sse.asm \
+	erasure_code/gf_4vect_mad_avx.asm \
+	erasure_code/gf_4vect_mad_avx2.asm \
+	erasure_code/gf_4vect_mad_avx2_gfni.asm \
+	erasure_code/gf_4vect_mad_avx512.asm \
+	erasure_code/gf_4vect_mad_avx512_gfni.asm \
+	erasure_code/gf_5vect_mad_sse.asm \
+	erasure_code/gf_5vect_mad_avx.asm \
+	erasure_code/gf_5vect_mad_avx2.asm \
+	erasure_code/gf_5vect_mad_avx2_gfni.asm \
+	erasure_code/gf_5vect_mad_avx512.asm \
+	erasure_code/gf_5vect_mad_avx512_gfni.asm \
+	erasure_code/gf_6vect_mad_sse.asm \
+	erasure_code/gf_6vect_mad_avx.asm \
+	erasure_code/gf_6vect_mad_avx2.asm \
+	erasure_code/gf_6vect_mad_avx2_gfni.asm \
+	erasure_code/gf_6vect_mad_avx512.asm \
+	erasure_code/gf_6vect_mad_avx512_gfni.asm \
+	erasure_code/ec_multibinary.asm
+endif
 
 # -I$(srcdir)/include lets sources find <erasure_code.h> and
 # <gf_vect_mul.h>.  -I$(srcdir)/erasure_code lets ec_base.c
@@ -41,8 +137,38 @@ AM_CPPFLAGS = -I$(srcdir)/include \
 # nuclear -w and lean on Intel's own upstream CI for correctness.
 AM_CFLAGS = -w
 
+# NASM assembly rule.  ISA-L's .asm sources use NASM syntax with
+# ELF64 (Linux) or MACHO64 (macOS) output formats.  Automake does
+# not natively support NASM; drive it manually and hand the
+# resulting .o off to libtool through the -.libs/-copy trick that
+# lets libtool consume a pre-existing object.
+if HAVE_ISA_L_X86_SIMD
+NASM_INCLUDES = -I$(srcdir)/include/ -I$(srcdir)/erasure_code/
+if HOST_DARWIN
+NASM_FORMAT = -f macho64 --prefix _
+else
+NASM_FORMAT = -f elf64
+endif
+NASM_FLAGS = $(NASM_FORMAT) $(NASM_INCLUDES) -DHAVE_AS_KNOWS_AVX512 \
+	-DAS_FEATURE_LEVEL=10
+
+# Assemble .asm -> .lo.  Libtool's --tag=CC --mode=compile does
+# not directly drive NASM, so build the .o ourselves and stage
+# it under .libs/ + write the .lo pseudo-file so libtool's link
+# stage picks it up.
+.asm.lo:
+	@mkdir -p $(@D)/.libs
+	$(NASM) $(NASM_FLAGS) -o $(@D)/.libs/$(*F).o $<
+	@echo "# Generated by NASM rule in isa-l-erasure/Makefile.am" > $@
+	@echo "pic_object='.libs/$(*F).o'" >> $@
+	@echo "non_pic_object='none'" >> $@
+endif
+
 EXTRA_DIST = NOTICE.md LICENSE \
 	erasure_code/ec_base.h \
 	include/erasure_code.h \
 	include/gf_vect_mul.h \
-	include/isal_api.h
+	include/isal_api.h \
+	include/reg_sizes.asm \
+	include/multibinary.asm \
+	include/aarch64_multibinary.h

@@ -147,6 +147,20 @@ AS_CASE([$host_cpu],
 AM_CONDITIONAL([HAVE_MD_X86_SIMD],  [test "x$have_md_x86_simd" = "xyes"])
 AM_CONDITIONAL([HAVE_MD_NEON_SIMD], [test "x$have_md_neon_simd" = "xyes"])
 
+# ISA-L erasure_code/ SIMD gate.  Slice 7.3 adds the AVX / AVX-2
+# / AVX-512 (with GFNI variants) x86 SIMD sources; those are NASM
+# .asm files that need the NASM assembler to build.  When NASM is
+# absent OR host is not x86_64, the sub-library falls back to
+# portable-C only (Slice 7.1 baseline).  aarch64 NEON support in
+# ISA-L uses .S files (no NASM) but adds its own runtime
+# dispatcher; deferred to a follow-up sub-slice to keep this one
+# scoped to Christoph's flagged Intel GFNI target.
+AC_CHECK_PROG([NASM], [nasm], [nasm])
+have_isa_l_x86_simd=no
+AS_IF([test "x$have_md_x86_simd" = "xyes" && test "x$NASM" != "x"],
+    [have_isa_l_x86_simd=yes])
+AM_CONDITIONAL([HAVE_ISA_L_X86_SIMD], [test "x$have_isa_l_x86_simd" = "xyes"])
+
 # POSIX extensions accept4(2) and pipe2(2) are Linux and FreeBSD
 # extensions; Darwin has only accept(2) / pipe(2).  Use AC_CHECK_DECLS
 # (header-only probe) instead of AC_CHECK_FUNCS (link-test probe) --
