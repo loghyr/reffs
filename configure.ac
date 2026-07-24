@@ -132,6 +132,21 @@ AS_CASE([$host_os],
 AM_CONDITIONAL([HOST_FREEBSD], [test "x$host_is_freebsd" = "xyes"])
 AM_CONDITIONAL([HOST_DARWIN],  [test "x$host_is_darwin"  = "xyes"])
 
+# Per-arch SIMD gates for the vendored Linux md/raid6 library
+# (lib/ec/linux-md-raid/).  Slice 6.3 enables SSE2/AVX2/AVX-512 on
+# x86_64 and NEON on aarch64; other arches stay portable-C only.
+# The sub-library's Makefile.am uses these conditionals to select
+# which SIMD .c files enter the build and to gate off the
+# `-D__arch_um__=1` fallback (which is only needed when NO SIMD is
+# available to satisfy algos.c's arch-block references).
+have_md_x86_simd=no
+have_md_neon_simd=no
+AS_CASE([$host_cpu],
+    [x86_64|amd64],  [have_md_x86_simd=yes],
+    [aarch64|arm64], [have_md_neon_simd=yes])
+AM_CONDITIONAL([HAVE_MD_X86_SIMD],  [test "x$have_md_x86_simd" = "xyes"])
+AM_CONDITIONAL([HAVE_MD_NEON_SIMD], [test "x$have_md_neon_simd" = "xyes"])
+
 # POSIX extensions accept4(2) and pipe2(2) are Linux and FreeBSD
 # extensions; Darwin has only accept(2) / pipe(2).  Use AC_CHECK_DECLS
 # (header-only probe) instead of AC_CHECK_FUNCS (link-test probe) --

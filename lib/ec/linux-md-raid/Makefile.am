@@ -11,8 +11,9 @@
 # lib/raid6/test/Makefile so the userspace-portable subset builds
 # without any kernel headers.
 #
-# SIMD variants (avx2/avx512/sse2/neon and their recov_*) deferred
-# to a later slice -- see NOTICE.md "What lands (planned)".
+# Slice 6.3 adds x86 (SSE2 / AVX2 / AVX-512) and aarch64 (NEON)
+# SIMD variants behind HAVE_MD_X86_SIMD / HAVE_MD_NEON_SIMD
+# conditionals from configure.ac.
 
 noinst_LTLIBRARIES = libreffs_linux_md_raid.la
 
@@ -26,21 +27,47 @@ nodist_libreffs_linux_md_raid_la_SOURCES = \
 	int1.c int2.c int4.c int8.c int16.c int32.c \
 	tables.c
 
+# Slice 6.3 x86 SIMD (SSE2 / AVX2 / AVX-512) -- 8 files + x86.h.
+# Per-file arch flags below.
+if HAVE_MD_X86_SIMD
+libreffs_linux_md_raid_la_SOURCES += \
+	mmx.c sse1.c sse2.c avx2.c avx512.c \
+	recov_ssse3.c recov_avx2.c recov_avx512.c
+endif
+
+# Slice 6.3 aarch64 NEON -- neon.c dispatcher + recov_neon.c +
+# recov_neon_inner.c, plus neon{1,2,4,8}.c generated from neon.uc.
+if HAVE_MD_NEON_SIMD
+libreffs_linux_md_raid_la_SOURCES += \
+	neon.c recov_neon.c recov_neon_inner.c
+nodist_libreffs_linux_md_raid_la_SOURCES += \
+	neon1.c neon2.c neon4.c neon8.c
+endif
+
 # -I. lets sources find our vendored pq.h at linux/raid/pq.h
 # via the standard #include <linux/raid/pq.h>.
 #
-# Slice 6.1 vendored the portable-C sources only; SIMD variants
-# come with Slice 6.3.  algos.c's dispatch table references SIMD
-# symbols (raid6_sse2x1 etc.) inside
-# `#if defined(__x86_64__) && !defined(__arch_um__)`.  On any
-# x86_64 Linux this pulls in symbols we deliberately did not
-# vendor, and the linker fails.  Define __arch_um__ (User-mode
-# Linux flag) on the sub-library to gate ALL arch-specific
-# SIMD blocks OUT uniformly, matching the "portable-C only"
-# Slice 6.1 scope.  The same guard covers __i386__ paths and
-# leaves ALTIVEC / S390 / NEON blocks alone (those use their
-# own CONFIG_* guards which are never defined in userspace).
+# When NEITHER x86 nor NEON SIMD is available on this host,
+# define __arch_um__=1 so algos.c's arch-specific dispatch
+# blocks (`#if defined(__x86_64__) && !defined(__arch_um__)`)
+# gate OUT their references to SIMD symbols we did not build.
+# When SIMD IS built for this arch, leave __arch_um__ undefined
+# so the arch block activates and picks up the new SIMD entries.
+if HAVE_MD_X86_SIMD
+# On x86_64 algos.c's `#if defined(__x86_64__)` block activates
+# naturally on the compiler-defined arch macro.  Nothing extra.
+AM_CPPFLAGS = -I$(srcdir)
+else
+if HAVE_MD_NEON_SIMD
+# aarch64 has no compiler-defined arch macro that matches Linux
+# md's NEON block; the kernel gates on CONFIG_KERNEL_MODE_NEON.
+# Define it here so algos.c and recov.c both wire in the NEON
+# dispatch entries we just built.
+AM_CPPFLAGS = -I$(srcdir) -DCONFIG_KERNEL_MODE_NEON=1
+else
 AM_CPPFLAGS = -I$(srcdir) -D__arch_um__=1
+endif
+endif
 
 # Silence all warnings for the vendored subtree via -w.  Linux md
 # uses kernel coding conventions (signed int loop counters, KR-style
@@ -66,6 +93,18 @@ int16.c: int.uc unroll.awk
 int32.c: int.uc unroll.awk
 	$(AWK) -f $(srcdir)/unroll.awk -vN=32 < $(srcdir)/int.uc > $@
 
+# neon.uc is the aarch64 NEON template.  Same unroll pattern as
+# int.uc; NEON needs unroll factors 1, 2, 4, 8 (matches the
+# raid6_neonx{1,2,4,8} dispatch entries in neon.c).
+neon1.c: neon.uc unroll.awk
+	$(AWK) -f $(srcdir)/unroll.awk -vN=1 < $(srcdir)/neon.uc > $@
+neon2.c: neon.uc unroll.awk
+	$(AWK) -f $(srcdir)/unroll.awk -vN=2 < $(srcdir)/neon.uc > $@
+neon4.c: neon.uc unroll.awk
+	$(AWK) -f $(srcdir)/unroll.awk -vN=4 < $(srcdir)/neon.uc > $@
+neon8.c: neon.uc unroll.awk
+	$(AWK) -f $(srcdir)/unroll.awk -vN=8 < $(srcdir)/neon.uc > $@
+
 # mktables is a userspace program that prints the GF-multiply +
 # log/exp tables as a C source file.  Run it at build time to
 # generate tables.c.  Using $(CC) (target compiler) since reffs
@@ -77,8 +116,41 @@ mktables$(EXEEXT): mktables.c
 tables.c: mktables$(EXEEXT)
 	./mktables$(EXEEXT) > $@
 
+# Per-file arch flags for the x86 SIMD variants.  Kernel Makefile
+# uses `CFLAGS_avx2.o += -mavx2` etc.; the automake analogue is
+# target-specific AM_CFLAGS on the .lo target.  These fire only
+# when the corresponding source is in SOURCES, so they are safe
+# to keep unconditionally.
+sse1.lo:        AM_CFLAGS += -msse
+sse2.lo:        AM_CFLAGS += -msse2
+recov_ssse3.lo: AM_CFLAGS += -mssse3
+avx2.lo:        AM_CFLAGS += -mavx2
+recov_avx2.lo:  AM_CFLAGS += -mavx2
+avx512.lo:      AM_CFLAGS += -mavx512f -mavx512bw
+recov_avx512.lo: AM_CFLAGS += -mavx512f -mavx512bw
+# mmx.c uses MMX intrinsics via <mmintrin.h>; on x86_64 MMX is
+# implicitly available but the .c uses -mmmx explicitly in Linux.
+mmx.lo:         AM_CFLAGS += -mmmx
+
+# neon1..8.c compile with -march=armv8-a+simd on aarch64.
+neon.lo:              AM_CFLAGS += -march=armv8-a+simd
+neon1.lo:             AM_CFLAGS += -march=armv8-a+simd
+neon2.lo:             AM_CFLAGS += -march=armv8-a+simd
+neon4.lo:             AM_CFLAGS += -march=armv8-a+simd
+neon8.lo:             AM_CFLAGS += -march=armv8-a+simd
+# recov_neon.c calls __raid6_{2data,datap}_recov_neon() (defined in
+# recov_neon_inner.c) but only #includes their forward-decl header
+# (neon.h) under `#ifdef __KERNEL__`.  In userspace the calls hit
+# implicit-declaration -Werror.  Force-include neon.h to satisfy
+# the decls without touching the vendored source.
+recov_neon.lo:        AM_CFLAGS += -march=armv8-a+simd \
+	-include $(srcdir)/neon.h
+recov_neon_inner.lo:  AM_CFLAGS += -march=armv8-a+simd
+
 # Cleanup generated files.
 CLEANFILES = int1.c int2.c int4.c int8.c int16.c int32.c \
+	neon1.c neon2.c neon4.c neon8.c \
 	tables.c mktables$(EXEEXT)
 
-EXTRA_DIST = NOTICE.md int.uc mktables.c unroll.awk linux/raid/pq.h
+EXTRA_DIST = NOTICE.md int.uc neon.uc mktables.c unroll.awk \
+	linux/raid/pq.h neon.h x86.h
