@@ -46,6 +46,18 @@
 #define LINUX_MD_MAX_DATA 253 /* k + 2 <= 255 for size + P + Q indexing */
 
 /*
+ * The vendored raid6 SIMD dispatchers (sse2, avx2, avx512, neon)
+ * are hand-unrolled around n >= 4 disks (2 data + P + Q or more).
+ * At k=1, n=3 disks the SSE2/AVX* paths read past the k-th data
+ * shard's end and either segfault or produce wrong bytes (mana's
+ * scalar int64x2 path handles it fine; shadow's avx2x2 does not).
+ * k=1 has no practical workload -- a single data shard with P and
+ * Q is just a triple-mirror -- so cap the wrapper at k >= 2 and
+ * let callers use ec_mirror_create() for the degenerate case.
+ */
+#define LINUX_MD_MIN_DATA 2
+
+/*
  * Userspace shim.  The vendored recov.c dereferences the kernel
  * symbol raid6_empty_zero_page (the shared zero page) when its
  * raid6_get_zero_page() is called at algo-selection time.  In
@@ -227,7 +239,7 @@ static void linux_md_destroy(struct ec_encoding *encoding)
 
 struct ec_encoding *ec_linux_md_create(int k)
 {
-	if (k < 1 || k > LINUX_MD_MAX_DATA)
+	if (k < LINUX_MD_MIN_DATA || k > LINUX_MD_MAX_DATA)
 		return NULL;
 
 	pthread_once(&g_init_once, linux_md_global_init);

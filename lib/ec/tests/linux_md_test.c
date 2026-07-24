@@ -48,6 +48,7 @@ END_TEST
 START_TEST(test_init_invalid)
 {
 	ck_assert_ptr_null(ec_linux_md_create(0));
+	ck_assert_ptr_null(ec_linux_md_create(1)); /* below LINUX_MD_MIN_DATA */
 	ck_assert_ptr_null(ec_linux_md_create(254));
 	ck_assert_ptr_null(ec_linux_md_create(-1));
 }
@@ -204,17 +205,13 @@ START_TEST(test_roundtrip_larger_k_two_data)
 }
 END_TEST
 
-START_TEST(test_roundtrip_k1)
-{
-	/* At k=1, P = data[0] and Q = 2^0 * data[0] = data[0] in
-	 * raid6's GF(2^8) generator basis.  Boundary check on the
-	 * wrapper's minimum accepted k.  Drop the sole data shard;
-	 * either parity reconstructs it. */
-	int miss[] = { 0 };
-
-	roundtrip(1, 1, miss);
-}
-END_TEST
+/*
+ * k=1 previously tested here but ec_linux_md_create() now caps
+ * at k >= 2 (LINUX_MD_MIN_DATA).  See linux_md.c: the vendored
+ * raid6 SIMD dispatchers hand-unroll around n >= 4 disks and
+ * misbehave at n = 3 (k=1 + P + Q).  Coverage of the k=1
+ * boundary lives in test_init_invalid instead.
+ */
 
 START_TEST(test_zero_length_roundtrip)
 {
@@ -317,6 +314,17 @@ Suite *linux_md_suite(void)
 	Suite *s = suite_create("linux_md");
 	TCase *tc = tcase_create("basic");
 
+	/*
+	 * raid6_select_algo() runs a full per-arch dispatch benchmark
+	 * (measures every SIMD variant against int64x{1,2,4,8}) once
+	 * per fork, taking ~300-500 ms.  Check forks per test by
+	 * default, so 15 tests run 15 dispatchers back-to-back.  The
+	 * default 4-second Check timeout is too tight when the
+	 * framework CPU-contends with the dispatcher.  Give each test
+	 * 30 s -- ample headroom without hiding real bugs.
+	 */
+	tcase_set_timeout(tc, 30);
+
 	tcase_add_test(tc, test_init_valid);
 	tcase_add_test(tc, test_init_invalid);
 	tcase_add_test(tc, test_roundtrip_no_loss);
@@ -329,7 +337,6 @@ Suite *linux_md_suite(void)
 	tcase_add_test(tc, test_roundtrip_p_plus_q);
 	tcase_add_test(tc, test_decode_too_many_missing);
 	tcase_add_test(tc, test_roundtrip_larger_k_two_data);
-	tcase_add_test(tc, test_roundtrip_k1);
 	tcase_add_test(tc, test_zero_length_roundtrip);
 	tcase_add_test(tc, test_wire_compat_with_snapraid_k4);
 	tcase_add_test(tc, test_wire_compat_with_snapraid_k6);
