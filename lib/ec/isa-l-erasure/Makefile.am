@@ -177,9 +177,12 @@ endif
 
 EXTRA_DIST = NOTICE.md LICENSE \
 	erasure_code/ec_base.h \
+	erasure_code/gf_vect_gfni.inc \
 	include/erasure_code.h \
 	include/gf_vect_mul.h \
 	include/isal_api.h \
 	include/reg_sizes.asm \
 	include/multibinary.asm \
-	include/aarch64_multibinary.h
+	include/aarch64_multibinary.h \
+	include/memcpy.asm \
+	include/crc.inc
