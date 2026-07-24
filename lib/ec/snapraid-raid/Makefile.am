@@ -41,7 +41,16 @@ libreffs_snapraid_raid_la_SOURCES = \
 # CFLAGS puts -std=c11 last, so a -std=gnu11 here would lose).
 # Same rationale for the -Wno-* set: silence warnings from vendored
 # code without editing.
+#
+# -fno-sanitize=alignment: the CPUID probe in raid/cpu.h writes
+# 3 uint32_t vendor-string chunks into a char[13] buffer at
+# 1-byte-aligned offsets (harmless on x86 -- unaligned stores
+# just work -- but strict-UB per the C standard).  UBSAN nightly
+# builds reported this every time raid_init() ran; suppress the
+# alignment check for the vendored subtree without editing
+# Andrea's code.  Other UBSAN checks stay on for this library.
+# See lib/ec/snapraid-raid/NOTICE.md.
 AM_CPPFLAGS = -Dasm=__asm__
-AM_CFLAGS = -Wno-unused-parameter -Wno-unused-function
+AM_CFLAGS = -Wno-unused-parameter -Wno-unused-function -fno-sanitize=alignment
 
 EXTRA_DIST = NOTICE.md
