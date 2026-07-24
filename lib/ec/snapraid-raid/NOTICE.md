@@ -100,6 +100,28 @@ interop with every non-reffs FFv2 implementation, so this is a
 instruction perf, it stays inside a client-only side channel
 that isn't part of the wire format.
 
+## Build-scoped UBSAN carve-out
+
+`Makefile.am` adds `-fno-sanitize=alignment` to this subtree's
+`AM_CFLAGS`.  Reason: Andrea's CPUID probe at `cpu.h:44-54` casts
+a `char[13]` vendor-string buffer to `(uint32_t *)` and writes
+three `uint32_t` chunks at 1-byte-aligned offsets.  x86 handles
+unaligned stores natively so this works fine in production but is
+strict-UB per the C standard; without the flag, UBSAN reports the
+alignment error every time `raid_init()` runs.
+
+The carve-out is deliberately narrow -- only the `alignment`
+check is disabled.  All other UBSAN checks (undefined-shift,
+signed-overflow, null-deref, ...) stay on for Andrea's code, so
+we still get the checks that catch real bugs.
+
+The alternative would be to patch `cpu.h` to use `memcpy()` for
+the vendor-string write.  That would be cleaner from a UB-standard
+standpoint but modifies vendored code -- see the "Refreshing from
+upstream" section: a refresh has to preserve Andrea's SPDX +
+copyright headers AND leave the code byte-identical, so build-
+scoped fixes go here and code-scoped fixes go upstream.
+
 ## Reffs-side additions
 
 Files in this directory that are NOT from upstream:
