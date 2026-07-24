@@ -66,19 +66,16 @@ libreffs_isa_l_erasure_la_SOURCES += \
 	erasure_code/gf_4vect_dot_prod_sse.asm \
 	erasure_code/gf_4vect_dot_prod_avx.asm \
 	erasure_code/gf_4vect_dot_prod_avx2.asm \
-	erasure_code/gf_4vect_dot_prod_avx2_gfni.asm \
 	erasure_code/gf_4vect_dot_prod_avx512.asm \
 	erasure_code/gf_4vect_dot_prod_avx512_gfni.asm \
 	erasure_code/gf_5vect_dot_prod_sse.asm \
 	erasure_code/gf_5vect_dot_prod_avx.asm \
 	erasure_code/gf_5vect_dot_prod_avx2.asm \
-	erasure_code/gf_5vect_dot_prod_avx2_gfni.asm \
 	erasure_code/gf_5vect_dot_prod_avx512.asm \
 	erasure_code/gf_5vect_dot_prod_avx512_gfni.asm \
 	erasure_code/gf_6vect_dot_prod_sse.asm \
 	erasure_code/gf_6vect_dot_prod_avx.asm \
 	erasure_code/gf_6vect_dot_prod_avx2.asm \
-	erasure_code/gf_6vect_dot_prod_avx2_gfni.asm \
 	erasure_code/gf_6vect_dot_prod_avx512.asm \
 	erasure_code/gf_6vect_dot_prod_avx512_gfni.asm \
 	erasure_code/gf_vect_mad_sse.asm \
@@ -114,7 +111,6 @@ libreffs_isa_l_erasure_la_SOURCES += \
 	erasure_code/gf_6vect_mad_sse.asm \
 	erasure_code/gf_6vect_mad_avx.asm \
 	erasure_code/gf_6vect_mad_avx2.asm \
-	erasure_code/gf_6vect_mad_avx2_gfni.asm \
 	erasure_code/gf_6vect_mad_avx512.asm \
 	erasure_code/gf_6vect_mad_avx512_gfni.asm \
 	erasure_code/ec_multibinary.asm
