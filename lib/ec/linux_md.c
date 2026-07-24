@@ -29,7 +29,19 @@
 
 #include "reffs/ec.h"
 
+/*
+ * pq.h defines an inline raid6_get_zero_page() that returns
+ * `void *` from a `const char[]` global -- fine under the -w in
+ * the vendored sub-library, but flagged as
+ * -Wincompatible-pointer-types-discards-qualifiers here.  Only
+ * suppress that specific warning around the include; do not
+ * touch the vendored header.
+ */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored \
+	"-Wincompatible-pointer-types-discards-qualifiers"
 #include "linux-md-raid/linux/raid/pq.h"
+#pragma GCC diagnostic pop
 
 #define LINUX_MD_MAX_DATA 253 /* k + 2 <= 255 for size + P + Q indexing */
 
