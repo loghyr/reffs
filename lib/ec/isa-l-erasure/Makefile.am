@@ -9,6 +9,12 @@
 # NASM assembler is available).  aarch64 NEON is deferred to
 # a follow-up sub-slice.
 
+# Sources live under erasure_code/ and erasure_code/aarch64/;
+# subdir-objects tells automake to put per-source objects into
+# the corresponding build-dir subdirs (matching the source
+# layout instead of flattening everything into the top-level).
+AUTOMAKE_OPTIONS = subdir-objects
+
 noinst_LTLIBRARIES = libreffs_isa_l_erasure.la
 
 # Portable-C baseline (Slice 7.1).  Always compiled.
