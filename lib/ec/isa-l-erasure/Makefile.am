@@ -15,6 +15,11 @@
 # layout instead of flattening everything into the top-level).
 AUTOMAKE_OPTIONS = subdir-objects
 
+# Register .asm as a build suffix so make's VPATH search fires
+# on .asm sources under $(srcdir)/erasure_code/ (out-of-tree
+# builds otherwise fail to find them from the build tree).
+SUFFIXES = .asm
+
 noinst_LTLIBRARIES = libreffs_isa_l_erasure.la
 
 # Portable-C baseline (Slice 7.1).  Always compiled.
