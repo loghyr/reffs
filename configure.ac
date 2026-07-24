@@ -860,6 +860,7 @@ AC_CONFIG_FILES([
 	lib/ec/Makefile
 	lib/ec/snapraid-raid/Makefile
 	lib/ec/linux-md-raid/Makefile
+	lib/ec/isa-l-erasure/Makefile
 	lib/ec/tests/Makefile
 	lib/nfs4/common/Makefile
 	lib/nfs4/server/Makefile
