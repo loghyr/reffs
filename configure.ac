@@ -25,6 +25,7 @@ dnl "no acceptable C compiler found" if CC is set to a non-existent
 dnl program.  No need for a custom AC_CHECK_PROG gate here -- it
 dnl tripped autoconf 2.73's strict macro-expansion rules on macOS.
 AC_PROG_CC
+AC_PROG_AWK
 AC_USE_SYSTEM_EXTENSIONS
 m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
 
@@ -858,6 +859,7 @@ AC_CONFIG_FILES([
 	lib/backends/Makefile
 	lib/ec/Makefile
 	lib/ec/snapraid-raid/Makefile
+	lib/ec/linux-md-raid/Makefile
 	lib/ec/tests/Makefile
 	lib/nfs4/common/Makefile
 	lib/nfs4/server/Makefile

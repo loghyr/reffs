@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-SUBDIRS = snapraid-raid tests
+SUBDIRS = snapraid-raid linux-md-raid tests
 
 AM_CFLAGS = -I$(top_srcdir)/lib/include
 
 noinst_LTLIBRARIES = libreffs_ec.la
 libreffs_ec_la_SOURCES = gf.c matrix.c mirror.c mojette.c mojette_encoding.c rs.c snapraid.c stripe.c xor.c
-libreffs_ec_la_LIBADD = snapraid-raid/libreffs_snapraid_raid.la
+libreffs_ec_la_LIBADD = snapraid-raid/libreffs_snapraid_raid.la \
+	linux-md-raid/libreffs_linux_md_raid.la
 
 # Enable AVX2 for the Mojette forward transform SIMD fast path.
 # configure detects -mavx2 support and sets AVX2_CFLAGS accordingly.

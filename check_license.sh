@@ -30,7 +30,7 @@ check_spdx_headers() {
 # Get a list of all files, excluding .gitignore, LICENSES directory, .x files,
 # LICENSE / LICENSE-EXCEPTIONS, COPYING files, and XDR-generated Python files
 # (which have "DO NOT EDIT" marker).
-files=$(git ls-files | grep -vE '\.gitignore$|LICENSES/|\.x$|^LICENSE([-.][A-Za-z0-9.-]+)?$|(^|/)COPYING$|deploy/benchmark/results/|_xdr_(const|type|pack)\.py$|^lib/ec/snapraid-raid/[^/]+\.[ch]$')
+files=$(git ls-files | grep -vE '\.gitignore$|LICENSES/|\.x$|^LICENSE([-.][A-Za-z0-9.-]+)?$|(^|/)COPYING$|deploy/benchmark/results/|_xdr_(const|type|pack)\.py$|^lib/ec/snapraid-raid/[^/]+\.[ch]$|^lib/ec/linux-md-raid/([^/]+\.[ch]|linux/raid/[^/]+\.h|int\.uc|unroll\.awk)$')
 
 # Vendored subtree: lib/ec/snapraid-raid/ carries Andrea Mazzoleni's
 # SPDX-License-Identifier (GPL-2.0-or-later / GPL-3.0-or-later) but uses
