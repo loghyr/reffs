@@ -16,8 +16,22 @@ libreffs_isa_l_erasure_la_SOURCES = \
 # -I$(srcdir)/include lets sources find <erasure_code.h> and
 # <gf_vect_mul.h>.  -I$(srcdir)/erasure_code lets ec_base.c
 # find its sibling ec_base.h (the GF tables).
+#
+# reffs's own lib/ec/gf.c exports `gf_mul` and `gf_inv` too, and
+# they end up in libreffs_ec.a alongside ISA-L's copies via
+# LIBADD -- the linker rejects the collision.  Rename ISA-L's
+# copies via -D so the vendored source stays untouched and the
+# refresh procedure keeps its diff-of-zero property.  reffs's
+# own gf_mul / gf_inv operate over the identical GF(2^8) (poly
+# 0x11d, generator 2) so any external consumer of ISA-L's
+# public API still gets bit-identical answers -- and none of
+# the shipped public API (ec_encode_data, ec_init_tables,
+# gf_gen_rs_matrix, gf_invert_matrix) needs gf_mul on its hot
+# path anyway.
 AM_CPPFLAGS = -I$(srcdir)/include \
-	-I$(srcdir)/erasure_code
+	-I$(srcdir)/erasure_code \
+	-Dgf_mul=isa_l_gf_mul \
+	-Dgf_inv=isa_l_gf_inv
 
 # Silence all warnings for the vendored subtree via -w.  ISA-L
 # uses upstream coding conventions that reffs's top-level

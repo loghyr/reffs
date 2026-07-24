@@ -288,6 +288,7 @@ int main(int argc, char **argv)
 	for (const struct geom *g = GEOMS; g->k > 0; g++) {
 		struct ec_encoding *rs = ec_rs_create(g->k, g->m);
 		struct ec_encoding *sr = ec_snapraid_create(g->k, g->m);
+		struct ec_encoding *il = ec_isa_l_create(g->k, g->m);
 		/* XOR is single-parity only; run it only at m=1 cells.
 		 * NULL here just means "skip the XOR row for this geom". */
 		struct ec_encoding *xr = (g->m == 1) ? ec_xor_create(g->k) :
@@ -295,14 +296,16 @@ int main(int argc, char **argv)
 		struct ec_encoding *md =
 			(g->m == 2) ? ec_linux_md_create(g->k) : NULL;
 
-		if (!rs || !sr) {
+		if (!rs || !sr || !il) {
 			fprintf(stderr,
-				"ec_bench: skip k=%d m=%d (create returned NULL: rs=%p sr=%p)\n",
-				g->k, g->m, (void *)rs, (void *)sr);
+				"ec_bench: skip k=%d m=%d (create returned NULL: rs=%p sr=%p il=%p)\n",
+				g->k, g->m, (void *)rs, (void *)sr, (void *)il);
 			if (rs)
 				ec_encoding_destroy(rs);
 			if (sr)
 				ec_encoding_destroy(sr);
+			if (il)
+				ec_encoding_destroy(il);
 			if (xr)
 				ec_encoding_destroy(xr);
 			if (md)
@@ -314,6 +317,8 @@ int main(int argc, char **argv)
 				  warmup);
 			bench_one("snapraid-cauchy", sr, g->k, g->m, *sz, iters,
 				  warmup);
+			bench_one("isa-l-rs", il, g->k, g->m, *sz, iters,
+				  warmup);
 			if (xr)
 				bench_one("xor-parity", xr, g->k, 1, *sz, iters,
 					  warmup);
@@ -323,6 +328,7 @@ int main(int argc, char **argv)
 		}
 		ec_encoding_destroy(rs);
 		ec_encoding_destroy(sr);
+		ec_encoding_destroy(il);
 		if (xr)
 			ec_encoding_destroy(xr);
 		if (md)

@@ -881,6 +881,8 @@ _Static_assert((int)REFFS_ENCODING_XOR_PARITY == (int)FFV2_ENCODING_XOR_PARITY,
 _Static_assert(
 	(int)REFFS_ENCODING_LINUX_MD_RAID == (int)FFV2_ENCODING_LINUX_MD_RAID,
 	"REFFS_ENCODING_LINUX_MD_RAID must match FFV2_ENCODING_LINUX_MD_RAID");
+_Static_assert((int)REFFS_ENCODING_ISA_L_RS == (int)FFV2_ENCODING_ISA_L_RS,
+	       "REFFS_ENCODING_ISA_L_RS must match FFV2_ENCODING_ISA_L_RS");
 
 /*
  * Resolve the target layout width from the sb's default_coding,

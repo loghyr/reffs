@@ -856,6 +856,7 @@ enum ec_encoding_type {
 		5, /* SnapRAID Cauchy (vendored raid/, GF(2^8) poly 0x1d) */
 	EC_ENCODING_XOR = 6, /* XOR single-parity (no field-polynomial dep) */
 	EC_ENCODING_LINUX_MD = 7, /* Linux md/raid6 P+Q double-parity */
+	EC_ENCODING_ISA_L = 8, /* Intel ISA-L RS Vandermonde (BSD-3) */
 };
 
 int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,

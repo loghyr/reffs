@@ -20,4 +20,5 @@ TESTS = \
 	rs_test \
 	snapraid_test \
 	xor_test \
-	linux_md_test
+	linux_md_test \
+	isa_l_test

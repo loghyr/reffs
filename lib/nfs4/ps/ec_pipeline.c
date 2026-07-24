@@ -530,6 +530,18 @@ ec_create_encoding(int k, int m, enum ec_encoding_type encoding_type)
 		 * and SNAPRAID_CAUCHY.
 		 */
 		return ec_linux_md_create(k);
+	case EC_ENCODING_ISA_L:
+		/*
+		 * Wire-side: FFV2_ENCODING_ISA_L_RS (proposed 0x9).
+		 * Intel ISA-L Reed-Solomon (Vandermonde) from the
+		 * vendored portable-C subset at lib/ec/isa-l-erasure/.
+		 * Field GF(2^8) with primitive polynomial 0x1d.
+		 * Matrix construction is ISA-L-specific (generator
+		 * 2^(i*j)) -- NOT bit-compat with RS_VANDERMONDE
+		 * (0x4) or SNAPRAID_CAUCHY (0x6) despite the shared
+		 * field.  Caps: k + m <= 254.
+		 */
+		return ec_isa_l_create(k, m);
 	default:
 		return NULL;
 	}

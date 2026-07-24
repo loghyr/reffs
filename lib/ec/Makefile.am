@@ -6,12 +6,13 @@ SUBDIRS = snapraid-raid linux-md-raid isa-l-erasure tests
 AM_CFLAGS = -I$(top_srcdir)/lib/include
 
 noinst_LTLIBRARIES = libreffs_ec.la
-libreffs_ec_la_SOURCES = gf.c linux_md.c matrix.c mirror.c mojette.c mojette_encoding.c rs.c snapraid.c stripe.c xor.c
+libreffs_ec_la_SOURCES = gf.c isa_l.c linux_md.c matrix.c mirror.c mojette.c mojette_encoding.c rs.c snapraid.c stripe.c xor.c
 libreffs_ec_la_LIBADD = snapraid-raid/libreffs_snapraid_raid.la \
-	linux-md-raid/libreffs_linux_md_raid.la
-# isa-l-erasure/libreffs_isa_l_erasure.la is built as SUBDIR here
-# but not yet linked into libreffs_ec.la -- Slice 7.2 adds isa_l.c
-# (the wrapper) and pulls the sub-library in via LIBADD then.
+	linux-md-raid/libreffs_linux_md_raid.la \
+	isa-l-erasure/libreffs_isa_l_erasure.la
+
+# isa_l.c needs to see the vendored ISA-L public header.
+isa_l.lo: AM_CFLAGS += -I$(top_srcdir)/lib/ec/isa-l-erasure/include
 
 # Enable AVX2 for the Mojette forward transform SIMD fast path.
 # configure detects -mavx2 support and sets AVX2_CFLAGS accordingly.

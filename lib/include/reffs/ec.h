@@ -185,6 +185,27 @@ struct ec_encoding *ec_linux_md_create(int k);
 struct ec_encoding *ec_snapraid_create(int k, int m);
 
 /*
+ * ec_isa_l_create -- create an Intel ISA-L Reed-Solomon
+ * (Vandermonde) encoding (FFV2_ENCODING_ISA_L_RS on the wire).
+ * Wraps the vendored portable-C subset of ISA-L's erasure_code/
+ * at lib/ec/isa-l-erasure/ (BSD-3-Clause).
+ *
+ * k: number of data shards (>=1).
+ * m: number of parity shards (>=1).
+ * Constraint: k + m <= 254 (GF(2^8) field size).
+ *
+ * Matrix construction: gf_gen_rs_matrix (generator 2^(i*j)),
+ * which is NOT bit-compat with reffs's own rs.c or SnapRAID's
+ * Cauchy despite sharing the field.
+ *
+ * Returns an initialized encoding, or NULL on failure.
+ *
+ * See ~/Documents/reffs-docs/ffv2-encoding-menu.md
+ * FFV2_ENCODING_ISA_L_RS (proposed 0x9).
+ */
+struct ec_encoding *ec_isa_l_create(int k, int m);
+
+/*
  * ec_encoding_destroy -- release a encoding and all internal state.
  */
 void ec_encoding_destroy(struct ec_encoding *encoding);
