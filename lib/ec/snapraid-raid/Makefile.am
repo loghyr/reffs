@@ -42,15 +42,19 @@ libreffs_snapraid_raid_la_SOURCES = \
 # Same rationale for the -Wno-* set: silence warnings from vendored
 # code without editing.
 #
-# -fno-sanitize=alignment: the CPUID probe in raid/cpu.h writes
+# -fsanitize-ignorelist: the CPUID probe in raid/cpu.h writes
 # 3 uint32_t vendor-string chunks into a char[13] buffer at
 # 1-byte-aligned offsets (harmless on x86 -- unaligned stores
 # just work -- but strict-UB per the C standard).  UBSAN nightly
-# builds reported this every time raid_init() ran; suppress the
-# alignment check for the vendored subtree without editing
-# Andrea's code.  Other UBSAN checks stay on for this library.
-# See lib/ec/snapraid-raid/NOTICE.md.
+# builds reported this every time raid_init() ran; ignorelist
+# suppresses the alignment check specifically for that file
+# without editing Andrea's code.  Every other UBSAN check stays
+# on for the vendored subtree.  See NOTICE.md "Build-scoped
+# UBSAN carve-out" for the rationale and the flag-ordering
+# reason we do not use -fno-sanitize=alignment (which loses to
+# the later -fsanitize=undefined in top-level CFLAGS).
 AM_CPPFLAGS = -Dasm=__asm__
-AM_CFLAGS = -Wno-unused-parameter -Wno-unused-function -fno-sanitize=alignment
+AM_CFLAGS = -Wno-unused-parameter -Wno-unused-function \
+	-fsanitize-ignorelist=$(srcdir)/ubsan-ignorelist.txt
 
-EXTRA_DIST = NOTICE.md
+EXTRA_DIST = NOTICE.md ubsan-ignorelist.txt
