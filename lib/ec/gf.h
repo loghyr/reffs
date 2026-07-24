@@ -51,4 +51,17 @@ static inline uint8_t gf_div(uint8_t a, uint8_t b)
 /* Power: a^n in GF(2^8).  a^0 = 1 for all a including 0. */
 uint8_t gf_pow(uint8_t a, uint8_t n);
 
+/*
+ * gf_mul_tbl_init -- precompute a 256-entry multiplication table
+ * for a single coefficient c, so callers can replace
+ * `gf_mul(c, b)` on the inner loop with `tbl[b]` (single memory
+ * access instead of log/antilog double-lookup).
+ *
+ * Typical use: RS encode/decode inner loop, once per (row, col)
+ * matrix coefficient at create time or decode-invert time.  256
+ * bytes per (row, col); (k+m) x k table fits in tens of KiB for
+ * realistic geometries.
+ */
+void gf_mul_tbl_init(uint8_t c, uint8_t tbl[256]);
+
 #endif /* _REFFS_EC_GF_H */

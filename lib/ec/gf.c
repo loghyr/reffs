@@ -80,3 +80,22 @@ uint8_t gf_pow(uint8_t a, uint8_t n)
 	int log_result = (log_a * n) % GF_ORDER;
 	return gf_exp[log_result];
 }
+
+void gf_mul_tbl_init(uint8_t c, uint8_t tbl[256])
+{
+	/*
+	 * Fill tbl[b] = gf_mul(c, b) for b in [0, 255].  Zero out
+	 * b == 0 explicitly; other entries come from the log/antilog
+	 * fast path with c's log value hoisted out of the loop.
+	 */
+	tbl[0] = 0;
+	if (c == 0) {
+		for (int b = 1; b < 256; b++)
+			tbl[b] = 0;
+		return;
+	}
+	int log_c = gf_log[c];
+
+	for (int b = 1; b < 256; b++)
+		tbl[b] = gf_exp[log_c + gf_log[b]];
+}
