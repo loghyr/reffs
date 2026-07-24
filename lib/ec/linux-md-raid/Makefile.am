@@ -28,7 +28,19 @@ nodist_libreffs_linux_md_raid_la_SOURCES = \
 
 # -I. lets sources find our vendored pq.h at linux/raid/pq.h
 # via the standard #include <linux/raid/pq.h>.
-AM_CPPFLAGS = -I$(srcdir)
+#
+# Slice 6.1 vendored the portable-C sources only; SIMD variants
+# come with Slice 6.3.  algos.c's dispatch table references SIMD
+# symbols (raid6_sse2x1 etc.) inside
+# `#if defined(__x86_64__) && !defined(__arch_um__)`.  On any
+# x86_64 Linux this pulls in symbols we deliberately did not
+# vendor, and the linker fails.  Define __arch_um__ (User-mode
+# Linux flag) on the sub-library to gate ALL arch-specific
+# SIMD blocks OUT uniformly, matching the "portable-C only"
+# Slice 6.1 scope.  The same guard covers __i386__ paths and
+# leaves ALTIVEC / S390 / NEON blocks alone (those use their
+# own CONFIG_* guards which are never defined in userspace).
+AM_CPPFLAGS = -I$(srcdir) -D__arch_um__=1
 
 # Silence all warnings for the vendored subtree via -w.  Linux md
 # uses kernel coding conventions (signed int loop counters, KR-style
