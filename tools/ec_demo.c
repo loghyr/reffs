@@ -1568,7 +1568,7 @@ static void usage(void)
 		"  --delete-first   Remove file before bigfile write"
 		" (forces fresh inode)\n"
 		"  --encoding TYPE     Encoding: rs (default), mojette-sys,"
-		" mojette-nonsys, stripe, mirror, snapraid\n"
+		" mojette-nonsys, stripe, mirror, snapraid, xor\n"
 		"  --id ID          Client identity (default: PID)."
 		" Unique per concurrent instance.\n"
 		"  --layout TYPE    Layout: v1 (default, NFSv3 DS),"
@@ -1850,6 +1850,8 @@ int main(int argc, char *argv[])
 				encoding_type = EC_ENCODING_MIRROR;
 			else if (strcmp(optarg, "snapraid") == 0)
 				encoding_type = EC_ENCODING_SNAPRAID;
+			else if (strcmp(optarg, "xor") == 0)
+				encoding_type = EC_ENCODING_XOR;
 			else {
 				fprintf(stderr,
 					"ec_demo: unknown encoding '%s'\n",

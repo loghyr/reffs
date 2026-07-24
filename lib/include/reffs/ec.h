@@ -129,6 +129,25 @@ struct ec_encoding *ec_stripe_create(int k);
 struct ec_encoding *ec_mirror_create(int k);
 
 /*
+ * ec_xor_create -- create an XOR single-parity encoding
+ * (FFV2_ENCODING_XOR_PARITY on the wire).  Systematic: k data
+ * shards preserved verbatim; one parity shard is the XOR of all
+ * k data shards.  Recovers any single missing shard by XORing
+ * the surviving ones.  No Galois-field math; no field-polynomial
+ * dependency (contrast ec_rs_create which requires GF(2^8) with
+ * primitive polynomial 0x11d).
+ *
+ * k: number of data shards (1..254).  Parity count is always 1.
+ *
+ * Returns an initialized encoding, or NULL on failure.  The
+ * caller must call ec_encoding_destroy() when done.
+ *
+ * See ~/Documents/reffs-docs/ffv2-encoding-menu.md
+ * FFV2_ENCODING_XOR_PARITY (proposed 0x7).
+ */
+struct ec_encoding *ec_xor_create(int k);
+
+/*
  * ec_snapraid_create -- create a SnapRAID Cauchy encoding.  Wraps
  * Andrea Mazzoleni's vendored raid/ library (lib/ec/snapraid-raid/,
  * GPL-2.0-or-later).  Extended-Cauchy matrix in GF(2^8) with

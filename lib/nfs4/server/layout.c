@@ -876,6 +876,8 @@ _Static_assert(
 	(int)REFFS_ENCODING_SNAPRAID_CAUCHY ==
 		(int)FFV2_ENCODING_SNAPRAID_CAUCHY,
 	"REFFS_ENCODING_SNAPRAID_CAUCHY must match FFV2_ENCODING_SNAPRAID_CAUCHY");
+_Static_assert((int)REFFS_ENCODING_XOR_PARITY == (int)FFV2_ENCODING_XOR_PARITY,
+	       "REFFS_ENCODING_XOR_PARITY must match FFV2_ENCODING_XOR_PARITY");
 
 /*
  * Resolve the target layout width from the sb's default_coding,

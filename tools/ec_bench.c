@@ -63,7 +63,8 @@ struct geom {
 	int k;
 	int m;
 };
-static const struct geom GEOMS[] = { { 4, 2 }, { 6, 2 }, { 8, 4 }, { 0, 0 } };
+static const struct geom GEOMS[] = { { 4, 1 }, { 4, 2 }, { 6, 2 },
+				     { 8, 1 }, { 8, 4 }, { 0, 0 } };
 
 static uint64_t now_ns(void)
 {
@@ -287,6 +288,10 @@ int main(int argc, char **argv)
 	for (const struct geom *g = GEOMS; g->k > 0; g++) {
 		struct ec_encoding *rs = ec_rs_create(g->k, g->m);
 		struct ec_encoding *sr = ec_snapraid_create(g->k, g->m);
+		/* XOR is single-parity only; run it only at m=1 cells.
+		 * NULL here just means "skip the XOR row for this geom". */
+		struct ec_encoding *xr = (g->m == 1) ? ec_xor_create(g->k) :
+						       NULL;
 
 		if (!rs || !sr) {
 			fprintf(stderr,
@@ -296,6 +301,8 @@ int main(int argc, char **argv)
 				ec_encoding_destroy(rs);
 			if (sr)
 				ec_encoding_destroy(sr);
+			if (xr)
+				ec_encoding_destroy(xr);
 			continue;
 		}
 		for (const size_t *sz = sizes; *sz; sz++) {
@@ -303,9 +310,14 @@ int main(int argc, char **argv)
 				  warmup);
 			bench_one("snapraid-cauchy", sr, g->k, g->m, *sz, iters,
 				  warmup);
+			if (xr)
+				bench_one("xor-parity", xr, g->k, 1, *sz, iters,
+					  warmup);
 		}
 		ec_encoding_destroy(rs);
 		ec_encoding_destroy(sr);
+		if (xr)
+			ec_encoding_destroy(xr);
 		printf("\n");
 	}
 	return 0;

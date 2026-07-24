@@ -4853,7 +4853,8 @@ enum ffv2_coding_type4 {
     FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC    = 0x3,
     FFV2_ENCODING_RS_VANDERMONDE            = 0x4,
     FFV2_ENCODING_MIRRORED                  = 0x5,
-    FFV2_ENCODING_SNAPRAID_CAUCHY           = 0x6
+    FFV2_ENCODING_SNAPRAID_CAUCHY           = 0x6,
+    FFV2_ENCODING_XOR_PARITY                = 0x7
 };
 
 /*

@@ -18,4 +18,5 @@ TESTS = \
 	mojette_test \
 	mojette_encoding_test \
 	rs_test \
-	snapraid_test
+	snapraid_test \
+	xor_test

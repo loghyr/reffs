@@ -854,6 +854,7 @@ enum ec_encoding_type {
 	EC_ENCODING_MIRROR = 4, /* N replicas via FFV2_ENCODING_MIRRORED */
 	EC_ENCODING_SNAPRAID =
 		5, /* SnapRAID Cauchy (vendored raid/, GF(2^8) poly 0x1d) */
+	EC_ENCODING_XOR = 6, /* XOR single-parity (no field-polynomial dep) */
 };
 
 int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
