@@ -26,11 +26,27 @@
 #include "reffs/ec.h"
 
 #include <errno.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "gf.h"
 #include "matrix.h"
+
+/*
+ * SIMD dispatch for the gf_mul inner loop.  Compile-time
+ * detection via arch-preset macros; runtime path picks
+ * per-shard based on shard_len alignment.  Neither header is
+ * portable enough to rely on unconditionally.
+ */
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#define RS_HAVE_NEON 1
+#endif
+#if defined(__SSSE3__)
+#include <tmmintrin.h>
+#define RS_HAVE_SSSE3 1
+#endif
 
 struct rs_private {
 	struct gf_matrix *rsp_encode; /* (k+m) x k encoding matrix */
@@ -46,6 +62,17 @@ struct rs_private {
 	 * geometries.
 	 */
 	uint8_t *parity_tbl;
+	/*
+	 * Split-nibble multiplication tables for the SIMD paths:
+	 * parity_split_tbl[(i * k + j) * 32 + 0..15]  = low-nibble half
+	 * parity_split_tbl[(i * k + j) * 32 + 16..31] = high-nibble half
+	 * for coefficient rsp_parity[i][j].  Loaded into a single
+	 * 16-byte register per (i, j) coefficient and consumed by
+	 * vqtbl1q_u8 (NEON) / pshufb (SSSE3) 16 shard bytes at a
+	 * time.  32 bytes per coefficient; 256 bytes at k=4 m=2,
+	 * 1 KiB at k=8 m=4 -- negligible.
+	 */
+	uint8_t *parity_split_tbl;
 };
 
 /*
@@ -98,6 +125,90 @@ fail:
 	return enc;
 }
 
+/*
+ * Multiply an aligned run of 16-byte blocks by the (16-lo + 16-hi)
+ * split table for a single coefficient, XOR'ing into `out`.  If
+ * `init` is true, initializes `out` (equivalent to XOR-with-zero);
+ * otherwise accumulates.  Returns the number of bytes consumed
+ * (always a multiple of 16), so the caller can handle the tail
+ * with the scalar path.
+ *
+ * NEON path handles aarch64; SSSE3 path handles x86; scalar
+ * fallback returns 0 immediately so the caller processes the
+ * whole shard scalar-side.
+ */
+static size_t rs_mul_add_16(uint8_t *out, const uint8_t *in,
+			    const uint8_t *split_tbl, size_t len, bool init)
+{
+	size_t done = len & ~(size_t)15;
+
+	if (done == 0)
+		return 0;
+
+#if defined(RS_HAVE_NEON)
+	uint8x16_t lo_tbl = vld1q_u8(&split_tbl[0]);
+	uint8x16_t hi_tbl = vld1q_u8(&split_tbl[16]);
+	uint8x16_t low_mask = vdupq_n_u8(0x0f);
+
+	for (size_t p = 0; p < done; p += 16) {
+		uint8x16_t dv = vld1q_u8(&in[p]);
+		uint8x16_t lo_idx = vandq_u8(dv, low_mask);
+		uint8x16_t hi_idx = vshrq_n_u8(dv, 4);
+		uint8x16_t prod = veorq_u8(vqtbl1q_u8(lo_tbl, lo_idx),
+					   vqtbl1q_u8(hi_tbl, hi_idx));
+		if (!init) {
+			uint8x16_t ov = vld1q_u8(&out[p]);
+
+			prod = veorq_u8(prod, ov);
+		}
+		vst1q_u8(&out[p], prod);
+	}
+	return done;
+#elif defined(RS_HAVE_SSSE3)
+	__m128i lo_tbl = _mm_loadu_si128((const __m128i *)&split_tbl[0]);
+	__m128i hi_tbl = _mm_loadu_si128((const __m128i *)&split_tbl[16]);
+	__m128i low_mask = _mm_set1_epi8(0x0f);
+
+	for (size_t p = 0; p < done; p += 16) {
+		__m128i dv = _mm_loadu_si128((const __m128i *)&in[p]);
+		__m128i lo_idx = _mm_and_si128(dv, low_mask);
+		__m128i hi_idx = _mm_and_si128(_mm_srli_epi64(dv, 4), low_mask);
+		__m128i prod = _mm_xor_si128(_mm_shuffle_epi8(lo_tbl, lo_idx),
+					     _mm_shuffle_epi8(hi_tbl, hi_idx));
+		if (!init) {
+			__m128i ov = _mm_loadu_si128((const __m128i *)&out[p]);
+
+			prod = _mm_xor_si128(prod, ov);
+		}
+		_mm_storeu_si128((__m128i *)&out[p], prod);
+	}
+	return done;
+#else
+	(void)out;
+	(void)in;
+	(void)split_tbl;
+	(void)init;
+	return 0;
+#endif
+}
+
+/*
+ * Scalar tail: process `len` bytes starting at (in, out) with the
+ * per-coefficient full 256-byte table.  Same loop-nest shape as
+ * the R.1 baseline.
+ */
+static void rs_mul_add_scalar(uint8_t *out, const uint8_t *in,
+			      const uint8_t *tbl, size_t len, bool init)
+{
+	if (init) {
+		for (size_t p = 0; p < len; p++)
+			out[p] = tbl[in[p]];
+	} else {
+		for (size_t p = 0; p < len; p++)
+			out[p] ^= tbl[in[p]];
+	}
+}
+
 static int rs_encode(struct ec_encoding *encoding, uint8_t **data,
 		     uint8_t **parity, size_t shard_len)
 {
@@ -106,12 +217,11 @@ static int rs_encode(struct ec_encoding *encoding, uint8_t **data,
 	int m = encoding->ec_m;
 
 	/*
-	 * Loop nest ordered i (parity) -> j (data) -> p (byte) rather
-	 * than the naive p -> i -> j.  For each (i, j) coefficient we
-	 * fix a 256-byte multiplication table pointer once and stream
-	 * across all shard_len bytes -- one table lookup per byte, no
-	 * per-iteration gf_mul.  Parity buffers are init'd on j == 0
-	 * and XOR-accumulated on j > 0.
+	 * Loop nest i (parity) -> j (data) -> p (byte).  For each
+	 * (i, j) coefficient, run the SIMD path over the aligned
+	 * 16-byte prefix and mop up the tail with the R.1 scalar
+	 * path.  Parity buffers are init'd on j == 0 and
+	 * XOR-accumulated on j > 0.
 	 */
 	for (int i = 0; i < m; i++) {
 		uint8_t *pi = parity[i];
@@ -119,15 +229,17 @@ static int rs_encode(struct ec_encoding *encoding, uint8_t **data,
 		for (int j = 0; j < k; j++) {
 			const uint8_t *tbl =
 				&rsp->parity_tbl[(i * k + j) * 256];
+			const uint8_t *stbl =
+				&rsp->parity_split_tbl[(i * k + j) * 32];
 			const uint8_t *dj = data[j];
+			bool init = (j == 0);
 
-			if (j == 0) {
-				for (size_t p = 0; p < shard_len; p++)
-					pi[p] = tbl[dj[p]];
-			} else {
-				for (size_t p = 0; p < shard_len; p++)
-					pi[p] ^= tbl[dj[p]];
-			}
+			size_t simd_done =
+				rs_mul_add_16(pi, dj, stbl, shard_len, init);
+			if (simd_done < shard_len)
+				rs_mul_add_scalar(pi + simd_done,
+						  dj + simd_done, tbl,
+						  shard_len - simd_done, init);
 		}
 	}
 
@@ -193,22 +305,29 @@ static int rs_decode(struct ec_encoding *encoding, uint8_t **shards,
 		goto out;
 
 	/*
-	 * Precompute a decode-side mul-table for every (row, col) of
-	 * sub_inv: decode_tbl[(r * k + c) * 256 + b] = gf_mul(sub_inv[r][c], b).
-	 * Amortizes k * k gf_mul_tbl_init calls (~k^2 * 256 =
-	 * k^2 * 256 bytes plus init) over the shard_len byte stream.
-	 * Break-even is well below the shortest realistic shard.
+	 * Precompute both the full 256-byte and the 32-byte split
+	 * mul-tables for every (row, col) of sub_inv, so the decode
+	 * inner loop mirrors the encode SIMD-plus-scalar-tail
+	 * pattern.  Amortizes k * k init over the shard_len byte
+	 * stream.
 	 */
 	uint8_t *decode_tbl = calloc((size_t)k * (size_t)k * 256, 1);
+	uint8_t *decode_split_tbl = calloc((size_t)k * (size_t)k * 32, 1);
 
-	if (!decode_tbl) {
+	if (!decode_tbl || !decode_split_tbl) {
+		free(decode_tbl);
+		free(decode_split_tbl);
 		ret = -ENOMEM;
 		goto out;
 	}
 	for (int r = 0; r < k; r++)
-		for (int c = 0; c < k; c++)
-			gf_mul_tbl_init(gf_matrix_get(sub_inv, r, c),
-					&decode_tbl[(r * k + c) * 256]);
+		for (int c = 0; c < k; c++) {
+			uint8_t coeff = gf_matrix_get(sub_inv, r, c);
+
+			gf_mul_tbl_init(coeff, &decode_tbl[(r * k + c) * 256]);
+			gf_mul_split_tbl_init(
+				coeff, &decode_split_tbl[(r * k + c) * 32]);
+		}
 
 	/*
 	 * Recover original data shards: multiply sub_inv by the
@@ -237,18 +356,21 @@ static int rs_decode(struct ec_encoding *encoding, uint8_t **shards,
 
 		for (int c = 0; c < k; c++) {
 			const uint8_t *tbl = &decode_tbl[(r * k + c) * 256];
+			const uint8_t *stbl =
+				&decode_split_tbl[(r * k + c) * 32];
 			const uint8_t *sc = shards[avail_idx[c]];
+			bool init = (c == 0);
 
-			if (c == 0) {
-				for (size_t p = 0; p < shard_len; p++)
-					rr[p] = tbl[sc[p]];
-			} else {
-				for (size_t p = 0; p < shard_len; p++)
-					rr[p] ^= tbl[sc[p]];
-			}
+			size_t simd_done =
+				rs_mul_add_16(rr, sc, stbl, shard_len, init);
+			if (simd_done < shard_len)
+				rs_mul_add_scalar(rr + simd_done,
+						  sc + simd_done, tbl,
+						  shard_len - simd_done, init);
 		}
 	}
 	free(decode_tbl);
+	free(decode_split_tbl);
 
 	/* Copy recovered data into missing data shard slots. */
 	for (int i = 0; i < k; i++) {
@@ -293,15 +415,18 @@ static int rs_decode(struct ec_encoding *encoding, uint8_t **shards,
 			for (int j = 0; j < k; j++) {
 				const uint8_t *tbl =
 					&rsp->parity_tbl[(i * k + j) * 256];
+				const uint8_t *stbl =
+					&rsp->parity_split_tbl[(i * k + j) * 32];
 				const uint8_t *dj = data_ptrs[j];
+				bool init = (j == 0);
 
-				if (j == 0) {
-					for (size_t p = 0; p < shard_len; p++)
-						pi[p] = tbl[dj[p]];
-				} else {
-					for (size_t p = 0; p < shard_len; p++)
-						pi[p] ^= tbl[dj[p]];
-				}
+				size_t simd_done = rs_mul_add_16(
+					pi, dj, stbl, shard_len, init);
+				if (simd_done < shard_len)
+					rs_mul_add_scalar(pi + simd_done,
+							  dj + simd_done, tbl,
+							  shard_len - simd_done,
+							  init);
 			}
 		}
 
@@ -362,12 +487,19 @@ struct ec_encoding *ec_rs_create(int k, int m)
 	 * stream.
 	 */
 	rsp->parity_tbl = calloc((size_t)m * (size_t)k * 256, 1);
-	if (!rsp->parity_tbl)
+	rsp->parity_split_tbl = calloc((size_t)m * (size_t)k * 32, 1);
+	if (!rsp->parity_tbl || !rsp->parity_split_tbl)
 		goto fail;
 	for (int r = 0; r < m; r++)
-		for (int c = 0; c < k; c++)
-			gf_mul_tbl_init(gf_matrix_get(rsp->rsp_parity, r, c),
+		for (int c = 0; c < k; c++) {
+			uint8_t coeff = gf_matrix_get(rsp->rsp_parity, r, c);
+
+			gf_mul_tbl_init(coeff,
 					&rsp->parity_tbl[(r * k + c) * 256]);
+			gf_mul_split_tbl_init(
+				coeff,
+				&rsp->parity_split_tbl[(r * k + c) * 32]);
+		}
 
 	encoding->ec_name = "reed-solomon";
 	encoding->ec_k = k;
@@ -385,6 +517,7 @@ fail:
 		gf_matrix_destroy(rsp->rsp_encode);
 		gf_matrix_destroy(rsp->rsp_parity);
 		free(rsp->parity_tbl);
+		free(rsp->parity_split_tbl);
 		free(rsp);
 	}
 	free(encoding);
@@ -408,6 +541,7 @@ void ec_encoding_destroy(struct ec_encoding *encoding)
 		gf_matrix_destroy(rsp->rsp_encode);
 		gf_matrix_destroy(rsp->rsp_parity);
 		free(rsp->parity_tbl);
+		free(rsp->parity_split_tbl);
 		free(rsp);
 	}
 	free(encoding);

@@ -64,4 +64,24 @@ uint8_t gf_pow(uint8_t a, uint8_t n);
  */
 void gf_mul_tbl_init(uint8_t c, uint8_t tbl[256]);
 
+/*
+ * gf_mul_split_tbl_init -- precompute two 16-entry multiplication
+ * tables (low nibble and high nibble) for a single coefficient c.
+ * Layout: tbl[0..15]  = gf_mul(c, i)        for i in [0, 16)   (low nibble)
+ *         tbl[16..31] = gf_mul(c, i << 4)   for i in [0, 16)   (high nibble)
+ *
+ * Callers reconstruct gf_mul(c, b) as
+ *   tbl[b & 0xf] ^ tbl[16 + (b >> 4)]
+ * i.e. two 4-bit-indexed lookups.  This factoring maps directly
+ * onto SIMD byte-shuffle instructions -- aarch64's vqtbl1q_u8
+ * and x86's pshufb both do 16 parallel 4-bit-indexed lookups per
+ * instruction on a 16-byte register -- so the hot loop can
+ * process 16 shard bytes per shuffle pair instead of one byte
+ * per full-table lookup.
+ *
+ * 32 bytes per (row, col) coefficient.  Compare with
+ * gf_mul_tbl_init's 256 bytes.
+ */
+void gf_mul_split_tbl_init(uint8_t c, uint8_t tbl[32]);
+
 #endif /* _REFFS_EC_GF_H */
