@@ -58,9 +58,13 @@ endif
 # vendor's identical carve-out).  Vendored source unchanged.
 if HAVE_MD_X86_SIMD
 # On x86_64 algos.c's `#if defined(__x86_64__)` block activates
-# naturally on the compiler-defined arch macro.  Nothing extra
-# beyond the asm alias.
-AM_CPPFLAGS = -I$(srcdir) -Dasm=__asm__
+# naturally on the compiler-defined arch macro.  The `x4`
+# variants (raid6_sse2x4, raid6_avx2x4, raid6_avx512x4)
+# referenced from that block are defined inside
+# `#ifdef CONFIG_X86_64` guards in sse2.c / avx2.c / avx512.c
+# (a Kconfig symbol that would always be set on x86_64 in the
+# kernel).  Define it here so the x4 variants get built.
+AM_CPPFLAGS = -I$(srcdir) -Dasm=__asm__ -DCONFIG_X86_64=1
 else
 if HAVE_MD_NEON_SIMD
 # aarch64 has no compiler-defined arch macro that matches Linux
