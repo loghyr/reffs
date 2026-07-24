@@ -53,19 +53,23 @@ endif
 # gate OUT their references to SIMD symbols we did not build.
 # When SIMD IS built for this arch, leave __arch_um__ undefined
 # so the arch block activates and picks up the new SIMD entries.
+# `asm` as a keyword is a GNU extension not accepted under -std=c11;
+# alias to __asm__ globally on the sub-lib (matches the SnapRAID
+# vendor's identical carve-out).  Vendored source unchanged.
 if HAVE_MD_X86_SIMD
 # On x86_64 algos.c's `#if defined(__x86_64__)` block activates
-# naturally on the compiler-defined arch macro.  Nothing extra.
-AM_CPPFLAGS = -I$(srcdir)
+# naturally on the compiler-defined arch macro.  Nothing extra
+# beyond the asm alias.
+AM_CPPFLAGS = -I$(srcdir) -Dasm=__asm__
 else
 if HAVE_MD_NEON_SIMD
 # aarch64 has no compiler-defined arch macro that matches Linux
 # md's NEON block; the kernel gates on CONFIG_KERNEL_MODE_NEON.
 # Define it here so algos.c and recov.c both wire in the NEON
 # dispatch entries we just built.
-AM_CPPFLAGS = -I$(srcdir) -DCONFIG_KERNEL_MODE_NEON=1
+AM_CPPFLAGS = -I$(srcdir) -DCONFIG_KERNEL_MODE_NEON=1 -Dasm=__asm__
 else
-AM_CPPFLAGS = -I$(srcdir) -D__arch_um__=1
+AM_CPPFLAGS = -I$(srcdir) -D__arch_um__=1 -Dasm=__asm__
 endif
 endif
 
