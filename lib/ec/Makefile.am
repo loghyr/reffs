@@ -29,14 +29,16 @@ gf.lo:            AM_CFLAGS += @NOSCALAR_VEC_CFLAGS@
 matrix.lo:        AM_CFLAGS += @NOSCALAR_VEC_CFLAGS@
 mojette.lo:       AM_CFLAGS += @NOSCALAR_VEC_CFLAGS@
 mojette_encoding.lo: AM_CFLAGS += @NOSCALAR_VEC_CFLAGS@
-rs.lo:            AM_CFLAGS += @NOSCALAR_VEC_CFLAGS@
 stripe.lo:        AM_CFLAGS += @NOSCALAR_VEC_CFLAGS@
 
-# Slice R.2: enable SSSE3 for rs.c on x86_64 so __SSSE3__ is
-# defined and the pshufb intrinsic path activates.  All modern
-# x86_64 (Core 2 Duo, 2006+) has SSSE3, so no runtime dispatch
-# is required.  aarch64 gets NEON via __ARM_NEON which is always
-# defined on aarch64 compiles -- no extra flag needed.
+# rs.lo needs @NOSCALAR_VEC_CFLAGS@ (like the peers above) AND on
+# x86_64 also -mssse3 so Slice R.2's pshufb intrinsic path
+# activates (__SSSE3__ is only defined when the flag is on the
+# compile line).  Automake warns if the same target is assigned
+# in multiple conditional branches, so build the assignment
+# in one place.
 if HAVE_MD_X86_SIMD
-rs.lo:            AM_CFLAGS += -mssse3
+rs.lo:            AM_CFLAGS += @NOSCALAR_VEC_CFLAGS@ -mssse3
+else
+rs.lo:            AM_CFLAGS += @NOSCALAR_VEC_CFLAGS@
 endif
