@@ -157,6 +157,25 @@ static uint64_t time_decode(struct ec_encoding *c, uint8_t **shards,
 	return best;
 }
 
+/*
+ * Query per-shard byte size for an encoder.  Encoders with
+ * uniform shard sizes (RS Vandermonde, SnapRAID, ISA-L, XOR,
+ * Linux md) leave ec_shard_size NULL and every shard is
+ * shard_len bytes.  Non-systematic Mojette (and systematic
+ * Mojette's parity shards) use ec_shard_size to report larger
+ * projection-sized buffers.  Round up to 64-byte alignment
+ * for aligned_alloc.
+ */
+static size_t bench_shard_bytes(struct ec_encoding *c, int shard_idx,
+				size_t data_shard_len)
+{
+	size_t s = c->ec_shard_size ?
+			   c->ec_shard_size(c, shard_idx, data_shard_len) :
+			   data_shard_len;
+
+	return (s + 63) & ~(size_t)63;
+}
+
 static void bench_one(const char *label, struct ec_encoding *c, int k, int m,
 		      size_t shard_len, int iters, int warmup)
 {
@@ -167,14 +186,18 @@ static void bench_one(const char *label, struct ec_encoding *c, int k, int m,
 	uint8_t **snapshot = calloc(n, sizeof(*snapshot));
 
 	for (int i = 0; i < k; i++) {
-		data[i] = aligned_alloc(64, shard_len);
-		shards[i] = aligned_alloc(64, shard_len);
-		snapshot[i] = aligned_alloc(64, shard_len);
+		size_t sz = bench_shard_bytes(c, i, shard_len);
+
+		data[i] = aligned_alloc(64, sz);
+		shards[i] = aligned_alloc(64, sz);
+		snapshot[i] = aligned_alloc(64, sz);
 	}
 	for (int i = 0; i < m; i++) {
-		parity[i] = aligned_alloc(64, shard_len);
-		shards[k + i] = aligned_alloc(64, shard_len);
-		snapshot[k + i] = aligned_alloc(64, shard_len);
+		size_t sz = bench_shard_bytes(c, k + i, shard_len);
+
+		parity[i] = aligned_alloc(64, sz);
+		shards[k + i] = aligned_alloc(64, sz);
+		snapshot[k + i] = aligned_alloc(64, sz);
 	}
 
 	fill_shards(data, k, shard_len);
@@ -182,11 +205,18 @@ static void bench_one(const char *label, struct ec_encoding *c, int k, int m,
 	uint64_t enc_ns =
 		time_encode(c, data, parity, shard_len, iters, warmup);
 
-	/* Snapshot the encoded shards so decode sees an authentic input. */
+	/* Snapshot the encoded shards so decode sees an authentic input.
+	 * Data shards are shard_len; parity shards use the encoder's
+	 * ec_shard_size (Mojette non-systematic can be larger). */
 	for (int i = 0; i < k; i++)
 		memcpy(snapshot[i], data[i], shard_len);
-	for (int i = 0; i < m; i++)
-		memcpy(snapshot[k + i], parity[i], shard_len);
+	for (int i = 0; i < m; i++) {
+		size_t sz = c->ec_shard_size ?
+				    c->ec_shard_size(c, k + i, shard_len) :
+				    shard_len;
+
+		memcpy(snapshot[k + i], parity[i], sz);
+	}
 
 	/* Decode with one data shard missing (index 1 -- avoid 0 which
 	 * often triggers a fast-path in some encodings). */
@@ -295,6 +325,8 @@ int main(int argc, char **argv)
 						       NULL;
 		struct ec_encoding *md =
 			(g->m == 2) ? ec_linux_md_create(g->k) : NULL;
+		struct ec_encoding *ms = ec_mojette_sys_create(g->k, g->m);
+		struct ec_encoding *mn = ec_mojette_nonsys_create(g->k, g->m);
 
 		if (!rs || !sr || !il) {
 			fprintf(stderr,
@@ -310,6 +342,10 @@ int main(int argc, char **argv)
 				ec_encoding_destroy(xr);
 			if (md)
 				ec_encoding_destroy(md);
+			if (ms)
+				ec_encoding_destroy(ms);
+			if (mn)
+				ec_encoding_destroy(mn);
 			continue;
 		}
 		for (const size_t *sz = sizes; *sz; sz++) {
@@ -325,6 +361,12 @@ int main(int argc, char **argv)
 			if (md)
 				bench_one("linux-md-raid6", md, g->k, 2, *sz,
 					  iters, warmup);
+			if (ms)
+				bench_one("mojette-sys", ms, g->k, g->m, *sz,
+					  iters, warmup);
+			if (mn)
+				bench_one("mojette-nonsys", mn, g->k, g->m, *sz,
+					  iters, warmup);
 		}
 		ec_encoding_destroy(rs);
 		ec_encoding_destroy(sr);
@@ -333,6 +375,10 @@ int main(int argc, char **argv)
 			ec_encoding_destroy(xr);
 		if (md)
 			ec_encoding_destroy(md);
+		if (ms)
+			ec_encoding_destroy(ms);
+		if (mn)
+			ec_encoding_destroy(mn);
 		printf("\n");
 	}
 	return 0;
