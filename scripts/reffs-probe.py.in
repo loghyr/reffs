@@ -839,6 +839,10 @@ _CODING_NAMES = {
     'mojette-nonsys': 3,
     'rs': 4,
     'mirrored': 5,
+    'snapraid-cauchy': 6,
+    'xor-parity': 7,
+    'linux-md-raid': 8,
+    'isa-l-rs': 9,
 }
 
 

@@ -469,6 +469,11 @@ static int parse_coding_spec(const char *s, struct reffs_coding_spec *out)
 		{ "rs", REFFS_ENCODING_RS_VANDERMONDE },
 		{ "mojette-sys", REFFS_ENCODING_MOJETTE_SYSTEMATIC },
 		{ "mojette-nonsys", REFFS_ENCODING_MOJETTE_NON_SYSTEMATIC },
+		{ "mirrored", REFFS_ENCODING_MIRRORED },
+		{ "snapraid-cauchy", REFFS_ENCODING_SNAPRAID_CAUCHY },
+		{ "xor-parity", REFFS_ENCODING_XOR_PARITY },
+		{ "linux-md-raid", REFFS_ENCODING_LINUX_MD_RAID },
+		{ "isa-l-rs", REFFS_ENCODING_ISA_L_RS },
 	};
 	char encoding_name[32];
 	unsigned int k = 0;
