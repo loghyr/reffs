@@ -10,6 +10,8 @@ AM_CFLAGS = -Im4 @CHECK_CFLAGS@					\
 
 AM_LDFLAGS = -rdynamic
 
+SUBDIRS = . tests
+
 lib_LTLIBRARIES = libreffs_trace.la
 libreffs_trace_la_SOURCES =	\
 	common.c

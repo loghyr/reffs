@@ -19,6 +19,8 @@
 #include <sys/types.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <dirent.h>
+#include <limits.h>
 #include <zstd.h>
 #include "reffs/log.h" /* reffs_gettid() */
 #include "reffs/trace/common.h"
@@ -26,6 +28,27 @@
 
 #define MAX_TRACE_SIZE (512 * 1024 * 1024)
 #define MAX_TRACE_QUEUE 64
+
+/*
+ * Archive retention.
+ *
+ * Rotation compresses each full trace log and keeps the archive
+ * forever.  Under a heavy trace workload that is unbounded growth: on
+ * 2026-07-27 reffs.ci produced 1412 archives (43 GB compressed, ~723 GB
+ * raw) in 13.7 hours, filled the root filesystem, and then spun
+ * retrying rotations that could no longer succeed -- which in turn
+ * wedged an in-flight COPY and hung the nightly for 13 hours.
+ *
+ * An external prune (nightly_ci.sh) cannot bound a single long run by
+ * construction; it only gets to act between runs.  The cap has to live
+ * here, where rotation happens.
+ *
+ * 8 GB holds ~270 archives at the observed ~30 MB compressed each --
+ * days of history on a normal workload, while capping the pathological
+ * case well short of a full disk.  Set REFFS_TRACE_ARCHIVE_MAX_BYTES=0
+ * to disable pruning entirely.
+ */
+#define DEFAULT_TRACE_ARCHIVE_MAX_BYTES (8ULL * 1024 * 1024 * 1024)
 
 static const char *reffs_trace_name;
 
@@ -56,6 +79,7 @@ static pthread_cond_t trace_compress_cond = PTHREAD_COND_INITIALIZER;
 static pthread_t trace_compress_tid;
 
 static void compress_trace_file_inline(char *input_path);
+static uint64_t trace_archive_max_bytes(void);
 
 /*
  * Build a timestamped filename from the base trace path.
@@ -105,6 +129,11 @@ static void *trace_compress_thread(void __attribute__((unused)) * arg)
 		if (input_path) {
 			compress_trace_file_inline(input_path);
 			free(input_path);
+			/* Prune here, not in rotate_trace_if_needed_locked():
+			 * that runs under trace_mutex, which every TRACE call
+			 * takes, and this walks a directory. */
+			reffs_trace_archive_prune(reffs_trace_name,
+						  trace_archive_max_bytes());
 		}
 	}
 	return NULL;
@@ -173,6 +202,172 @@ static void compress_trace_file_inline(char *input_path)
 	fclose(in);
 	fclose(out);
 	remove(input_path);
+}
+
+struct archive_ent {
+	char *ae_path;
+	off_t ae_size;
+	time_t ae_mtime;
+};
+
+static int archive_ent_newest_first(const void *a, const void *b)
+{
+	const struct archive_ent *ea = a;
+	const struct archive_ent *eb = b;
+
+	if (ea->ae_mtime > eb->ae_mtime)
+		return -1;
+	if (ea->ae_mtime < eb->ae_mtime)
+		return 1;
+	/* Same second: fall back to name so the order is deterministic.
+	 * Names carry a timestamp, so this sorts newest-first too. */
+	return strcmp(eb->ae_path, ea->ae_path);
+}
+
+/*
+ * Does `name` look like a rotated archive of `stem`?  Rotation produces
+ * "<stem>-<TIMESTAMP>.log", which the compress thread turns into
+ * "<stem>-<TIMESTAMP>.log.zst".  The live trace file is plain
+ * "<stem>.log" -- it has no '-' after the stem, so it never matches and
+ * is never a prune candidate.
+ */
+static bool is_rotated_archive(const char *name, const char *stem,
+			       size_t stem_len)
+{
+	size_t nlen;
+
+	if (strncmp(name, stem, stem_len) != 0 || name[stem_len] != '-')
+		return false;
+
+	nlen = strlen(name);
+	if (nlen > 8 && strcmp(name + nlen - 8, ".log.zst") == 0)
+		return true;
+	if (nlen > 4 && strcmp(name + nlen - 4, ".log") == 0)
+		return true;
+	return false;
+}
+
+void reffs_trace_archive_prune(const char *trace_path, uint64_t max_bytes)
+{
+	char dir[PATH_MAX];
+	char stem[NAME_MAX + 1];
+	const char *slash, *file;
+	size_t stem_len;
+	struct archive_ent *ents = NULL;
+	size_t n_ents = 0, cap_ents = 0;
+	uint64_t total = 0;
+	struct dirent *de;
+	DIR *d;
+
+	/* max_bytes == 0 disables pruning -- an explicit escape hatch. */
+	if (!trace_path || max_bytes == 0)
+		return;
+
+	slash = strrchr(trace_path, '/');
+	if (slash) {
+		size_t dlen = (size_t)(slash - trace_path);
+
+		if (dlen == 0)
+			dlen = 1; /* "/foo.log" -> "/" */
+		if (dlen >= sizeof(dir))
+			return;
+		memcpy(dir, trace_path, dlen);
+		dir[dlen] = '\0';
+		file = slash + 1;
+	} else {
+		snprintf(dir, sizeof(dir), ".");
+		file = trace_path;
+	}
+
+	/* Strip the ".log" suffix to get the stem, matching
+	 * format_timestamped_name(). */
+	stem_len = strlen(file);
+	if (stem_len > 4 && strcmp(file + stem_len - 4, ".log") == 0)
+		stem_len -= 4;
+	if (stem_len == 0 || stem_len >= sizeof(stem))
+		return;
+	memcpy(stem, file, stem_len);
+	stem[stem_len] = '\0';
+
+	d = opendir(dir);
+	if (!d)
+		return;
+
+	while ((de = readdir(d)) != NULL) {
+		char path[PATH_MAX];
+		struct stat st;
+
+		if (!is_rotated_archive(de->d_name, stem, stem_len))
+			continue;
+		if (snprintf(path, sizeof(path), "%s/%s", dir, de->d_name) >=
+		    (int)sizeof(path))
+			continue;
+		if (stat(path, &st) != 0 || !S_ISREG(st.st_mode))
+			continue;
+
+		if (n_ents == cap_ents) {
+			size_t new_cap = cap_ents ? cap_ents * 2 : 64;
+			struct archive_ent *grown =
+				realloc(ents, new_cap * sizeof(*grown));
+
+			if (!grown)
+				goto out;
+			ents = grown;
+			cap_ents = new_cap;
+		}
+
+		ents[n_ents].ae_path = strdup(path);
+		if (!ents[n_ents].ae_path)
+			goto out;
+		ents[n_ents].ae_size = st.st_size;
+		ents[n_ents].ae_mtime = st.st_mtime;
+		n_ents++;
+	}
+
+	qsort(ents, n_ents, sizeof(*ents), archive_ent_newest_first);
+
+	/* Keep newest-first until the cap is reached; drop the rest. */
+	for (size_t i = 0; i < n_ents; i++) {
+		if (total + (uint64_t)ents[i].ae_size <= max_bytes) {
+			total += (uint64_t)ents[i].ae_size;
+			continue;
+		}
+		if (remove(ents[i].ae_path) != 0)
+			fprintf(stderr,
+				"Failed to prune trace archive %s: %s\n",
+				ents[i].ae_path, strerror(errno));
+	}
+
+out:
+	for (size_t i = 0; i < n_ents; i++)
+		free(ents[i].ae_path);
+	free(ents);
+	closedir(d);
+}
+
+/*
+ * Cap read once, at first use.  getenv() is not thread-safe against a
+ * concurrent setenv(), and this runs on the compress thread.
+ */
+static uint64_t trace_archive_max_bytes(void)
+{
+	static uint64_t cached;
+	static bool loaded;
+
+	if (!loaded) {
+		const char *env = getenv("REFFS_TRACE_ARCHIVE_MAX_BYTES");
+
+		cached = DEFAULT_TRACE_ARCHIVE_MAX_BYTES;
+		if (env && *env) {
+			char *end;
+			unsigned long long v = strtoull(env, &end, 10);
+
+			if (*end == '\0')
+				cached = (uint64_t)v;
+		}
+		loaded = true;
+	}
+	return cached;
 }
 
 static void rotate_trace_if_needed_locked(void)

@@ -926,6 +926,7 @@ AC_CONFIG_FILES([
 	lib/probe1/Makefile
 	lib/tests/Makefile
 	lib/trace/Makefile
+	lib/trace/tests/Makefile
 	lib/utils/Makefile
 	lib/utils/tests/Makefile
 	lib/xdr/Makefile

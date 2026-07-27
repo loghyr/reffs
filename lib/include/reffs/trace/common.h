@@ -12,6 +12,16 @@
 void reffs_trace_init(const char *filename);
 void reffs_trace_close(void);
 
+/*
+ * Drop the oldest rotated archives of `trace_path` until the total is
+ * at or below `max_bytes`; `max_bytes == 0` disables pruning.  The live
+ * trace file is never a candidate.
+ *
+ * Called automatically by the compress thread after each rotation.
+ * Exposed so the unit tests can drive it against a scratch directory.
+ */
+void reffs_trace_archive_prune(const char *trace_path, uint64_t max_bytes);
+
 /* Enabling/disabling trace categories */
 void reffs_trace_enable_category(enum reffs_trace_category category);
 void reffs_trace_enable_all_categories(void);
