@@ -19,12 +19,32 @@ jobs:
     - name: Acquire CI lock
       run: |
         LOCKFILE=/reffs_data/reffs_ci.lock
+        # Match nightly_ci.sh MAX_RUNTIME: a holder older than this is
+        # wedged, not working.  On 2026-07-27 a nightly hung in
+        # nfs-conformance for 13h and held this lock; with no steal path
+        # every push failed here after the full 10-minute wait.
+        MAX_RUNTIME=$((3 * 3600))
         for i in $(seq 1 60); do
           if (set -C; echo $$ > "$LOCKFILE") 2>/dev/null; then
             echo "Lock acquired"
             break
           fi
-          echo "Waiting for lock (attempt $i/60)..."
+          # Steal a stale lock: holder dead, or alive past MAX_RUNTIME.
+          HOLDER=$(cat "$LOCKFILE" 2>/dev/null)
+          if [ -n "$HOLDER" ] && ! kill -0 "$HOLDER" 2>/dev/null; then
+            echo "Lock holder PID $HOLDER is gone -- stealing stale lock"
+            rm -f "$LOCKFILE"
+            continue
+          fi
+          if [ -f "$LOCKFILE" ]; then
+            AGE=$(( $(date +%s) - $(stat -c %Y "$LOCKFILE" 2>/dev/null || date +%s) ))
+            if [ "$AGE" -gt "$MAX_RUNTIME" ]; then
+              echo "Lock held ${AGE}s by PID $HOLDER, past ${MAX_RUNTIME}s -- stealing"
+              rm -f "$LOCKFILE"
+              continue
+            fi
+          fi
+          echo "Waiting for lock (attempt $i/60, holder PID ${HOLDER:-unknown})..."
           sleep 10
         done
         [ -f "$LOCKFILE" ] && [ "$(cat "$LOCKFILE")" = "$$" ] || exit 1
