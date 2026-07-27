@@ -233,19 +233,25 @@ END_TEST
  * verified against Linux md in Slice 6.2).  So ISA-L, Linux
  * md, and SnapRAID all wire-agree at m <= 2.
  *
- * Reffs's own rs.c uses a NORMALIZED Vandermonde (multiplied
- * by the inverse of the top k*k block to force identity on
- * top) whose parity rows are NOT the [1,1,1,1] / [1,2,4,8]
- * pattern, and therefore MUST NOT agree with ISA-L on either
- * P or Q.  So we need the RS_VANDERMONDE (0x4) enum to remain
- * distinct from ISA_L_RS (0x9).
+ * Slice S.1 (2026-07-27) added reffs's own RS_VANDERMONDE
+ * (0x4) to that agreement: build_encoding_matrix() now
+ * hand-crafts the P/Q parity rows at m <= 2 instead of using
+ * the normalized-Vandermonde bottom rows.  The four encodings
+ * are now byte-identical at m <= 2; RS_VANDERMONDE stays a
+ * distinct enum because its m >= 3 rows still use the
+ * normalized-Vandermonde path (and RS_VANDERMONDE's decoder
+ * knows how to invert them).
  *
  * At m >= 3, ISA-L and SnapRAID diverge: ISA-L keeps
  * appending Vandermonde rows (1, gen^i, gen^(2i), ...) with a
  * new generator per row, while SnapRAID's Cauchy uses
  * 1/(x_i + y_j) with SnapRAID-specific point choice.  Assert
  * that divergence at m=4 so a wrong-refactor cannot silently
- * merge SNAPRAID_CAUCHY (0x6) into ISA_L_RS (0x9).
+ * merge SNAPRAID_CAUCHY (0x6) into ISA_L_RS (0x9).  reffs's
+ * RS_VANDERMONDE also diverges from both at m >= 3 (its own
+ * point set is still {1, 2, 3, 4, ...} pre-normalization);
+ * widening the wire-compat map further is tracked as follow-up
+ * Slice S.2.
  */
 static bool parity_bytes_equal(uint8_t *a, uint8_t *b, size_t len)
 {
@@ -288,10 +294,10 @@ START_TEST(test_matrix_agrees_with_snapraid_at_m2)
 	ck_assert(parity_bytes_equal(p_il[0], p_sr[0], len));
 	ck_assert(parity_bytes_equal(p_il[1], p_sr[1], len));
 
-	/* Reffs's rs.c uses normalized Vandermonde; parity rows must
-	 * NOT agree with ISA-L on either row. */
-	ck_assert(!parity_bytes_equal(p_il[0], p_rv[0], len));
-	ck_assert(!parity_bytes_equal(p_il[1], p_rv[1], len));
+	/* Slice S.1: reffs's rs.c now hand-crafts P/Q at m<=2, so
+	 * RS_VANDERMONDE also agrees with ISA-L on BOTH rows here. */
+	ck_assert(parity_bytes_equal(p_il[0], p_rv[0], len));
+	ck_assert(parity_bytes_equal(p_il[1], p_rv[1], len));
 
 	for (int i = 0; i < k; i++)
 		free(data[i]);
@@ -307,6 +313,67 @@ START_TEST(test_matrix_agrees_with_snapraid_at_m2)
 	ec_encoding_destroy(il);
 	ec_encoding_destroy(rv);
 	ec_encoding_destroy(sr);
+}
+END_TEST
+
+/*
+ * Slice S.1 m=1 lock-in: rs-vand at m=1 must produce the plain
+ * XOR-of-all-data parity byte, byte-identical to XOR_PARITY,
+ * to ISA-L's single Reed-Solomon row (which reduces to XOR when
+ * m=1), and to Linux md's P row.  Locks in the "RS_VANDERMONDE
+ * joins the wire-compat map at m=1" invariant so a future
+ * refactor of build_encoding_matrix() can't silently regress it.
+ */
+START_TEST(test_matrix_agrees_at_m1_across_encoders)
+{
+	int k = 4;
+	int m = 1;
+	size_t len = SHARD_LEN;
+	struct ec_encoding *il = ec_isa_l_create(k, m);
+	struct ec_encoding *rv = ec_rs_create(k, m);
+	struct ec_encoding *xp = ec_xor_create(k);
+
+	ck_assert_ptr_nonnull(il);
+	ck_assert_ptr_nonnull(rv);
+	ck_assert_ptr_nonnull(xp);
+
+	uint8_t **data = calloc(k, sizeof(*data));
+	uint8_t **p_il = calloc(m, sizeof(*p_il));
+	uint8_t **p_rv = calloc(m, sizeof(*p_rv));
+	uint8_t **p_xp = calloc(m, sizeof(*p_xp));
+
+	for (int i = 0; i < k; i++) {
+		data[i] = calloc(len, 1);
+		fill_pattern(data[i], len, i);
+	}
+	for (int i = 0; i < m; i++) {
+		p_il[i] = calloc(len, 1);
+		p_rv[i] = calloc(len, 1);
+		p_xp[i] = calloc(len, 1);
+	}
+
+	ck_assert_int_eq(il->ec_encode(il, data, p_il, len), 0);
+	ck_assert_int_eq(rv->ec_encode(rv, data, p_rv, len), 0);
+	ck_assert_int_eq(xp->ec_encode(xp, data, p_xp, len), 0);
+
+	/* All three encodings collapse to plain XOR at m=1. */
+	ck_assert(parity_bytes_equal(p_il[0], p_xp[0], len));
+	ck_assert(parity_bytes_equal(p_rv[0], p_xp[0], len));
+
+	for (int i = 0; i < k; i++)
+		free(data[i]);
+	for (int i = 0; i < m; i++) {
+		free(p_il[i]);
+		free(p_rv[i]);
+		free(p_xp[i]);
+	}
+	free(data);
+	free(p_il);
+	free(p_rv);
+	free(p_xp);
+	ec_encoding_destroy(il);
+	ec_encoding_destroy(rv);
+	ec_encoding_destroy(xp);
 }
 END_TEST
 
@@ -378,6 +445,7 @@ Suite *isa_l_suite(void)
 	tcase_add_test(tc, test_roundtrip_k1m1);
 	tcase_add_test(tc, test_zero_length_roundtrip);
 	tcase_add_test(tc, test_matrix_agrees_with_snapraid_at_m2);
+	tcase_add_test(tc, test_matrix_agrees_at_m1_across_encoders);
 	tcase_add_test(tc, test_matrix_diverges_from_snapraid_at_m4);
 	suite_add_tcase(s, tc);
 	return s;

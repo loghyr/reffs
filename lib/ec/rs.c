@@ -76,25 +76,73 @@ struct rs_private {
 };
 
 /*
- * Build the normalized encoding matrix.
+ * Build the systematic encoding matrix.
  *
- * Start with a (k+m) x k Vandermonde matrix, then left-multiply by
- * the inverse of its top k x k sub-matrix.  The result has an
- * identity block on top (rows 0..k-1) and the parity generation
- * matrix on the bottom (rows k..k+m-1).
+ * The top k rows are always the k x k identity (data pass-through).
+ * The bottom m parity rows are chosen for MDS + wire-compat as
+ * follows:
+ *
+ *   m == 1: parity row = [1, 1, ..., 1].  Parity output is the
+ *           bitwise XOR of every data shard -- byte-identical to
+ *           FFV2_ENCODING_XOR_PARITY and to Linux md's P row.
+ *
+ *   m == 2: parity rows = [1, 1, ..., 1] and [1, g, g^2, ..., g^(k-1)]
+ *           where g = 2 in GF(2^8) with primitive polynomial 0x1d.
+ *           Byte-identical to Linux md's (P, Q), ISA-L's first two
+ *           Reed-Solomon rows, and SnapRAID's first two Cauchy rows
+ *           (see Slice 7.2 wire-compat findings).  This is the
+ *           `Slice S.1` change -- the pre-S.1 rs-vand used
+ *           normalized-Vandermonde bottom rows which are equivalent
+ *           MDS coefficients but diverge from the on-the-wire
+ *           choices in every other m=2 encoding.
+ *
+ *   m >= 3: fall back to the normalized-Vandermonde construction --
+ *           start with a (k+m) x k Vandermonde with alpha_r = r+1,
+ *           extract the top k x k sub-matrix, invert it, and
+ *           left-multiply the whole Vandermonde by the inverse.
+ *           The top k rows become the identity; the bottom m rows
+ *           become the parity generation matrix that Slice A.1
+ *           locked in.  These do not match any external encoding
+ *           at m >= 3.  Widening the wire-compat map further is
+ *           tracked as follow-up Slice S.2.
  */
 static struct gf_matrix *build_encoding_matrix(int k, int m)
 {
+	struct gf_matrix *enc = NULL;
 	struct gf_matrix *vand = NULL;
 	struct gf_matrix *top = NULL;
 	struct gf_matrix *top_inv = NULL;
-	struct gf_matrix *enc = NULL;
 
+	if (m <= 2) {
+		enc = gf_matrix_create(k + m, k);
+		if (!enc)
+			return NULL;
+
+		/* Top k rows: identity. */
+		for (int r = 0; r < k; r++)
+			gf_matrix_set(enc, r, r, 1);
+
+		/* P row: all-ones (XOR of all data). */
+		for (int c = 0; c < k; c++)
+			gf_matrix_set(enc, k, c, 1);
+
+		/* Q row (m == 2 only): [1, g, g^2, ..., g^(k-1)], g = 2. */
+		if (m == 2) {
+			uint8_t coef = 1;
+
+			for (int c = 0; c < k; c++) {
+				gf_matrix_set(enc, k + 1, c, coef);
+				coef = gf_mul(coef, 2);
+			}
+		}
+		return enc;
+	}
+
+	/* m >= 3: normalized-Vandermonde fallback. */
 	vand = gf_matrix_vandermonde(k + m, k);
 	if (!vand)
 		return NULL;
 
-	/* Extract top k x k sub-matrix. */
 	top = gf_matrix_create(k, k);
 	if (!top)
 		goto fail;
@@ -102,14 +150,12 @@ static struct gf_matrix *build_encoding_matrix(int k, int m)
 		for (int c = 0; c < k; c++)
 			gf_matrix_set(top, r, c, gf_matrix_get(vand, r, c));
 
-	/* Invert it. */
 	top_inv = gf_matrix_create(k, k);
 	if (!top_inv)
 		goto fail;
 	if (gf_matrix_invert(top, top_inv) < 0)
 		goto fail;
 
-	/* Multiply: enc = vand * top_inv --> identity on top. */
 	enc = gf_matrix_create(k + m, k);
 	if (!enc)
 		goto fail;
