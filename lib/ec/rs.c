@@ -26,37 +26,123 @@
 #include "reffs/ec.h"
 
 #include <errno.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "gf.h"
 #include "matrix.h"
 
+/*
+ * SIMD dispatch for the gf_mul inner loop.  Compile-time
+ * detection via arch-preset macros; runtime path picks
+ * per-shard based on shard_len alignment.  Neither header is
+ * portable enough to rely on unconditionally.
+ */
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#define RS_HAVE_NEON 1
+#endif
+#if defined(__SSSE3__)
+#include <tmmintrin.h>
+#define RS_HAVE_SSSE3 1
+#endif
+
 struct rs_private {
 	struct gf_matrix *rsp_encode; /* (k+m) x k encoding matrix */
 	struct gf_matrix *rsp_parity; /* m x k parity sub-matrix */
+	/*
+	 * Precomputed multiplication tables for every parity
+	 * coefficient: parity_tbl[(i * k + j) * 256 + b] ==
+	 * gf_mul(rsp_parity[i][j], b).  Built once at create time so
+	 * the encode hot path replaces `gf_exp[gf_log[coeff] +
+	 * gf_log[b]]` (two table lookups per gf_mul) with a single
+	 * direct table lookup.  m * k * 256 bytes; ~8 KiB at k=4 m=2,
+	 * ~64 KiB at k=8 m=4 -- well within L1/L2 for realistic
+	 * geometries.
+	 */
+	uint8_t *parity_tbl;
+	/*
+	 * Split-nibble multiplication tables for the SIMD paths:
+	 * parity_split_tbl[(i * k + j) * 32 + 0..15]  = low-nibble half
+	 * parity_split_tbl[(i * k + j) * 32 + 16..31] = high-nibble half
+	 * for coefficient rsp_parity[i][j].  Loaded into a single
+	 * 16-byte register per (i, j) coefficient and consumed by
+	 * vqtbl1q_u8 (NEON) / pshufb (SSSE3) 16 shard bytes at a
+	 * time.  32 bytes per coefficient; 256 bytes at k=4 m=2,
+	 * 1 KiB at k=8 m=4 -- negligible.
+	 */
+	uint8_t *parity_split_tbl;
 };
 
 /*
- * Build the normalized encoding matrix.
+ * Build the systematic encoding matrix.
  *
- * Start with a (k+m) x k Vandermonde matrix, then left-multiply by
- * the inverse of its top k x k sub-matrix.  The result has an
- * identity block on top (rows 0..k-1) and the parity generation
- * matrix on the bottom (rows k..k+m-1).
+ * The top k rows are always the k x k identity (data pass-through).
+ * The bottom m parity rows are chosen for MDS + wire-compat as
+ * follows:
+ *
+ *   m == 1: parity row = [1, 1, ..., 1].  Parity output is the
+ *           bitwise XOR of every data shard -- byte-identical to
+ *           FFV2_ENCODING_XOR_PARITY and to Linux md's P row.
+ *
+ *   m == 2: parity rows = [1, 1, ..., 1] and [1, g, g^2, ..., g^(k-1)]
+ *           where g = 2 in GF(2^8) with primitive polynomial 0x1d.
+ *           Byte-identical to Linux md's (P, Q), ISA-L's first two
+ *           Reed-Solomon rows, and SnapRAID's first two Cauchy rows
+ *           (see Slice 7.2 wire-compat findings).  This is the
+ *           `Slice S.1` change -- the pre-S.1 rs-vand used
+ *           normalized-Vandermonde bottom rows which are equivalent
+ *           MDS coefficients but diverge from the on-the-wire
+ *           choices in every other m=2 encoding.
+ *
+ *   m >= 3: fall back to the normalized-Vandermonde construction --
+ *           start with a (k+m) x k Vandermonde with alpha_r = r+1,
+ *           extract the top k x k sub-matrix, invert it, and
+ *           left-multiply the whole Vandermonde by the inverse.
+ *           The top k rows become the identity; the bottom m rows
+ *           become the parity generation matrix that Slice A.1
+ *           locked in.  These do not match any external encoding
+ *           at m >= 3.  Widening the wire-compat map further is
+ *           tracked as follow-up Slice S.2.
  */
 static struct gf_matrix *build_encoding_matrix(int k, int m)
 {
+	struct gf_matrix *enc = NULL;
 	struct gf_matrix *vand = NULL;
 	struct gf_matrix *top = NULL;
 	struct gf_matrix *top_inv = NULL;
-	struct gf_matrix *enc = NULL;
 
+	if (m <= 2) {
+		enc = gf_matrix_create(k + m, k);
+		if (!enc)
+			return NULL;
+
+		/* Top k rows: identity. */
+		for (int r = 0; r < k; r++)
+			gf_matrix_set(enc, r, r, 1);
+
+		/* P row: all-ones (XOR of all data). */
+		for (int c = 0; c < k; c++)
+			gf_matrix_set(enc, k, c, 1);
+
+		/* Q row (m == 2 only): [1, g, g^2, ..., g^(k-1)], g = 2. */
+		if (m == 2) {
+			uint8_t coef = 1;
+
+			for (int c = 0; c < k; c++) {
+				gf_matrix_set(enc, k + 1, c, coef);
+				coef = gf_mul(coef, 2);
+			}
+		}
+		return enc;
+	}
+
+	/* m >= 3: normalized-Vandermonde fallback. */
 	vand = gf_matrix_vandermonde(k + m, k);
 	if (!vand)
 		return NULL;
 
-	/* Extract top k x k sub-matrix. */
 	top = gf_matrix_create(k, k);
 	if (!top)
 		goto fail;
@@ -64,14 +150,12 @@ static struct gf_matrix *build_encoding_matrix(int k, int m)
 		for (int c = 0; c < k; c++)
 			gf_matrix_set(top, r, c, gf_matrix_get(vand, r, c));
 
-	/* Invert it. */
 	top_inv = gf_matrix_create(k, k);
 	if (!top_inv)
 		goto fail;
 	if (gf_matrix_invert(top, top_inv) < 0)
 		goto fail;
 
-	/* Multiply: enc = vand * top_inv --> identity on top. */
 	enc = gf_matrix_create(k + m, k);
 	if (!enc)
 		goto fail;
@@ -87,6 +171,90 @@ fail:
 	return enc;
 }
 
+/*
+ * Multiply an aligned run of 16-byte blocks by the (16-lo + 16-hi)
+ * split table for a single coefficient, XOR'ing into `out`.  If
+ * `init` is true, initializes `out` (equivalent to XOR-with-zero);
+ * otherwise accumulates.  Returns the number of bytes consumed
+ * (always a multiple of 16), so the caller can handle the tail
+ * with the scalar path.
+ *
+ * NEON path handles aarch64; SSSE3 path handles x86; scalar
+ * fallback returns 0 immediately so the caller processes the
+ * whole shard scalar-side.
+ */
+static size_t rs_mul_add_16(uint8_t *out, const uint8_t *in,
+			    const uint8_t *split_tbl, size_t len, bool init)
+{
+	size_t done = len & ~(size_t)15;
+
+	if (done == 0)
+		return 0;
+
+#if defined(RS_HAVE_NEON)
+	uint8x16_t lo_tbl = vld1q_u8(&split_tbl[0]);
+	uint8x16_t hi_tbl = vld1q_u8(&split_tbl[16]);
+	uint8x16_t low_mask = vdupq_n_u8(0x0f);
+
+	for (size_t p = 0; p < done; p += 16) {
+		uint8x16_t dv = vld1q_u8(&in[p]);
+		uint8x16_t lo_idx = vandq_u8(dv, low_mask);
+		uint8x16_t hi_idx = vshrq_n_u8(dv, 4);
+		uint8x16_t prod = veorq_u8(vqtbl1q_u8(lo_tbl, lo_idx),
+					   vqtbl1q_u8(hi_tbl, hi_idx));
+		if (!init) {
+			uint8x16_t ov = vld1q_u8(&out[p]);
+
+			prod = veorq_u8(prod, ov);
+		}
+		vst1q_u8(&out[p], prod);
+	}
+	return done;
+#elif defined(RS_HAVE_SSSE3)
+	__m128i lo_tbl = _mm_loadu_si128((const __m128i *)&split_tbl[0]);
+	__m128i hi_tbl = _mm_loadu_si128((const __m128i *)&split_tbl[16]);
+	__m128i low_mask = _mm_set1_epi8(0x0f);
+
+	for (size_t p = 0; p < done; p += 16) {
+		__m128i dv = _mm_loadu_si128((const __m128i *)&in[p]);
+		__m128i lo_idx = _mm_and_si128(dv, low_mask);
+		__m128i hi_idx = _mm_and_si128(_mm_srli_epi64(dv, 4), low_mask);
+		__m128i prod = _mm_xor_si128(_mm_shuffle_epi8(lo_tbl, lo_idx),
+					     _mm_shuffle_epi8(hi_tbl, hi_idx));
+		if (!init) {
+			__m128i ov = _mm_loadu_si128((const __m128i *)&out[p]);
+
+			prod = _mm_xor_si128(prod, ov);
+		}
+		_mm_storeu_si128((__m128i *)&out[p], prod);
+	}
+	return done;
+#else
+	(void)out;
+	(void)in;
+	(void)split_tbl;
+	(void)init;
+	return 0;
+#endif
+}
+
+/*
+ * Scalar tail: process `len` bytes starting at (in, out) with the
+ * per-coefficient full 256-byte table.  Same loop-nest shape as
+ * the R.1 baseline.
+ */
+static void rs_mul_add_scalar(uint8_t *out, const uint8_t *in,
+			      const uint8_t *tbl, size_t len, bool init)
+{
+	if (init) {
+		for (size_t p = 0; p < len; p++)
+			out[p] = tbl[in[p]];
+	} else {
+		for (size_t p = 0; p < len; p++)
+			out[p] ^= tbl[in[p]];
+	}
+}
+
 static int rs_encode(struct ec_encoding *encoding, uint8_t **data,
 		     uint8_t **parity, size_t shard_len)
 {
@@ -94,17 +262,30 @@ static int rs_encode(struct ec_encoding *encoding, uint8_t **data,
 	int k = encoding->ec_k;
 	int m = encoding->ec_m;
 
-	for (size_t p = 0; p < shard_len; p++) {
-		for (int i = 0; i < m; i++) {
-			uint8_t sum = 0;
+	/*
+	 * Loop nest i (parity) -> j (data) -> p (byte).  For each
+	 * (i, j) coefficient, run the SIMD path over the aligned
+	 * 16-byte prefix and mop up the tail with the R.1 scalar
+	 * path.  Parity buffers are init'd on j == 0 and
+	 * XOR-accumulated on j > 0.
+	 */
+	for (int i = 0; i < m; i++) {
+		uint8_t *pi = parity[i];
 
-			for (int j = 0; j < k; j++)
-				sum = gf_add(
-					sum,
-					gf_mul(gf_matrix_get(rsp->rsp_parity, i,
-							     j),
-					       data[j][p]));
-			parity[i][p] = sum;
+		for (int j = 0; j < k; j++) {
+			const uint8_t *tbl =
+				&rsp->parity_tbl[(i * k + j) * 256];
+			const uint8_t *stbl =
+				&rsp->parity_split_tbl[(i * k + j) * 32];
+			const uint8_t *dj = data[j];
+			bool init = (j == 0);
+
+			size_t simd_done =
+				rs_mul_add_16(pi, dj, stbl, shard_len, init);
+			if (simd_done < shard_len)
+				rs_mul_add_scalar(pi + simd_done,
+						  dj + simd_done, tbl,
+						  shard_len - simd_done, init);
 		}
 	}
 
@@ -170,11 +351,39 @@ static int rs_decode(struct ec_encoding *encoding, uint8_t **shards,
 		goto out;
 
 	/*
+	 * Precompute both the full 256-byte and the 32-byte split
+	 * mul-tables for every (row, col) of sub_inv, so the decode
+	 * inner loop mirrors the encode SIMD-plus-scalar-tail
+	 * pattern.  Amortizes k * k init over the shard_len byte
+	 * stream.
+	 */
+	uint8_t *decode_tbl = calloc((size_t)k * (size_t)k * 256, 1);
+	uint8_t *decode_split_tbl = calloc((size_t)k * (size_t)k * 32, 1);
+
+	if (!decode_tbl || !decode_split_tbl) {
+		free(decode_tbl);
+		free(decode_split_tbl);
+		ret = -ENOMEM;
+		goto out;
+	}
+	for (int r = 0; r < k; r++)
+		for (int c = 0; c < k; c++) {
+			uint8_t coeff = gf_matrix_get(sub_inv, r, c);
+
+			gf_mul_tbl_init(coeff, &decode_tbl[(r * k + c) * 256]);
+			gf_mul_split_tbl_init(
+				coeff, &decode_split_tbl[(r * k + c) * 32]);
+		}
+
+	/*
 	 * Recover original data shards: multiply sub_inv by the
-	 * k available shard data vectors.
+	 * k available shard data vectors.  Loop nest r -> c -> p
+	 * lets us keep a per-(r, c) 256-byte table pointer in a
+	 * register across the byte stream.
 	 */
 	recovered = calloc((size_t)k, sizeof(uint8_t *));
 	if (!recovered) {
+		free(decode_tbl);
 		ret = -ENOMEM;
 		goto out;
 	}
@@ -182,23 +391,32 @@ static int rs_decode(struct ec_encoding *encoding, uint8_t **shards,
 	for (int i = 0; i < k; i++) {
 		recovered[i] = calloc(shard_len, 1);
 		if (!recovered[i]) {
+			free(decode_tbl);
 			ret = -ENOMEM;
 			goto out;
 		}
 	}
 
-	for (size_t p = 0; p < shard_len; p++) {
-		for (int r = 0; r < k; r++) {
-			uint8_t sum = 0;
+	for (int r = 0; r < k; r++) {
+		uint8_t *rr = recovered[r];
 
-			for (int c = 0; c < k; c++)
-				sum = gf_add(
-					sum,
-					gf_mul(gf_matrix_get(sub_inv, r, c),
-					       shards[avail_idx[c]][p]));
-			recovered[r][p] = sum;
+		for (int c = 0; c < k; c++) {
+			const uint8_t *tbl = &decode_tbl[(r * k + c) * 256];
+			const uint8_t *stbl =
+				&decode_split_tbl[(r * k + c) * 32];
+			const uint8_t *sc = shards[avail_idx[c]];
+			bool init = (c == 0);
+
+			size_t simd_done =
+				rs_mul_add_16(rr, sc, stbl, shard_len, init);
+			if (simd_done < shard_len)
+				rs_mul_add_scalar(rr + simd_done,
+						  sc + simd_done, tbl,
+						  shard_len - simd_done, init);
 		}
 	}
+	free(decode_tbl);
+	free(decode_split_tbl);
 
 	/* Copy recovered data into missing data shard slots. */
 	for (int i = 0; i < k; i++) {
@@ -217,7 +435,12 @@ static int rs_decode(struct ec_encoding *encoding, uint8_t **shards,
 	}
 
 	if (need_parity) {
-		/* Use the now-complete data shards to re-encode. */
+		/*
+		 * Use the now-complete data shards to re-encode.
+		 * Reuse rsp->parity_tbl (precomputed at create time)
+		 * so this path is the same speed as the forward
+		 * encode path.
+		 */
 		uint8_t **data_ptrs = calloc((size_t)k, sizeof(uint8_t *));
 
 		if (!data_ptrs) {
@@ -228,23 +451,28 @@ static int rs_decode(struct ec_encoding *encoding, uint8_t **shards,
 		for (int i = 0; i < k; i++)
 			data_ptrs[i] = present[i] ? shards[i] : recovered[i];
 
-		/* Encode into a temporary parity set. */
 		uint8_t **parity_ptrs = shards + k;
 
-		for (size_t p = 0; p < shard_len; p++) {
-			for (int i = 0; i < m; i++) {
-				if (present[k + i])
-					continue;
-				uint8_t sum = 0;
+		for (int i = 0; i < m; i++) {
+			if (present[k + i])
+				continue;
+			uint8_t *pi = parity_ptrs[i];
 
-				for (int j = 0; j < k; j++)
-					sum = gf_add(
-						sum,
-						gf_mul(gf_matrix_get(
-							       rsp->rsp_parity,
-							       i, j),
-						       data_ptrs[j][p]));
-				parity_ptrs[i][p] = sum;
+			for (int j = 0; j < k; j++) {
+				const uint8_t *tbl =
+					&rsp->parity_tbl[(i * k + j) * 256];
+				const uint8_t *stbl =
+					&rsp->parity_split_tbl[(i * k + j) * 32];
+				const uint8_t *dj = data_ptrs[j];
+				bool init = (j == 0);
+
+				size_t simd_done = rs_mul_add_16(
+					pi, dj, stbl, shard_len, init);
+				if (simd_done < shard_len)
+					rs_mul_add_scalar(pi + simd_done,
+							  dj + simd_done, tbl,
+							  shard_len - simd_done,
+							  init);
 			}
 		}
 
@@ -295,6 +523,30 @@ struct ec_encoding *ec_rs_create(int k, int m)
 			gf_matrix_set(rsp->rsp_parity, r, c,
 				      gf_matrix_get(rsp->rsp_encode, k + r, c));
 
+	/*
+	 * Precompute per-coefficient 256-byte multiplication tables
+	 * for every (i, j) of the parity sub-matrix.  This is the
+	 * single-largest scalar-speedup for rs_encode: swap the
+	 * per-byte gf_exp[gf_log[coeff] + gf_log[b]] double-lookup
+	 * for a one-step table[coeff][b] lookup, keeping the table
+	 * pointer in a register across the whole shard_len byte
+	 * stream.
+	 */
+	rsp->parity_tbl = calloc((size_t)m * (size_t)k * 256, 1);
+	rsp->parity_split_tbl = calloc((size_t)m * (size_t)k * 32, 1);
+	if (!rsp->parity_tbl || !rsp->parity_split_tbl)
+		goto fail;
+	for (int r = 0; r < m; r++)
+		for (int c = 0; c < k; c++) {
+			uint8_t coeff = gf_matrix_get(rsp->rsp_parity, r, c);
+
+			gf_mul_tbl_init(coeff,
+					&rsp->parity_tbl[(r * k + c) * 256]);
+			gf_mul_split_tbl_init(
+				coeff,
+				&rsp->parity_split_tbl[(r * k + c) * 32]);
+		}
+
 	encoding->ec_name = "reed-solomon";
 	encoding->ec_k = k;
 	encoding->ec_m = m;
@@ -310,6 +562,8 @@ fail:
 	if (rsp) {
 		gf_matrix_destroy(rsp->rsp_encode);
 		gf_matrix_destroy(rsp->rsp_parity);
+		free(rsp->parity_tbl);
+		free(rsp->parity_split_tbl);
 		free(rsp);
 	}
 	free(encoding);
@@ -332,6 +586,8 @@ void ec_encoding_destroy(struct ec_encoding *encoding)
 	if (rsp) {
 		gf_matrix_destroy(rsp->rsp_encode);
 		gf_matrix_destroy(rsp->rsp_parity);
+		free(rsp->parity_tbl);
+		free(rsp->parity_split_tbl);
 		free(rsp);
 	}
 	free(encoding);

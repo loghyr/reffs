@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# UBSAN ignorelist for the vendored SnapRAID raid/ subtree.
+#
+# Andrea's raid_cpu_info (raid/cpu.h:44-54) casts a char[13]
+# vendor-string buffer to (uint32_t *) and writes three uint32_t
+# chunks at 1-byte-aligned offsets.  x86 handles unaligned stores
+# natively so this works in production but is strict-UB per the
+# C standard; UBSAN alignment check reports it on every raid_init().
+# See NOTICE.md "Build-scoped UBSAN carve-out" for the rationale.
+#
+# The [alignment] section header restricts the suppression to the
+# alignment check; every other UBSAN check remains active for
+# vendored code.
+#
+# clang -fsanitize-ignorelist file format:
+#   https://clang.llvm.org/docs/SanitizerSpecialCaseList.html
+[alignment]
+src:*/lib/ec/snapraid-raid/cpu.h

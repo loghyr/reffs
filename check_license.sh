@@ -30,7 +30,16 @@ check_spdx_headers() {
 # Get a list of all files, excluding .gitignore, LICENSES directory, .x files,
 # LICENSE / LICENSE-EXCEPTIONS, COPYING files, and XDR-generated Python files
 # (which have "DO NOT EDIT" marker).
-files=$(git ls-files | grep -vE '\.gitignore$|LICENSES/|\.x$|^LICENSE([-.][A-Za-z0-9.-]+)?$|(^|/)COPYING$|deploy/benchmark/results/|_xdr_(const|type|pack)\.py$')
+files=$(git ls-files | grep -vE '\.gitignore$|LICENSES/|\.x$|^LICENSE([-.][A-Za-z0-9.-]+)?$|(^|/)COPYING$|deploy/benchmark/results/|_xdr_(const|type|pack)\.py$|^lib/ec/snapraid-raid/[^/]+\.[ch]$|^lib/ec/linux-md-raid/([^/]+\.[ch]|linux/raid/[^/]+\.h|int\.uc|neon\.uc|unroll\.awk)$|^lib/ec/isa-l-erasure/(LICENSE|(erasure_code|include)/[^/]+\.[chS]|erasure_code/[^/]+\.(asm|inc)|erasure_code/aarch64/[^/]+\.[cSh]|include/[^/]+\.(asm|inc))$')
+
+# Vendored subtree: lib/ec/snapraid-raid/ carries Andrea Mazzoleni's
+# SPDX-License-Identifier (GPL-2.0-or-later / GPL-3.0-or-later) but uses
+# the older-style "Copyright (C) 2013 Andrea Mazzoleni" instead of the
+# SPDX-FileCopyrightText: line reffs prefers.  Exclude the vendored
+# .c/.h files from the SPDX-style check; the Makefile.am and NOTICE.md
+# in that directory are ours and DO carry SPDX-FileCopyrightText.
+# See lib/ec/snapraid-raid/NOTICE.md for upstream provenance + license
+# per file.
 
 # Check each file
 error_count=0

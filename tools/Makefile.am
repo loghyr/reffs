@@ -48,5 +48,8 @@ er_demo_LDADD = $(NFS4_CLIENT_LIBS)
 moj_bench_SOURCES = moj_bench.c
 moj_bench_LDADD = $(top_builddir)/lib/ec/libreffs_ec.la
 
+ec_bench_SOURCES = ec_bench.c
+ec_bench_LDADD = $(top_builddir)/lib/ec/libreffs_ec.la
+
 bin_PROGRAMS = ec_demo er_demo nfs_krb5_test nfs_krb5_multiclient \
-	nfs_tls_test moj_bench
+	nfs_tls_test moj_bench ec_bench

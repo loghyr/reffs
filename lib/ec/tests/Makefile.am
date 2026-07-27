@@ -17,4 +17,8 @@ TESTS = \
 	mirror_test \
 	mojette_test \
 	mojette_encoding_test \
-	rs_test
+	rs_test \
+	snapraid_test \
+	xor_test \
+	linux_md_test \
+	isa_l_test

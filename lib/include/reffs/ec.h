@@ -129,6 +129,83 @@ struct ec_encoding *ec_stripe_create(int k);
 struct ec_encoding *ec_mirror_create(int k);
 
 /*
+ * ec_xor_create -- create an XOR single-parity encoding
+ * (FFV2_ENCODING_XOR_PARITY on the wire).  Systematic: k data
+ * shards preserved verbatim; one parity shard is the XOR of all
+ * k data shards.  Recovers any single missing shard by XORing
+ * the surviving ones.  No Galois-field math; no field-polynomial
+ * dependency (contrast ec_rs_create which requires GF(2^8) with
+ * primitive polynomial 0x11d).
+ *
+ * k: number of data shards (1..254).  Parity count is always 1.
+ *
+ * Returns an initialized encoding, or NULL on failure.  The
+ * caller must call ec_encoding_destroy() when done.
+ *
+ * See ~/Documents/reffs-docs/ffv2-encoding-menu.md
+ * FFV2_ENCODING_XOR_PARITY (proposed 0x7).
+ */
+struct ec_encoding *ec_xor_create(int k);
+
+/*
+ * ec_linux_md_create -- create a Linux md/raid6 P+Q double-parity
+ * encoding (FFV2_ENCODING_LINUX_MD_RAID on the wire).  Wraps the
+ * vendored Linux md raid6 library at lib/ec/linux-md-raid/
+ * (H. Peter Anvin 2002 onward, GPL-2.0-or-later).
+ *
+ * k: number of data shards (1..253).  Parity count is always 2
+ * (P = XOR of all data, Q = 2^i-weighted sum in GF(2^8)).  Field
+ * GF(2^8) with primitive polynomial 0x1d -- same field as
+ * ec_rs_create and ec_snapraid_create.
+ *
+ * Returns an initialized encoding, or NULL on failure.
+ *
+ * See ~/Documents/reffs-docs/ffv2-encoding-menu.md
+ * FFV2_ENCODING_LINUX_MD_RAID (proposed 0x8).
+ */
+struct ec_encoding *ec_linux_md_create(int k);
+
+/*
+ * ec_snapraid_create -- create a SnapRAID Cauchy encoding.  Wraps
+ * Andrea Mazzoleni's vendored raid/ library (lib/ec/snapraid-raid/,
+ * GPL-2.0-or-later).  Extended-Cauchy matrix in GF(2^8) with
+ * primitive polynomial 0x11d; first two rows reproduce Linux md
+ * RAID-5 / RAID-6 coefficients (compatible-superset property).
+ *
+ * k: number of data shards (1..251).
+ * m: number of parity shards (1..6).
+ *
+ * Returns an initialized encoding, or NULL on failure.  The caller
+ * must call ec_encoding_destroy() when done.
+ *
+ * See ~/Documents/reffs-docs/snapraid-evaluation.md for the license
+ * and adoption rationale, and lib/ec/snapraid-raid/NOTICE.md for the
+ * upstream pin.
+ */
+struct ec_encoding *ec_snapraid_create(int k, int m);
+
+/*
+ * ec_isa_l_create -- create an Intel ISA-L Reed-Solomon
+ * (Vandermonde) encoding (FFV2_ENCODING_ISA_L_RS on the wire).
+ * Wraps the vendored portable-C subset of ISA-L's erasure_code/
+ * at lib/ec/isa-l-erasure/ (BSD-3-Clause).
+ *
+ * k: number of data shards (>=1).
+ * m: number of parity shards (>=1).
+ * Constraint: k + m <= 254 (GF(2^8) field size).
+ *
+ * Matrix construction: gf_gen_rs_matrix (generator 2^(i*j)),
+ * which is NOT bit-compat with reffs's own rs.c or SnapRAID's
+ * Cauchy despite sharing the field.
+ *
+ * Returns an initialized encoding, or NULL on failure.
+ *
+ * See ~/Documents/reffs-docs/ffv2-encoding-menu.md
+ * FFV2_ENCODING_ISA_L_RS (proposed 0x9).
+ */
+struct ec_encoding *ec_isa_l_create(int k, int m);
+
+/*
  * ec_encoding_destroy -- release a encoding and all internal state.
  */
 void ec_encoding_destroy(struct ec_encoding *encoding);

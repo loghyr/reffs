@@ -25,6 +25,7 @@ dnl "no acceptable C compiler found" if CC is set to a non-existent
 dnl program.  No need for a custom AC_CHECK_PROG gate here -- it
 dnl tripped autoconf 2.73's strict macro-expansion rules on macOS.
 AC_PROG_CC
+AC_PROG_AWK
 AC_USE_SYSTEM_EXTENSIONS
 m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
 
@@ -131,6 +132,35 @@ AS_CASE([$host_os],
 AM_CONDITIONAL([HOST_FREEBSD], [test "x$host_is_freebsd" = "xyes"])
 AM_CONDITIONAL([HOST_DARWIN],  [test "x$host_is_darwin"  = "xyes"])
 
+# Per-arch SIMD gates for the vendored Linux md/raid6 library
+# (lib/ec/linux-md-raid/).  Slice 6.3 enables SSE2/AVX2/AVX-512 on
+# x86_64 and NEON on aarch64; other arches stay portable-C only.
+# The sub-library's Makefile.am uses these conditionals to select
+# which SIMD .c files enter the build and to gate off the
+# `-D__arch_um__=1` fallback (which is only needed when NO SIMD is
+# available to satisfy algos.c's arch-block references).
+have_md_x86_simd=no
+have_md_neon_simd=no
+AS_CASE([$host_cpu],
+    [x86_64|amd64],  [have_md_x86_simd=yes],
+    [aarch64|arm64], [have_md_neon_simd=yes])
+AM_CONDITIONAL([HAVE_MD_X86_SIMD],  [test "x$have_md_x86_simd" = "xyes"])
+AM_CONDITIONAL([HAVE_MD_NEON_SIMD], [test "x$have_md_neon_simd" = "xyes"])
+
+# ISA-L erasure_code/ SIMD gate.  Slice 7.3 adds the AVX / AVX-2
+# / AVX-512 (with GFNI variants) x86 SIMD sources; those are NASM
+# .asm files that need the NASM assembler to build.  When NASM is
+# absent OR host is not x86_64, the sub-library falls back to
+# portable-C only (Slice 7.1 baseline).  aarch64 NEON support in
+# ISA-L uses .S files (no NASM) but adds its own runtime
+# dispatcher; deferred to a follow-up sub-slice to keep this one
+# scoped to Christoph's flagged Intel GFNI target.
+AC_CHECK_PROG([NASM], [nasm], [nasm])
+have_isa_l_x86_simd=no
+AS_IF([test "x$have_md_x86_simd" = "xyes" && test "x$NASM" != "x"],
+    [have_isa_l_x86_simd=yes])
+AM_CONDITIONAL([HAVE_ISA_L_X86_SIMD], [test "x$have_isa_l_x86_simd" = "xyes"])
+
 # POSIX extensions accept4(2) and pipe2(2) are Linux and FreeBSD
 # extensions; Darwin has only accept(2) / pipe(2).  Use AC_CHECK_DECLS
 # (header-only probe) instead of AC_CHECK_FUNCS (link-test probe) --
@@ -152,6 +182,17 @@ AC_CHECK_DECLS([pipe2], [AC_DEFINE([HAVE_PIPE2], [1],
 # offers fcntl(F_FULLFSYNC) as the moral equivalent).  Header-probe
 # rather than link-test for the same reason as accept4 / pipe2 above.
 AC_CHECK_DECLS([fdatasync], [], [], [[#include <unistd.h>]])
+
+# HAVE_ASSEMBLY drives Andrea Mazzoleni's vendored SnapRAID raid/ library
+# (lib/ec/snapraid-raid/) -- his internal.h uses this to gate the
+# CONFIG_X86 / CONFIG_X86_64 / CONFIG_NEON compile-time enables and the
+# gfconst16 struct that the per-arch SIMD files reference.  reffs targets
+# platforms that all support inline asm, so we always enable it and let
+# Andrea's compiler-predefine autodetect (__x86_64__, __ARM_NEON, etc.)
+# pick the right dispatch tables.  Users who need to disable can rebuild
+# with -DHAVE_ASSEMBLY=0 in CFLAGS.
+AC_DEFINE([HAVE_ASSEMBLY], [1],
+    [Define to 1 to enable inline assembly in the vendored SnapRAID raid/ library.])
 
 AC_MSG_CHECKING([for C11 support])
 dnl Strip out the freaking -O2 by default!
@@ -846,6 +887,9 @@ AC_CONFIG_FILES([
 	lib/config/tests/Makefile
 	lib/backends/Makefile
 	lib/ec/Makefile
+	lib/ec/snapraid-raid/Makefile
+	lib/ec/linux-md-raid/Makefile
+	lib/ec/isa-l-erasure/Makefile
 	lib/ec/tests/Makefile
 	lib/nfs4/common/Makefile
 	lib/nfs4/server/Makefile

@@ -23,6 +23,16 @@
 #include <stdint.h>
 
 /*
+ * Hard cap on n = k + m for a single Mojette encoding.  Encoder
+ * wrappers stack-allocate several k/m-sized VLAs (row pointers,
+ * projection descriptors, temp buffers); layout parameters reach
+ * mojette_create unvalidated by ec_pipeline.  64 covers every
+ * plausible stripe width (real deployments run k <= 16, m <= 4)
+ * while bounding the worst-case VLA footprint at ~3 KiB.
+ */
+#define MOJ_MAX_STRIPE_WIDTH 64
+
+/*
  * Direction vector for a Mojette projection.
  * By convention q is always 1 (per Parrein 2001) to limit
  * projection size overhead.
@@ -126,16 +136,36 @@ int moj_directions_generate(int n, struct moj_direction **dirs);
  *
  * grid:  row-major P x Q matrix of uint64_t elements.
  *        grid[row * P + col] is element (row, col).
- * P, Q:  grid dimensions (columns, rows).
+ * P, Q:  grid dimensions (columns, rows).  Q must be <=
+ *        MOJ_MAX_STRIPE_WIDTH.
  * dirs:  array of n directions.
  * n:     number of projections to compute.
- * projs: output array of n projections (caller-allocated via
- *        moj_projection_create).  Bins are zeroed on entry and
- *        filled on return.
+ * projs: output array of n projections.  proj->mp_bins may be
+ *        uninitialized on entry -- every element in the bin buffer
+ *        (all mp_nbins uint64s) is fully overwritten by the
+ *        transform, so callers wrapping caller-owned scratch or
+ *        output buffers (see ec/mojette_encoding.c) do not need
+ *        to pre-zero them.  proj->mp_nbins MUST match
+ *        moj_projection_size(p, q, P, Q) for the corresponding
+ *        direction; the SIMD fast path assumes this exactly.
  */
 void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
 		 const struct moj_direction *dirs, int n,
 		 struct moj_projection **projs);
+
+/*
+ * moj_forward_rows -- forward transform on a row-pointer array.
+ *
+ * Same semantics as moj_forward (including the "bins need not be
+ * zeroed; overwrite is total; mp_nbins must match the direction's
+ * projection_size" contract), but reads rows from an array of
+ * pointers instead of a contiguous grid.  Callers with input rows
+ * already in separate buffers avoid materializing a contiguous
+ * grid.  Each rows[r] must reference at least P uint64_t elements.
+ */
+void moj_forward_rows(const uint64_t *const *rows, int P, int Q,
+		      const struct moj_direction *dirs, int n,
+		      struct moj_projection **projs);
 
 /*
  * moj_inverse_sparse -- partially-known-grid dispatcher.

@@ -80,3 +80,49 @@ uint8_t gf_pow(uint8_t a, uint8_t n)
 	int log_result = (log_a * n) % GF_ORDER;
 	return gf_exp[log_result];
 }
+
+void gf_mul_tbl_init(uint8_t c, uint8_t tbl[256])
+{
+	/*
+	 * Fill tbl[b] = gf_mul(c, b) for b in [0, 255].  Zero out
+	 * b == 0 explicitly; other entries come from the log/antilog
+	 * fast path with c's log value hoisted out of the loop.
+	 */
+	tbl[0] = 0;
+	if (c == 0) {
+		for (int b = 1; b < 256; b++)
+			tbl[b] = 0;
+		return;
+	}
+	int log_c = gf_log[c];
+
+	for (int b = 1; b < 256; b++)
+		tbl[b] = gf_exp[log_c + gf_log[b]];
+}
+
+void gf_mul_split_tbl_init(uint8_t c, uint8_t tbl[32])
+{
+	/*
+	 * Low-nibble half: tbl[i] = gf_mul(c, i) for i in [0, 16).
+	 * High-nibble half: tbl[16 + i] = gf_mul(c, i << 4).
+	 *
+	 * Both halves start at gf_mul(c, 0) = 0.  c == 0 short-
+	 * circuits to all zeros.  Otherwise use the log-hoisted
+	 * fast path.
+	 */
+	tbl[0] = 0;
+	tbl[16] = 0;
+	if (c == 0) {
+		for (int i = 1; i < 16; i++) {
+			tbl[i] = 0;
+			tbl[16 + i] = 0;
+		}
+		return;
+	}
+	int log_c = gf_log[c];
+
+	for (int i = 1; i < 16; i++)
+		tbl[i] = gf_exp[log_c + gf_log[i]];
+	for (int i = 1; i < 16; i++)
+		tbl[16 + i] = gf_exp[log_c + gf_log[i << 4]];
+}

@@ -496,6 +496,52 @@ ec_create_encoding(int k, int m, enum ec_encoding_type encoding_type)
 		 * on output.
 		 */
 		return ec_mirror_create(k);
+	case EC_ENCODING_SNAPRAID:
+		/*
+		 * Wire-side: FFV2_ENCODING_SNAPRAID_CAUCHY.  Extended
+		 * Cauchy matrix in GF(2^8) with primitive polynomial
+		 * 0x1d (see lib/ec/snapraid-raid/NOTICE.md for the
+		 * polynomial discussion and lib/ec/snapraid.c for the
+		 * ec_encoding wrapper).  Uniform shard sizes, so the
+		 * pipeline treats it the same as EC_ENCODING_RS on
+		 * the non-mirror / non-nonsys branches.  Caps: k <= 251,
+		 * m <= 6.
+		 */
+		return ec_snapraid_create(k, m);
+	case EC_ENCODING_XOR:
+		/*
+		 * Wire-side: FFV2_ENCODING_XOR_PARITY.  Systematic
+		 * single-parity: k data + 1 XOR-parity shard.  No
+		 * field-polynomial dependency.  m is always 1 -- the
+		 * caller's m argument is ignored (see ec_xor_create).
+		 * See ~/Documents/reffs-docs/ffv2-encoding-menu.md
+		 * FFV2_ENCODING_XOR_PARITY (proposed 0x7) for the
+		 * MTI rationale.
+		 */
+		return ec_xor_create(k);
+	case EC_ENCODING_LINUX_MD:
+		/*
+		 * Wire-side: FFV2_ENCODING_LINUX_MD_RAID (proposed
+		 * 0x8).  Linux md/raid6 P+Q double-parity from the
+		 * vendored library at lib/ec/linux-md-raid/.  m is
+		 * always 2 -- the caller's m argument is ignored
+		 * (see ec_linux_md_create).  Field GF(2^8) with
+		 * primitive polynomial 0x1d, same as RS_VANDERMONDE
+		 * and SNAPRAID_CAUCHY.
+		 */
+		return ec_linux_md_create(k);
+	case EC_ENCODING_ISA_L:
+		/*
+		 * Wire-side: FFV2_ENCODING_ISA_L_RS (proposed 0x9).
+		 * Intel ISA-L Reed-Solomon (Vandermonde) from the
+		 * vendored portable-C subset at lib/ec/isa-l-erasure/.
+		 * Field GF(2^8) with primitive polynomial 0x1d.
+		 * Matrix construction is ISA-L-specific (generator
+		 * 2^(i*j)) -- NOT bit-compat with RS_VANDERMONDE
+		 * (0x4) or SNAPRAID_CAUCHY (0x6) despite the shared
+		 * field.  Caps: k + m <= 254.
+		 */
+		return ec_isa_l_create(k, m);
 	default:
 		return NULL;
 	}
