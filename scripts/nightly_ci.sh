@@ -57,6 +57,24 @@ EMAIL="loghyr@gmail.com"
 HOSTNAME=$(hostname -s)
 NFS_PORT=12049
 
+# Per-suite wall-clock cap for the external test suites (pynfs, cthon04,
+# nfs-conformance, pjdfstest, wardtest).  MAX_RUNTIME above is only
+# consulted at startup by the *next* run, so without a per-suite cap a
+# single wedged test hangs this run forever: on 2026-07-27 op_copy sat
+# in D-state for 13h against a reffsd that could not write (full disk),
+# which held LOCKFILE all day and failed every GitHub Actions push with
+# "Acquire CI lock".  cthon04 completes in ~83s, so 30 min is roughly
+# 20x headroom -- generous enough never to fire on a healthy run, tight
+# enough to bound a wedge.  Override with SUITE_TIMEOUT=<seconds>.
+SUITE_TIMEOUT=${SUITE_TIMEOUT:-$((30 * 60))}
+
+# Refuse to start below this much free space on $RESULTS' filesystem.
+# reffsd cannot rotate its trace log when / is full; the write failure
+# is what wedged nfs-conformance in the incident above.  Failing loudly
+# at the top is far cheaper than discovering it 13h later.  Override
+# with MIN_FREE_MB=<megabytes>.
+MIN_FREE_MB=${MIN_FREE_MB:-5120}
+
 # -- CLI flags --
 SOAK_ONLY=false
 SOAK_DURATION=30        # minutes per soak (default: 30)
@@ -172,6 +190,26 @@ if [ -d "$REPO" ]; then
     fi
 fi
 
+# -----------------------------------------------------------------------
+# Free-space gate
+#
+# Runs immediately after the prune above so pruning gets its chance to
+# reclaim before we judge.  Aborting here costs one nightly; running on
+# a full disk costs a wedged reffsd, a held LOCKFILE, and every GitHub
+# Actions push failing until someone notices.
+# -----------------------------------------------------------------------
+
+_free_mb=$(df -Pm "$REPO" 2>/dev/null | awk 'NR==2 {print $4}')
+if [ -n "$_free_mb" ] && [ "$_free_mb" -lt "$MIN_FREE_MB" ]; then
+    echo "FATAL: only ${_free_mb} MB free on $(df -Pm "$REPO" | awk 'NR==2 {print $6}')," \
+         "below the ${MIN_FREE_MB} MB floor."
+    echo "reffsd cannot rotate its trace log without free space; refusing"
+    echo "to start rather than wedge mid-run.  Largest consumers:"
+    du -xh --max-depth=1 "$REPO" 2>/dev/null | sort -rh | head -5
+    exit 1
+fi
+echo "Free space: ${_free_mb:-unknown} MB (floor ${MIN_FREE_MB} MB)"
+
 PASSED=0
 FAILED=0
 SKIPPED=0
@@ -197,6 +235,13 @@ record() {
     if [ "$result" -eq 0 ]; then
         echo "  PASS: $name${elapsed}"
         PASSED=$((PASSED + 1))
+    elif [ "$result" -eq 124 ]; then
+        # timeout(1) exit 124 -- the suite was killed at SUITE_TIMEOUT,
+        # not a test assertion.  Call it out so the nightly email points
+        # at a wedge (D-state client, spinning reffsd) rather than
+        # sending someone hunting for a failing test case.
+        echo "  TIMEOUT: $name (killed after ${SUITE_TIMEOUT}s)${elapsed}"
+        FAILED=$((FAILED + 1))
     else
         echo "  FAIL: $name (exit $result)${elapsed}"
         FAILED=$((FAILED + 1))
@@ -461,7 +506,7 @@ fi
 
 if [ -z "${goto_email:-}" ]; then
 section_start pynfs "pynfs"
-"$REPO/scripts/ci_pynfs.sh" --server 127.0.0.1 --port "$NFS_PORT" \
+timeout $SUITE_TIMEOUT "$REPO/scripts/ci_pynfs.sh" --server 127.0.0.1 --port "$NFS_PORT" \
     2>&1 | tee "$LOGDIR/pynfs.log" | \
     grep -E '(=== |PASS|FAIL|running|tests passed)' | tail -20
 PYNFS_RC=${PIPESTATUS[0]}
@@ -474,7 +519,7 @@ fi
 
 if [ -z "${goto_email:-}" ]; then
 section_start cthon04 "cthon04"
-"$REPO/scripts/ci_cthon04_test.sh" --v3-mount "$V3_MOUNT" --v4-mount "$V4_MOUNT" \
+timeout $SUITE_TIMEOUT "$REPO/scripts/ci_cthon04_test.sh" --v3-mount "$V3_MOUNT" --v4-mount "$V4_MOUNT" \
     2>&1 | tee "$LOGDIR/cthon04.log" | \
     grep -E '(=== |PASS|FAIL|basic|general)' | tail -20
 CTHON04_RC=${PIPESTATUS[0]}
@@ -487,7 +532,7 @@ fi
 
 if [ -z "${goto_email:-}" ]; then
 section_start nfs_conformance "nfs-conformance"
-"$REPO/scripts/ci_nfs_conformance_test.sh" --v3-mount "$V3_MOUNT" --v4-mount "$V4_MOUNT" \
+timeout $SUITE_TIMEOUT "$REPO/scripts/ci_nfs_conformance_test.sh" --v3-mount "$V3_MOUNT" --v4-mount "$V4_MOUNT" \
     2>&1 | tee "$LOGDIR/nfs_conformance.log" | \
     grep -E '(=== |PASS|FAIL|Files=)' | tail -20
 NFS_CONFORMANCE_RC=${PIPESTATUS[0]}
@@ -500,7 +545,7 @@ fi
 
 if [ -z "${goto_email:-}" ]; then
 section_start pjdfstest "pjdfstest"
-"$REPO/scripts/ci_pjdfstest.sh" --v3-mount "$V3_MOUNT" --v4-mount "$V4_MOUNT" \
+timeout $SUITE_TIMEOUT "$REPO/scripts/ci_pjdfstest.sh" --v3-mount "$V3_MOUNT" --v4-mount "$V4_MOUNT" \
     2>&1 | tee "$LOGDIR/pjdfstest.log" | \
     grep -E '(=== |PASS|FAIL|tests|Failed)' | tail -20
 PJDFSTEST_RC=${PIPESTATUS[0]}
@@ -521,7 +566,7 @@ fi
 # wardtest changes infrequently -- skip the per-nightly fetch.  Run
 # `cd ~/wardtest && git pull` manually when there's a real update.
 
-"$REPO/scripts/ci_wardtest.sh" --mount "$V4_MOUNT" --duration 60 \
+timeout $SUITE_TIMEOUT "$REPO/scripts/ci_wardtest.sh" --mount "$V4_MOUNT" --duration 60 \
     --wardtest-dir "$WARDTEST_DIR" \
     2>&1 | tee "$LOGDIR/wardtest.log" | \
     grep -E '(=== |PASS|FAIL|iterations|verify)' | tail -20
