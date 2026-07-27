@@ -537,7 +537,12 @@ void reffs_trace_event(enum reffs_trace_category category, const char *name,
 		n += fprintf(trace_fp, "\n");
 		fflush(trace_fp);
 
-		trace_bytes_written += n;
+		/* fprintf/vfprintf return a negative value on error (ENOSPC
+		 * being the interesting one here).  Folding that into the
+		 * counter drives it backwards and desynchronises rotation
+		 * from the real file size, so only count real output. */
+		if (n > 0)
+			trace_bytes_written += n;
 		rotate_trace_if_needed_locked();
 	}
 	pthread_mutex_unlock(&trace_mutex);
