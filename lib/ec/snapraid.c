@@ -174,6 +174,7 @@ static void snapraid_destroy(struct ec_encoding *encoding)
 		pthread_mutex_destroy(&sp->zero_mutex);
 		free(sp);
 	}
+	free(encoding);
 }
 
 struct ec_encoding *ec_snapraid_create(int k, int m)
