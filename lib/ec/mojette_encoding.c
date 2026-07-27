@@ -60,29 +60,24 @@ static int mojette_sys_encode(struct ec_encoding *encoding, uint8_t **data,
 	int P = grid_P(shard_len);
 
 	/*
-	 * data[0..k-1] are grid rows.  Assemble them into a contiguous
-	 * grid for the forward transform.
+	 * data[0..k-1] are grid rows.  Pass them directly as row
+	 * pointers -- moj_forward_rows XORs each row into projection
+	 * bins without materializing a contiguous grid.
 	 */
-	uint64_t *grid = calloc((size_t)P * k, sizeof(uint64_t));
-
-	if (!grid)
-		return -ENOMEM;
+	const uint64_t *rows[k];
 
 	for (int i = 0; i < k; i++)
-		memcpy(grid + (size_t)i * P, data[i], shard_len);
+		rows[i] = (const uint64_t *)data[i];
 
 	/*
 	 * We only need the last m projections (the parity directions).
-	 * The first k directions correspond to data rows in a
-	 * systematic code; we skip them.
+	 * Wrap parity[i] buffers directly -- ec_shard_size guarantees
+	 * they are nbins*8 bytes, so moj_forward_impl's memset+XOR
+	 * writes land exactly where the caller expects the encoded
+	 * shard.  No intermediate allocation, no post-encode memcpy.
 	 */
-	struct moj_projection **projs =
-		calloc((size_t)m, sizeof(struct moj_projection *));
-
-	if (!projs) {
-		free(grid);
-		return -ENOMEM;
-	}
+	struct moj_projection projs[m];
+	struct moj_projection *proj_ptrs[m];
 
 	for (int i = 0; i < m; i++) {
 		int dir_idx = k + i;
@@ -90,28 +85,12 @@ static int mojette_sys_encode(struct ec_encoding *encoding, uint8_t **data,
 						mcp->mcp_dirs[dir_idx].md_q, P,
 						k);
 
-		projs[i] = moj_projection_create(nbins);
-		if (!projs[i]) {
-			for (int j = 0; j < i; j++)
-				moj_projection_destroy(projs[j]);
-			free(projs);
-			free(grid);
-			return -ENOMEM;
-		}
+		projs[i].mp_bins = (uint64_t *)parity[i];
+		projs[i].mp_nbins = nbins;
+		proj_ptrs[i] = &projs[i];
 	}
 
-	moj_forward(grid, P, k, mcp->mcp_dirs + k, m, projs);
-
-	/* Copy projections into parity buffers, zero-padded. */
-	for (int i = 0; i < m; i++) {
-		size_t proj_bytes =
-			(size_t)projs[i]->mp_nbins * sizeof(uint64_t);
-		memcpy(parity[i], projs[i]->mp_bins, proj_bytes);
-		moj_projection_destroy(projs[i]);
-	}
-
-	free(projs);
-	free(grid);
+	moj_forward_rows(rows, P, k, mcp->mcp_dirs + k, m, proj_ptrs);
 	return 0;
 }
 
@@ -245,65 +224,73 @@ static int mojette_nonsys_encode(struct ec_encoding *encoding, uint8_t **data,
 	struct moj_encoding_private *mcp = encoding->ec_private;
 	int k = encoding->ec_k;
 	int m = encoding->ec_m;
-	int n = k + m;
 	int P = grid_P(shard_len);
 
-	/* Assemble grid from data rows. */
-	uint64_t *grid = calloc((size_t)P * k, sizeof(uint64_t));
-
-	if (!grid)
-		return -ENOMEM;
+	/* Row pointers into caller-supplied data buffers. */
+	const uint64_t *rows[k];
 
 	for (int i = 0; i < k; i++)
-		memcpy(grid + (size_t)i * P, data[i], shard_len);
-
-	/* Compute all n projections. */
-	struct moj_projection **projs =
-		calloc((size_t)n, sizeof(struct moj_projection *));
-
-	if (!projs) {
-		free(grid);
-		return -ENOMEM;
-	}
-
-	for (int i = 0; i < n; i++) {
-		int nbins = moj_projection_size(mcp->mcp_dirs[i].md_p,
-						mcp->mcp_dirs[i].md_q, P, k);
-
-		projs[i] = moj_projection_create(nbins);
-		if (!projs[i]) {
-			for (int j = 0; j < i; j++)
-				moj_projection_destroy(projs[j]);
-			free(projs);
-			free(grid);
-			return -ENOMEM;
-		}
-	}
-
-	moj_forward(grid, P, k, mcp->mcp_dirs, n, projs);
-	free(grid);
+		rows[i] = (const uint64_t *)data[i];
 
 	/*
-	 * First k projections go into data[] (overwrites input).
-	 * Remaining m go into parity[].
+	 * The m parity projections can wrap parity[i] directly (different
+	 * buffer from rows[]).  The k "data" projections cannot: they
+	 * would overwrite data[i] which aliases rows[i], and
+	 * moj_forward_impl's memset would zero the row before it is XORed
+	 * into projection 0.  Compute them into temp buffers then copy
+	 * out at the end.  Splitting into two moj_forward_rows calls
+	 * keeps both concerns clean.
 	 */
-	for (int i = 0; i < k; i++) {
-		size_t proj_bytes =
-			(size_t)projs[i]->mp_nbins * sizeof(uint64_t);
 
-		memcpy(data[i], projs[i]->mp_bins, proj_bytes);
-		moj_projection_destroy(projs[i]);
-	}
+	/* --- parity projections: direct wrap, no memcpy after --- */
+	struct moj_projection parity_projs[m];
+	struct moj_projection *parity_ptrs[m];
 
 	for (int i = 0; i < m; i++) {
-		size_t proj_bytes =
-			(size_t)projs[k + i]->mp_nbins * sizeof(uint64_t);
+		int dir_idx = k + i;
+		int nbins = moj_projection_size(mcp->mcp_dirs[dir_idx].md_p,
+						mcp->mcp_dirs[dir_idx].md_q, P,
+						k);
 
-		memcpy(parity[i], projs[k + i]->mp_bins, proj_bytes);
-		moj_projection_destroy(projs[k + i]);
+		parity_projs[i].mp_bins = (uint64_t *)parity[i];
+		parity_projs[i].mp_nbins = nbins;
+		parity_ptrs[i] = &parity_projs[i];
 	}
+	moj_forward_rows(rows, P, k, mcp->mcp_dirs + k, m, parity_ptrs);
 
-	free(projs);
+	/*
+	 * --- data projections: temp buffers to avoid rows[i]==data[i]
+	 * aliasing; memcpy back afterwards.  data[] holding the input
+	 * is only safe to overwrite once the transform has finished
+	 * reading from it, so this copy is load-bearing.
+	 */
+	struct moj_projection data_projs[k];
+	struct moj_projection *data_ptrs[k];
+	uint64_t *data_bufs[k];
+
+	for (int i = 0; i < k; i++) {
+		int nbins = moj_projection_size(mcp->mcp_dirs[i].md_p,
+						mcp->mcp_dirs[i].md_q, P, k);
+		size_t proj_bytes = (size_t)nbins * sizeof(uint64_t);
+
+		data_bufs[i] = malloc(proj_bytes);
+		if (!data_bufs[i]) {
+			for (int j = 0; j < i; j++)
+				free(data_bufs[j]);
+			return -ENOMEM;
+		}
+		data_projs[i].mp_bins = data_bufs[i];
+		data_projs[i].mp_nbins = nbins;
+		data_ptrs[i] = &data_projs[i];
+	}
+	moj_forward_rows(rows, P, k, mcp->mcp_dirs, k, data_ptrs);
+
+	for (int i = 0; i < k; i++) {
+		size_t proj_bytes =
+			(size_t)data_projs[i].mp_nbins * sizeof(uint64_t);
+		memcpy(data[i], data_bufs[i], proj_bytes);
+		free(data_bufs[i]);
+	}
 	return 0;
 }
 
@@ -429,6 +416,18 @@ static struct ec_encoding *mojette_create(int k, int m, bool systematic)
 	int n = k + m;
 
 	if (k < 1 || m < 1)
+		return NULL;
+	/*
+	 * Encoder wrappers use k/m-sized stack VLAs (row-pointer arrays,
+	 * projection descriptor arrays, temp buffer arrays -- see
+	 * mojette_sys_encode + mojette_nonsys_encode).  MDS-provided
+	 * layout values reach here unvalidated by ec_pipeline; enforce a
+	 * hard cap so a malformed layout can't blow the stack via ~24 MB
+	 * of VLAs before any allocation failure surfaces.  Real
+	 * deployments never approach this ceiling (typical stripe widths
+	 * are k <= 16, m <= 4).
+	 */
+	if (n > MOJ_MAX_STRIPE_WIDTH)
 		return NULL;
 
 	encoding = calloc(1, sizeof(*encoding));

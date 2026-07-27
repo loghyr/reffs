@@ -65,8 +65,10 @@
 #include <emmintrin.h> /* SSE2 -- baseline on all x86_64 */
 #endif
 
+#include <assert.h>
 #include <errno.h>
 #include <stdatomic.h>
+#include <stddef.h> /* ptrdiff_t */
 #include <stdlib.h>
 #include <string.h>
 
@@ -272,9 +274,24 @@ static void moj_fwd_row_seq(const uint64_t *__restrict__ src, int P,
 
 #endif /* __aarch64__ / __SSE2__ / __AVX2__ */
 
-void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
-		 const struct moj_direction *dirs, int n,
-		 struct moj_projection **projs)
+/*
+ * Row-pointer forward-transform core.  Both moj_forward and
+ * moj_forward_rows dispatch here; moj_forward materializes a
+ * transient row-pointer array on the stack.
+ *
+ * R.3.3 memset-fusion: in the SIMD q=1 fast path, row 0 covers a
+ * contiguous span of the projection buffer, so we memcpy it directly
+ * (no OR-in-zeros needed) and zero only the small extension regions
+ * that no row contributes to.  Callers may pass projections with
+ * uninitialized mp_bins -- the transform guarantees a full
+ * overwrite.  proj->mp_nbins MUST match moj_projection_size(p, q,
+ * P, Q); an assert catches wrong-sized callers in debug builds and
+ * drops through to the scalar path (which memsets exactly the
+ * declared mp_nbins) in release.
+ */
+static void moj_forward_impl(const uint64_t *const *rows, int P, int Q,
+			     const struct moj_direction *dirs, int n,
+			     struct moj_projection **projs)
 {
 	for (int i = 0; i < n; i++) {
 		int p = dirs[i].md_p;
@@ -282,37 +299,96 @@ void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
 		int off = moj_bin_offset(p, q, P, Q);
 		struct moj_projection *proj = projs[i];
 
-		memset(proj->mp_bins, 0,
-		       (size_t)proj->mp_nbins * sizeof(uint64_t));
-
-		/*
-		 * SIMD fast path for q=1.
-		 *
-		 * Paper bin formula `b = row*p + col*q - off` with q=1 gives
-		 * b sequential in col for any p; bin pointer for row r is
-		 * `bins + r*p - off`, then we XOR a row's worth of pixels in.
-		 * Bypassed when moj_force_scalar(true) is set.
-		 */
 #if defined(__aarch64__) || defined(__SSE2__) || defined(__AVX2__)
 		if (!moj_scalar_only && q == 1) {
 			for (int row = 0; row < Q; row++) {
-				const uint64_t *src = grid + (size_t)row * P;
+				const uint64_t *src = rows[row];
 				uint64_t *dst = proj->mp_bins + (row * p - off);
 
-				moj_fwd_row_seq(src, P, dst);
+				if (row == 0) {
+					size_t before =
+						(size_t)(dst - proj->mp_bins);
+					uint64_t *end =
+						proj->mp_bins + proj->mp_nbins;
+					ptrdiff_t after_s = end - (dst + P);
+
+					/*
+					 * Guardrail: after_s < 0 iff caller
+					 * declared mp_nbins <
+					 * moj_projection_size(p,q,P,Q).
+					 * Detect before casting to size_t
+					 * (which would balloon to ~2^64 and
+					 * scribble the address space) and
+					 * fall through to the scalar path,
+					 * which memsets exactly the declared
+					 * mp_nbins.  Debug builds assert;
+					 * release builds degrade to
+					 * correct-but-slow.
+					 */
+					assert(after_s >= 0 &&
+					       "mp_nbins < moj_projection_size(...)");
+					if (after_s < 0)
+						goto scalar_fallback;
+
+					if (before)
+						memset(proj->mp_bins, 0,
+						       before *
+							       sizeof(uint64_t));
+					memcpy(dst, src,
+					       (size_t)P * sizeof(uint64_t));
+					if (after_s)
+						memset(dst + P, 0,
+						       (size_t)after_s *
+							       sizeof(uint64_t));
+				} else {
+					moj_fwd_row_seq(src, P, dst);
+				}
 			}
 			continue;
 		}
 #endif /* __aarch64__ || __SSE2__ || __AVX2__ */
-		/* General scalar path -- handles any (p, q). */
+		/*
+		 * General scalar path -- handles any (p, q).  Kept behind
+		 * the full memset because the scattered bin writes don't
+		 * follow the "row 0 covers a contiguous span" property that
+		 * the SIMD fast path exploits.  Also the safe-slow landing
+		 * pad if the SIMD path detects an out-of-contract mp_nbins.
+		 */
+scalar_fallback:
+		memset(proj->mp_bins, 0,
+		       (size_t)proj->mp_nbins * sizeof(uint64_t));
 		for (int row = 0; row < Q; row++) {
+			const uint64_t *src = rows[row];
+
 			for (int col = 0; col < P; col++) {
 				int b = row * p + col * q - off;
 
-				proj->mp_bins[b] ^= grid[row * P + col];
+				proj->mp_bins[b] ^= src[col];
 			}
 		}
 	}
+}
+
+void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
+		 const struct moj_direction *dirs, int n,
+		 struct moj_projection **projs)
+{
+	/*
+	 * Q is stripe width (k), capped at MOJ_MAX_STRIPE_WIDTH via
+	 * mojette_create; VLA on the stack is bounded.
+	 */
+	const uint64_t *rows[Q];
+
+	for (int r = 0; r < Q; r++)
+		rows[r] = grid + (size_t)r * P;
+	moj_forward_impl(rows, P, Q, dirs, n, projs);
+}
+
+void moj_forward_rows(const uint64_t *const *rows, int P, int Q,
+		      const struct moj_direction *dirs, int n,
+		      struct moj_projection **projs)
+{
+	moj_forward_impl(rows, P, Q, dirs, n, projs);
 }
 
 /* ------------------------------------------------------------------ */
