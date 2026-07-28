@@ -77,7 +77,9 @@
 /* ------------------------------------------------------------------ */
 
 static _Atomic bool moj_scalar_only;
-static _Atomic bool moj_gd_enabled;
+/* Geometry-driven inverse dispatcher defaults on; measurably faster than
+ * peel at the sizes ec_bench exercises.  moj_force_gd(false) pins peel. */
+static _Atomic bool moj_gd_enabled = true;
 
 void moj_force_scalar(bool force)
 {
