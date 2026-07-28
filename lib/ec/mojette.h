@@ -269,6 +269,37 @@ int moj_inverse_gd_sparse(uint64_t *grid, int P, int Q,
 			  int n_missing);
 
 /*
+ * Row-pointer variants (R.4.1 fastpath).
+ *
+ * These accept an array of row pointers `rows[Q]` instead of a
+ * contiguous P*Q grid, letting the caller alias rows directly at
+ * on-wire shard buffers.  Same semantics as the flat-grid
+ * counterparts; the sparse variants document the initial-state
+ * requirement on rows[] in moj_inverse_sparse_rows().
+ */
+int moj_inverse_peel_rows(uint64_t **rows, int P, int Q,
+			  const struct moj_direction *dirs, int n,
+			  struct moj_projection **projs);
+int moj_inverse_peel_sparse_rows(uint64_t **rows, int P, int Q,
+				 const struct moj_direction *dirs, int n,
+				 struct moj_projection **projs,
+				 const int *missing, int n_missing);
+int moj_inverse_gd_rows(uint64_t **rows, int P, int Q,
+			const struct moj_direction *dirs, int n,
+			struct moj_projection **projs);
+int moj_inverse_gd_sparse_rows(uint64_t **rows, int P, int Q,
+			       const struct moj_direction *dirs, int n,
+			       struct moj_projection **projs,
+			       const int *missing, int n_missing);
+int moj_inverse_rows(uint64_t **rows, int P, int Q,
+		     const struct moj_direction *dirs, int n,
+		     struct moj_projection **projs);
+int moj_inverse_sparse_rows(uint64_t **rows, int P, int Q,
+			    const struct moj_direction *dirs, int n,
+			    struct moj_projection **projs, const int *missing,
+			    int n_missing);
+
+/*
  * moj_force_gd -- enable / disable geometry-driven inverse dispatch.
  *
  * When set to true, moj_inverse() routes to moj_inverse_gd if the

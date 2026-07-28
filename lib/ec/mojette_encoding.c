@@ -144,15 +144,15 @@ static int mojette_sys_decode(struct ec_encoding *encoding, uint8_t **shards,
 
 	/* Use exactly missing_data parity projections (n == n_missing). */
 	int n_inv = missing_data;
+	/* VLA declared before any goto target -- C forbids goto over VLA. */
+	uint64_t *rows[k];
 	struct moj_direction *sub_dirs =
 		calloc((size_t)n_inv, sizeof(*sub_dirs));
 	struct moj_projection **sub_projs =
 		calloc((size_t)n_inv, sizeof(*sub_projs));
 	int *missing_rows = calloc((size_t)missing_data, sizeof(int));
-	uint64_t *full_grid = calloc((size_t)P * k, sizeof(uint64_t));
 
-	if (!sub_dirs || !sub_projs || !missing_rows || !full_grid) {
-		free(full_grid);
+	if (!sub_dirs || !sub_projs || !missing_rows) {
 		free(missing_rows);
 		free(sub_projs);
 		free(sub_dirs);
@@ -177,35 +177,47 @@ static int mojette_sys_decode(struct ec_encoding *encoding, uint8_t **shards,
 		if (!sub_projs[pidx])
 			goto out;
 
-		/* Load FULL parity bins (no pre-subtraction here). */
+		/*
+		 * Load FULL parity bins (no pre-subtraction here).  Peel
+		 * writes back into these during decode, so we cannot alias
+		 * the shards buffer directly (see slice-R4-decode-scoping.md
+		 * for the R.4.2 feasibility finding).
+		 */
 		memcpy(sub_projs[pidx]->mp_bins, shards[k + i],
 		       (size_t)nbins * sizeof(uint64_t));
 		pidx++;
 	}
 
-	/* Pre-fill known data rows; collect missing row indices ascending. */
+	/*
+	 * R.4.1 fastpath: alias rows[] directly at the on-wire shard
+	 * buffers.  Present rows carry the caller's data (read by the
+	 * inverse init pass); missing rows receive recovered pixels
+	 * in place (written by peel/gd).  No full_grid, no memcpy of
+	 * present rows in, no memcpy of recovered rows out.
+	 *
+	 * Missing rows MUST be zero on entry -- moj_inverse_gd_sparse_rows
+	 * XORs pre-existing bytes into the pixel accumulator during the
+	 * DGCI walk (see mojette.c:1112 etc.).  peel_sparse does not read
+	 * missing rows on init, so it tolerates any initial content, but
+	 * the shared contract requires zero.  Callers of ec_pipeline reuse
+	 * shard buffers across stripes, so `shards[missing[i]]` can carry
+	 * leftover bytes from a previous chunk.  memset the missing shards
+	 * to zero before calling the inverse.
+	 */
 	int midx = 0;
 
 	for (int i = 0; i < k; i++) {
-		if (present[i])
-			memcpy(full_grid + (size_t)i * P, shards[i], shard_len);
-		else
+		rows[i] = (uint64_t *)shards[i];
+		if (!present[i]) {
+			memset(shards[i], 0, shard_len);
 			missing_rows[midx++] = i;
+		}
 	}
 
-	ret = moj_inverse_sparse(full_grid, P, k, sub_dirs, n_inv, sub_projs,
-				 missing_rows, missing_data);
-
-	if (ret == 0) {
-		/* Copy recovered rows back into shards. */
-		for (int i = 0; i < missing_data; i++)
-			memcpy(shards[missing_rows[i]],
-			       full_grid + (size_t)missing_rows[i] * P,
-			       shard_len);
-	}
+	ret = moj_inverse_sparse_rows(rows, P, k, sub_dirs, n_inv, sub_projs,
+				      missing_rows, missing_data);
 
 out:
-	free(full_grid);
 	free(missing_rows);
 	for (int i = 0; i < pidx; i++)
 		moj_projection_destroy(sub_projs[i]);

@@ -408,15 +408,16 @@ void moj_forward_rows(const uint64_t *const *rows, int P, int Q,
  * would require.
  */
 
-int moj_inverse_peel(uint64_t *grid, int P, int Q,
-		     const struct moj_direction *dirs, int n,
-		     struct moj_projection **projs)
+int moj_inverse_peel_rows(uint64_t **rows, int P, int Q,
+			  const struct moj_direction *dirs, int n,
+			  struct moj_projection **projs)
 {
 	int total = P * Q;
 	int recovered = 0;
 	int ret = -EIO;
 
-	memset(grid, 0, (size_t)total * sizeof(uint64_t));
+	for (int r = 0; r < Q; r++)
+		memset(rows[r], 0, (size_t)P * sizeof(uint64_t));
 
 	/* Track which pixels have been reconstructed. */
 	bool *known = calloc((size_t)total, sizeof(bool));
@@ -510,7 +511,7 @@ found:;
 				 */
 				uint64_t val = proj->mp_bins[b];
 
-				grid[u_row * P + u_col] = val;
+				rows[u_row][u_col] = val;
 				known[u_row * P + u_col] = true;
 				recovered++;
 				progress = true;
@@ -546,6 +547,23 @@ out_offsets:
 	return ret;
 }
 
+/*
+ * moj_inverse_peel -- flat-grid wrapper over moj_inverse_peel_rows.
+ * Callers with contiguous P*Q grids stay on this signature; the row-
+ * pointer form is the R.4.1 fastpath used by mojette_sys_decode to
+ * eliminate full_grid + shard-copy passes on decode.
+ */
+int moj_inverse_peel(uint64_t *grid, int P, int Q,
+		     const struct moj_direction *dirs, int n,
+		     struct moj_projection **projs)
+{
+	uint64_t *rows[Q];
+
+	for (int i = 0; i < Q; i++)
+		rows[i] = grid + (size_t)i * P;
+	return moj_inverse_peel_rows(rows, P, Q, dirs, n, projs);
+}
+
 /* ------------------------------------------------------------------ */
 /* Corner-peeling on a partially known grid                            */
 /* ------------------------------------------------------------------ */
@@ -561,10 +579,10 @@ out_offsets:
  * known ones).  We pre-subtract known-row contributions so bin
  * contents reflect only unknown pixels, then run standard peel.
  */
-int moj_inverse_peel_sparse(uint64_t *grid, int P, int Q,
-			    const struct moj_direction *dirs, int n,
-			    struct moj_projection **projs, const int *missing,
-			    int n_missing)
+int moj_inverse_peel_sparse_rows(uint64_t **rows, int P, int Q,
+				 const struct moj_direction *dirs, int n,
+				 struct moj_projection **projs,
+				 const int *missing, int n_missing)
 {
 	int total = P * Q;
 	int recovered = 0;
@@ -635,8 +653,7 @@ int moj_inverse_peel_sparse(uint64_t *grid, int P, int Q,
 					col * dirs[i].md_q - offsets[i];
 
 				if (is_known)
-					projs[i]->mp_bins[b] ^=
-						grid[row * P + col];
+					projs[i]->mp_bins[b] ^= rows[row][col];
 				else
 					count[i][b]++;
 			}
@@ -678,7 +695,7 @@ int moj_inverse_peel_sparse(uint64_t *grid, int P, int Q,
 found:;
 				uint64_t val = proj->mp_bins[b];
 
-				grid[u_row * P + u_col] = val;
+				rows[u_row][u_col] = val;
 				known[u_row * P + u_col] = true;
 				recovered++;
 				progress = true;
@@ -711,6 +728,24 @@ out:
 	free(known);
 	free(missing_row);
 	return ret;
+}
+
+/*
+ * moj_inverse_peel_sparse -- flat-grid wrapper over
+ * moj_inverse_peel_sparse_rows.  See moj_inverse_peel for the
+ * wrapper-vs-fastpath rationale.
+ */
+int moj_inverse_peel_sparse(uint64_t *grid, int P, int Q,
+			    const struct moj_direction *dirs, int n,
+			    struct moj_projection **projs, const int *missing,
+			    int n_missing)
+{
+	uint64_t *rows[Q];
+
+	for (int i = 0; i < Q; i++)
+		rows[i] = grid + (size_t)i * P;
+	return moj_inverse_peel_sparse_rows(rows, P, Q, dirs, n, projs, missing,
+					    n_missing);
 }
 
 /* ------------------------------------------------------------------ */
@@ -762,9 +797,9 @@ static int moj_gd_pair_cmp(const void *a, const void *b)
 	return 0;
 }
 
-int moj_inverse_gd(uint64_t *grid, int P, int Q,
-		   const struct moj_direction *dirs, int n,
-		   struct moj_projection **projs)
+int moj_inverse_gd_rows(uint64_t **rows, int P, int Q,
+			const struct moj_direction *dirs, int n,
+			struct moj_projection **projs)
 {
 	int np = n;
 	int ret = -EIO;
@@ -792,7 +827,8 @@ int moj_inverse_gd(uint64_t *grid, int P, int Q,
 		goto out;
 	}
 
-	memset(grid, 0, (size_t)P * (size_t)Q * sizeof(uint64_t));
+	for (int r = 0; r < Q; r++)
+		memset(rows[r], 0, (size_t)P * sizeof(uint64_t));
 
 	/* Sort by slope p/q descending via an index array. */
 	for (int i = 0; i < np; i++) {
@@ -882,7 +918,7 @@ int moj_inverse_gd(uint64_t *grid, int P, int Q,
 				       xtop + p < P) {
 					xtop += p;
 					ytop -= 1;
-					pixel ^= grid[ytop * P + xtop];
+					pixel ^= rows[ytop][xtop];
 				}
 				int xdn = x;
 				int ydn = y;
@@ -891,7 +927,7 @@ int moj_inverse_gd(uint64_t *grid, int P, int Q,
 				       xdn - p < P) {
 					xdn -= p;
 					ydn += 1;
-					pixel ^= grid[ydn * P + xdn];
+					pixel ^= rows[ydn][xdn];
 				}
 			} else {
 				/*
@@ -902,13 +938,13 @@ int moj_inverse_gd(uint64_t *grid, int P, int Q,
 				 */
 				for (int i = 0; i < Q; i++) {
 					if (i != y)
-						pixel ^= grid[i * P + x];
+						pixel ^= rows[i][x];
 				}
 			}
 
 			int b = y * p + x - off[l];
 
-			grid[y * P + x] = projs[orig]->mp_bins[b] ^ pixel;
+			rows[y][x] = projs[orig]->mp_bins[b] ^ pixel;
 		}
 	}
 
@@ -921,6 +957,21 @@ out:
 	free(sorted_idx);
 	free(pairs);
 	return ret;
+}
+
+/*
+ * moj_inverse_gd -- flat-grid wrapper over moj_inverse_gd_rows.
+ * See moj_inverse_peel for the wrapper-vs-fastpath rationale.
+ */
+int moj_inverse_gd(uint64_t *grid, int P, int Q,
+		   const struct moj_direction *dirs, int n,
+		   struct moj_projection **projs)
+{
+	uint64_t *rows[Q];
+
+	for (int i = 0; i < Q; i++)
+		rows[i] = grid + (size_t)i * P;
+	return moj_inverse_gd_rows(rows, P, Q, dirs, n, projs);
 }
 
 /* ------------------------------------------------------------------ */
@@ -937,10 +988,10 @@ out:
  * ordering ensures all OTHER pixels on each line are either known
  * or already recovered when the algorithm reads them from grid[].
  */
-int moj_inverse_gd_sparse(uint64_t *grid, int P, int Q,
-			  const struct moj_direction *dirs, int n,
-			  struct moj_projection **projs, const int *missing,
-			  int n_missing)
+int moj_inverse_gd_sparse_rows(uint64_t **rows, int P, int Q,
+			       const struct moj_direction *dirs, int n,
+			       struct moj_projection **projs,
+			       const int *missing, int n_missing)
 {
 	int np = n;
 	int ret = -EIO;
@@ -1057,7 +1108,7 @@ int moj_inverse_gd_sparse(uint64_t *grid, int P, int Q,
 				       xtop + p < P) {
 					xtop += p;
 					ytop -= 1;
-					pixel ^= grid[ytop * P + xtop];
+					pixel ^= rows[ytop][xtop];
 				}
 				int xdn = x;
 				int ydn = y;
@@ -1066,19 +1117,19 @@ int moj_inverse_gd_sparse(uint64_t *grid, int P, int Q,
 				       xdn - p < P) {
 					xdn -= p;
 					ydn += 1;
-					pixel ^= grid[ydn * P + xdn];
+					pixel ^= rows[ydn][xdn];
 				}
 			} else {
 				/* p==0: column-sum projection. */
 				for (int i = 0; i < Q; i++) {
 					if (i != y)
-						pixel ^= grid[i * P + x];
+						pixel ^= rows[i][x];
 				}
 			}
 
 			int b = y * p + x - off[l];
 
-			grid[y * P + x] = projs[orig]->mp_bins[b] ^ pixel;
+			rows[y][x] = projs[orig]->mp_bins[b] ^ pixel;
 		}
 	}
 
@@ -1091,6 +1142,24 @@ out:
 	free(sorted_idx);
 	free(pairs);
 	return ret;
+}
+
+/*
+ * moj_inverse_gd_sparse -- flat-grid wrapper over
+ * moj_inverse_gd_sparse_rows.  See moj_inverse_peel for the
+ * wrapper-vs-fastpath rationale.
+ */
+int moj_inverse_gd_sparse(uint64_t *grid, int P, int Q,
+			  const struct moj_direction *dirs, int n,
+			  struct moj_projection **projs, const int *missing,
+			  int n_missing)
+{
+	uint64_t *rows[Q];
+
+	for (int i = 0; i < Q; i++)
+		rows[i] = grid + (size_t)i * P;
+	return moj_inverse_gd_sparse_rows(rows, P, Q, dirs, n, projs, missing,
+					  n_missing);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1135,6 +1204,39 @@ int moj_inverse(uint64_t *grid, int P, int Q, const struct moj_direction *dirs,
 }
 
 /*
+ * moj_inverse_rows -- row-pointer dispatcher (R.4.1 fastpath).
+ *
+ * Same semantics as moj_inverse but takes an array of row pointers
+ * instead of a contiguous grid.  Lets the caller alias the rows
+ * directly at on-wire shard buffers, eliminating a full-grid
+ * allocation and two shard-memcpy passes on the decode path.
+ */
+int moj_inverse_rows(uint64_t **rows, int P, int Q,
+		     const struct moj_direction *dirs, int n,
+		     struct moj_projection **projs)
+{
+	if (atomic_load_explicit(&moj_gd_enabled, memory_order_relaxed) &&
+	    n == Q) {
+		bool ok = true;
+
+		for (int i = 0; i < n; i++) {
+			if (dirs[i].md_q != 1) {
+				ok = false;
+				break;
+			}
+		}
+		if (ok) {
+			int ret =
+				moj_inverse_gd_rows(rows, P, Q, dirs, n, projs);
+
+			if (ret != -ENOSYS && ret != -EINVAL)
+				return ret;
+		}
+	}
+	return moj_inverse_peel_rows(rows, P, Q, dirs, n, projs);
+}
+
+/*
  * moj_inverse_sparse -- partially-known-grid dispatcher.
  *
  * If moj_force_gd is set and shape permits (q==1 for all dirs,
@@ -1166,4 +1268,51 @@ int moj_inverse_sparse(uint64_t *grid, int P, int Q,
 	}
 	return moj_inverse_peel_sparse(grid, P, Q, dirs, n, projs, missing,
 				       n_missing);
+}
+
+/*
+ * moj_inverse_sparse_rows -- row-pointer dispatcher (R.4.1 fastpath).
+ *
+ * Same semantics as moj_inverse_sparse but takes an array of row
+ * pointers instead of a contiguous grid.  The primary decode
+ * fastpath: mojette_sys_decode aliases rows[] at the on-wire
+ * shard buffers, avoiding a full_grid calloc plus two shard-
+ * memcpy passes (present rows in, recovered rows out).
+ *
+ * Semantics on rows[]:
+ *   - rows[i] for i NOT in `missing[]`: caller MUST have present
+ *     data at rows[i][0..P-1] (peel/gd XOR them out of the
+ *     projection bins during init).
+ *   - rows[i] for i in `missing[]`: caller MUST have zero at
+ *     rows[i][0..P-1] on entry.  peel does not read them, but the
+ *     gd_sparse DGCI walk XORs pre-existing bytes into the pixel
+ *     accumulator (see moj_inverse_gd_sparse_rows), so non-zero
+ *     initial content silently corrupts the recovered result.  On
+ *     return the buffer holds the recovered pixels.
+ */
+int moj_inverse_sparse_rows(uint64_t **rows, int P, int Q,
+			    const struct moj_direction *dirs, int n,
+			    struct moj_projection **projs, const int *missing,
+			    int n_missing)
+{
+	if (atomic_load_explicit(&moj_gd_enabled, memory_order_relaxed) &&
+	    n == n_missing) {
+		bool ok = true;
+
+		for (int i = 0; i < n; i++) {
+			if (dirs[i].md_q != 1) {
+				ok = false;
+				break;
+			}
+		}
+		if (ok) {
+			int ret = moj_inverse_gd_sparse_rows(
+				rows, P, Q, dirs, n, projs, missing, n_missing);
+
+			if (ret != -ENOSYS && ret != -EINVAL)
+				return ret;
+		}
+	}
+	return moj_inverse_peel_sparse_rows(rows, P, Q, dirs, n, projs, missing,
+					    n_missing);
 }
