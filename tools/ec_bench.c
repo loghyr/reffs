@@ -119,22 +119,28 @@ static uint64_t time_encode(struct ec_encoding *c, uint8_t **data,
 /* Time decode with shard[erase_idx] dropped.  All shards are set up
  * fresh each iter (memcpy from snapshot) so consecutive iters do not
  * observe already-recovered state. */
+static size_t bench_shard_bytes(struct ec_encoding *c, int shard_idx,
+				size_t data_shard_len);
+
 static uint64_t time_decode(struct ec_encoding *c, uint8_t **shards,
 			    uint8_t **snapshot, int k, int m, int erase_idx,
 			    size_t shard_len, int iters, int warmup)
 {
 	int n = k + m;
 	bool *present = calloc(n, sizeof(*present));
+	size_t *ssize = calloc(n, sizeof(*ssize));
 
-	for (int i = 0; i < n; i++)
+	for (int i = 0; i < n; i++) {
 		present[i] = true;
+		ssize[i] = bench_shard_bytes(c, i, shard_len);
+	}
 	present[erase_idx] = false;
 
 	/* Warmup */
 	for (int w = 0; w < warmup; w++) {
 		for (int i = 0; i < n; i++)
-			memcpy(shards[i], snapshot[i], shard_len);
-		memset(shards[erase_idx], 0, shard_len);
+			memcpy(shards[i], snapshot[i], ssize[i]);
+		memset(shards[erase_idx], 0, ssize[erase_idx]);
 		c->ec_decode(c, shards, present, shard_len);
 	}
 
@@ -142,8 +148,8 @@ static uint64_t time_decode(struct ec_encoding *c, uint8_t **shards,
 
 	for (int i = 0; i < iters; i++) {
 		for (int j = 0; j < n; j++)
-			memcpy(shards[j], snapshot[j], shard_len);
-		memset(shards[erase_idx], 0, shard_len);
+			memcpy(shards[j], snapshot[j], ssize[j]);
+		memset(shards[erase_idx], 0, ssize[erase_idx]);
 
 		uint64_t t0 = now_ns();
 
@@ -153,6 +159,7 @@ static uint64_t time_decode(struct ec_encoding *c, uint8_t **shards,
 		if (elapsed < best)
 			best = elapsed;
 	}
+	free(ssize);
 	free(present);
 	return best;
 }
@@ -223,10 +230,13 @@ static void bench_one(const char *label, struct ec_encoding *c, int k, int m,
 	uint64_t dec_ns = time_decode(c, shards, snapshot, k, m, 1, shard_len,
 				      iters, warmup);
 
+	int correct = memcmp(shards[1], snapshot[1], shard_len) == 0;
+
 	printf("%-14s k=%d m=%d size=%7zu  enc %6.1f MB/s (%6" PRIu64
-	       " ns)  dec %6.1f MB/s (%6" PRIu64 " ns)\n",
+	       " ns)  dec %6.1f MB/s (%6" PRIu64 " ns)%s\n",
 	       label, k, m, shard_len, mb_per_sec(k, shard_len, enc_ns), enc_ns,
-	       mb_per_sec(k, shard_len, dec_ns), dec_ns);
+	       mb_per_sec(k, shard_len, dec_ns), dec_ns,
+	       correct ? "" : "  CORRUPT");
 
 	for (int i = 0; i < k; i++) {
 		free(data[i]);
