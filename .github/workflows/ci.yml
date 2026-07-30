@@ -10,49 +10,51 @@ on:
     branches: [ "main", "master" ]
 
 jobs:
-  # Self-hosted runner on Hetzner VM — Fedora, real NFS mounts, RocksDB.
-  # All deps pre-installed, no Docker.
-  build-self-hosted:
-    runs-on: self-hosted
+  # GitHub-hosted runner: build, style, license, and unit tests.
+  # Deps mirror Dockerfile.ci (FROM ubuntu:24.04 == ubuntu-latest).
+  # The root/NFS integration test is NOT run here -- it needs real
+  # kernel NFS mounts and runs in the nightly job on garbo.
+  build:
+    runs-on: ubuntu-latest
 
     steps:
-    - name: Acquire CI lock
-      run: |
-        LOCKFILE=/reffs_data/reffs_ci.lock
-        # Match nightly_ci.sh MAX_RUNTIME: a holder older than this is
-        # wedged, not working.  On 2026-07-27 a nightly hung in
-        # nfs-conformance for 13h and held this lock; with no steal path
-        # every push failed here after the full 10-minute wait.
-        MAX_RUNTIME=$((3 * 3600))
-        for i in $(seq 1 60); do
-          if (set -C; echo $$ > "$LOCKFILE") 2>/dev/null; then
-            echo "Lock acquired"
-            break
-          fi
-          # Steal a stale lock: holder dead, or alive past MAX_RUNTIME.
-          HOLDER=$(cat "$LOCKFILE" 2>/dev/null)
-          if [ -n "$HOLDER" ] && ! kill -0 "$HOLDER" 2>/dev/null; then
-            echo "Lock holder PID $HOLDER is gone -- stealing stale lock"
-            rm -f "$LOCKFILE"
-            continue
-          fi
-          if [ -f "$LOCKFILE" ]; then
-            AGE=$(( $(date +%s) - $(stat -c %Y "$LOCKFILE" 2>/dev/null || date +%s) ))
-            if [ "$AGE" -gt "$MAX_RUNTIME" ]; then
-              echo "Lock held ${AGE}s by PID $HOLDER, past ${MAX_RUNTIME}s -- stealing"
-              rm -f "$LOCKFILE"
-              continue
-            fi
-          fi
-          echo "Waiting for lock (attempt $i/60, holder PID ${HOLDER:-unknown})..."
-          sleep 10
-        done
-        [ -f "$LOCKFILE" ] && [ "$(cat "$LOCKFILE")" = "$$" ] || exit 1
-
     - uses: actions/checkout@v5
       with:
         submodules: recursive
         fetch-depth: 0
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        # Compile/link + style deps, matching Dockerfile.ci.  clang-format-18
+        # is the version the tree is formatted with; the style target must
+        # use it or it reports spurious diffs.
+        sudo apt-get install -y \
+          clang clang-format-18 clang-tidy clang-tools \
+          pkg-config autoconf automake autoconf-archive libtool libtool-bin \
+          make cmake git \
+          liburcu-dev libtirpc-dev check librocksdb-dev libxxhash-dev \
+          libfuse-dev uuid-dev zlib1g-dev libzstd-dev liburing-dev \
+          libjemalloc-dev libssl-dev libkrb5-dev libnfsidmap-dev libcap-dev \
+          rpcsvc-proto python3 python3-pip python3-venv
+
+    - name: Install XDR tooling (xdr-parser / reply-xdr)
+      # System-wide so xdr-parser lands on PATH (/usr/local/bin) for
+      # configure's AC_PATH_PROG probe; --break-system-packages for PEP 668.
+      run: |
+        sudo pip3 install --no-cache-dir --break-system-packages \
+          xdrlib3 \
+          reply-xdr@git+https://github.com/loghyr/reply.git
+
+    - name: Install HdrHistogram_c from source
+      # The apt package is insufficient; build from source (same as CI image).
+      run: |
+        git clone https://github.com/HdrHistogram/HdrHistogram_c.git /tmp/HdrHistogram_c
+        cmake -S /tmp/HdrHistogram_c -B /tmp/HdrHistogram_c/build
+        make -C /tmp/HdrHistogram_c/build
+        sudo make -C /tmp/HdrHistogram_c/build install
+        sudo ldconfig
+        rm -rf /tmp/HdrHistogram_c
 
     - name: Create m4 directory
       run: mkdir -p m4
@@ -61,7 +63,7 @@ jobs:
       run: autoreconf -fi
 
     - name: Check style
-      run: make -f Makefile.reffs style
+      run: make -f Makefile.reffs style CLANG_FORMAT=clang-format-18
 
     - name: Check license
       run: SKIP_STYLE=1 make -f Makefile.reffs license
@@ -73,52 +75,17 @@ jobs:
         ../configure --enable-asan --enable-ubsan
 
     - name: Build
-      run: |
-        cd build_ci
-        make -j$(nproc)
+      run: make -C build_ci -j$(nproc)
 
     - name: Run unit tests
       run: |
         cd build_ci
         make check || (cat lib/fs/tests/test-suite.log && exit 1)
 
-    - name: Run integration tests
+    - name: Dump test-suite logs on failure
+      if: failure()
       run: |
-        sudo rpcbind 2>/dev/null || true
-        # Integration test needs root for mount + port 2049.
-        # Pass user's PATH so build-on-NFS finds xdr-parser.
-        sudo -E env \
-          "PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/usr/sbin" \
-          "LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64" \
-          "HOME=$HOME" \
-          bash -c "ulimit -n 65536; bash scripts/ci_integration_test.sh \
-            '$(pwd)/build_ci/src/reffsd' \
-            '$(pwd)'"
-
-    - name: Clean up
-      if: always()
-      run: |
-        rm -rf build_ci
-        # Integration test mount (port 2049).  Kill reffsd first so
-        # pending RPCs get ECONNREFUSED and D-state processes can wake
-        # before the unmount.  Do NOT use fuser -k -m here -- that sends
-        # SIGKILL to every process using the NFS filesystem, including
-        # the runner itself.
-        sudo fuser -k 2049/tcp 2>/dev/null || true
-        sleep 1
-        sudo umount -f -l /mnt/reffs 2>/dev/null || true
-        sudo rm -rf /mnt/reffs 2>/dev/null || true
-        # Soak test mounts left by nightly_ci.sh or local_soak.sh when
-        # SIGKILL bypasses EXIT traps.  Kill the stale reffsd on port
-        # 12049 first so pending RPCs get ECONNREFUSED and D-state
-        # processes can wake before we force-unmount.
-        sudo fuser -k 12049/tcp 2>/dev/null || true
-        sleep 1
-        for mp in /mnt/reffs_local_soak /mnt/reffs_soak*; do
-          [ -d "$mp" ] || continue
-          mountpoint -q "$mp" 2>/dev/null || continue
-          sudo fuser -k -m "$mp" 2>/dev/null || true
-          sleep 1
-          sudo umount -f -l "$mp" 2>/dev/null || true
+        for f in build_ci/lib/*/tests/*.log; do
+          [ -f "$f" ] || continue
+          echo "=== $f ==="; cat "$f" || true
         done
-        rm -f /reffs_data/reffs_ci.lock
