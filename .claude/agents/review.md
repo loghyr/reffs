@@ -977,3 +977,34 @@ in doubt, use NOTE rather than BLOCKER.
 - **Do not flag grandfathered atomics.** The GCC `__atomic_*` builtins on
   the specific fields listed in `standards.md` are correct and must not be
   flagged as a standards violation.
+
+## Applying findings: fix-at-introduction rule (bisect discipline)
+
+When the programmer acts on a finding, and the defect was introduced
+by a commit that is still under active development (a local topic
+branch under a single author's control, `wip/*`, `*-wip`, or an
+un-pushed stgit stack), the fix MUST be folded back into the commit
+that first introduced the defect.  This keeps `git bisect` on that
+branch clean -- no intermediate commit builds broken or carries a
+latent regression.
+
+Mechanisms: `stg squash` / `stg edit`, `git commit --fixup <sha>` +
+`git rebase -i --autosquash`, or `git commit --amend` for the tip.
+After folding, verify each commit in the resulting stack builds
+standalone before republishing.
+
+**Never rewrite history that has left the local changeset.**  Once
+a commit is at `origin/main`, at `origin/<shared-topic>`, on a
+branch a collaborator has fetched, or in any upstream tree, it is
+golden -- a force-push destroys every downstream copy.  In that
+case, ship the fix as a follow-up commit whose message includes a
+`Fixes: <12-char-sha> ("<subject>")` trailer naming the introducing
+commit.  The follow-up must be a plain (non-forced) push.
+
+Boundary: treat as non-local anything the author cannot personally
+guarantee has no downstream fetchers.  When in doubt, follow-up.
+
+The reviewer does not enforce this -- the programmer does -- but
+when a finding can be traced to a specific in-stack commit, cite
+that commit's SHA in the finding so the programmer can decide
+fix-in-place vs. follow-up without re-investigating.
