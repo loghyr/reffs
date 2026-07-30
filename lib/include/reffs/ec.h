@@ -11,6 +11,10 @@
 #ifndef _REFFS_EC_H
 #define _REFFS_EC_H
 
+#ifdef HAVE_CONFIG_H
+#include "config.h" // IWYU pragma: keep
+#endif
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -165,6 +169,7 @@ struct ec_encoding *ec_xor_create(int k);
  */
 struct ec_encoding *ec_linux_md_create(int k);
 
+#ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
 /*
  * ec_snapraid_create -- create a SnapRAID Cauchy encoding.  Wraps
  * Andrea Mazzoleni's vendored raid/ library (lib/ec/snapraid-raid/,
@@ -178,32 +183,39 @@ struct ec_encoding *ec_linux_md_create(int k);
  * Returns an initialized encoding, or NULL on failure.  The caller
  * must call ec_encoding_destroy() when done.
  *
- * See ~/Documents/reffs-docs/snapraid-evaluation.md for the license
- * and adoption rationale, and lib/ec/snapraid-raid/NOTICE.md for the
- * upstream pin.
+ * Removed from the FFv2 draft standards-track registry on
+ * 2026-07-30 due to StreamScale US 8,683,296 exposure on the SIMD
+ * split-table GF multiply this Cauchy construction relies on.
+ * Retained here behind REFFS_ENABLE_PRIVATE_ENCODINGS (private-
+ * range wire codepoint 0x8001) for bench and internal comparison
+ * work.  See ~/Documents/reffs-docs/snapraid-evaluation.md and
+ * lib/ec/snapraid-raid/NOTICE.md for the upstream pin.
  */
 struct ec_encoding *ec_snapraid_create(int k, int m);
 
 /*
  * ec_isa_l_create -- create an Intel ISA-L Reed-Solomon
- * (Vandermonde) encoding (FFV2_ENCODING_ISA_L_RS on the wire).
- * Wraps the vendored portable-C subset of ISA-L's erasure_code/
- * at lib/ec/isa-l-erasure/ (BSD-3-Clause).
+ * (Vandermonde) encoding.  Wraps the vendored portable-C subset
+ * of ISA-L's erasure_code/ at lib/ec/isa-l-erasure/
+ * (BSD-3-Clause).
  *
  * k: number of data shards (>=1).
  * m: number of parity shards (>=1).
  * Constraint: k + m <= 254 (GF(2^8) field size).
  *
  * Matrix construction: gf_gen_rs_matrix (generator 2^(i*j)),
- * which is NOT bit-compat with reffs's own rs.c or SnapRAID's
- * Cauchy despite sharing the field.
+ * which is NOT bit-compat with reffs's own rs.c despite sharing
+ * the field.
  *
  * Returns an initialized encoding, or NULL on failure.
  *
- * See ~/Documents/reffs-docs/ffv2-encoding-menu.md
- * FFV2_ENCODING_ISA_L_RS (proposed 0x9).
+ * Removed from the FFv2 draft standards-track registry on
+ * 2026-07-30 (same StreamScale rationale as ec_snapraid_create).
+ * Retained here behind REFFS_ENABLE_PRIVATE_ENCODINGS (private-
+ * range wire codepoint 0x8002).
  */
 struct ec_encoding *ec_isa_l_create(int k, int m);
+#endif
 
 /*
  * ec_encoding_destroy -- release a encoding and all internal state.

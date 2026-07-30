@@ -357,6 +357,29 @@ AS_IF([test "x$enable_strict_posix" = "xyes"], [
     AC_DEFINE([HAVE_STRICT_POSIX], [1], [Define if strict POSIX permissions are enabled])
 ])
 
+# Gate the SnapRAID Cauchy and Intel ISA-L Reed-Solomon encoders
+# behind a build-time flag.  Both encoders rely on the SIMD
+# split-table Galois-field multiply technique claimed by
+# StreamScale US 8,683,296 and were removed from the FFv2 draft
+# IANA registry (2026-07-30) for that reason plus the absence of
+# an external wire-facing interop community.  Reffs retains the
+# encoder implementations for bench and internal comparison work;
+# when the flag is enabled, they are exposed at private-range
+# wire codepoints (0x8001, 0x8002) that will never collide with
+# any IETF-registered value.  Default: off.
+AC_ARG_ENABLE([private-encodings],
+    [AS_HELP_STRING([--enable-private-encodings],
+        [enable SnapRAID Cauchy and Intel ISA-L RS encoders at private-range wire codepoints @<:@default=no@:>@])],
+    [],
+    [enable_private_encodings=no])
+
+AS_IF([test "x$enable_private_encodings" = "xyes"], [
+    AC_DEFINE([REFFS_ENABLE_PRIVATE_ENCODINGS], [1],
+              [Define to compile in SnapRAID and ISA-L RS encoders at private-range wire codepoints])
+])
+AM_CONDITIONAL([HAVE_PRIVATE_ENCODINGS],
+               [test "x$enable_private_encodings" = "xyes"])
+
 dnl Check for liburing.  Split pkg-config and manual-check logic into
 dnl flat AS_IF blocks -- nesting an error-macro call inside the 4th
 dnl arg of PKG_CHECK_MODULES (or inside a raw `if test ... fi` block

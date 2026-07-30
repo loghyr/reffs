@@ -1849,14 +1849,16 @@ int main(int argc, char *argv[])
 				encoding_type = EC_ENCODING_STRIPE;
 			else if (strcmp(optarg, "mirror") == 0)
 				encoding_type = EC_ENCODING_MIRROR;
-			else if (strcmp(optarg, "snapraid") == 0)
-				encoding_type = EC_ENCODING_SNAPRAID;
 			else if (strcmp(optarg, "xor") == 0)
 				encoding_type = EC_ENCODING_XOR;
 			else if (strcmp(optarg, "linux-md") == 0)
 				encoding_type = EC_ENCODING_LINUX_MD;
+#ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
+			else if (strcmp(optarg, "snapraid") == 0)
+				encoding_type = EC_ENCODING_SNAPRAID;
 			else if (strcmp(optarg, "isa-l") == 0)
 				encoding_type = EC_ENCODING_ISA_L;
+#endif
 			else {
 				fprintf(stderr,
 					"ec_demo: unknown encoding '%s'\n",

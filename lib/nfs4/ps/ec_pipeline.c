@@ -496,18 +496,24 @@ ec_create_encoding(int k, int m, enum ec_encoding_type encoding_type)
 		 * on output.
 		 */
 		return ec_mirror_create(k);
+#ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
 	case EC_ENCODING_SNAPRAID:
 		/*
-		 * Wire-side: FFV2_ENCODING_SNAPRAID_CAUCHY.  Extended
-		 * Cauchy matrix in GF(2^8) with primitive polynomial
-		 * 0x1d (see lib/ec/snapraid-raid/NOTICE.md for the
-		 * polynomial discussion and lib/ec/snapraid.c for the
-		 * ec_encoding wrapper).  Uniform shard sizes, so the
-		 * pipeline treats it the same as EC_ENCODING_RS on
-		 * the non-mirror / non-nonsys branches.  Caps: k <= 251,
-		 * m <= 6.
+		 * Wire-side: FFV2_ENCODING_HAMMERSPACE_SNAPRAID_CAUCHY
+		 * (private range 0x8001).  Removed from the FFv2 draft
+		 * standards-track registry on 2026-07-30 due to
+		 * StreamScale US 8,683,296 exposure; retained here
+		 * behind --enable-private-encodings for bench and
+		 * internal comparison work.  Extended Cauchy matrix in
+		 * GF(2^8) with primitive polynomial 0x1d (see
+		 * lib/ec/snapraid-raid/NOTICE.md for the polynomial
+		 * discussion and lib/ec/snapraid.c for the ec_encoding
+		 * wrapper).  Uniform shard sizes, so the pipeline treats
+		 * it the same as EC_ENCODING_RS on the non-mirror /
+		 * non-nonsys branches.  Caps: k <= 251, m <= 6.
 		 */
 		return ec_snapraid_create(k, m);
+#endif
 	case EC_ENCODING_XOR:
 		/*
 		 * Wire-side: FFV2_ENCODING_XOR_PARITY.  Systematic
@@ -530,18 +536,24 @@ ec_create_encoding(int k, int m, enum ec_encoding_type encoding_type)
 		 * and SNAPRAID_CAUCHY.
 		 */
 		return ec_linux_md_create(k);
+#ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
 	case EC_ENCODING_ISA_L:
 		/*
-		 * Wire-side: FFV2_ENCODING_ISA_L_RS (proposed 0x9).
-		 * Intel ISA-L Reed-Solomon (Vandermonde) from the
-		 * vendored portable-C subset at lib/ec/isa-l-erasure/.
-		 * Field GF(2^8) with primitive polynomial 0x1d.
-		 * Matrix construction is ISA-L-specific (generator
-		 * 2^(i*j)) -- NOT bit-compat with RS_VANDERMONDE
-		 * (0x4) or SNAPRAID_CAUCHY (0x6) despite the shared
-		 * field.  Caps: k + m <= 254.
+		 * Wire-side: FFV2_ENCODING_HAMMERSPACE_ISA_L_RS
+		 * (private range 0x8002).  Removed from the FFv2 draft
+		 * standards-track registry on 2026-07-30 (same
+		 * StreamScale rationale as SnapRAID above); retained
+		 * here behind --enable-private-encodings for bench and
+		 * internal comparison work.  Intel ISA-L Reed-Solomon
+		 * (Vandermonde) from the vendored portable-C subset at
+		 * lib/ec/isa-l-erasure/.  Field GF(2^8) with primitive
+		 * polynomial 0x1d.  Matrix construction is ISA-L-specific
+		 * (generator 2^(i*j)) -- NOT bit-compat with
+		 * RS_VANDERMONDE (0x4) despite the shared field.
+		 * Caps: k + m <= 254.
 		 */
 		return ec_isa_l_create(k, m);
+#endif
 	default:
 		return NULL;
 	}

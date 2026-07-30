@@ -4847,16 +4847,30 @@ struct ffv2_data_server4 {
     ffv2_ds_flags4          ffv2ds_flags;
 };
 
+/*
+ * Standards-track values (0x0001-0x00FF) are per the FFv2 draft
+ * IANA registry (draft-haynes-nfsv4-flexfiles-v2, #tbl-coding-types).
+ *
+ * Private-range values (0x8000-0xFFFE) are Hammerspace-scoped;
+ * SnapRAID Cauchy and Intel ISA-L RS were removed from the
+ * standards-track registry on 2026-07-30 due to StreamScale
+ * US 8,683,296 patent exposure on their SIMD implementations,
+ * and are surfaced here only when reffs is built with
+ * --enable-private-encodings.  The private-range codepoints
+ * cannot collide with any IETF-registered value; interoperability
+ * is limited to other Hammerspace-built implementations.
+ */
 enum ffv2_coding_type4 {
-    FFV2_ENCODING_PASSTHROUGH               = 0x1,
-    FFV2_ENCODING_MOJETTE_SYSTEMATIC        = 0x2,
-    FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC    = 0x3,
-    FFV2_ENCODING_RS_VANDERMONDE            = 0x4,
-    FFV2_ENCODING_MIRRORED                  = 0x5,
-    FFV2_ENCODING_SNAPRAID_CAUCHY           = 0x6,
-    FFV2_ENCODING_XOR_PARITY                = 0x7,
-    FFV2_ENCODING_LINUX_MD_RAID             = 0x8,
-    FFV2_ENCODING_ISA_L_RS                  = 0x9
+    FFV2_ENCODING_PASSTHROUGH                       = 0x1,
+    FFV2_ENCODING_MOJETTE_SYSTEMATIC                = 0x2,
+    FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC            = 0x3,
+    FFV2_ENCODING_RS_VANDERMONDE                    = 0x4,
+    FFV2_ENCODING_MIRRORED                          = 0x5,
+    FFV2_ENCODING_XOR_PARITY                        = 0x6,
+    FFV2_ENCODING_LINUX_MD_RAID                     = 0x7,
+
+    FFV2_ENCODING_HAMMERSPACE_SNAPRAID_CAUCHY       = 0x8001,
+    FFV2_ENCODING_HAMMERSPACE_ISA_L_RS              = 0x8002
 };
 
 /*

@@ -347,8 +347,10 @@ int main(int argc, char **argv)
 
 	for (const struct geom *g = GEOMS; g->k > 0; g++) {
 		struct ec_encoding *rs = ec_rs_create(g->k, g->m);
+#ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
 		struct ec_encoding *sr = ec_snapraid_create(g->k, g->m);
 		struct ec_encoding *il = ec_isa_l_create(g->k, g->m);
+#endif
 		/* XOR is single-parity only; run it only at m=1 cells.
 		 * NULL here just means "skip the XOR row for this geom". */
 		struct ec_encoding *xr = (g->m == 1) ? ec_xor_create(g->k) :
@@ -358,16 +360,30 @@ int main(int argc, char **argv)
 		struct ec_encoding *ms = ec_mojette_sys_create(g->k, g->m);
 		struct ec_encoding *mn = ec_mojette_nonsys_create(g->k, g->m);
 
-		if (!rs || !sr || !il) {
+		if (!rs
+#ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
+		    || !sr || !il
+#endif
+		    ) {
 			fprintf(stderr,
-				"ec_bench: skip k=%d m=%d (create returned NULL: rs=%p sr=%p il=%p)\n",
-				g->k, g->m, (void *)rs, (void *)sr, (void *)il);
+				"ec_bench: skip k=%d m=%d (create returned NULL: rs=%p"
+#ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
+				" sr=%p il=%p"
+#endif
+				")\n",
+				g->k, g->m, (void *)rs
+#ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
+				, (void *)sr, (void *)il
+#endif
+				);
 			if (rs)
 				ec_encoding_destroy(rs);
+#ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
 			if (sr)
 				ec_encoding_destroy(sr);
 			if (il)
 				ec_encoding_destroy(il);
+#endif
 			if (xr)
 				ec_encoding_destroy(xr);
 			if (md)
@@ -381,10 +397,12 @@ int main(int argc, char **argv)
 		for (const size_t *sz = sizes; *sz; sz++) {
 			bench_one("rs-vand", rs, g->k, g->m, *sz, iters,
 				  warmup);
+#ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
 			bench_one("snapraid-cauchy", sr, g->k, g->m, *sz, iters,
 				  warmup);
 			bench_one("isa-l-rs", il, g->k, g->m, *sz, iters,
 				  warmup);
+#endif
 			if (xr)
 				bench_one("xor-parity", xr, g->k, 1, *sz, iters,
 					  warmup);
@@ -399,8 +417,10 @@ int main(int argc, char **argv)
 					  iters, warmup);
 		}
 		ec_encoding_destroy(rs);
+#ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
 		ec_encoding_destroy(sr);
 		ec_encoding_destroy(il);
+#endif
 		if (xr)
 			ec_encoding_destroy(xr);
 		if (md)

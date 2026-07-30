@@ -470,10 +470,13 @@ static int parse_coding_spec(const char *s, struct reffs_coding_spec *out)
 		{ "mojette-sys", REFFS_ENCODING_MOJETTE_SYSTEMATIC },
 		{ "mojette-nonsys", REFFS_ENCODING_MOJETTE_NON_SYSTEMATIC },
 		{ "mirrored", REFFS_ENCODING_MIRRORED },
-		{ "snapraid-cauchy", REFFS_ENCODING_SNAPRAID_CAUCHY },
 		{ "xor-parity", REFFS_ENCODING_XOR_PARITY },
 		{ "linux-md-raid", REFFS_ENCODING_LINUX_MD_RAID },
-		{ "isa-l-rs", REFFS_ENCODING_ISA_L_RS },
+#ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
+		{ "snapraid-cauchy",
+		  REFFS_ENCODING_HAMMERSPACE_SNAPRAID_CAUCHY },
+		{ "isa-l-rs", REFFS_ENCODING_HAMMERSPACE_ISA_L_RS },
+#endif
 	};
 	char encoding_name[32];
 	unsigned int k = 0;

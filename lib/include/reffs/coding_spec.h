@@ -28,6 +28,10 @@
 #ifndef _REFFS_CODING_SPEC_H
 #define _REFFS_CODING_SPEC_H
 
+#ifdef HAVE_CONFIG_H
+#include "config.h" // IWYU pragma: keep
+#endif
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -36,6 +40,16 @@
  * FFV2_ENCODING_* on the wire so the translation from
  * sb-level descriptor to ffm_coding_type is the identity
  * cast.  Keep in sync with lib/xdr/nfsv42_xdr.x.
+ *
+ * SNAPRAID_CAUCHY and ISA_L_RS were removed from the FFv2
+ * standards-track registry on 2026-07-30 due to StreamScale
+ * US 8,683,296 patent exposure on their SIMD split-table
+ * Galois-field multiply.  Reffs retains them for bench and
+ * internal comparison work, gated by
+ * REFFS_ENABLE_PRIVATE_ENCODINGS at configure time; when the
+ * flag is set they occupy private-range wire codepoints
+ * (0x8001, 0x8002) that will never collide with an
+ * IETF-registered value.
  */
 enum reffs_encoding_type {
 	REFFS_ENCODING_PASSTHROUGH = 0x1,
@@ -43,10 +57,12 @@ enum reffs_encoding_type {
 	REFFS_ENCODING_MOJETTE_NON_SYSTEMATIC = 0x3,
 	REFFS_ENCODING_RS_VANDERMONDE = 0x4,
 	REFFS_ENCODING_MIRRORED = 0x5,
-	REFFS_ENCODING_SNAPRAID_CAUCHY = 0x6,
-	REFFS_ENCODING_XOR_PARITY = 0x7,
-	REFFS_ENCODING_LINUX_MD_RAID = 0x8,
-	REFFS_ENCODING_ISA_L_RS = 0x9,
+	REFFS_ENCODING_XOR_PARITY = 0x6,
+	REFFS_ENCODING_LINUX_MD_RAID = 0x7,
+#ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
+	REFFS_ENCODING_HAMMERSPACE_SNAPRAID_CAUCHY = 0x8001,
+	REFFS_ENCODING_HAMMERSPACE_ISA_L_RS = 0x8002,
+#endif
 };
 
 /*

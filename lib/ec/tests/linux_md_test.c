@@ -230,16 +230,19 @@ START_TEST(test_zero_length_roundtrip)
 }
 END_TEST
 
+#ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
 /*
  * Wire-compat cross-check against SnapRAID at m=2 (the IETF-126
  * on-list assertion: SnapRAID's first two Cauchy rows reproduce
  * Linux md's P+Q coefficients).  Encode the same data with both
  * encoders and memcmp the parity output.
  *
- * If this ever fails, the on-list assertion is wrong OR the
- * vendored SnapRAID upstream changed its matrix construction;
- * either way, the wire-compat story between LINUX_MD_RAID and
- * SNAPRAID_CAUCHY needs re-examination.
+ * Only compiled when --enable-private-encodings brings the
+ * SnapRAID encoder into the build; SnapRAID was removed from the
+ * FFv2 standards-track registry on 2026-07-30 (StreamScale
+ * exposure) and lives in the private range now, but the algebraic
+ * cross-check remains valid whenever both encoders are present in
+ * the same build.
  */
 static void wire_compat_at_k(int k)
 {
@@ -308,6 +311,7 @@ START_TEST(test_wire_compat_with_snapraid_k6)
 	wire_compat_at_k(6);
 }
 END_TEST
+#endif /* REFFS_ENABLE_PRIVATE_ENCODINGS */
 
 Suite *linux_md_suite(void)
 {
@@ -338,8 +342,10 @@ Suite *linux_md_suite(void)
 	tcase_add_test(tc, test_decode_too_many_missing);
 	tcase_add_test(tc, test_roundtrip_larger_k_two_data);
 	tcase_add_test(tc, test_zero_length_roundtrip);
+#ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
 	tcase_add_test(tc, test_wire_compat_with_snapraid_k4);
 	tcase_add_test(tc, test_wire_compat_with_snapraid_k6);
+#endif
 	suite_add_tcase(s, tc);
 	return s;
 }
