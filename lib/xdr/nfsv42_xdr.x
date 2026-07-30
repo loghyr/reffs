@@ -3381,6 +3381,20 @@ struct chunk_guard4 {
         uint32_t   cg_client_id;
 };
 
+/*
+ * chunk_owner4.co_id is a writer-chosen opaque identifier the
+ * data server tracks alongside cg_client_id and cg_gen_id for
+ * CAS-guard bookkeeping and repair correlation.  Typically a
+ * monotonic per-writer serial (reference client: see
+ * ec_pipeline.c owner_id assignment; kernel client: see
+ * ffv2_owner_id_next in fs/nfs/flexfilesv2/flexfilesv2.h).  The
+ * data server MUST NOT require co_id to equal cwa_offset -- an
+ * earlier draft revision spoke of a MUST relationship; both this
+ * reffs server and the reference client have always treated
+ * co_id as writer identity, and the draft prose was corrected in
+ * sync with this comment (see co_id text in
+ * draft-haynes-nfsv4-flexfiles-v2 sec-CHUNK_WRITE).
+ */
 struct chunk_owner4 {
 	chunk_guard4   co_guard;
 	uint32_t       co_id;
