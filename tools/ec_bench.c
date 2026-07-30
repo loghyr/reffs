@@ -364,7 +364,7 @@ int main(int argc, char **argv)
 #ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
 		    || !sr || !il
 #endif
-		    ) {
+		) {
 			fprintf(stderr,
 				"ec_bench: skip k=%d m=%d (create returned NULL: rs=%p"
 #ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
@@ -373,9 +373,10 @@ int main(int argc, char **argv)
 				")\n",
 				g->k, g->m, (void *)rs
 #ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
-				, (void *)sr, (void *)il
+				,
+				(void *)sr, (void *)il
 #endif
-				);
+			);
 			if (rs)
 				ec_encoding_destroy(rs);
 #ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
