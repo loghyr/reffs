@@ -880,14 +880,23 @@ START_TEST(test_repair_bypasses_pending_collision_gate)
 	free(wargs->cwa_checksums.cwa_checksums_val[0].cs_value.cs_value_val);
 	free(wargs->cwa_checksums.cwa_checksums_val);
 	/*
-	 * CHUNK_WRITE's resok has a calloc'd cwr_block_status array
-	 * that the handler allocates on the success path; free it
-	 * before resetting the slot or it leaks.
+	 * CHUNK_WRITE's resok has three co-indexed calloc'd arrays
+	 * (cwr_block_status, cwr_block_activated, cwr_owners) that
+	 * the handler allocates on the success path; free all three
+	 * before resetting the slot or LSAN reports leaks.
 	 */
-	CHUNK_WRITE4res *wres = &cm->compound->c_res->resarray.resarray_val[0]
-					 .nfs_resop4_u.opchunk_write;
-	free(wres->CHUNK_WRITE4res_u.cwr_resok4.cwr_block_status
-		     .cwr_block_status_val);
+	CHUNK_WRITE4resok *wok = &cm->compound->c_res->resarray.resarray_val[0]
+					  .nfs_resop4_u.opchunk_write
+					  .CHUNK_WRITE4res_u.cwr_resok4;
+	free(wok->cwr_block_status.cwr_block_status_val);
+	free(wok->cwr_block_activated.cwr_block_activated_val);
+	free(wok->cwr_owners.cwr_owners_val);
+	wok->cwr_block_status.cwr_block_status_val = NULL;
+	wok->cwr_block_activated.cwr_block_activated_val = NULL;
+	wok->cwr_owners.cwr_owners_val = NULL;
+	wok->cwr_block_status.cwr_block_status_len = 0;
+	wok->cwr_block_activated.cwr_block_activated_len = 0;
+	wok->cwr_owners.cwr_owners_len = 0;
 	cm_reset_slot(cm, 0);
 
 	/* Now the repair-write from a different owner must succeed. */

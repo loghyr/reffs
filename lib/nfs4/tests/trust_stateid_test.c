@@ -1186,11 +1186,22 @@ START_TEST(test_chunk_trusted_stateid_allowed)
 	/* NFS4_OK or NFS4ERR_IO are both acceptable: trust check passed. */
 	ck_assert(res->cwr_status == NFS4_OK || res->cwr_status == NFS4ERR_IO);
 
-	/* Free the per-chunk status array allocated by nfs4_op_chunk_write. */
-	free(res->CHUNK_WRITE4res_u.cwr_resok4.cwr_block_status
-		     .cwr_block_status_val);
-	res->CHUNK_WRITE4res_u.cwr_resok4.cwr_block_status.cwr_block_status_val =
-		NULL;
+	/*
+	 * Free the three co-indexed per-chunk arrays allocated by
+	 * nfs4_op_chunk_write (cwr_block_status, cwr_block_activated,
+	 * cwr_owners).
+	 */
+	CHUNK_WRITE4resok *ok = &res->CHUNK_WRITE4res_u.cwr_resok4;
+
+	free(ok->cwr_block_status.cwr_block_status_val);
+	free(ok->cwr_block_activated.cwr_block_activated_val);
+	free(ok->cwr_owners.cwr_owners_val);
+	ok->cwr_block_status.cwr_block_status_val = NULL;
+	ok->cwr_block_activated.cwr_block_activated_val = NULL;
+	ok->cwr_owners.cwr_owners_val = NULL;
+	ok->cwr_block_status.cwr_block_status_len = 0;
+	ok->cwr_block_activated.cwr_block_activated_len = 0;
+	ok->cwr_owners.cwr_owners_len = 0;
 
 	cm_free(cm);
 }

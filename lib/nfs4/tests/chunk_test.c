@@ -265,16 +265,27 @@ static void free_write_args(struct cm_ctx *cm)
 	}
 }
 
-/* Free the per-chunk status array from a successful CHUNK_WRITE result. */
+/* Free the three per-chunk arrays from a successful CHUNK_WRITE result:
+ * cwr_block_status, cwr_block_activated, cwr_owners.  Each is calloc'd
+ * once per op in nfs4_op_chunk_write; without this teardown the LSAN
+ * pass on every happy-path test reports direct leaks. */
 static void free_write_res(struct cm_ctx *cm)
 {
-	CHUNK_WRITE4res *res = &cm->compound->c_res->resarray.resarray_val[0]
-					.nfs_resop4_u.opchunk_write;
+	CHUNK_WRITE4resok *ok = &cm->compound->c_res->resarray.resarray_val[0]
+					 .nfs_resop4_u.opchunk_write
+					 .CHUNK_WRITE4res_u.cwr_resok4;
 
-	free(res->CHUNK_WRITE4res_u.cwr_resok4.cwr_block_status
-		     .cwr_block_status_val);
-	res->CHUNK_WRITE4res_u.cwr_resok4.cwr_block_status.cwr_block_status_val =
-		NULL;
+	free(ok->cwr_block_status.cwr_block_status_val);
+	ok->cwr_block_status.cwr_block_status_val = NULL;
+	ok->cwr_block_status.cwr_block_status_len = 0;
+
+	free(ok->cwr_block_activated.cwr_block_activated_val);
+	ok->cwr_block_activated.cwr_block_activated_val = NULL;
+	ok->cwr_block_activated.cwr_block_activated_len = 0;
+
+	free(ok->cwr_owners.cwr_owners_val);
+	ok->cwr_owners.cwr_owners_val = NULL;
+	ok->cwr_owners.cwr_owners_len = 0;
 }
 
 /* Free the per-owner status array from a CHUNK_FINALIZE result. */
@@ -448,8 +459,31 @@ START_TEST(test_chunk_write_single_block)
 
 	CHUNK_WRITE4res *res = &cm->compound->c_res->resarray.resarray_val[0]
 					.nfs_resop4_u.opchunk_write;
+	CHUNK_WRITE4resok *ok = &res->CHUNK_WRITE4res_u.cwr_resok4;
+
 	ck_assert_int_eq(res->cwr_status, NFS4_OK);
-	ck_assert_uint_eq(res->CHUNK_WRITE4res_u.cwr_resok4.cwr_count, 1);
+	ck_assert_uint_eq(ok->cwr_count, 1);
+
+	/*
+	 * Wire-conformance regression guard for the three co-indexed
+	 * per-chunk arrays (draft sec-CHUNK_WRITE :9062-9065): all three
+	 * MUST be len == n (one entry per payload chunk).  A regression
+	 * back to len == 0 for cwr_block_activated or cwr_owners would
+	 * break strict decoders (Linux kernel client
+	 * fs/nfs/flexfilesv2/flexfilesv2_xdr_chunk.c:547-570 returns
+	 * -EPROTO on len mismatch).  cwr_block_activated stays FALSE
+	 * for every element because reffs never invokes the
+	 * CHUNK_WRITE_FLAGS_ACTIVATE_IF_EMPTY activation shortcut
+	 * (:9163-9173); cwr_owners echoes the caller-supplied
+	 * cwa_owner.
+	 */
+	ck_assert_uint_eq(ok->cwr_block_status.cwr_block_status_len, 1);
+	ck_assert_uint_eq(ok->cwr_block_activated.cwr_block_activated_len, 1);
+	ck_assert_uint_eq(ok->cwr_owners.cwr_owners_len, 1);
+	ck_assert_int_eq(ok->cwr_block_status.cwr_block_status_val[0], NFS4_OK);
+	ck_assert_int_eq(ok->cwr_block_activated.cwr_block_activated_val[0],
+			 false);
+	ck_assert_uint_eq(ok->cwr_owners.cwr_owners_val[0].co_id, 99);
 
 	/* Chunk store must exist with one PENDING block at offset 0. */
 	struct chunk_store *cs = g_inode->i_chunk_store;

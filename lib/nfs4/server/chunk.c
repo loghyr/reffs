@@ -460,6 +460,52 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 
 	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 
+	/*
+	 * Allocate all three co-indexed per-chunk result arrays BEFORE the
+	 * loop.  Draft sec-CHUNK_WRITE (:9062-9065) mandates cwr_block_status,
+	 * cwr_block_activated, and cwr_owners are all one-entry-per-chunk in
+	 * the payload; leaving the two "arrays" empty violated the co-indexing
+	 * MUST and made strict decoders (Linux kernel client at
+	 * fs/nfs/flexfilesv2/flexfilesv2_xdr_chunk.c:547-570) return -EPROTO
+	 * on every reply.  Populating in-loop lets us capture
+	 * block_activated[i] from the first-write detection that INV-1 also
+	 * consumes -- consolidating the chunk_store_lookup that used to sit
+	 * inside the cstats guard.
+	 *
+	 * Any calloc failure fails the whole op with NFS4ERR_DELAY (matches
+	 * the pre-existing failure treatment for cwr_block_status).
+	 */
+	/*
+	 * Size each calloc by the actual array-element type via sizeof(*ptr)
+	 * so it matches the rpcgen-generated struct's element size.  In
+	 * particular, XDR `bool` becomes tirpc `bool_t` = int = 4 bytes; a
+	 * plain sizeof(bool) (1 byte in C99) would under-allocate and cause
+	 * a heap-buffer-overflow on every store past index 0.
+	 */
+	resok->cwr_block_status.cwr_block_status_val = calloc(
+		nchunks, sizeof(*resok->cwr_block_status.cwr_block_status_val));
+	resok->cwr_block_activated.cwr_block_activated_val = calloc(
+		nchunks,
+		sizeof(*resok->cwr_block_activated.cwr_block_activated_val));
+	resok->cwr_owners.cwr_owners_val =
+		calloc(nchunks, sizeof(*resok->cwr_owners.cwr_owners_val));
+	if (!resok->cwr_block_status.cwr_block_status_val ||
+	    !resok->cwr_block_activated.cwr_block_activated_val ||
+	    !resok->cwr_owners.cwr_owners_val) {
+		free(resok->cwr_block_status.cwr_block_status_val);
+		free(resok->cwr_block_activated.cwr_block_activated_val);
+		free(resok->cwr_owners.cwr_owners_val);
+		resok->cwr_block_status.cwr_block_status_val = NULL;
+		resok->cwr_block_activated.cwr_block_activated_val = NULL;
+		resok->cwr_owners.cwr_owners_val = NULL;
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_DELAY;
+		return 0;
+	}
+	resok->cwr_block_status.cwr_block_status_len = nchunks;
+	resok->cwr_block_activated.cwr_block_activated_len = nchunks;
+	resok->cwr_owners.cwr_owners_len = nchunks;
+
 	/* Record per-block metadata.  Last block may be smaller. */
 	for (uint32_t i = 0; i < nchunks; i++) {
 		uint32_t blk_size = chunk_size;
@@ -525,37 +571,50 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		       sizeof(blk.cb_checksum_value));
 
 		/*
-		 * INV-1 / chunk-collision instrumentation: peek at the
-		 * prior block before overwriting.  Two axes:
-		 *   - cs_blocks_first_write / cs_blocks_overwrite:
-		 *     EMPTY vs non-EMPTY prior state -- INV-1's RMW
-		 *     ratio answering Hellwig msg 5 (in-place update).
-		 *   - cs_blocks_full / cs_blocks_partial: blk_size
-		 *     vs chunk_size -- INV-1's full vs partial write
-		 *     ratio answering Hellwig msg 9 (NFS block size).
+		 * cwr_block_activated[i] per draft sec-CHUNK_WRITE
+		 * (:9091-9098): TRUE means the chunk is COMMITTED on
+		 * return via the CHUNK_WRITE_FLAGS_ACTIVATE_IF_EMPTY
+		 * activation shortcut (:9163-9173); FALSE means the
+		 * chunk is PENDING and requires CHUNK_FINALIZE +
+		 * CHUNK_COMMIT to become COMMITTED.  Reffs never
+		 * inspects cwa_flags today and unconditionally writes
+		 * blocks as CHUNK_STATE_PENDING (below), so the correct
+		 * wire value here is unconditionally FALSE.  The calloc
+		 * above already zeroed the array; no per-element store
+		 * is needed.  When the ACTIVATE_IF_EMPTY shortcut is
+		 * implemented, set to TRUE only when the guarded
+		 * (flag && was-EMPTY && stable >= DATA_SYNC4) triple
+		 * from :9163-9173 holds.
 		 *
-		 * cs_pending_displaced (cross-writer PENDING overwrite)
-		 * used to bump here, but the Option C gate above
-		 * (commit d8a09448671b) rejects exactly that case
+		 * Caller identity owns every chunk it accepts on this
+		 * op; struct copy is safe (chunk_owner4 has no inner
+		 * pointer-bearing fields, xdr-parser generates a POD
+		 * layout for chunk_guard4 + uint32_t co_id).
+		 */
+		resok->cwr_owners.cwr_owners_val[i] = args->cwa_owner;
+
+		/*
+		 * INV-1 / chunk-collision instrumentation.  cs_pending_
+		 * displaced (cross-writer PENDING overwrite) used to
+		 * bump here, but the Option C gate above (commit
+		 * d8a09448671b) rejects PENDING-from-different-writer
 		 * before this loop runs.  cs_chunk_busy_delay is the
 		 * post-Option-C counter that records the same shape of
-		 * contention.  The cs_pending_displaced wire field
-		 * stays in probe1's response struct for backward compat
-		 * with deployed probe clients; it reports zero in any
-		 * post-Option-C build (callers should read
-		 * cs_chunk_busy_delay instead).
+		 * contention.  Option C does NOT reject FINALIZED or
+		 * COMMITTED overwrites from other writers, so a
+		 * non-NULL prev here can be either same-writer or
+		 * other-writer of a durable prior state -- the
+		 * distinction is not made in the current INV-1 axes.
+		 * The cs_pending_displaced wire field stays in probe1's
+		 * response struct for backward compat with deployed
+		 * probe clients; it reports zero in any post-Option-C
+		 * build (callers should read cs_chunk_busy_delay
+		 * instead).
 		 */
 		if (cstats) {
 			struct chunk_block *prev =
 				chunk_store_lookup(cs, args->cwa_offset + i);
 
-			/*
-			 * chunk_store_lookup returns NULL for EMPTY (and for
-			 * out-of-range offsets, which never happens here --
-			 * chunk_store_write below grows the array if needed,
-			 * but the lookup sees the pre-grow state).  Either
-			 * way, NULL == first-write for INV-1's purposes.
-			 */
 			if (prev == NULL)
 				atomic_fetch_add_explicit(
 					&cstats->cs_blocks_first_write, 1,
@@ -576,6 +635,16 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		}
 
 		if (chunk_store_write(cs, args->cwa_offset + i, &blk) < 0) {
+			free(resok->cwr_block_status.cwr_block_status_val);
+			free(resok->cwr_block_activated.cwr_block_activated_val);
+			free(resok->cwr_owners.cwr_owners_val);
+			resok->cwr_block_status.cwr_block_status_val = NULL;
+			resok->cwr_block_activated.cwr_block_activated_val =
+				NULL;
+			resok->cwr_owners.cwr_owners_val = NULL;
+			resok->cwr_block_status.cwr_block_status_len = 0;
+			resok->cwr_block_activated.cwr_block_activated_len = 0;
+			resok->cwr_owners.cwr_owners_len = 0;
 			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 			*status = NFS4ERR_DELAY;
 			return 0;
@@ -610,16 +679,11 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 								  UNSTABLE4;
 	chunk_write_verf(compound->c_server_state, resok->cwr_writeverf);
 
-	/* Return per-chunk status (all OK for happy path). */
-	resok->cwr_block_status.cwr_block_status_val =
-		calloc(nchunks, sizeof(nfsstat4));
-	if (!resok->cwr_block_status.cwr_block_status_val) {
-		*status = NFS4ERR_DELAY;
-		return 0;
-	}
-	resok->cwr_block_status.cwr_block_status_len = nchunks;
-	resok->cwr_owners.cwr_owners_len = 0;
-	resok->cwr_owners.cwr_owners_val = NULL;
+	/*
+	 * The three per-chunk arrays (cwr_block_status, cwr_block_activated,
+	 * cwr_owners) are already populated in-loop above; cwr_block_status
+	 * elements stay at their calloc'd zero (NFS4_OK) on the happy path.
+	 */
 
 	return 0;
 }
