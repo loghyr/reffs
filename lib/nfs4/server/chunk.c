@@ -73,6 +73,69 @@ static inline bool chunk_cid_is_reserved(uint32_t cid)
 }
 
 /*
+ * chunk_lifecycle_check_stateid -- trust-table validation for the
+ * CHUNK_FINALIZE / CHUNK_COMMIT / CHUNK_ROLLBACK lifecycle ops
+ * (draft M3).  All three carry an explicit layout stateid on the
+ * wire; the check is identical across them so we share it here.
+ *
+ * Returns NFS4_OK when the caller may proceed.  Returns a non-zero
+ * nfsstat4 on rejection (caller assigns to *status and returns 0).
+ * Special stateids bypass the check exactly as they do for
+ * CHUNK_WRITE / CHUNK_READ.
+ */
+static nfsstat4 chunk_lifecycle_check_stateid(const stateid4 *stid)
+{
+	if (stateid4_is_special(stid))
+		return NFS4_OK;
+
+	struct trust_entry *te = trust_stateid_find(stid);
+
+	if (!te)
+		return NFS4ERR_BAD_STATEID;
+
+	uint64_t now = reffs_now_ns();
+	uint64_t exp =
+		atomic_load_explicit(&te->te_expire_ns, memory_order_acquire);
+	uint32_t flags =
+		atomic_load_explicit(&te->te_flags, memory_order_acquire);
+
+	if (flags & TRUST_PENDING) {
+		trust_entry_put(te);
+		return NFS4ERR_DELAY;
+	}
+	if (exp != 0 && now > exp) {
+		trust_entry_put(te);
+		return NFS4ERR_BAD_STATEID;
+	}
+	if (!(flags & TRUST_ACTIVE)) {
+		trust_entry_put(te);
+		return NFS4ERR_BAD_STATEID;
+	}
+
+	trust_entry_put(te);
+	return NFS4_OK;
+}
+
+/*
+ * chunk_lifecycle_check_bounds -- shared M5 array-cardinality
+ * check for CHUNK_FINALIZE / CHUNK_COMMIT / CHUNK_ROLLBACK.  A
+ * request whose chunk_owner4 array exceeds the protocol maximum
+ * is rejected with NFS4ERR_INVAL before any mutation.
+ *
+ * Returns NFS4_OK when the caller may proceed.
+ *
+ * Note: response-size gating against ca_maxresponsesize is a
+ * NOT_NOW_BROWN_COW; the array-bound check here caps allocation
+ * on the request path, which is the sharper of the two knobs.
+ */
+static nfsstat4 chunk_lifecycle_check_bounds(uint32_t chunks_len)
+{
+	if (chunks_len > CHUNK_MAX_OWNERS_PER_OP)
+		return NFS4ERR_INVAL;
+	return NFS4_OK;
+}
+
+/*
  * chunk_write_validate_payload -- input + per-chunk-CRC validation
  * shared between OP_CHUNK_WRITE and OP_CHUNK_WRITE_REPAIR.
  *
@@ -969,6 +1032,21 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 		return 0;
 	}
 
+	nfsstat4 bounds_err =
+		chunk_lifecycle_check_bounds(args->cfa_chunks.cfa_chunks_len);
+
+	if (bounds_err != NFS4_OK) {
+		*status = bounds_err;
+		return 0;
+	}
+
+	nfsstat4 stid_err = chunk_lifecycle_check_stateid(&args->cfa_stateid);
+
+	if (stid_err != NFS4_OK) {
+		*status = stid_err;
+		return 0;
+	}
+
 	for (uint32_t i = 0; i < args->cfa_chunks.cfa_chunks_len; i++) {
 		if (chunk_cid_is_reserved(args->cfa_chunks.cfa_chunks_val[i]
 						  .co_guard.cg_client_id)) {
@@ -1047,6 +1125,21 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 
 	if (count == 0 || args->cca_chunks.cca_chunks_len == 0) {
 		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	nfsstat4 bounds_err =
+		chunk_lifecycle_check_bounds(args->cca_chunks.cca_chunks_len);
+
+	if (bounds_err != NFS4_OK) {
+		*status = bounds_err;
+		return 0;
+	}
+
+	nfsstat4 stid_err = chunk_lifecycle_check_stateid(&args->cca_stateid);
+
+	if (stid_err != NFS4_OK) {
+		*status = stid_err;
 		return 0;
 	}
 
@@ -1284,6 +1377,21 @@ uint32_t nfs4_op_chunk_rollback(struct compound *compound)
 
 	if (count == 0 || args->crb_chunks.crb_chunks_len == 0) {
 		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	nfsstat4 bounds_err =
+		chunk_lifecycle_check_bounds(args->crb_chunks.crb_chunks_len);
+
+	if (bounds_err != NFS4_OK) {
+		*status = bounds_err;
+		return 0;
+	}
+
+	nfsstat4 stid_err = chunk_lifecycle_check_stateid(&args->crb_stateid);
+
+	if (stid_err != NFS4_OK) {
+		*status = stid_err;
 		return 0;
 	}
 

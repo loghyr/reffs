@@ -3376,6 +3376,23 @@ union ACCESS_MASK4res switch (nfsstat4 amr_status) {
 const CHUNK_GUARD_CLIENT_ID_NONE = 0x00000000;
 const CHUNK_GUARD_CLIENT_ID_MDS  = 0xFFFFFFFF;
 
+/*
+ * Bounds on chunk-op array cardinalities (draft M5).  The data
+ * server rejects a request whose array length exceeds these maxima
+ * with NFS4ERR_INVAL before mutation, and rejects with
+ * NFS4ERR_TOOSMALL when the mandatory response would exceed
+ * ca_maxresponsesize.  Short processing (server returning fewer
+ * chunks than requested) is NOT permitted for lifecycle ops
+ * because co-indexed result arrays would lose positional
+ * correlation -- the client must split and retry with a smaller
+ * batch instead.
+ */
+const CHUNK_MAX_CHUNKS_PER_OP    = 4096;
+const CHUNK_MAX_PAYLOAD_BYTES    = 4194304;
+const CHUNK_MAX_CHECKSUMS_PER_OP = 4096;
+const CHUNK_MAX_OWNERS_PER_OP    = 4096;
+const CHUNK_MAX_STATUS_PER_OP    = 4096;
+
 struct chunk_guard4 {
         uint32_t   cg_gen_id;
         uint32_t   cg_client_id;
@@ -3432,6 +3449,7 @@ struct checksum4 {
 
 struct CHUNK_COMMIT4args {
     /* CURRENT_FH: file */
+    stateid4        cca_stateid;
     offset4         cca_offset;
     count4          cca_count;
     chunk_owner4    cca_chunks<>;
@@ -3464,6 +3482,7 @@ struct CHUNK_ERROR4res {
 
 struct CHUNK_FINALIZE4args {
     /* CURRENT_FH: file */
+    stateid4        cfa_stateid;
     offset4         cfa_offset;
     count4          cfa_count;
     chunk_owner4    cfa_chunks<>;
@@ -3570,6 +3589,7 @@ union CHUNK_REPAIRED4res switch (nfsstat4 cpr_status) {
 
 struct CHUNK_ROLLBACK4args {
     /* CURRENT_FH: file */
+    stateid4        crb_stateid;
     offset4         crb_offset;
     count4          crb_count;
     chunk_owner4    crb_chunks<>;

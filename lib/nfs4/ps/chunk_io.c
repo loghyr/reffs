@@ -648,6 +648,16 @@ int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
 
 	CHUNK_FINALIZE4args *cfa = &slot->nfs_argop4_u.opchunk_finalize;
 
+	/*
+	 * NOT_NOW_BROWN_COW: pass the caller's layout stateid here so
+	 * the DS trust-stateid check (draft M3) authorises this
+	 * FINALIZE.  Slot is zero-initialised by mds_compound_add_op,
+	 * so cfa_stateid defaults to the anonymous stateid; the DS
+	 * bypasses the trust-table check on anonymous stateids, which
+	 * preserves the current PS demo behaviour.  Plumb the real
+	 * layout stateid through when the PS-DS trust path lands
+	 * end-to-end.
+	 */
 	cfa->cfa_offset = block_offset;
 	cfa->cfa_count = count;
 	cfa->cfa_chunks.cfa_chunks_len = 1;
@@ -724,6 +734,11 @@ int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 
 	CHUNK_COMMIT4args *cca = &slot->nfs_argop4_u.opchunk_commit;
 
+	/*
+	 * NOT_NOW_BROWN_COW: pass the caller's layout stateid here so
+	 * the DS trust-stateid check (draft M3) authorises this
+	 * COMMIT.  Same defaulting behaviour as CHUNK_FINALIZE above.
+	 */
 	cca->cca_offset = block_offset;
 	cca->cca_count = count;
 	cca->cca_chunks.cca_chunks_len = 1;
