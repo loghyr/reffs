@@ -1288,6 +1288,122 @@ START_TEST(test_chunk_read_pending_returns_delay)
 }
 END_TEST
 
+/*
+ * Bit-rot preservation contract: on stored-vs-disk CRC mismatch,
+ * CHUNK_READ MUST return the STORED checksum on the wire, not a
+ * recomputed CRC over the corrupted disk bytes.  A client-side
+ * CRC verify -- e.g. the ffv2-client K.2 patch 4b slice 2
+ * CHUNK_READ dispatch at flexfilesv2_write.c:1646-1662 -- then
+ * catches the rot as an integrity failure.  Repacking the CRC
+ * over corrupted bytes would let the client happily verify and
+ * launder the rot through an RMW round-trip.
+ *
+ * Test: write + finalize a chunk with a known payload and correct
+ * CRC.  Simulate bit rot by mutating the stored cb_checksum_value
+ * so it no longer matches the on-disk bytes (equivalent to the
+ * on-disk bytes rotting, since the code path compares stored vs.
+ * disk-computed).  READ and verify the wire cs_value equals the
+ * mutated stored value, not the disk-derived CRC.
+ */
+START_TEST(test_chunk_read_bit_rot_preserves_stored_checksum)
+{
+	static char buf[CHUNK_SZ]; /* zero-filled */
+	uint32_t good_crc = (uint32_t)crc32(0L, (const Bytef *)buf, CHUNK_SZ);
+	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+
+	/* WRITE with correct CRC over zero payload. */
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, &good_crc, 1);
+	nfs4_op_chunk_write(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_write.cwr_status,
+			 NFS4_OK);
+	free_write_args(cm);
+	free_write_res(cm);
+
+	/* FINALIZE so the block is visible to READ. */
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_FINALIZE);
+	{
+		CHUNK_FINALIZE4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_finalize;
+		a->cfa_offset = 0;
+		a->cfa_count = 1;
+		a->cfa_chunks.cfa_chunks_val = &owner;
+		a->cfa_chunks.cfa_chunks_len = 1;
+	}
+	nfs4_op_chunk_finalize(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_finalize.cfr_status,
+			 NFS4_OK);
+	free_finalize_res(cm);
+
+	/*
+	 * Simulate bit rot by mutating stored cb_checksum_value so it
+	 * diverges from the actual disk bytes.  From the CHUNK_READ
+	 * handler's perspective this is indistinguishable from the
+	 * disk bytes rotting under a still-correct stored checksum:
+	 * both scenarios yield stored != disk-computed.  Preservation
+	 * of the stored value on the wire is the load-bearing
+	 * property the client CRC verify relies on.
+	 */
+	struct chunk_block *blk = chunk_store_lookup(g_inode->i_chunk_store, 0);
+
+	ck_assert_ptr_nonnull(blk);
+	ck_assert_uint_eq(blk->cb_checksum_algorithm, CHECKSUM_ALG_CRC32);
+	ck_assert_uint_eq(blk->cb_checksum_len, 4);
+	uint8_t rotted[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
+
+	memcpy(blk->cb_checksum_value, rotted, 4);
+
+	/* READ and verify wire cs_value == rotted (stored), not disk_crc. */
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_READ);
+	{
+		CHUNK_READ4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_read;
+		memset(&a->cra_stateid, 0, sizeof(a->cra_stateid));
+		a->cra_offset = 0;
+		a->cra_count = 1;
+	}
+	nfs4_op_chunk_read(cm->compound);
+	{
+		CHUNK_READ4res *res =
+			&cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_read;
+		ck_assert_int_eq(res->crr_status, NFS4_OK);
+
+		CHUNK_READ4resok *resok = &res->CHUNK_READ4res_u.crr_resok4;
+
+		ck_assert_uint_eq(resok->crr_chunks.crr_chunks_len, 1);
+		checksum4 *cs =
+			&resok->crr_chunks.crr_chunks_val[0].cr_checksum;
+		ck_assert_uint_eq(cs->cs_algorithm, CHECKSUM_ALG_CRC32);
+		ck_assert_uint_eq(cs->cs_value.cs_value_len, 4);
+		/*
+		 * cs_value MUST be the preserved (rotted) stored value.
+		 * A regression to the old repack-with-disk-CRC path
+		 * would show good_crc big-endian bytes here instead.
+		 */
+		ck_assert_int_eq(memcmp(cs->cs_value.cs_value_val, rotted, 4),
+				 0);
+		/* Sanity: it must NOT equal the disk-derived good_crc. */
+		uint8_t disk_be[4] = { (uint8_t)(good_crc >> 24),
+				       (uint8_t)(good_crc >> 16),
+				       (uint8_t)(good_crc >> 8),
+				       (uint8_t)good_crc };
+		ck_assert_int_ne(memcmp(cs->cs_value.cs_value_val, disk_be, 4),
+				 0);
+	}
+	free_read_res(cm);
+	cm_free(cm);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Group F: Full state machine roundtrip                               */
 /* ------------------------------------------------------------------ */
@@ -1917,6 +2033,7 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_e, test_chunk_read_no_store);
 	tcase_add_test(tc_e, test_chunk_read_count_zero);
 	tcase_add_test(tc_e, test_chunk_read_pending_returns_delay);
+	tcase_add_test(tc_e, test_chunk_read_bit_rot_preserves_stored_checksum);
 	suite_add_tcase(s, tc_e);
 
 	TCase *tc_f = tcase_create("full_cycle");

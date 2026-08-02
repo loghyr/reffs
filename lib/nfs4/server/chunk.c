@@ -884,6 +884,27 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 		 * the stored bytes", which is still useful when the stored
 		 * checksum itself was corrupted on disk -- the client side
 		 * recomputes against the data anyway).
+		 *
+		 * On mismatch we PRESERVE the stored checksum on the wire
+		 * (do NOT repack with the disk-derived CRC).  Rationale:
+		 * a client-side CRC verify -- e.g. the ffv2-client K.2
+		 * patch 4b slice 2 CHUNK_READ dispatch at
+		 * flexfilesv2_write.c:1646-1662, which recomputes CRC over
+		 * received bytes and fail-closes on mismatch -- MUST see
+		 * the checksum the CHUNK_WRITE committed, otherwise the
+		 * client happily verifies corrupted disk bytes against a
+		 * checksum synthesised from those same corrupted bytes and
+		 * a RMW round-trip silently laundries the corruption into
+		 * a guarded CHUNK_WRITE that reshapes the entire stripe.
+		 * Preserving the stored checksum turns bit rot into a
+		 * hard client-visible integrity error and prevents the
+		 * launder path.  LOG remains so operators still see the
+		 * disk error and can drive scrub.
+		 *
+		 * Cross-tree ref: /Volumes/Sensitive/linux ffv2-client
+		 * commit 301745e8b0f5 kernel comment cites this bit-rot
+		 * preservation contract as the load-bearing correctness
+		 * property for its wire-integrity ONLY CRC verify claim.
 		 */
 		if (blk->cb_checksum_len > 0 &&
 		    blk->cb_checksum_algorithm == CHECKSUM_ALG_CRC32 &&
@@ -899,18 +920,10 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 
 			if (disk_crc != stored_crc) {
 				LOG("CHUNK_READ: CRC mismatch block %" PRIu64
-				    ": stored 0x%08x disk 0x%08x",
+				    ": stored 0x%08x disk 0x%08x "
+				    "(preserving stored checksum on wire; "
+				    "client CRC verify will fail-closed)",
 				    off, stored_crc, disk_crc);
-				/*
-				 * Re-pack with the disk-derived CRC so the
-				 * client sees what was actually read; XDR
-				 * free will release the new allocation.
-				 */
-				free(rc->cr_checksum.cs_value.cs_value_val);
-				rc->cr_checksum.cs_value.cs_value_val = NULL;
-				rc->cr_checksum.cs_value.cs_value_len = 0;
-				(void)chunk_checksum_pack_crc32(
-					&rc->cr_checksum, disk_crc);
 			}
 		}
 	}
