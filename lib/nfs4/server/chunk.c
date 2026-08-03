@@ -908,6 +908,8 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 		rc->cr_owner.co_guard.cg_gen_id = blk->cb_gen_id;
 		rc->cr_owner.co_guard.cg_client_id = blk->cb_client_id;
 		rc->cr_owner.co_id = blk->cb_owner_id;
+		rc->cr_guard.cg_gen_id = blk->cb_gen_id;
+		rc->cr_guard.cg_client_id = blk->cb_client_id;
 		rc->cr_payload_id = blk->cb_payload_id;
 		rc->cr_locked.cr_locked_len = 0;
 		rc->cr_locked.cr_locked_val = NULL;

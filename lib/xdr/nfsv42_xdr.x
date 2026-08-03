@@ -3512,6 +3512,7 @@ struct CHUNK_HEADER_READ4resok {
     nfsstat4        chrr_status<>;
     bool            chrr_locked<>;
     chunk_owner4    chrr_chunks<>;
+    chunk_guard4    chrr_guards<>;
 };
 
 union CHUNK_HEADER_READ4res switch (nfsstat4 chrr_status) {
@@ -3545,10 +3546,20 @@ struct CHUNK_READ4args {
     count4      cra_count;
 };
 
+/*
+ * cr_guard carries the data server's current per-chunk CAS state
+ * (cg_gen_id, cg_client_id) so multi-writer callers can obtain the
+ * expected prior value race-free.  reffs's chunk_owner4 still embeds
+ * chunk_guard4 co_guard (older shape) so the server dual-writes
+ * cr_owner.co_guard and cr_guard; once the M2 owner-triple restructure
+ * lands (see .claude/design/ffv2-draft-xdr-divergence.md), cr_guard is
+ * the authoritative source.
+ */
 struct read_chunk4 {
     checksum4       cr_checksum;
     uint32_t        cr_effective_len;
     chunk_owner4    cr_owner;
+    chunk_guard4    cr_guard;
     uint32_t        cr_payload_id;
     bool            cr_locked<>;
     nfsstat4        cr_status<>;

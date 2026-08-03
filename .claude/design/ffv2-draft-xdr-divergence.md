@@ -15,6 +15,23 @@ records what is aligned and what is deliberately deferred.
 
 ## Aligned as of 2026-08-02
 
+- **B2 additive fields** (this slice, branch `ffv2-b2-mirror`):
+  - `read_chunk4` gained `chunk_guard4 cr_guard;` between
+    `cr_owner` and `cr_payload_id`.  Mirrors draft Base B2 at
+    commit `02be5992b964` in `~/Documents/ietf/flexfiles-v2`.
+  - `CHUNK_HEADER_READ4resok` gained a fifth co-indexed
+    `chunk_guard4 chrr_guards<>` after `chrr_chunks<>`.  Handler
+    remains stubbed as `NFS4ERR_NOTSUPP`; the field is wire-only
+    until a real handler lands (which should carry the co-indexing
+    invariant docs across all four `<>` arrays).
+  - Server: `nfs4_op_chunk_read` in `lib/nfs4/server/chunk.c`
+    dual-writes `cr_owner.co_guard.{cg_gen_id, cg_client_id}` and
+    `cr_guard.{cg_gen_id, cg_client_id}` from
+    `blk->cb_gen_id/cb_client_id` -- redundant while
+    `chunk_owner4` still embeds `chunk_guard4 co_guard`; the
+    embedded copy goes away with the M2 restructure below and
+    `cr_guard` becomes the sole guard on the read path.
+
 - **M3 lifecycle stateids** (branch `xdr-sync-m2-m3-m5`, sync
   session):
   - `CHUNK_COMMIT4args` gained `stateid4 cca_stateid`.
