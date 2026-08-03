@@ -59,6 +59,92 @@ records what is aligned and what is deliberately deferred.
     the request-side array bound is the sharper of the two
     knobs.
 
+- **Base B2 additive fields** (commit `979518ce3c76`):
+  - `read_chunk4` gained `chunk_guard4 cr_guard` between
+    `cr_owner` and `cr_payload_id`.  The DS sees the per-chunk
+    generation on every CHUNK_READ reply, satisfying the CAS
+    expected-value contract from the draft's multi-writer rules.
+  - `CHUNK_HEADER_READ4resok` gained `chunk_guard4 chrr_guards<>`
+    after `chrr_chunks<>`; one guard per chunk header.
+  - Server: `lib/nfs4/server/chunk.c` dual-writes into
+    `rc->cr_owner.co_guard` and `rc->cr_guard` from the same
+    `chunk_block` pair, so the older single-owner shape and the
+    new additive guard coexist until M2 lands.  No server
+    behavioural change; the extra field is a pure read-path
+    observation.
+  - Kernel client mirror: `psyklo/ffv2-client` at `06a10ddebbca`
+    decodes `cr_guard` into `struct ffv2_read_chunk4.guard` on
+    every CHUNK_READ.
+
+## Deferred: Base B4 tight-coupling + tsa_client_id
+
+The draft's Base B4 fix landed as commit `d40c581ed251` on
+`origin/main` of `draft-haynes-nfsv4-flexfiles-v2` (2026-08-02).
+Two normative changes:
+
+1. **CHUNK_* encodings require tight coupling**: any
+   `FFV2_ENCODING_*` value other than `PASSTHROUGH` MUST be
+   advertised with `ffdv_tightly_coupled = true`.  Loose coupling
+   is no longer a valid pairing with chunked encodings.
+2. **`TRUST_STATEID4args` gained `uint32_t tsa_client_id`**: the
+   metadata server registers the `ffv2m_client_id` bound to the
+   layout stateid so the data server can validate `cwa_client_id`
+   on CHUNK_WRITE (and `cg_client_id` in `chunk_guard4` CAS)
+   against the trust-table entry.  Prior text hand-waved that the
+   DS "knows" the client identity from the layout; the wire had
+   no field for it.
+
+Reffs stays on the pre-B4 wire for now:
+
+- `TRUST_STATEID4args` in `lib/xdr/nfsv42_xdr.x` is unchanged
+  (four fields: `tsa_layout_stateid, tsa_iomode, tsa_expire,
+  tsa_principal`).
+- `lib/nfs4/server/chunk.c` does not compare `cwa_client_id`
+  against a trust-table `tsa_client_id` -- the trust-table entry
+  does not yet carry one.
+- The layout constraint at LAYOUTGET time does not enforce
+  tight-coupling for chunked encodings; a loose-coupled DS with a
+  non-PASSTHROUGH encoding would still be issued today (the
+  runtime has no such deployment, so this is currently unreachable
+  rather than incorrect).
+
+### Why deferred
+
+- **Slice size**: XDR change plus `trust_stateid.c` renewal path,
+  chunk-op validation hook update, MDS-side fanout compound
+  reshape, and unit tests for each -- multi-file, multi-day.
+  Best queued as a dedicated slice once the K.2 patch 5 kernel
+  cross-verify closes (task #555).
+- **Kernel client**: the kernel doesn't send TRUST_STATEID (it's
+  MDS-to-DS), so no client-side wire mirror is needed for B4.
+  The layout-constraint tightening affects deployment posture,
+  not the client wire format.
+- **BAT posture**: the reffs demo already runs tight-coupling
+  paths through the (currently loose-coupling-compatible)
+  anonymous-stateid bypass at the DS.  B4's tightening does not
+  change the wire the demo exercises today; it forbids a
+  configuration nobody uses.
+
+### When to pick this back up
+
+1. K.2 patch 5 dreamer cross-verify closes (task #555).
+2. Any deployment starts running non-PASSTHROUGH encodings under
+   loose coupling (currently a configuration that never appears).
+3. The trust-stateid follow-up work (`trust-stateid.md`) queues
+   a slice for the `tsa_client_id` renewal path.
+
+### Follow-up slices
+
+- Reffs XDR: add `uint32_t tsa_client_id` to `TRUST_STATEID4args`.
+- Reffs server: extend `trust_entry` with `te_ffv2m_client_id`;
+  populate on TRUST_STATEID; validate `cwa_client_id` against it
+  in the CHUNK_WRITE stateid hook; same for CAS `cg_client_id`.
+- Reffs MDS: include `ffv2m_client_id` in the LAYOUTGET-time
+  TRUST_STATEID fanout.
+- Reffs LAYOUTGET: enforce `ffdv_tightly_coupled = true` for any
+  mirror whose encoding is not PASSTHROUGH; reject inconsistent
+  configurations at load time.
+
 ## Deferred: M2 chunk_owner4 restructure
 
 The draft moved from single-owner-per-CHUNK_WRITE to
@@ -132,8 +218,13 @@ schedule:
 
 - Draft (2026-08-02):
   `~/Documents/ietf/flexfiles-v2/draft-haynes-nfsv4-flexfiles-v2.md`
-  at commit `2de7b49e7711` (M4/M5 tier-2 fold).
+  at commit `d40c581ed251` (Base B4 tight-coupling + tsa_client_id
+  fold).  Prior stable point: `02be5992b964` (Base B2 additive
+  fields).
 - Codex fresh-semantics review with all M1/M2/M3/M4/M5 findings:
   `~/Documents/reffs-docs/flexfiles-v2-fresh-semantics-review-codex.md`.
-- Trust-stateid design (M3 counterpart):
+- Family review with B1-B4 findings:
+  `~/Documents/reffs-docs/flexfiles-v2-family-codex-review-2026-08-02.md`
+  and its fable counterpart.
+- Trust-stateid design (M3 counterpart, B4 will extend):
   `.claude/design/trust-stateid.md`.
