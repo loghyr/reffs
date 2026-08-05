@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # test_mirror_local.sh -- end-to-end functional check for the
-# FFV2_ENCODING_MIRRORED encoding type.
+# FFV2_ENCODING_REPLICATED encoding type.
 #
 # Stands up a combined-mode reffsd with N loopback dstores (so the
 # MDS allocates N mirrors per layout), then runs ec_demo `write`
@@ -13,7 +13,7 @@
 # any of those replicas, and byte-compared identical to the input.
 #
 # This is the "developer / pre-push" check for the MIRROR pipeline
-# wiring landed alongside FFV2_ENCODING_MIRRORED in the FFv2 draft.
+# wiring landed alongside FFV2_ENCODING_REPLICATED in the FFv2 draft.
 # Wired as the `mirror` target in Makefile.ci; not run by default
 # because the existing `check` and `full` targets do not exercise
 # the MIRROR code path.
@@ -189,7 +189,7 @@ fi
 # --- 3. degraded read: drop one replica via --skip-ds --------------
 #
 # Confirm that the mirror encoding recovers when one replica is
-# unavailable.  With N mirrors, MIRRORED tolerates up to N-1 losses;
+# unavailable.  With N mirrors, REPLICATED tolerates up to N-1 losses;
 # this test drops one and asserts the read still verifies.
 echo "=== ec_demo verify --skip-ds 0 (one mirror dropped) ==="
 if ! "$EC_DEMO" verify \

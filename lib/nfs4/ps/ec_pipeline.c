@@ -484,12 +484,12 @@ ec_create_encoding(int k, int m, enum ec_encoding_type encoding_type)
 		return ec_mojette_nonsys_create(k, m);
 	case EC_ENCODING_STRIPE:
 		return ec_stripe_create(k);
-	case EC_ENCODING_MIRROR:
+	case EC_ENCODING_REPLICATED:
 		/*
-		 * Wire-side: FFV2_ENCODING_MIRRORED, N replicas, no
+		 * Wire-side: FFV2_ENCODING_REPLICATED, N replicas, no
 		 * parity.  Encode replicates data[0] verbatim,
 		 * decode picks any present shard.  The pipeline
-		 * branches on encoding_type == EC_ENCODING_MIRROR in
+		 * branches on encoding_type == EC_ENCODING_REPLICATED in
 		 * ec_write_encoding_with_file / ec_read_encoding_with_file
 		 * to lay every data_shards[i] at the same stripe
 		 * offset and to emit one shard's worth per stripe
@@ -918,7 +918,7 @@ int ec_write_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
 	 * out loop below.  stripe_data and the data_shards stride
 	 * pick up the per-encoding branch immediately below.
 	 */
-	const bool is_mirror = (encoding_type == EC_ENCODING_MIRROR);
+	const bool is_mirror = (encoding_type == EC_ENCODING_REPLICATED);
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.ctx_ms = ms;
@@ -1942,7 +1942,7 @@ int ec_read_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
 	 * rejected legitimate degraded reads on MIRROR layouts where
 	 * m == 0 by construction.
 	 */
-	int max_loss = (encoding_type == EC_ENCODING_MIRROR) ? (k - 1) : m;
+	int max_loss = (encoding_type == EC_ENCODING_REPLICATED) ? (k - 1) : m;
 
 	if (nskip > max_loss) {
 		ec_log("ec_read: skip_ds_mask has %d bits set, "
@@ -1967,7 +1967,7 @@ int ec_read_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
 	 * downstream collapses the N identical shards to a single
 	 * stripe-sized run in `buf`.
 	 */
-	const bool is_mirror = (encoding_type == EC_ENCODING_MIRROR);
+	const bool is_mirror = (encoding_type == EC_ENCODING_REPLICATED);
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.ctx_ms = ms;

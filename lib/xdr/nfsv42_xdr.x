@@ -249,7 +249,7 @@ enum nfsstat4 {
  NFS4ERR_XATTR2BIG      = 10096, /* xattr value is too big  */
 
  /* Erasure Coding errors start here. */
- NFS4ERR_CODING_NOT_SUPPORTED = 10097,/* Coding Type unsupported  */
+ NFS4ERR_ENCODING_NOT_SUPPORTED = 10097,/* Coding Type unsupported  */
  NFS4ERR_PAYLOAD_NOT_ATOMIC = 10098,/* payload not atomic  */
  NFS4ERR_CHUNK_LOCKED   = 10099,/* chunk is locked  */
  NFS4ERR_CHUNK_GUARDED  = 10100,/* chunk is guarded  */
@@ -4910,7 +4910,7 @@ enum ffv2_coding_type4 {
     FFV2_ENCODING_MOJETTE_SYSTEMATIC                = 0x2,
     FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC            = 0x3,
     FFV2_ENCODING_RS_VANDERMONDE                    = 0x4,
-    FFV2_ENCODING_MIRRORED                          = 0x5,
+    FFV2_ENCODING_REPLICATED                          = 0x5,
     FFV2_ENCODING_XOR_PARITY                        = 0x6,
     FFV2_ENCODING_LINUX_MD_RAID                     = 0x7,
 

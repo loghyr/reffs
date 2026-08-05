@@ -281,7 +281,7 @@ struct probe_client_rule1 {
  * struct reffs_coding_spec in lib/include/reffs/coding_spec.h.
  * pcs_encoding_type values are the FFV2_ENCODING_* wire constants
  * (PASSTHROUGH=1, MOJETTE_SYS=2, MOJETTE_NONSYS=3, RS_VANDERMONDE=4,
- * MIRRORED=5).  An all-zero spec (cs_encoding_type == 0) is the
+ * REPLICATED=5).  An all-zero spec (cs_encoding_type == 0) is the
  * "unset" sentinel: LAYOUTGET falls back to the legacy
  * ls_k = nfiles, ls_m = 0 path.  See
  * .claude/design/per-export-default-coding.md.

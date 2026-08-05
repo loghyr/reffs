@@ -1848,7 +1848,7 @@ int main(int argc, char *argv[])
 			else if (strcmp(optarg, "stripe") == 0)
 				encoding_type = EC_ENCODING_STRIPE;
 			else if (strcmp(optarg, "mirror") == 0)
-				encoding_type = EC_ENCODING_MIRROR;
+				encoding_type = EC_ENCODING_REPLICATED;
 			else if (strcmp(optarg, "xor") == 0)
 				encoding_type = EC_ENCODING_XOR;
 			else if (strcmp(optarg, "linux-md") == 0)
@@ -2120,7 +2120,7 @@ int main(int argc, char *argv[])
 
 	/* EC commands need valid k/m.  Stripe and mirror allow m=0. */
 	int m_min = (encoding_type == EC_ENCODING_STRIPE ||
-		     encoding_type == EC_ENCODING_MIRROR) ?
+		     encoding_type == EC_ENCODING_REPLICATED) ?
 			    0 :
 			    1;
 
