@@ -267,7 +267,7 @@ class Probe1Client(ProtocolClient):
             2 = MOJETTE_SYSTEMATIC
             3 = MOJETTE_NON_SYSTEMATIC
             4 = RS_VANDERMONDE
-            5 = MIRRORED
+            5 = REPLICATED
         An all-zero spec (encoding=0, k=0, m=0) clears the policy --
         LAYOUTGET reverts to the legacy nfiles-driven path.
 
