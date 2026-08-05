@@ -127,7 +127,7 @@ struct ec_encoding *ec_stripe_create(int k);
  * Encode replicates data[0] verbatim into data[1..k-1]; decode
  * picks any present shard and copies it into the missing slots.
  * Wire-side this is the client encoding for the FFv2 layout type's
- * FFV2_ENCODING_MIRRORED encoding (see draft-haynes-nfsv4-flexfiles-v2
+ * FFV2_ENCODING_REPLICATED encoding (see draft-haynes-nfsv4-flexfiles-v2
  * section sec-encoding-mirrored).
  */
 struct ec_encoding *ec_mirror_create(int k);

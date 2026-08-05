@@ -453,7 +453,7 @@ static void parse_one_client_rule(struct reffs_client_rule_config *rule,
  *   - K + M <= LAYOUT_SEG_MAX_FILES
  *   - M == 0 IFF encoding == PASSTHROUGH
  *
- * Mirror encoding (REFFS_ENCODING_MIRRORED) is intentionally not parsed
+ * Mirror encoding (REFFS_ENCODING_REPLICATED) is intentionally not parsed
  * here; the TOML surface listed in
  * .claude/design/per-export-default-coding.md "Coding spec
  * format" enumerates four encodings.  If mirror is ever needed as a
@@ -469,7 +469,7 @@ static int parse_coding_spec(const char *s, struct reffs_coding_spec *out)
 		{ "rs", REFFS_ENCODING_RS_VANDERMONDE },
 		{ "mojette-sys", REFFS_ENCODING_MOJETTE_SYSTEMATIC },
 		{ "mojette-nonsys", REFFS_ENCODING_MOJETTE_NON_SYSTEMATIC },
-		{ "mirrored", REFFS_ENCODING_MIRRORED },
+		{ "mirrored", REFFS_ENCODING_REPLICATED },
 		{ "xor-parity", REFFS_ENCODING_XOR_PARITY },
 		{ "linux-md-raid", REFFS_ENCODING_LINUX_MD_RAID },
 #ifdef REFFS_ENABLE_PRIVATE_ENCODINGS

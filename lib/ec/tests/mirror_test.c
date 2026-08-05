@@ -8,7 +8,7 @@
 /*
  * Unit tests for the mirror encoding.
  *
- * The MIRRORED encoding (FFV2_ENCODING_MIRRORED on the wire,
+ * The MIRRORED encoding (FFV2_ENCODING_REPLICATED on the wire,
  * draft-haynes-nfsv4-flexfiles-v2 sec-encoding-mirrored) replicates
  * data[0] verbatim across all k replicas.  Decode picks any one
  * present shard as authoritative and populates the missing slots
