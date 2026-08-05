@@ -325,7 +325,7 @@ ffv1-stress: image
 			/src/scripts/test_krb5_ffv1_stress_local.sh /build/src/reffsd"
 
 # -----------------------------------------------------------------------
-# mirror: end-to-end functional check for FFV2_ENCODING_MIRRORED
+# mirror: end-to-end functional check for FFV2_ENCODING_REPLICATED
 # -----------------------------------------------------------------------
 # Stands up a combined-mode reffsd with N loopback dstores so the
 # MDS allocates N mirrors per layout, then runs ec_demo
