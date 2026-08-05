@@ -600,7 +600,7 @@ START_TEST(test_ldf_flags_persist_combined)
 		calloc(1, sizeof(struct layout_data_file));
 
 	files[0] = make_data_file(10, 0xCC, 4096);
-	files[0].ldf_flags = FFV2_DS_FLAGS_REPAIR | FFV2_DS_FLAGS_SPARE;
+	files[0].ldf_flags = FFV2_DS_FLAGS_REPAIR;
 
 	struct layout_segment seg = {
 		.ls_offset = 0,
@@ -623,7 +623,7 @@ START_TEST(test_ldf_flags_persist_combined)
 	ck_assert_int_eq(g_posix_sb->sb_ops->inode_alloc(inode), 0);
 	ck_assert_uint_eq(
 		inode->i_layout_segments->lss_segs[0].ls_files[0].ldf_flags,
-		FFV2_DS_FLAGS_REPAIR | FFV2_DS_FLAGS_SPARE);
+		FFV2_DS_FLAGS_REPAIR);
 
 	inode_active_put(inode);
 }
