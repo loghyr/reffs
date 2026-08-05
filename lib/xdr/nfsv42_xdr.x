@@ -4866,7 +4866,7 @@ struct ffv2_file_info4 {
 };
 
 const FFV2_DS_FLAGS_ACTIVE        = 0x00000001;
-const FFV2_DS_FLAGS_SPARE         = 0x00000002;
+/* 0x00000002 reserved (former FFV2_DS_FLAGS_SPARE, retired) */
 const FFV2_DS_FLAGS_PARITY        = 0x00000004;
 const FFV2_DS_FLAGS_REPAIR        = 0x00000008;
 
