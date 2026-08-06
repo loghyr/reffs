@@ -136,6 +136,29 @@ static nfsstat4 chunk_lifecycle_check_bounds(uint32_t chunks_len)
 }
 
 /*
+ * chunk_op_on_non_chunked -- S1.5(B) enforcement gate.
+ *
+ * draft-haynes-nfsv4-flexfiles-v2 sec-ops-client: a data server that
+ * has identified a file as non-chunked MUST reject CHUNK operations
+ * against it with NFS4ERR_NOTSUPP.  A PASSTHROUGH data file carries
+ * no chunk envelope, so a CHUNK op against one cannot mean anything.
+ *
+ * UNIDENTIFIED is deliberately not a FALSE.  Settling attribute 90 at
+ * layout assignment is best effort, and only dstore_ops_nfsv4 does it
+ * -- combined mode goes through dstore_ops_local and never crosses the
+ * wire, so every file there is unidentified.  Treating that as FALSE
+ * would return NFS4ERR_NOTSUPP for every CHUNK operation in combined
+ * mode.  The draft is explicit that a data server which cannot
+ * identify the file relies on the client-side MUST NOT and on stateid
+ * validation instead, which is what this returning false preserves.
+ */
+static bool chunk_op_on_non_chunked(const struct compound *compound)
+{
+	return compound->c_inode &&
+	       inode_chunked_state(compound->c_inode) == INODE_CHUNKED_NO;
+}
+
+/*
  * chunk_write_validate_payload -- input + per-chunk-CRC validation
  * shared between OP_CHUNK_WRITE and OP_CHUNK_WRITE_REPAIR.
  *
@@ -150,6 +173,7 @@ static nfsstat4 chunk_lifecycle_check_bounds(uint32_t chunks_len)
  * Validation rules (in order; first failure wins):
  *   1. current FH set                 -> NFS4ERR_NOFILEHANDLE
  *   2. current FH is a regular file   -> NFS4ERR_INVAL
+ *   2a. file not identified non-chunked -> NFS4ERR_NOTSUPP
  *   3. chunk_size > 0, chunks_len > 0 -> NFS4ERR_INVAL
  *   4. cg_client_id not reserved      -> NFS4ERR_INVAL
  *   5. nchunks > 0                    -> NFS4ERR_INVAL
@@ -183,6 +207,9 @@ chunk_write_validate_payload(struct compound *compound, uint32_t chunk_size,
 
 	if (!compound->c_inode || !S_ISREG(compound->c_inode->i_mode))
 		return NFS4ERR_INVAL;
+
+	if (chunk_op_on_non_chunked(compound))
+		return NFS4ERR_NOTSUPP;
 
 	if (chunk_size == 0 || chunks_len == 0)
 		return NFS4ERR_INVAL;
@@ -773,6 +800,11 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 		return 0;
 	}
 
+	if (chunk_op_on_non_chunked(compound)) {
+		*status = NFS4ERR_NOTSUPP;
+		return 0;
+	}
+
 	uint32_t count = (uint32_t)args->cra_count;
 
 	if (count == 0) {
@@ -1038,6 +1070,11 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 		return 0;
 	}
 
+	if (chunk_op_on_non_chunked(compound)) {
+		*status = NFS4ERR_NOTSUPP;
+		return 0;
+	}
+
 	uint32_t count = (uint32_t)args->cfa_count;
 
 	if (count == 0 || args->cfa_chunks.cfa_chunks_len == 0) {
@@ -1131,6 +1168,11 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 
 	if (!compound->c_inode) {
 		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	if (chunk_op_on_non_chunked(compound)) {
+		*status = NFS4ERR_NOTSUPP;
 		return 0;
 	}
 
@@ -1301,6 +1343,11 @@ uint32_t nfs4_op_chunk_repaired(struct compound *compound)
 		return 0;
 	}
 
+	if (chunk_op_on_non_chunked(compound)) {
+		*status = NFS4ERR_NOTSUPP;
+		return 0;
+	}
+
 	if (chunk_cid_is_reserved(args->cpa_owner.co_guard.cg_client_id)) {
 		*status = NFS4ERR_INVAL;
 		return 0;
@@ -1383,6 +1430,11 @@ uint32_t nfs4_op_chunk_rollback(struct compound *compound)
 
 	if (!compound->c_inode) {
 		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	if (chunk_op_on_non_chunked(compound)) {
+		*status = NFS4ERR_NOTSUPP;
 		return 0;
 	}
 

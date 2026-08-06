@@ -1451,6 +1451,213 @@ START_TEST(test_attr90_mds_setattr_on_nonempty_rejected)
 END_TEST
 
 /*
+ * S1.5(B): CHUNK operations against an identified non-chunked file.
+ *
+ * draft-haynes-nfsv4-flexfiles-v2 sec-ops-client makes this a MUST
+ * reject with NFS4ERR_NOTSUPP.  The three states are covered
+ * separately because the interesting failure is not "does the reject
+ * fire" but "does it fire on the wrong state" -- treating
+ * UNIDENTIFIED as FALSE would return NFS4ERR_NOTSUPP for every CHUNK
+ * operation in combined mode, which is the configuration
+ * scripts/test_mirror_local.sh and the v2 benchmark variants run on.
+ */
+
+/* Drive the inode to a given identification state. */
+static void mark_chunked(struct inode *inode, enum inode_chunked_state st)
+{
+	switch (st) {
+	case INODE_CHUNKED_UNIDENTIFIED:
+		inode->i_attr_flags &= ~(uint64_t)(INODE_CHUNKED_ATTR_PRESENT |
+						   INODE_IS_CHUNKED_DATA_FILE);
+		break;
+	case INODE_CHUNKED_NO:
+		inode->i_attr_flags |= INODE_CHUNKED_ATTR_PRESENT;
+		inode->i_attr_flags &= ~(uint64_t)INODE_IS_CHUNKED_DATA_FILE;
+		break;
+	case INODE_CHUNKED_YES:
+		inode->i_attr_flags |= INODE_CHUNKED_ATTR_PRESENT |
+				       INODE_IS_CHUNKED_DATA_FILE;
+		break;
+	}
+	ck_assert_int_eq(inode_chunked_state(inode), st);
+}
+
+/* One CHUNK_WRITE of a single valid chunk; returns the wire status. */
+static nfsstat4 run_chunk_write(struct cm_ctx *cm, char *buf)
+{
+	uint32_t crc = (uint32_t)crc32(0L, (const Bytef *)buf, CHUNK_SZ);
+	nfsstat4 st;
+
+	cm_reset_slot(cm, 0);
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, &crc, 1);
+	nfs4_op_chunk_write(cm->compound);
+	st = cm->compound->c_res->resarray.resarray_val[0]
+		     .nfs_resop4_u.opchunk_write.cwr_status;
+	free_write_args(cm);
+	free_write_res(cm);
+	return st;
+}
+
+/* FINALIZE block 0 for one owner; returns the wire status. */
+static nfsstat4 run_chunk_finalize(struct cm_ctx *cm, chunk_owner4 *owner)
+{
+	nfsstat4 st;
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_FINALIZE);
+	{
+		CHUNK_FINALIZE4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_finalize;
+		a->cfa_offset = 0;
+		a->cfa_count = 1;
+		a->cfa_chunks.cfa_chunks_val = owner;
+		a->cfa_chunks.cfa_chunks_len = 1;
+	}
+	nfs4_op_chunk_finalize(cm->compound);
+	st = cm->compound->c_res->resarray.resarray_val[0]
+		     .nfs_resop4_u.opchunk_finalize.cfr_status;
+	free_finalize_res(cm);
+	return st;
+}
+
+/* One CHUNK_READ of block 0; returns the wire status. */
+static nfsstat4 run_chunk_read(struct cm_ctx *cm)
+{
+	nfsstat4 st;
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_READ);
+	{
+		CHUNK_READ4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_read;
+		memset(&a->cra_stateid, 0, sizeof(a->cra_stateid));
+		a->cra_offset = 0;
+		a->cra_count = 1;
+	}
+	nfs4_op_chunk_read(cm->compound);
+	st = cm->compound->c_res->resarray.resarray_val[0]
+		     .nfs_resop4_u.opchunk_read.crr_status;
+	free_read_res(cm);
+	return st;
+}
+
+START_TEST(test_chunk_ops_rejected_on_non_chunked)
+{
+	static char buf[CHUNK_SZ];
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_NO);
+
+	ck_assert_int_eq(run_chunk_write(cm, buf), NFS4ERR_NOTSUPP);
+	ck_assert_int_eq(run_chunk_read(cm), NFS4ERR_NOTSUPP);
+
+	/* The reject must happen before any chunk state is created. */
+	ck_assert_ptr_null(g_inode->i_chunk_store);
+
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_chunk_ops_allowed_when_unidentified)
+{
+	static char buf[CHUNK_SZ];
+	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_UNIDENTIFIED);
+
+	/*
+	 * This is the combined-mode case: dstore_ops_local never sets
+	 * attribute 90, so every file the mirror test touches is
+	 * unidentified.  Enforcement keyed on the value bit alone would
+	 * turn this red and take the mirror test with it.
+	 *
+	 * The read is after a FINALIZE because a PENDING block answers
+	 * NFS4ERR_DELAY, which would mask the reject this test is
+	 * looking for.
+	 */
+	ck_assert_int_eq(run_chunk_write(cm, buf), NFS4_OK);
+	ck_assert_int_eq(run_chunk_finalize(cm, &owner), NFS4_OK);
+	ck_assert_int_eq(run_chunk_read(cm), NFS4_OK);
+
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_chunk_ops_allowed_when_chunked)
+{
+	static char buf[CHUNK_SZ];
+	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+
+	ck_assert_int_eq(run_chunk_write(cm, buf), NFS4_OK);
+	ck_assert_int_eq(run_chunk_finalize(cm, &owner), NFS4_OK);
+	ck_assert_int_eq(run_chunk_read(cm), NFS4_OK);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * The lifecycle ops carry the gate in their own prologues rather than
+ * through chunk_write_validate_payload, so they are checked
+ * separately -- a gate added to the write path alone would leave
+ * FINALIZE, COMMIT and ROLLBACK reachable on a non-chunked file.
+ */
+START_TEST(test_chunk_lifecycle_ops_rejected_on_non_chunked)
+{
+	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_NO);
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_FINALIZE);
+	{
+		CHUNK_FINALIZE4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_finalize;
+		a->cfa_offset = 0;
+		a->cfa_count = 1;
+		a->cfa_chunks.cfa_chunks_val = &owner;
+		a->cfa_chunks.cfa_chunks_len = 1;
+	}
+	nfs4_op_chunk_finalize(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_finalize.cfr_status,
+			 NFS4ERR_NOTSUPP);
+	free_finalize_res(cm);
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_COMMIT);
+	{
+		CHUNK_COMMIT4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_commit;
+		a->cca_offset = 0;
+		a->cca_count = 1;
+		a->cca_chunks.cca_chunks_val = &owner;
+		a->cca_chunks.cca_chunks_len = 1;
+	}
+	nfs4_op_chunk_commit(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_commit.ccr_status,
+			 NFS4ERR_NOTSUPP);
+	free_commit_res(cm);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
  * S7: cover the R7c behavioral change.
  *
  * R7c turned read_chunk4's cr_locked from an always-empty array
@@ -2382,6 +2589,10 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_attr90_client_setattr_rejected);
 	tcase_add_test(tc_h, test_attr90_mds_setattr_on_empty_accepted);
 	tcase_add_test(tc_h, test_attr90_mds_setattr_on_nonempty_rejected);
+	tcase_add_test(tc_h, test_chunk_ops_rejected_on_non_chunked);
+	tcase_add_test(tc_h, test_chunk_ops_allowed_when_unidentified);
+	tcase_add_test(tc_h, test_chunk_ops_allowed_when_chunked);
+	tcase_add_test(tc_h, test_chunk_lifecycle_ops_rejected_on_non_chunked);
 	suite_add_tcase(s, tc_h);
 
 	return s;
