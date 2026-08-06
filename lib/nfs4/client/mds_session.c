@@ -1040,6 +1040,35 @@ static CLIENT *mds_session_clnt_open(const char *host, const char *source_ip)
 	return clnt;
 }
 
+/*
+ * mds_clnt_destroy -- destroy a CLIENT together with the AUTH
+ * installed on it.
+ *
+ * libtirpc's clnt_destroy frees the CLIENT and its transport but does
+ * not touch cl_auth: an AUTH belongs to whoever created it.  Every
+ * session below installs its own -- authunix_create_default for
+ * AUTH_SYS, authgss_create_default for krb5 -- over the one
+ * clnt_create supplied, so each teardown has to destroy it.  The
+ * codebase already assumes this ownership in both directions:
+ * mds_session_create destroys the clnt_create default before
+ * installing its own, and mds_compound_send_with_auth destroys the
+ * per-compound override it swapped in.
+ *
+ * Destroying a clnt_create default is safe on paths that never got
+ * that far -- libtirpc's AUTH_NONE is a singleton whose destroy is a
+ * no-op.
+ */
+static void mds_clnt_destroy(CLIENT *clnt)
+{
+	if (!clnt)
+		return;
+	if (clnt->cl_auth) {
+		auth_destroy(clnt->cl_auth);
+		clnt->cl_auth = NULL;
+	}
+	clnt_destroy(clnt);
+}
+
 int mds_session_create(struct mds_session *ms, const char *host)
 {
 	int ret;
@@ -1104,7 +1133,7 @@ int mds_session_create(struct mds_session *ms, const char *host)
 
 err:
 	if (ms->ms_clnt)
-		clnt_destroy(ms->ms_clnt);
+		mds_clnt_destroy(ms->ms_clnt);
 	pthread_mutex_destroy(&ms->ms_call_mutex);
 	memset(ms, 0, sizeof(*ms));
 	return ret;
@@ -1286,7 +1315,7 @@ int mds_session_create_tls(struct mds_session *ms, const char *host,
 
 err:
 	if (ms->ms_clnt)
-		clnt_destroy(ms->ms_clnt);
+		mds_clnt_destroy(ms->ms_clnt);
 	if (ms->ms_tls_ctx) {
 		SSL_CTX_free(ms->ms_tls_ctx);
 		ms->ms_tls_ctx = NULL;
@@ -1378,7 +1407,7 @@ int mds_session_create_sec_spn(struct mds_session *ms, const char *host,
 		gss_svc = RPCSEC_GSS_SVC_PRIVACY;
 		break;
 	default:
-		clnt_destroy(ms->ms_clnt);
+		mds_clnt_destroy(ms->ms_clnt);
 		return -EINVAL;
 	}
 
@@ -1395,7 +1424,7 @@ int mds_session_create_sec_spn(struct mds_session *ms, const char *host,
 	if (!auth) {
 		fprintf(stderr,
 			"mds_session_create_sec: authgss_create_default failed\n");
-		clnt_destroy(ms->ms_clnt);
+		mds_clnt_destroy(ms->ms_clnt);
 		pthread_mutex_destroy(&ms->ms_call_mutex);
 		memset(ms, 0, sizeof(*ms));
 		return -EACCES;
@@ -1426,7 +1455,7 @@ int mds_session_create_sec_spn(struct mds_session *ms, const char *host,
 
 err:
 	if (ms->ms_clnt)
-		clnt_destroy(ms->ms_clnt);
+		mds_clnt_destroy(ms->ms_clnt);
 	pthread_mutex_destroy(&ms->ms_call_mutex);
 	memset(ms, 0, sizeof(*ms));
 	return ret;
@@ -1447,30 +1476,28 @@ void mds_session_destroy(struct mds_session *ms)
 	 * Tear down secondary transports (ms_clnts[1..N-1]) before the
 	 * primary -- they share the same sessionid which is already
 	 * destroyed on the server side by mds_destroy_session above.
-	 * clnt_destroy here releases each transport's CLIENT* and its
-	 * per-transport GSS auth (cl_auth) via libtirpc's standard
-	 * auth_destroy.  ms_clnts[0] aliases ms_clnt and gets torn down
-	 * below with the primary path so it lands exactly once.
+	 * mds_clnt_destroy releases each transport's CLIENT* and its
+	 * per-transport GSS auth.  ms_clnts[0] aliases ms_clnt and gets
+	 * torn down below with the primary path so it lands exactly once.
 	 */
 	if (ms->ms_clnts && ms->ms_nconnect > 1) {
 		for (unsigned int i = 1; i < ms->ms_nconnect; i++) {
 			if (ms->ms_clnts[i])
-				clnt_destroy(ms->ms_clnts[i]);
+				mds_clnt_destroy(ms->ms_clnts[i]);
 		}
 		free(ms->ms_clnts);
 		ms->ms_clnts = NULL;
 	}
-	clnt_destroy(ms->ms_clnt);
+	mds_clnt_destroy(ms->ms_clnt);
 	/*
-	 * clnt_destroy calls auth_destroy on cl_auth; the default auth
-	 * we stored in ms_auth_default was the same pointer, so don't
-	 * double-destroy.  Just forget it.
+	 * ms_auth_default aliased the AUTH that mds_clnt_destroy just
+	 * released, so forget it rather than destroying it again.
 	 */
 	ms->ms_auth_default = NULL;
 	/*
 	 * SSL_CTX must outlive every SSL spawned from it (OpenSSL
 	 * contract).  The custom XPRT freed its SSL inside
-	 * clnt_destroy above; freeing the CTX now is safe.  No-op
+	 * mds_clnt_destroy above; freeing the CTX now is safe.  No-op
 	 * for plain-TCP sessions where ms_tls_ctx stays NULL.
 	 */
 	if (ms->ms_tls_ctx) {
@@ -1619,7 +1646,7 @@ static int mds_session_open_secondary(struct mds_session *ms, const char *host,
 		gss_svc = RPCSEC_GSS_SVC_PRIVACY;
 		break;
 	default:
-		clnt_destroy(clnt);
+		mds_clnt_destroy(clnt);
 		return -EINVAL;
 	}
 
@@ -1636,7 +1663,7 @@ static int mds_session_open_secondary(struct mds_session *ms, const char *host,
 	if (!auth) {
 		fprintf(stderr,
 			"mds_session_open_secondary: authgss_create_default failed\n");
-		clnt_destroy(clnt);
+		mds_clnt_destroy(clnt);
 		return -EACCES;
 	}
 
@@ -1646,8 +1673,7 @@ static int mds_session_open_secondary(struct mds_session *ms, const char *host,
 	int ret = mds_bind_conn_to_session(ms, clnt);
 
 	if (ret) {
-		/* clnt_destroy releases the GSS auth via cl_auth. */
-		clnt_destroy(clnt);
+		mds_clnt_destroy(clnt);
 		return ret;
 	}
 
