@@ -969,6 +969,46 @@ which has real diagnostic value and can ride with S7.
 The two draft-side follow-ups are independent of all of the above
 and can go whenever the draft is next opened.
 
+## Live-run attempt 2026-08-06 -- combined-mode v2 path does not run on dreamer
+
+The unit suite covers S1.5(A)/(B), S1.6, S3 and S4 against
+`dispatch_compound()` and the handlers directly.  The obvious next
+evidence is a live exchange, and `scripts/test_mirror_local.sh` is
+the script for it: combined-mode reffsd plus `ec_demo` over the v2
+CHUNK path, which touches all four at once.
+
+**It does not currently run on dreamer, and not because of these
+slices.**  The three loopback dstores fail MOUNT inside
+`dstore_alloc` during startup -- `clnttcp_create(127.0.0.1:12049)
+MOUNT failed` -- because that runs before reffsd is listening on
+its own port.  The NFSv3 renewal thread later reports the dstores
+reconnected, but LAYOUTGET still answers
+NFS4ERR_LAYOUTUNAVAILABLE, so the reconnect is not restoring
+whatever `dstore_alloc` failed to build (root filehandle, runway,
+or both).
+
+Starting rpcbind (it was inactive) cleared the RPC registration
+failures but changed nothing about the mount failures or the
+LAYOUTGET result.
+
+Attribution was established by A/B rather than assumed: the same
+script on `aa4ce4478af7` -- the last commit before S1.6 -- fails
+identically, same error, same exit status.
+
+**What this costs us.**  This plan repeatedly cites
+`test_mirror_local.sh` and the v2 benchmark variants as the thing
+a wrong enforcement rule would have broken -- the S1.5(B) naive-
+rule argument leans on it directly.  That evidence is theoretical
+while the script cannot run.  The 33-failure mutation result
+stands on its own, but "and it would have broken the mirror test"
+is currently an inference.
+
+**Follow-up, unowned:** find out whether the dstore startup
+ordering is a real defect or a dreamer-only environment gap.  The
+script's docstring says it is wired as the `mirror` target in
+Makefile.ci and is not run by default, so it may have been
+bit-rotting for a while.
+
 ## Verification and rollout
 
 - Every reffs slice runs `make -f Makefile.reffs license style
