@@ -633,7 +633,7 @@ struct ec_layout {
 	layouttype4 el_layout_type; /* v1 or v2 */
 	uint32_t el_stripe_unit; /* v1: ffl_stripe_unit */
 	uint32_t el_chunk_size; /* v2: ffm_striping_unit_size */
-	uint32_t el_coding_type; /* v2: ffv2_coding_type4 */
+	uint32_t el_coding_type; /* v2: ffv2_encoding_type4 */
 	uint32_t el_nmirrors;
 	struct ec_mirror *el_mirrors;
 };

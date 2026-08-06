@@ -1330,7 +1330,7 @@ static int cmd_bigfile(const char *mds_host, const char *nfs_file,
 	 * unconditionally (the file already exists; the MDS SHOULD
 	 * ignore the hint on grown files per slice-2 design).
 	 */
-	ffv2_coding_type4 supported[1] = { FFV2_ENCODING_RS_VANDERMONDE };
+	ffv2_encoding_type4 supported[1] = { FFV2_ENCODING_RS_VANDERMONDE };
 	ffv2_layouthint4 layouthint = {
 		.ffv2lh_supported_types = {
 			.ffv2lh_supported_types_len = 1,

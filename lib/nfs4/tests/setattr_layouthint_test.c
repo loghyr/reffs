@@ -71,7 +71,7 @@ END_TEST
 
 START_TEST(test_layouthint_accept_valid_full_hints)
 {
-	ffv2_coding_type4 types[1] = { FFV2_ENCODING_RS_VANDERMONDE };
+	ffv2_encoding_type4 types[1] = { FFV2_ENCODING_RS_VANDERMONDE };
 	ffv2_layouthint4 lh = {
 		.ffv2lh_supported_types = {
 			.ffv2lh_supported_types_len = 1,

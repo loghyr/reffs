@@ -971,25 +971,26 @@ int default_coding_resolve_segment(const struct reffs_coding_spec *coding,
 }
 
 static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
-				   uint32_t ffm_coding_type, char **out_body,
+				   uint32_t ffv2m_coding_type, char **out_body,
 				   u_long *out_size)
 {
 	ffv2_layout4 ffl;
 
 	memset(&ffl, 0, sizeof(ffl));
-	ffl.ffl_flags = FFV2_FLAGS_NO_LAYOUTCOMMIT | FFV2_FLAGS_NO_IO_THRU_MDS;
-	ffl.ffl_stats_collect_hint = 0;
+	ffl.ffv2l_flags = FFV2_FLAGS_NO_LAYOUTCOMMIT |
+			  FFV2_FLAGS_NO_IO_THRU_MDS;
+	ffl.ffv2l_stats_collect_hint = 0;
 
-	ffl.ffl_mirrors.ffl_mirrors_len = 1;
-	ffl.ffl_mirrors.ffl_mirrors_val = calloc(1, sizeof(ffv2_mirror4));
-	if (!ffl.ffl_mirrors.ffl_mirrors_val)
+	ffl.ffv2l_mirrors.ffv2l_mirrors_len = 1;
+	ffl.ffv2l_mirrors.ffv2l_mirrors_val = calloc(1, sizeof(ffv2_mirror4));
+	if (!ffl.ffv2l_mirrors.ffv2l_mirrors_val)
 		return NFS4ERR_DELAY;
 
 	nfsstat4 ret = NFS4_OK;
-	ffv2_mirror4 *mirror = &ffl.ffl_mirrors.ffl_mirrors_val[0];
+	ffv2_mirror4 *mirror = &ffl.ffv2l_mirrors.ffv2l_mirrors_val[0];
 
 	/*
-	 * ffm_coding_type is supplied by the caller, computed by
+	 * ffv2m_coding_type is supplied by the caller, computed by
 	 * default_coding_resolve_segment() from the sb's
 	 * sb_default_coding (per-export-default-coding step 5).
 	 * When the export has no default_coding set, the caller
@@ -1001,12 +1002,12 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 	 * supersedes the per-export default.  See the design's
 	 * Deferred section.
 	 */
-	mirror->ffm_coding_type = ffm_coding_type;
-	mirror->ffm_protection.fdp_data = seg->ls_k;
-	mirror->ffm_protection.fdp_parity = seg->ls_m;
+	mirror->ffv2m_coding_type = ffv2m_coding_type;
+	mirror->ffv2m_protection.fdp_data = seg->ls_k;
+	mirror->ffv2m_protection.fdp_parity = seg->ls_m;
 
 	/*
-	 * Per draft-haynes-nfsv4-flexfiles-v2 (tigran-5e), ffm_checksum_algorithm
+	 * Per draft-haynes-nfsv4-flexfiles-v2 (tigran-5e), ffv2m_checksum_algorithm
 	 * carries the per-mirror tag the client and DSes use to checksum
 	 * chunks.  Reffs picks the algorithm at LAYOUTGET-creation time
 	 * (Pending Change 6 step 6) and stores it on the segment; subsequent
@@ -1035,27 +1036,28 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 		       "CHECKSUM_ALG_SHA512 drift");
 	_Static_assert(LAYOUT_CHECKSUM_ALG_BLAKE3 == CHECKSUM_ALG_BLAKE3,
 		       "CHECKSUM_ALG_BLAKE3 drift");
-	mirror->ffm_checksum_algorithm = seg->ls_checksum_algorithm ?
-						 seg->ls_checksum_algorithm :
-						 CHECKSUM_ALG_CRC32;
+	mirror->ffv2m_checksum_algorithm = seg->ls_checksum_algorithm ?
+						   seg->ls_checksum_algorithm :
+						   CHECKSUM_ALG_CRC32;
 
-	mirror->ffm_striping = FFV2_STRIPING_DENSE;
-	mirror->ffm_striping_unit_size = 4096;
+	mirror->ffv2m_striping = FFV2_STRIPING_DENSE;
+	mirror->ffv2m_striping_unit_size = 4096;
 	mirror->ffv2m_client_id = 0;
 
-	mirror->ffm_stripes.ffm_stripes_len = 1;
-	mirror->ffm_stripes.ffm_stripes_val = calloc(1, sizeof(ffv2_stripes4));
-	if (!mirror->ffm_stripes.ffm_stripes_val) {
+	mirror->ffv2m_stripes.ffv2m_stripes_len = 1;
+	mirror->ffv2m_stripes.ffv2m_stripes_val =
+		calloc(1, sizeof(ffv2_stripes4));
+	if (!mirror->ffv2m_stripes.ffv2m_stripes_val) {
 		ret = NFS4ERR_DELAY;
 		goto out_v2;
 	}
 
-	ffv2_stripes4 *stripe = &mirror->ffm_stripes.ffm_stripes_val[0];
+	ffv2_stripes4 *stripe = &mirror->ffv2m_stripes.ffv2m_stripes_val[0];
 
-	stripe->ffs_data_servers.ffs_data_servers_len = seg->ls_nfiles;
-	stripe->ffs_data_servers.ffs_data_servers_val =
+	stripe->ffv2s_data_servers.ffv2s_data_servers_len = seg->ls_nfiles;
+	stripe->ffv2s_data_servers.ffv2s_data_servers_val =
 		calloc(seg->ls_nfiles, sizeof(ffv2_data_server4));
-	if (!stripe->ffs_data_servers.ffs_data_servers_val) {
+	if (!stripe->ffv2s_data_servers.ffv2s_data_servers_val) {
 		ret = NFS4ERR_DELAY;
 		goto out_v2;
 	}
@@ -1063,7 +1065,7 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 	for (uint32_t i = 0; i < seg->ls_nfiles; i++) {
 		struct layout_data_file *ldf = &seg->ls_files[i];
 		ffv2_data_server4 *ffds =
-			&stripe->ffs_data_servers.ffs_data_servers_val[i];
+			&stripe->ffv2s_data_servers.ffv2s_data_servers_val[i];
 
 		deviceid_from_dstore(ffds->ffv2ds_deviceid, ldf->ldf_dstore_id);
 
@@ -1136,18 +1138,19 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 	*out_size = xdr_size;
 
 out_v2:
-	if (ffl.ffl_mirrors.ffl_mirrors_val) {
-		ffv2_mirror4 *m0 = &ffl.ffl_mirrors.ffl_mirrors_val[0];
+	if (ffl.ffv2l_mirrors.ffv2l_mirrors_val) {
+		ffv2_mirror4 *m0 = &ffl.ffv2l_mirrors.ffv2l_mirrors_val[0];
 
-		if (m0->ffm_stripes.ffm_stripes_val) {
-			ffv2_stripes4 *st = &m0->ffm_stripes.ffm_stripes_val[0];
+		if (m0->ffv2m_stripes.ffv2m_stripes_val) {
+			ffv2_stripes4 *st =
+				&m0->ffv2m_stripes.ffv2m_stripes_val[0];
 
 			for (uint32_t i = 0;
-			     i < st->ffs_data_servers.ffs_data_servers_len;
+			     i < st->ffv2s_data_servers.ffv2s_data_servers_len;
 			     i++) {
 				ffv2_data_server4 *f2 =
-					&st->ffs_data_servers
-						 .ffs_data_servers_val[i];
+					&st->ffv2s_data_servers
+						 .ffv2s_data_servers_val[i];
 
 				if (f2->ffv2ds_file_info.ffv2ds_file_info_val) {
 					free(f2->ffv2ds_file_info
@@ -1159,10 +1162,10 @@ out_v2:
 				free(f2->ffv2ds_user.utf8string_val);
 				free(f2->ffv2ds_group.utf8string_val);
 			}
-			free(st->ffs_data_servers.ffs_data_servers_val);
-			free(m0->ffm_stripes.ffm_stripes_val);
+			free(st->ffv2s_data_servers.ffv2s_data_servers_val);
+			free(m0->ffv2m_stripes.ffv2m_stripes_val);
 		}
-		free(ffl.ffl_mirrors.ffl_mirrors_val);
+		free(ffl.ffv2l_mirrors.ffv2l_mirrors_val);
 	}
 	return ret;
 }

@@ -10,7 +10,7 @@
  * clients.
  *
  * The numeric values of `enum reffs_encoding_type` are aligned with
- * the FFv2 wire-protocol `ffv2_coding_type4` values (see
+ * the FFv2 wire-protocol `ffv2_encoding_type4` values (see
  * `draft-haynes-nfsv4-flexfiles-v2` and `lib/xdr/nfsv42_xdr.x`
  * around `FFV2_ENCODING_PASSTHROUGH = 0x1`).  The alignment is
  * verified by a _Static_assert at the translation site in

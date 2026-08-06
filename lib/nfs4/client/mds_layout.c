@@ -194,24 +194,26 @@ int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 		}
 		xdr_destroy(&xdrs);
 
-		if (ffl.ffl_mirrors.ffl_mirrors_len < 1) {
+		if (ffl.ffv2l_mirrors.ffv2l_mirrors_len < 1) {
 			xdr_free((xdrproc_t)xdr_ffv2_layout4, (caddr_t)&ffl);
 			mds_compound_fini(&mc);
 			return -ENODATA;
 		}
 
-		ffv2_mirror4 *m0 = &ffl.ffl_mirrors.ffl_mirrors_val[0];
+		ffv2_mirror4 *m0 = &ffl.ffv2l_mirrors.ffv2l_mirrors_val[0];
 
-		layout->el_coding_type = m0->ffm_coding_type;
-		layout->el_chunk_size = m0->ffm_striping_unit_size;
-		layout->el_stripe_unit = m0->ffm_striping_unit_size;
+		layout->el_coding_type = m0->ffv2m_coding_type;
+		layout->el_chunk_size = m0->ffv2m_striping_unit_size;
+		layout->el_stripe_unit = m0->ffv2m_striping_unit_size;
 
 		/* Count total data servers across all stripes. */
 		uint32_t nds = 0;
 
-		for (uint32_t s = 0; s < m0->ffm_stripes.ffm_stripes_len; s++)
-			nds += m0->ffm_stripes.ffm_stripes_val[s]
-				       .ffs_data_servers.ffs_data_servers_len;
+		for (uint32_t s = 0; s < m0->ffv2m_stripes.ffv2m_stripes_len;
+		     s++)
+			nds += m0->ffv2m_stripes.ffv2m_stripes_val[s]
+				       .ffv2s_data_servers
+				       .ffv2s_data_servers_len;
 
 		layout->el_nmirrors = nds;
 		layout->el_mirrors = calloc(nds, sizeof(struct ec_mirror));
@@ -223,15 +225,17 @@ int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 
 		uint32_t idx = 0;
 
-		for (uint32_t s = 0; s < m0->ffm_stripes.ffm_stripes_len; s++) {
-			ffv2_stripes4 *st = &m0->ffm_stripes.ffm_stripes_val[s];
+		for (uint32_t s = 0; s < m0->ffv2m_stripes.ffv2m_stripes_len;
+		     s++) {
+			ffv2_stripes4 *st =
+				&m0->ffv2m_stripes.ffv2m_stripes_val[s];
 
 			for (uint32_t d = 0;
-			     d < st->ffs_data_servers.ffs_data_servers_len;
+			     d < st->ffv2s_data_servers.ffv2s_data_servers_len;
 			     d++) {
 				ffv2_data_server4 *ds =
-					&st->ffs_data_servers
-						 .ffs_data_servers_val[d];
+					&st->ffv2s_data_servers
+						 .ffv2s_data_servers_val[d];
 				struct ec_mirror *em =
 					&layout->el_mirrors[idx++];
 
@@ -247,7 +251,7 @@ int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 				 * the matching ffv2_mirror4.
 				 */
 				em->em_checksum_algorithm =
-					m0->ffm_checksum_algorithm;
+					m0->ffv2m_checksum_algorithm;
 
 				if (ds->ffv2ds_file_info.ffv2ds_file_info_len >
 				    0) {

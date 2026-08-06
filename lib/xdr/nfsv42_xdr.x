@@ -5138,7 +5138,7 @@ struct ffv2_data_server4 {
  * cannot collide with any IETF-registered value; interoperability
  * is limited to other Hammerspace-built implementations.
  */
-enum ffv2_coding_type4 {
+enum ffv2_encoding_type4 {
     FFV2_ENCODING_PASSTHROUGH                       = 0x1,
     FFV2_ENCODING_MOJETTE_SYSTEMATIC                = 0x2,
     FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC            = 0x3,
@@ -5164,7 +5164,7 @@ struct ffv2_data_protection4 {
 /*
  * ffv2_coding_type_data4 was a union switched on coding type, but
  * all arms carry the same ffv2_data_protection4.  The coding type
- * is already in ffv2_coding_type4; the geometry is just (k, m).
+ * is already in ffv2_encoding_type4; the geometry is just (k, m).
  * Replaced by ffv2_data_protection4 directly.
  */
 
@@ -5175,23 +5175,34 @@ enum ffv2_striping4 {
 };
 
 struct ffv2_stripes4 {
-        ffv2_data_server4       ffs_data_servers<>;
+        ffv2_data_server4       ffv2s_data_servers<>;
 };
 
+/*
+ * NOT_NOW_BROWN_COW: the draft collapses ffv2m_coding_type +
+ * ffv2m_protection into a single discriminated union
+ * ffv2_coding_type_data4 (draft-haynes-nfsv4-flexfiles-v2
+ * sec-ffv2_coding_type_data4).  The wire bytes are identical --
+ * every union arm carries ffv2_data_protection4, so the encoding
+ * is discriminator + protection either way -- but the generated C
+ * API differs (m->ffv2m_coding_type_data.fctd_coding plus a union
+ * body accessor).  Deferred as a structural change separate from
+ * this naming sweep.
+ */
 struct ffv2_mirror4 {
-        ffv2_coding_type4       ffm_coding_type;
-        ffv2_data_protection4   ffm_protection;
-        ffv2_striping4          ffm_striping;
-        uint32_t                ffm_striping_unit_size; /* The minimum stripe unit size is 64 bytes. */
+        ffv2_encoding_type4     ffv2m_coding_type;
+        ffv2_data_protection4   ffv2m_protection;
+        ffv2_striping4          ffv2m_striping;
+        uint32_t                ffv2m_striping_unit_size; /* min 64 bytes */
         uint32_t                ffv2m_client_id;
-        checksum_algorithm4     ffm_checksum_algorithm;
-        ffv2_stripes4           ffm_stripes<>; /* Length of this array is the stripe count */
+        checksum_algorithm4     ffv2m_checksum_algorithm;
+        ffv2_stripes4           ffv2m_stripes<>; /* length = stripe count */
 };
 
 struct ffv2_layout4 {
-    ffv2_mirror4            ffl_mirrors<>;
-    ffv2_flags4             ffl_flags;
-    uint32_t                ffl_stats_collect_hint;
+    ffv2_mirror4            ffv2l_mirrors<>;
+    ffv2_flags4             ffv2l_flags;
+    uint32_t                ffv2l_stats_collect_hint;
 };
 
 struct ffv2_ioerr4 {
@@ -5236,7 +5247,7 @@ struct ffv2_layoutreturn4 {
 };
 
 struct ffv2_layouthint4 {
-    ffv2_coding_type4       ffv2lh_supported_types<>;
+    ffv2_encoding_type4       ffv2lh_supported_types<>;
     ffv2_data_protection4   ffv2lh_preferred_protection;
     uint32_t                ffv2lh_stripe_unit;
     uint64_t                ffv2lh_expected_file_size;
