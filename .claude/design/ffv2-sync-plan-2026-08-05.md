@@ -1119,11 +1119,31 @@ correct-by-construction.
 What this leaves owed is observability, not correctness.  A path whose
 success is invisible cannot be regression-tested from a trace, and the
 next person to ask "is tight coupling actually engaging?" has the same
-empty measurement available to mislead them.  A registration counter
-and a validation counter on the trust table, surfaced through the
-probe protocol next to the existing per-op stats, would make the
-question answerable without a private build.  Worth doing before this
-path is relied on.
+empty measurement available to mislead them.
+
+**Done** (`ef52a7ce7b2b`).  The trust table now counts registrations
+(split from in-place renewals), revocations, bulk revocations,
+expiries, lookups and misses, plus a validation-outcome breakdown
+reported by both consumers -- the CHUNK family and the proxy
+short-circuit, the latter counting its NULL-stateid case in the same
+bypass bucket.  `PROBEPROC1_TRUST_STATEID_STATS` (op 40) exposes them,
+C and Python together.  The signature of tight coupling failing to
+engage is a large bypass count against a small accepted count.
+
+Against `COUPLING=local` the op reproduces what the private
+instrumented build had shown -- 2048 lookups, 0 missed, 2048 accepted,
+6 bypassed -- and adds what instrumentation had not: 3 inserts against
+15 in-place renewals, and a table drained to 0 live entries at
+teardown.  The measurement no longer needs a private build.
+
+**Found while verifying it:** `reffs_probe1_clnt` aborts under ASAN at
+exit with "Joining already joined thread", on `sb-list` as readily as
+on the new op, so it is a pre-existing defect in the probe client's
+io_handler shutdown and not specific to op 40.  It lands after the
+reply is printed, so the tool is usable; it would fail any CI that
+gates on the client's exit status under ASAN.  Not fixed here --
+different subsystem, and this slice was already at the size where a
+second concern belongs in its own commit.
 
 **A second defect surfaced on the way** (`39d1da3436f1`).  Both mirror
 configurations were exiting non-zero under LeakSanitizer *after*
