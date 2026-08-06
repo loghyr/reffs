@@ -1498,15 +1498,22 @@ enum nfs_opnum4 {
 
 %/*
 % * CHUNK_ESCROW ops: draft-haynes-nfsv4-flexfiles-v2 sec-chunk-escrow.
-% * Op numbers 92-95 are TBD pending IANA assignment; assigned in the
-% * flexfiles-v2 draft, so the reffs-owned proxy-server and swap ops
-% * were relocated (see the OP_PROXY_* and OP_EXCHANGE_RANGE blocks
-% * below) to make room.  Handlers land in a follow-up slice
-% * (R5b) returning NFS4ERR_NOTSUPP; only the number reservation is
-% * held here today, which matters when a mid-review reviewer
-% * (adversarial or supervisor) walks the enum and expects the
-% * draft-authoritative op-number layout.
+% * Metadata-server-to-data-server control-plane ops that install /
+% * release / enumerate / take over metadata-server escrow locks on
+% * per-file byte ranges (INSTALL/RELEASE), enumerate the data
+% * server's held escrows (ENUMERATE), or transfer escrow ownership
+% * across metadata-server incarnations (TAKEOVER).  Op numbers
+% * 92-95 are TBD pending IANA assignment.
+% *
+% * The R5b handlers return NFS4ERR_NOTSUPP; XDR wire skeleton is
+% * live so an on-wire capability probe from a compliant metadata
+% * server observes a "known op returning NOTSUPP" rather than a
+% * decode error.
 % */
+ OP_CHUNK_ESCROW_INSTALL    = 92,
+ OP_CHUNK_ESCROW_RELEASE    = 93,
+ OP_CHUNK_ESCROW_ENUMERATE  = 94,
+ OP_CHUNK_ESCROW_TAKEOVER   = 95,
 
 %/*
 % * Proxy-server fore-channel ops: draft-haynes-nfsv4-flexfiles-v2-proxy-server.
@@ -3746,6 +3753,111 @@ union CHUNK_WRITE_REPAIR4res switch (nfsstat4 cwrr_status) {
 };
 
 /*
+ * CHUNK_ESCROW ops (draft-haynes-nfsv4-flexfiles-v2
+ * sec-chunk-escrow) -- metadata-server-to-data-server control plane
+ * for per-file escrow-lock handoff.  The R5b handlers stub the four
+ * ops with NFS4ERR_NOTSUPP; only the wire skeleton is live so a
+ * capability probe from a compliant metadata server sees a known
+ * op returning NOTSUPP rather than a decode error.  Full semantics
+ * arrive with follow-up implementation slices.
+ */
+
+/*
+ * Registered proof-profile identifier used by CHUNK_ESCROW_TAKEOVER
+ * to carry a signed incarnation-continuity attestation.  See
+ * draft-haynes-nfsv4-flexfiles-v2 sec-proof-profile.
+ */
+typedef uint32_t   proof_profile_id4;
+
+const PROOF_PROFILE_UNSPECIFIED          = 0;
+const PROOF_PROFILE_HA_AUTHORITY_ED25519 = 1;
+
+const CETA_INCARNATION_PROOF_MAX4        = 4096;
+
+/*
+ * Bounds on CHUNK_ESCROW_ENUMERATE cookie and entry array.  Paging
+ * lets a metadata server walk a large held-escrow set across
+ * multiple calls; each call caps the returned array to
+ * CHUNK_ESCROW_ENUMERATE_MAX4 entries.
+ */
+const CHUNK_ESCROW_ENUMERATE_COOKIE_MAX4 = 256;
+const CHUNK_ESCROW_ENUMERATE_MAX4        = 256;
+
+struct CHUNK_ESCROW_INSTALL4args {
+    /* CURRENT_FH: file */
+    uint64_t        ceia_mds_epoch;
+    offset4         ceia_offset;
+    count4          ceia_count;
+    escrow_id4      ceia_escrow_id;
+};
+
+union CHUNK_ESCROW_INSTALL4res switch (nfsstat4 ceir_status) {
+    case NFS4_OK:
+        escrow_id4  ceir_escrow_id;
+    default:
+        void;
+};
+
+struct CHUNK_ESCROW_RELEASE4args {
+    /* CURRENT_FH: file */
+    uint64_t        cera_mds_epoch;
+    offset4         cera_offset;
+    count4          cera_count;
+    escrow_id4      cera_escrow_id;
+};
+
+union CHUNK_ESCROW_RELEASE4res switch (nfsstat4 cerr_status) {
+    case NFS4_OK:
+        void;
+    default:
+        void;
+};
+
+struct escrow_enum_entry4 {
+    offset4         eee_offset;
+    count4          eee_count;
+    escrow_id4      eee_escrow_id;
+};
+
+struct CHUNK_ESCROW_ENUMERATE4args {
+    /* CURRENT_FH: file */
+    uint64_t        ceea_mds_epoch;
+    offset4         ceea_offset;
+    count4          ceea_count;
+    uint32_t        ceea_maxcount;
+    opaque          ceea_cookie<CHUNK_ESCROW_ENUMERATE_COOKIE_MAX4>;
+};
+
+struct CHUNK_ESCROW_ENUMERATE4resok {
+    bool                 ceer_eof;
+    opaque               ceer_cookie<CHUNK_ESCROW_ENUMERATE_COOKIE_MAX4>;
+    escrow_enum_entry4   ceer_entries<CHUNK_ESCROW_ENUMERATE_MAX4>;
+};
+
+union CHUNK_ESCROW_ENUMERATE4res switch (nfsstat4 ceer_status) {
+    case NFS4_OK:
+        CHUNK_ESCROW_ENUMERATE4resok    ceer_resok4;
+    default:
+        void;
+};
+
+struct CHUNK_ESCROW_TAKEOVER4args {
+    /* CURRENT_FH: file (per NFSv4.2 COMPOUND convention; op is
+     * per-data-server, not per-file). */
+    uint64_t             ceta_expected_prior_epoch;
+    uint64_t             ceta_new_epoch;
+    proof_profile_id4    ceta_proof_profile;
+    opaque               ceta_proof_data<CETA_INCARNATION_PROOF_MAX4>;
+};
+
+union CHUNK_ESCROW_TAKEOVER4res switch (nfsstat4 cetar_status) {
+    case NFS4_OK:
+        void;
+    default:
+        void;
+};
+
+/*
  * DS trust table operations -- flexfiles v2 tight coupling.
  *
  * TRUST_STATEID: MDS registers a layout stateid in the DS trust table.
@@ -4119,6 +4231,16 @@ union nfs_argop4 switch (nfs_opnum4 argop) {
  case OP_REVOKE_STATEID: REVOKE_STATEID4args oprevoke_stateid;
  case OP_BULK_REVOKE_STATEID: BULK_REVOKE_STATEID4args opbulk_revoke_stateid;
 
+ /* CHUNK_ESCROW ops (flexfiles-v2 draft) */
+ case OP_CHUNK_ESCROW_INSTALL:
+     CHUNK_ESCROW_INSTALL4args opchunk_escrow_install;
+ case OP_CHUNK_ESCROW_RELEASE:
+     CHUNK_ESCROW_RELEASE4args opchunk_escrow_release;
+ case OP_CHUNK_ESCROW_ENUMERATE:
+     CHUNK_ESCROW_ENUMERATE4args opchunk_escrow_enumerate;
+ case OP_CHUNK_ESCROW_TAKEOVER:
+     CHUNK_ESCROW_TAKEOVER4args opchunk_escrow_takeover;
+
  /* Proxy-server fore-channel ops (data-mover draft) */
  case OP_PROXY_REGISTRATION: PROXY_REGISTRATION4args opproxy_registration;
  case OP_PROXY_PROGRESS:     PROXY_PROGRESS4args     opproxy_progress;
@@ -4278,6 +4400,16 @@ union nfs_resop4 switch (nfs_opnum4 resop) {
  case OP_TRUST_STATEID: TRUST_STATEID4res optrust_stateid;
  case OP_REVOKE_STATEID: REVOKE_STATEID4res oprevoke_stateid;
  case OP_BULK_REVOKE_STATEID: BULK_REVOKE_STATEID4res opbulk_revoke_stateid;
+
+ /* CHUNK_ESCROW ops (flexfiles-v2 draft) */
+ case OP_CHUNK_ESCROW_INSTALL:
+     CHUNK_ESCROW_INSTALL4res opchunk_escrow_install;
+ case OP_CHUNK_ESCROW_RELEASE:
+     CHUNK_ESCROW_RELEASE4res opchunk_escrow_release;
+ case OP_CHUNK_ESCROW_ENUMERATE:
+     CHUNK_ESCROW_ENUMERATE4res opchunk_escrow_enumerate;
+ case OP_CHUNK_ESCROW_TAKEOVER:
+     CHUNK_ESCROW_TAKEOVER4res opchunk_escrow_takeover;
 
  /* Proxy-server fore-channel ops (data-mover draft) */
  case OP_PROXY_REGISTRATION: PROXY_REGISTRATION4res opproxy_registration;

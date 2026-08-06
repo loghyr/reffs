@@ -1892,3 +1892,54 @@ uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 
 	return 0;
 }
+
+/*
+ * CHUNK_ESCROW_{INSTALL,RELEASE,ENUMERATE,TAKEOVER} stubs.
+ * Wire is live so a capability probe from a compliant metadata
+ * server sees a known op returning NFS4ERR_NOTSUPP rather than a
+ * decode error.  Semantics arrive with follow-up implementation
+ * slices (see draft-haynes-nfsv4-flexfiles-v2 sec-chunk-escrow).
+ */
+uint32_t nfs4_op_chunk_escrow_install(struct compound *compound)
+{
+	CHUNK_ESCROW_INSTALL4res *res =
+		NFS4_OP_RES_SETUP(compound, opchunk_escrow_install);
+	nfsstat4 *status = &res->ceir_status;
+
+	*status = NFS4ERR_NOTSUPP;
+
+	return 0;
+}
+
+uint32_t nfs4_op_chunk_escrow_release(struct compound *compound)
+{
+	CHUNK_ESCROW_RELEASE4res *res =
+		NFS4_OP_RES_SETUP(compound, opchunk_escrow_release);
+	nfsstat4 *status = &res->cerr_status;
+
+	*status = NFS4ERR_NOTSUPP;
+
+	return 0;
+}
+
+uint32_t nfs4_op_chunk_escrow_enumerate(struct compound *compound)
+{
+	CHUNK_ESCROW_ENUMERATE4res *res =
+		NFS4_OP_RES_SETUP(compound, opchunk_escrow_enumerate);
+	nfsstat4 *status = &res->ceer_status;
+
+	*status = NFS4ERR_NOTSUPP;
+
+	return 0;
+}
+
+uint32_t nfs4_op_chunk_escrow_takeover(struct compound *compound)
+{
+	CHUNK_ESCROW_TAKEOVER4res *res =
+		NFS4_OP_RES_SETUP(compound, opchunk_escrow_takeover);
+	nfsstat4 *status = &res->cetar_status;
+
+	*status = NFS4ERR_NOTSUPP;
+
+	return 0;
+}
