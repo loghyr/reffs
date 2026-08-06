@@ -220,15 +220,35 @@ static int nfsv4_create(struct dstore *ds, const uint8_t *dir_fh,
 	oa->owner.owner.owner_len = strlen(ms->ms_owner);
 	oa->openhow.opentype = OPEN4_CREATE;
 	oa->openhow.openflag4_u.how.mode = UNCHECKED4;
-	/* No createattrs -- file gets DS default mode. */
+	/*
+	 * Set fattr4_chunked_data_file = TRUE atomically with file
+	 * creation so a data server that supports attribute 90
+	 * (draft-haynes-nfsv4-flexfiles-v2 sec-fattr4_chunked_data_file)
+	 * classifies the new file as a chunked-encoding data file and
+	 * enforces the CHUNK-family restrictions in sec-ops-client.
+	 *
+	 * attr 90 lives in bit 26 of bitmap word 2 (word = 90/32 = 2,
+	 * bit = 90%32 = 26).  The XDR encoding of a bool TRUE is the
+	 * four-byte big-endian value 0x00000001.
+	 *
+	 * NOT_NOW_BROWN_COW: on ATTRNOTSUPP from a non-reffs data
+	 * server the OPEN currently fails end-to-end and takes the
+	 * runway file with it; retry-without-createattrs plus a
+	 * per-dstore capability latch is the follow-up.  Every reffs
+	 * data server advertises attribute 90 as of the R3 slice, so
+	 * the reffs-to-reffs deployment we care about first is not
+	 * exposed.
+	 */
+	static uint32_t chunked_bits[3] = { 0, 0, 1U << 26 };
+	static char chunked_true_val[4] = { 0x00, 0x00, 0x00, 0x01 };
 	oa->openhow.openflag4_u.how.createhow4_u.createattrs.attrmask
-		.bitmap4_len = 0;
+		.bitmap4_len = 3;
 	oa->openhow.openflag4_u.how.createhow4_u.createattrs.attrmask
-		.bitmap4_val = NULL;
+		.bitmap4_val = chunked_bits;
 	oa->openhow.openflag4_u.how.createhow4_u.createattrs.attr_vals
-		.attrlist4_len = 0;
+		.attrlist4_len = 4;
 	oa->openhow.openflag4_u.how.createhow4_u.createattrs.attr_vals
-		.attrlist4_val = NULL;
+		.attrlist4_val = chunked_true_val;
 	oa->claim.claim = CLAIM_NULL;
 	oa->claim.open_claim4_u.file.utf8string_val = (char *)name;
 	oa->claim.open_claim4_u.file.utf8string_len = strlen(name);
