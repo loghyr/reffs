@@ -2861,6 +2861,14 @@ static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
 					~INODE_IS_UNCACHEABLE_DIRENT_METADATA;
 			break;
 		case FATTR4_CHUNKED_DATA_FILE:
+			/*
+			 * Reaching here means the metadata server has
+			 * told us what this file is, so record that the
+			 * answer is known as well as what it was.  See
+			 * INODE_CHUNKED_ATTR_PRESENT in inode.h for why
+			 * a bare FALSE is not enough.
+			 */
+			inode->i_attr_flags |= INODE_CHUNKED_ATTR_PRESENT;
 			if (nattr->chunked_data_file)
 				inode->i_attr_flags |=
 					INODE_IS_CHUNKED_DATA_FILE;

@@ -122,6 +122,28 @@ struct inode {
  * (attribute 90).  Persists via id_attr_flags in the on-disk inode.
  */
 #define INODE_IS_CHUNKED_DATA_FILE (1ULL << 6)
+/*
+ * Set when the metadata server has actually told this data server
+ * what the file is, so that INODE_IS_CHUNKED_DATA_FILE can be read
+ * as a real FALSE rather than as "nobody has said".
+ *
+ * The distinction is load-bearing.  Settling attribute 90 at layout
+ * assignment is best effort -- a data server may not support the
+ * attribute, or the SETATTR may simply fail -- and without this bit
+ * a failure to reach the data server is indistinguishable from an
+ * explicit FALSE.  Enforcement keyed on the value bit alone would
+ * then reject every CHUNK operation against a genuinely chunked
+ * file whose SETATTR happened to be lost, putting its data out of
+ * reach.
+ *
+ * draft-haynes-nfsv4-flexfiles-v2 sec-data-file-identification is
+ * explicit that the reject rules apply only to files the data
+ * server has identified, and that a data server which cannot
+ * identify a file relies on the client-side MUST NOT instead.  This
+ * bit is how reffs tells those two states apart.
+ */
+#define INODE_CHUNKED_ATTR_PRESENT (1ULL << 7)
+
 	uint64_t i_attr_flags;
 
 	/* Security label (RFC 7861 Labeled NFS) */
@@ -138,6 +160,29 @@ struct inode {
 	/* DS chunk metadata (NULL until first CHUNK_WRITE). */
 	struct chunk_store *i_chunk_store;
 };
+
+/*
+ * Three-state answer to "what is this data file?", for enforcement
+ * of the CHUNK / non-CHUNK operation restrictions in
+ * draft-haynes-nfsv4-flexfiles-v2 sec-ops-client.  Callers MUST
+ * treat UNIDENTIFIED as "do not enforce" -- that is the draft's
+ * fallback, not a defaulted FALSE.
+ */
+enum inode_chunked_state {
+	INODE_CHUNKED_UNIDENTIFIED = 0,
+	INODE_CHUNKED_NO,
+	INODE_CHUNKED_YES,
+};
+
+static inline enum inode_chunked_state
+inode_chunked_state(const struct inode *inode)
+{
+	if (!(inode->i_attr_flags & INODE_CHUNKED_ATTR_PRESENT))
+		return INODE_CHUNKED_UNIDENTIFIED;
+	return (inode->i_attr_flags & INODE_IS_CHUNKED_DATA_FILE) ?
+		       INODE_CHUNKED_YES :
+		       INODE_CHUNKED_NO;
+}
 
 struct inode_disk {
 	uint64_t id_uid; /* reffs_id */

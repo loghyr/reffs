@@ -214,6 +214,12 @@ static int local_set_chunked(struct dstore *ds __attribute__((unused)),
 		return -ESTALE;
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
+	/*
+	 * Mark the answer known as well as recording it -- the wire
+	 * path does the same in nattr_to_inode(), and enforcement must
+	 * not be able to tell combined mode from a real data server.
+	 */
+	inode->i_attr_flags |= INODE_CHUNKED_ATTR_PRESENT;
 	if (chunked)
 		inode->i_attr_flags |= INODE_IS_CHUNKED_DATA_FILE;
 	else
