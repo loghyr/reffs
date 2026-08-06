@@ -149,8 +149,10 @@ END_TEST
 START_TEST(test_register_basic)
 {
 	stateid4 s = make_stateid(0x01);
-	int ret = trust_stateid_register(&s, 42, 0xCAFE, LAYOUTIOMODE4_RW,
-					 future_expire_ns(), "");
+	int ret = trust_stateid_register(&s, 42, 0xCAFE,
+					 CHUNK_GUARD_CLIENT_ID_NONE,
+					 LAYOUTIOMODE4_RW, future_expire_ns(),
+					 "");
 	ck_assert_int_eq(ret, 0);
 
 	struct trust_entry *te = trust_stateid_find(&s);
@@ -179,10 +181,10 @@ START_TEST(test_register_idempotent)
 {
 	stateid4 s = make_stateid(0x02);
 
-	trust_stateid_register(&s, 10, 0xCAFE, LAYOUTIOMODE4_READ,
-			       future_expire_ns(), "");
-	trust_stateid_register(&s, 10, 0xCAFE, LAYOUTIOMODE4_RW,
-			       future_expire_ns(), "");
+	trust_stateid_register(&s, 10, 0xCAFE, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_READ, future_expire_ns(), "");
+	trust_stateid_register(&s, 10, 0xCAFE, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_RW, future_expire_ns(), "");
 
 	struct trust_entry *te = trust_stateid_find(&s);
 
@@ -201,8 +203,8 @@ START_TEST(test_register_with_principal)
 	stateid4 s = make_stateid(0x03);
 	const char *principal = "nfs/mds.example.com@EXAMPLE.COM";
 
-	trust_stateid_register(&s, 1, 0, LAYOUTIOMODE4_RW, future_expire_ns(),
-			       principal);
+	trust_stateid_register(&s, 1, 0, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_RW, future_expire_ns(), principal);
 
 	struct trust_entry *te = trust_stateid_find(&s);
 
@@ -223,7 +225,8 @@ START_TEST(test_register_principal_truncated)
 	memset(long_principal, 'x', sizeof(long_principal) - 1);
 	long_principal[sizeof(long_principal) - 1] = '\0';
 
-	trust_stateid_register(&s, 1, 0, LAYOUTIOMODE4_RW, future_expire_ns(),
+	trust_stateid_register(&s, 1, 0, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_RW, future_expire_ns(),
 			       long_principal);
 
 	struct trust_entry *te = trust_stateid_find(&s);
@@ -244,10 +247,10 @@ START_TEST(test_register_two_entries)
 	stateid4 s1 = make_stateid(0x11);
 	stateid4 s2 = make_stateid(0x22);
 
-	trust_stateid_register(&s1, 1, 0, LAYOUTIOMODE4_RW, future_expire_ns(),
-			       "");
-	trust_stateid_register(&s2, 2, 0, LAYOUTIOMODE4_READ,
-			       future_expire_ns(), "");
+	trust_stateid_register(&s1, 1, 0, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_RW, future_expire_ns(), "");
+	trust_stateid_register(&s2, 2, 0, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_READ, future_expire_ns(), "");
 
 	struct trust_entry *te1 = trust_stateid_find(&s1);
 	struct trust_entry *te2 = trust_stateid_find(&s2);
@@ -287,8 +290,8 @@ START_TEST(test_find_refcount)
 {
 	stateid4 s = make_stateid(0x05);
 
-	trust_stateid_register(&s, 1, 0, LAYOUTIOMODE4_RW, future_expire_ns(),
-			       "");
+	trust_stateid_register(&s, 1, 0, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_RW, future_expire_ns(), "");
 
 	struct trust_entry *te = trust_stateid_find(&s);
 
@@ -319,8 +322,8 @@ START_TEST(test_flags_active_after_register)
 {
 	stateid4 s = make_stateid(0x06);
 
-	trust_stateid_register(&s, 1, 0, LAYOUTIOMODE4_RW, future_expire_ns(),
-			       "");
+	trust_stateid_register(&s, 1, 0, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_RW, future_expire_ns(), "");
 
 	struct trust_entry *te = trust_stateid_find(&s);
 
@@ -344,8 +347,8 @@ START_TEST(test_revoke_removes_entry)
 {
 	stateid4 s = make_stateid(0x07);
 
-	trust_stateid_register(&s, 1, 0, LAYOUTIOMODE4_RW, future_expire_ns(),
-			       "");
+	trust_stateid_register(&s, 1, 0, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_RW, future_expire_ns(), "");
 	trust_stateid_revoke(&s);
 
 	struct trust_entry *te = trust_stateid_find(&s);
@@ -372,11 +375,11 @@ START_TEST(test_revoke_then_reregister)
 {
 	stateid4 s = make_stateid(0x08);
 
-	trust_stateid_register(&s, 1, 0, LAYOUTIOMODE4_RW, future_expire_ns(),
-			       "");
+	trust_stateid_register(&s, 1, 0, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_RW, future_expire_ns(), "");
 	trust_stateid_revoke(&s);
-	trust_stateid_register(&s, 2, 0, LAYOUTIOMODE4_READ, future_expire_ns(),
-			       "");
+	trust_stateid_register(&s, 2, 0, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_READ, future_expire_ns(), "");
 
 	struct trust_entry *te = trust_stateid_find(&s);
 
@@ -397,12 +400,12 @@ START_TEST(test_bulk_revoke_by_clientid)
 	const clientid4 cid_a = 0xAAAA;
 	const clientid4 cid_b = 0xBBBB;
 
-	trust_stateid_register(&s1, 1, cid_a, LAYOUTIOMODE4_RW,
-			       future_expire_ns(), "");
-	trust_stateid_register(&s2, 2, cid_a, LAYOUTIOMODE4_RW,
-			       future_expire_ns(), "");
-	trust_stateid_register(&s3, 3, cid_b, LAYOUTIOMODE4_RW,
-			       future_expire_ns(), "");
+	trust_stateid_register(&s1, 1, cid_a, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_RW, future_expire_ns(), "");
+	trust_stateid_register(&s2, 2, cid_a, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_RW, future_expire_ns(), "");
+	trust_stateid_register(&s3, 3, cid_b, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_RW, future_expire_ns(), "");
 
 	trust_stateid_bulk_revoke(cid_a);
 
@@ -426,12 +429,12 @@ START_TEST(test_bulk_revoke_all)
 	stateid4 s2 = make_stateid(0x41);
 	stateid4 s3 = make_stateid(0x42);
 
-	trust_stateid_register(&s1, 1, 0xAAAA, LAYOUTIOMODE4_RW,
-			       future_expire_ns(), "");
-	trust_stateid_register(&s2, 2, 0xBBBB, LAYOUTIOMODE4_RW,
-			       future_expire_ns(), "");
-	trust_stateid_register(&s3, 3, 0xCCCC, LAYOUTIOMODE4_RW,
-			       future_expire_ns(), "");
+	trust_stateid_register(&s1, 1, 0xAAAA, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_RW, future_expire_ns(), "");
+	trust_stateid_register(&s2, 2, 0xBBBB, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_RW, future_expire_ns(), "");
+	trust_stateid_register(&s3, 3, 0xCCCC, CHUNK_GUARD_CLIENT_ID_NONE,
+			       LAYOUTIOMODE4_RW, future_expire_ns(), "");
 
 	trust_stateid_bulk_revoke(0); /* 0 = clear all */
 
@@ -990,9 +993,9 @@ START_TEST(test_op_revoke_stateid_ok)
 	stateid4 stid = make_stateid(0xAA);
 	clientid4 cid = 0x1234;
 
-	ck_assert_int_eq(trust_stateid_register(&stid, 999, cid,
-						LAYOUTIOMODE4_RW,
-						future_expire_ns(), ""),
+	ck_assert_int_eq(trust_stateid_register(
+				 &stid, 999, cid, CHUNK_GUARD_CLIENT_ID_NONE,
+				 LAYOUTIOMODE4_RW, future_expire_ns(), ""),
 			 0);
 
 	struct cm_ctx *cm = cm_alloc(1, EXCHGID4_FLAG_USE_PNFS_MDS);
@@ -1055,9 +1058,10 @@ START_TEST(test_op_revoke_stateid_plain_client_rejected)
 	stateid4 stid = make_stateid(0xBC);
 
 	/* Pre-register the entry the plain client will try to revoke. */
-	ck_assert_int_eq(trust_stateid_register(&stid, g_op_inode->i_ino,
-						0x2222, LAYOUTIOMODE4_RW,
-						future_expire_ns(), ""),
+	ck_assert_int_eq(trust_stateid_register(
+				 &stid, g_op_inode->i_ino, 0x2222,
+				 CHUNK_GUARD_CLIENT_ID_NONE, LAYOUTIOMODE4_RW,
+				 future_expire_ns(), ""),
 			 0);
 
 	cm_set_inode(cm, g_op_inode);
@@ -1147,11 +1151,13 @@ START_TEST(test_op_bulk_revoke_stateid_ok)
 	stateid4 s1 = make_stateid(0xD1);
 	stateid4 s2 = make_stateid(0xD2);
 
-	ck_assert_int_eq(trust_stateid_register(&s1, 111, cid, LAYOUTIOMODE4_RW,
-						future_expire_ns(), ""),
+	ck_assert_int_eq(trust_stateid_register(
+				 &s1, 111, cid, CHUNK_GUARD_CLIENT_ID_NONE,
+				 LAYOUTIOMODE4_RW, future_expire_ns(), ""),
 			 0);
-	ck_assert_int_eq(trust_stateid_register(&s2, 222, cid, LAYOUTIOMODE4_RW,
-						future_expire_ns(), ""),
+	ck_assert_int_eq(trust_stateid_register(
+				 &s2, 222, cid, CHUNK_GUARD_CLIENT_ID_NONE,
+				 LAYOUTIOMODE4_RW, future_expire_ns(), ""),
 			 0);
 
 	struct cm_ctx *cm = cm_alloc(1, EXCHGID4_FLAG_USE_PNFS_MDS);
@@ -1213,9 +1219,10 @@ START_TEST(test_op_bulk_revoke_stateid_plain_client_rejected)
 	struct cm_ctx *cm = cm_alloc(1, EXCHGID4_FLAG_USE_NON_PNFS);
 	stateid4 stid = make_stateid(0xBD);
 
-	ck_assert_int_eq(trust_stateid_register(&stid, g_op_inode->i_ino,
-						0x3333, LAYOUTIOMODE4_RW,
-						future_expire_ns(), ""),
+	ck_assert_int_eq(trust_stateid_register(
+				 &stid, g_op_inode->i_ino, 0x3333,
+				 CHUNK_GUARD_CLIENT_ID_NONE, LAYOUTIOMODE4_RW,
+				 future_expire_ns(), ""),
 			 0);
 
 	cm_set_op(cm, 0, OP_BULK_REVOKE_STATEID);
@@ -1299,6 +1306,7 @@ START_TEST(test_chunk_trusted_stateid_allowed)
 	stateid4 stid = make_stateid(0xE1);
 
 	ck_assert_int_eq(trust_stateid_register(&stid, g_op_inode->i_ino, 0,
+						CHUNK_GUARD_CLIENT_ID_NONE,
 						LAYOUTIOMODE4_RW,
 						future_expire_ns(), ""),
 			 0);
@@ -1346,8 +1354,9 @@ START_TEST(test_chunk_untrusted_stateid_rejected)
 	/* Insert a dummy entry so the table is non-empty. */
 	stateid4 other = make_stateid(0xE2);
 
-	ck_assert_int_eq(trust_stateid_register(&other, 1, 0, LAYOUTIOMODE4_RW,
-						future_expire_ns(), ""),
+	ck_assert_int_eq(trust_stateid_register(
+				 &other, 1, 0, CHUNK_GUARD_CLIENT_ID_NONE,
+				 LAYOUTIOMODE4_RW, future_expire_ns(), ""),
 			 0);
 
 	stateid4 unknown = make_stateid(0xEE); /* not in table */
@@ -1377,6 +1386,7 @@ START_TEST(test_chunk_expired_stateid_rejected)
 	uint64_t expired_ns = 1; /* 1 ns after epoch = expired */
 
 	ck_assert_int_eq(trust_stateid_register(&stid, g_op_inode->i_ino, 0,
+						CHUNK_GUARD_CLIENT_ID_NONE,
 						LAYOUTIOMODE4_RW, expired_ns,
 						""),
 			 0);
@@ -1404,6 +1414,7 @@ START_TEST(test_chunk_pending_stateid_delay)
 	stateid4 stid = make_stateid(0xE4);
 
 	ck_assert_int_eq(trust_stateid_register(&stid, g_op_inode->i_ino, 0,
+						CHUNK_GUARD_CLIENT_ID_NONE,
 						LAYOUTIOMODE4_RW,
 						future_expire_ns(), ""),
 			 0);
@@ -1449,8 +1460,9 @@ START_TEST(test_trust_renewal_extends_expire)
 	/* Expires in 1 second -- below the half-lease threshold of 45s */
 	uint64_t soon = before + 1000000000ULL;
 
-	ck_assert_int_eq(trust_stateid_register(&stid, 100, 1, LAYOUTIOMODE4_RW,
-						soon, ""),
+	ck_assert_int_eq(trust_stateid_register(&stid, 100, 1,
+						CHUNK_GUARD_CLIENT_ID_NONE,
+						LAYOUTIOMODE4_RW, soon, ""),
 			 0);
 
 	trust_stateid_renewal_scan(90);
@@ -1479,8 +1491,9 @@ START_TEST(test_trust_renewal_skips_far_future)
 	stateid4 stid = make_stateid(0x62);
 	uint64_t far = reffs_now_ns() + 100ULL * 1000000000ULL;
 
-	ck_assert_int_eq(trust_stateid_register(&stid, 100, 1, LAYOUTIOMODE4_RW,
-						far, ""),
+	ck_assert_int_eq(trust_stateid_register(&stid, 100, 1,
+						CHUNK_GUARD_CLIENT_ID_NONE,
+						LAYOUTIOMODE4_RW, far, ""),
 			 0);
 
 	trust_stateid_renewal_scan(90); /* threshold = 45s; 100s > 45s */
@@ -1512,8 +1525,9 @@ START_TEST(test_trust_renewal_skips_expired)
 	stateid4 stid = make_stateid(0x63);
 	uint64_t past = 1000000000ULL; /* epoch + 1s -- safely in the past */
 
-	ck_assert_int_eq(trust_stateid_register(&stid, 100, 1, LAYOUTIOMODE4_RW,
-						past, ""),
+	ck_assert_int_eq(trust_stateid_register(&stid, 100, 1,
+						CHUNK_GUARD_CLIENT_ID_NONE,
+						LAYOUTIOMODE4_RW, past, ""),
 			 0);
 
 	trust_stateid_renewal_scan(90);
@@ -1545,9 +1559,11 @@ START_TEST(test_trust_renewal_multiple)
 	uint64_t far = now + 100ULL * 1000000000ULL; /* 100s */
 
 	ck_assert_int_eq(trust_stateid_register(&near_stid, 100, 1,
+						CHUNK_GUARD_CLIENT_ID_NONE,
 						LAYOUTIOMODE4_RW, soon, ""),
 			 0);
 	ck_assert_int_eq(trust_stateid_register(&far_stid, 101, 2,
+						CHUNK_GUARD_CLIENT_ID_NONE,
 						LAYOUTIOMODE4_RW, far, ""),
 			 0);
 
@@ -1587,8 +1603,9 @@ START_TEST(test_trust_renewal_zero_lease)
 	stateid4 stid = make_stateid(0x66);
 	uint64_t soon = reffs_now_ns() + 1000000000ULL;
 
-	ck_assert_int_eq(trust_stateid_register(&stid, 100, 1, LAYOUTIOMODE4_RW,
-						soon, ""),
+	ck_assert_int_eq(trust_stateid_register(&stid, 100, 1,
+						CHUNK_GUARD_CLIENT_ID_NONE,
+						LAYOUTIOMODE4_RW, soon, ""),
 			 0);
 
 	/* lease_sec=0: threshold=0, new_lifetime=0 -- no renewal */
@@ -1605,6 +1622,116 @@ START_TEST(test_trust_renewal_zero_lease)
 	ck_assert_uint_gt(exp, reffs_now_ns());
 
 	trust_stateid_revoke(&stid);
+}
+END_TEST
+
+/*
+ * The binding itself: a CHUNK_WRITE whose cg_client_id differs from
+ * the writer identity the metadata server registered must be rejected
+ * with NFS4ERR_BAD_STATEID.  chunk_set_write_args presents 0xBEEF, so
+ * registering anything else is a mismatch.
+ *
+ * This is the case the draft calls spoofing another writer's identity;
+ * without it, any client holding a valid layout stateid could write
+ * under a different writer's guard.
+ */
+START_TEST(test_chunk_client_id_mismatch_rejected)
+{
+	stateid4 stid = make_stateid(0xE7);
+
+	ck_assert_int_eq(trust_stateid_register(&stid, g_op_inode->i_ino, 0,
+						0x1234, LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+
+	struct cm_ctx *cm = cm_alloc(1, 0);
+
+	cm_set_inode(cm, g_op_inode);
+	chunk_set_write_args(cm, &stid);
+
+	nfs4_op_chunk_write(cm->compound);
+
+	CHUNK_WRITE4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					.nfs_resop4_u.opchunk_write;
+
+	ck_assert_int_eq(res->cwr_status, NFS4ERR_BAD_STATEID);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * The matching case must get through the hook, or the binding would
+ * reject the legitimate writer too.
+ */
+START_TEST(test_chunk_client_id_match_allowed)
+{
+	stateid4 stid = make_stateid(0xE8);
+
+	ck_assert_int_eq(trust_stateid_register(&stid, g_op_inode->i_ino, 0,
+						0xBEEF, LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+
+	struct cm_ctx *cm = cm_alloc(1, 0);
+
+	cm_set_inode(cm, g_op_inode);
+	chunk_set_write_args(cm, &stid);
+
+	nfs4_op_chunk_write(cm->compound);
+
+	CHUNK_WRITE4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					.nfs_resop4_u.opchunk_write;
+
+	ck_assert_int_ne(res->cwr_status, NFS4ERR_BAD_STATEID);
+
+	CHUNK_WRITE4resok *ok = &res->CHUNK_WRITE4res_u.cwr_resok4;
+
+	free(ok->cwr_block_status.cwr_block_status_val);
+	free(ok->cwr_block_activated.cwr_block_activated_val);
+	free(ok->cwr_owners.cwr_owners_val);
+	memset(ok, 0, sizeof(*ok));
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * An entry registered with the reserved NONE records no binding, so
+ * any writer identity passes.  This is what keeps a data server
+ * working against a metadata server that does not supply
+ * tsa_client_id -- combined mode, or a third-party implementation.
+ */
+START_TEST(test_chunk_client_id_unbound_allows_any)
+{
+	stateid4 stid = make_stateid(0xE9);
+
+	ck_assert_int_eq(trust_stateid_register(&stid, g_op_inode->i_ino, 0,
+						CHUNK_GUARD_CLIENT_ID_NONE,
+						LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+
+	struct cm_ctx *cm = cm_alloc(1, 0);
+
+	cm_set_inode(cm, g_op_inode);
+	chunk_set_write_args(cm, &stid);
+
+	nfs4_op_chunk_write(cm->compound);
+
+	CHUNK_WRITE4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					.nfs_resop4_u.opchunk_write;
+
+	ck_assert_int_ne(res->cwr_status, NFS4ERR_BAD_STATEID);
+
+	CHUNK_WRITE4resok *ok = &res->CHUNK_WRITE4res_u.cwr_resok4;
+
+	free(ok->cwr_block_status.cwr_block_status_val);
+	free(ok->cwr_block_activated.cwr_block_activated_val);
+	free(ok->cwr_owners.cwr_owners_val);
+	memset(ok, 0, sizeof(*ok));
+
+	cm_free(cm);
 }
 END_TEST
 
@@ -1672,6 +1799,82 @@ START_TEST(test_writer_id_ignores_boot_and_incarnation)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* K. Writer-identity binding (tsa_client_id)                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The identity the metadata server registers is what a CHUNK
+ * operation's cg_client_id is compared against, so it has to survive
+ * registration intact.
+ */
+START_TEST(test_register_records_client_id)
+{
+	stateid4 s = make_stateid(0x51);
+
+	ck_assert_int_eq(trust_stateid_register(&s, 5, 0xCAFE, 0x1234,
+						LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+
+	struct trust_entry *te = trust_stateid_find(&s);
+
+	ck_assert_ptr_nonnull(te);
+	ck_assert_uint_eq(te->te_client_id, 0x1234u);
+	trust_entry_put(te);
+}
+END_TEST
+
+/*
+ * A layout stateid belongs to one client, so a re-registration cannot
+ * legitimately rebind it to a different writer.  The field is
+ * write-once, which is also what lets CHUNK operations read it without
+ * atomics while the entry is live.
+ */
+START_TEST(test_reregister_does_not_rebind_client_id)
+{
+	stateid4 s = make_stateid(0x52);
+
+	ck_assert_int_eq(trust_stateid_register(&s, 5, 0xCAFE, 0x1234,
+						LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+	ck_assert_int_eq(trust_stateid_register(&s, 5, 0xCAFE, 0x9999,
+						LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+
+	struct trust_entry *te = trust_stateid_find(&s);
+
+	ck_assert_ptr_nonnull(te);
+	ck_assert_uint_eq(te->te_client_id, 0x1234u);
+	trust_entry_put(te);
+}
+END_TEST
+
+/*
+ * An entry registered with the reserved NONE carries no binding.  That
+ * is what keeps a data server usable against a metadata server that
+ * does not supply tsa_client_id -- combined mode before S4a, and any
+ * third-party metadata server that has not implemented the field.
+ */
+START_TEST(test_register_none_client_id_is_no_binding)
+{
+	stateid4 s = make_stateid(0x53);
+
+	ck_assert_int_eq(trust_stateid_register(
+				 &s, 5, 0xCAFE, CHUNK_GUARD_CLIENT_ID_NONE,
+				 LAYOUTIOMODE4_RW, future_expire_ns(), ""),
+			 0);
+
+	struct trust_entry *te = trust_stateid_find(&s);
+
+	ck_assert_ptr_nonnull(te);
+	ck_assert_uint_eq(te->te_client_id, CHUNK_GUARD_CLIENT_ID_NONE);
+	trust_entry_put(te);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -1700,6 +1903,13 @@ static Suite *trust_stateid_suite(void)
 	tcase_add_test(tc_register, test_register_principal_truncated);
 	tcase_add_test(tc_register, test_register_two_entries);
 	suite_add_tcase(s, tc_register);
+
+	TCase *tc_bind = tcase_create("client_id_binding");
+	tcase_add_checked_fixture(tc_bind, setup, teardown);
+	tcase_add_test(tc_bind, test_register_records_client_id);
+	tcase_add_test(tc_bind, test_reregister_does_not_rebind_client_id);
+	tcase_add_test(tc_bind, test_register_none_client_id_is_no_binding);
+	suite_add_tcase(s, tc_bind);
 
 	TCase *tc_find = tcase_create("find");
 	tcase_add_checked_fixture(tc_find, setup, teardown);
@@ -1759,6 +1969,9 @@ static Suite *trust_stateid_suite(void)
 	tcase_add_test(tc_i, test_chunk_untrusted_stateid_rejected);
 	tcase_add_test(tc_i, test_chunk_expired_stateid_rejected);
 	tcase_add_test(tc_i, test_chunk_pending_stateid_delay);
+	tcase_add_test(tc_i, test_chunk_client_id_mismatch_rejected);
+	tcase_add_test(tc_i, test_chunk_client_id_match_allowed);
+	tcase_add_test(tc_i, test_chunk_client_id_unbound_allows_any);
 	suite_add_tcase(s, tc_i);
 
 	TCase *tc_j = tcase_create("renewal");

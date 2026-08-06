@@ -330,8 +330,9 @@ void trust_stateid_fini(void)
 }
 
 int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
-			   clientid4 clientid, layoutiomode4 iomode,
-			   uint64_t expire_mono_ns, const char *principal)
+			   clientid4 clientid, uint32_t client_id,
+			   layoutiomode4 iomode, uint64_t expire_mono_ns,
+			   const char *principal)
 {
 	if (!trust_ht)
 		return -EINVAL;
@@ -383,6 +384,7 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 	memcpy(te->te_other, stateid->other, NFS4_OTHER_SIZE);
 	te->te_ino = ino;
 	te->te_clientid = clientid;
+	te->te_client_id = client_id;
 	te->te_iomode = iomode;
 	atomic_store_explicit(&te->te_expire_ns, expire_mono_ns,
 			      memory_order_relaxed);

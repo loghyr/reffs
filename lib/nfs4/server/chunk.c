@@ -73,17 +73,24 @@ static inline bool chunk_cid_is_reserved(uint32_t cid)
 }
 
 /*
- * chunk_lifecycle_check_stateid -- trust-table validation for the
- * CHUNK_FINALIZE / CHUNK_COMMIT / CHUNK_ROLLBACK lifecycle ops
- * (draft M3).  All three carry an explicit layout stateid on the
- * wire; the check is identical across them so we share it here.
+ * chunk_check_trusted_stateid -- trust-table validation shared by
+ * every CHUNK op that presents a layout stateid.
  *
  * Returns NFS4_OK when the caller may proceed.  Returns a non-zero
  * nfsstat4 on rejection (caller assigns to *status and returns 0).
- * Special stateids bypass the check exactly as they do for
- * CHUNK_WRITE / CHUNK_READ.
+ * Special stateids bypass the check -- the data server's own
+ * permission model handles those.
+ *
+ * client_id is the writer identity the operation presents, or
+ * CHUNK_GUARD_CLIENT_ID_NONE when it presents none.  CHUNK_READ is
+ * the honest case of the latter: it carries a stateid and nothing
+ * else, so a read is authorized by the stateid alone.
+ *
+ * require_rw is for CHUNK_WRITE_REPAIR, the one caller that also
+ * insists the registered layout be writable.
  */
-static nfsstat4 chunk_lifecycle_check_stateid(const stateid4 *stid)
+static nfsstat4 chunk_check_trusted_stateid(const stateid4 *stid,
+					    uint32_t client_id, bool require_rw)
 {
 	if (stateid4_is_special(stid))
 		return NFS4_OK;
@@ -108,6 +115,33 @@ static nfsstat4 chunk_lifecycle_check_stateid(const stateid4 *stid)
 		return NFS4ERR_BAD_STATEID;
 	}
 	if (!(flags & TRUST_ACTIVE)) {
+		trust_entry_put(te);
+		return NFS4ERR_BAD_STATEID;
+	}
+	if (require_rw && te->te_iomode != LAYOUTIOMODE4_RW) {
+		trust_entry_put(te);
+		return NFS4ERR_ACCESS;
+	}
+
+	/*
+	 * Writer-identity binding.  draft-haynes-nfsv4-flexfiles-v2:
+	 * the data server compares the client id presented on a CHUNK
+	 * operation against the tsa_client_id the metadata server
+	 * registered for the layout stateid, and MUST reject a mismatch
+	 * with NFS4ERR_BAD_STATEID -- a client presenting another
+	 * writer's identity is spoofing it.
+	 *
+	 * A registered NONE means the metadata server recorded no
+	 * binding, and the comparison is skipped, exactly as an empty
+	 * te_principal means no principal constraint.  That is a
+	 * deliberate permissiveness rather than conformance: the draft
+	 * does not contemplate a metadata server registering the
+	 * reserved value.  It is what keeps a data server working
+	 * against a metadata server that does not yet supply the field.
+	 */
+	if (te->te_client_id != CHUNK_GUARD_CLIENT_ID_NONE &&
+	    client_id != CHUNK_GUARD_CLIENT_ID_NONE &&
+	    te->te_client_id != client_id) {
 		trust_entry_put(te);
 		return NFS4ERR_BAD_STATEID;
 	}
@@ -355,37 +389,13 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	 * read-bypass) bypass the check -- they are handled separately
 	 * by the DS's own permission model.
 	 */
-	if (!stateid4_is_special(&args->cwa_stateid)) {
-		struct trust_entry *te = trust_stateid_find(&args->cwa_stateid);
+	nfsstat4 trust_err = chunk_check_trusted_stateid(
+		&args->cwa_stateid, args->cwa_owner.co_guard.cg_client_id,
+		false);
 
-		if (!te) {
-			*status = NFS4ERR_BAD_STATEID;
-			return 0;
-		}
-
-		uint64_t now = reffs_now_ns();
-		uint64_t exp = atomic_load_explicit(&te->te_expire_ns,
-						    memory_order_acquire);
-		uint32_t flags = atomic_load_explicit(&te->te_flags,
-						      memory_order_acquire);
-
-		if (flags & TRUST_PENDING) {
-			trust_entry_put(te);
-			*status = NFS4ERR_DELAY;
-			return 0;
-		}
-		if (exp != 0 && now > exp) {
-			trust_entry_put(te);
-			*status = NFS4ERR_BAD_STATEID;
-			return 0;
-		}
-		if (!(flags & TRUST_ACTIVE)) {
-			trust_entry_put(te);
-			*status = NFS4ERR_BAD_STATEID;
-			return 0;
-		}
-
-		trust_entry_put(te);
+	if (trust_err != NFS4_OK) {
+		*status = trust_err;
+		return 0;
 	}
 
 	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
@@ -825,37 +835,12 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 	 * Trust table validation -- tightly-coupled DS.
 	 * Same logic as CHUNK_WRITE: special stateids bypass the check.
 	 */
-	if (!stateid4_is_special(&args->cra_stateid)) {
-		struct trust_entry *te = trust_stateid_find(&args->cra_stateid);
+	nfsstat4 trust_err = chunk_check_trusted_stateid(
+		&args->cra_stateid, CHUNK_GUARD_CLIENT_ID_NONE, false);
 
-		if (!te) {
-			*status = NFS4ERR_BAD_STATEID;
-			return 0;
-		}
-
-		uint64_t now = reffs_now_ns();
-		uint64_t exp = atomic_load_explicit(&te->te_expire_ns,
-						    memory_order_acquire);
-		uint32_t flags = atomic_load_explicit(&te->te_flags,
-						      memory_order_acquire);
-
-		if (flags & TRUST_PENDING) {
-			trust_entry_put(te);
-			*status = NFS4ERR_DELAY;
-			return 0;
-		}
-		if (exp != 0 && now > exp) {
-			trust_entry_put(te);
-			*status = NFS4ERR_BAD_STATEID;
-			return 0;
-		}
-		if (!(flags & TRUST_ACTIVE)) {
-			trust_entry_put(te);
-			*status = NFS4ERR_BAD_STATEID;
-			return 0;
-		}
-
-		trust_entry_put(te);
+	if (trust_err != NFS4_OK) {
+		*status = trust_err;
+		return 0;
 	}
 
 	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
@@ -1097,7 +1082,8 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 		return 0;
 	}
 
-	nfsstat4 stid_err = chunk_lifecycle_check_stateid(&args->cfa_stateid);
+	nfsstat4 stid_err = chunk_check_trusted_stateid(
+		&args->cfa_stateid, CHUNK_GUARD_CLIENT_ID_NONE, false);
 
 	if (stid_err != NFS4_OK) {
 		*status = stid_err;
@@ -1198,7 +1184,8 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 		return 0;
 	}
 
-	nfsstat4 stid_err = chunk_lifecycle_check_stateid(&args->cca_stateid);
+	nfsstat4 stid_err = chunk_check_trusted_stateid(
+		&args->cca_stateid, CHUNK_GUARD_CLIENT_ID_NONE, false);
 
 	if (stid_err != NFS4_OK) {
 		*status = stid_err;
@@ -1460,7 +1447,8 @@ uint32_t nfs4_op_chunk_rollback(struct compound *compound)
 		return 0;
 	}
 
-	nfsstat4 stid_err = chunk_lifecycle_check_stateid(&args->crb_stateid);
+	nfsstat4 stid_err = chunk_check_trusted_stateid(
+		&args->crb_stateid, CHUNK_GUARD_CLIENT_ID_NONE, false);
 
 	if (stid_err != NFS4_OK) {
 		*status = stid_err;
@@ -1780,41 +1768,14 @@ uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 		return 0;
 	}
 
-	struct trust_entry *te = trust_stateid_find(&args->cwra_stateid);
+	nfsstat4 trust_err = chunk_check_trusted_stateid(
+		&args->cwra_stateid, args->cwra_owner.co_guard.cg_client_id,
+		true);
 
-	if (!te) {
-		*status = NFS4ERR_BAD_STATEID;
+	if (trust_err != NFS4_OK) {
+		*status = trust_err;
 		return 0;
 	}
-
-	uint64_t now = reffs_now_ns();
-	uint64_t exp =
-		atomic_load_explicit(&te->te_expire_ns, memory_order_acquire);
-	uint32_t te_flags =
-		atomic_load_explicit(&te->te_flags, memory_order_acquire);
-
-	if (te_flags & TRUST_PENDING) {
-		trust_entry_put(te);
-		*status = NFS4ERR_DELAY;
-		return 0;
-	}
-	if (exp != 0 && now > exp) {
-		trust_entry_put(te);
-		*status = NFS4ERR_BAD_STATEID;
-		return 0;
-	}
-	if (!(te_flags & TRUST_ACTIVE)) {
-		trust_entry_put(te);
-		*status = NFS4ERR_BAD_STATEID;
-		return 0;
-	}
-	if (te->te_iomode != LAYOUTIOMODE4_RW) {
-		trust_entry_put(te);
-		*status = NFS4ERR_ACCESS;
-		return 0;
-	}
-
-	trust_entry_put(te);
 
 	if (compound->c_curr_sb)
 		atomic_fetch_add_explicit(

@@ -351,7 +351,9 @@ static void free_repair_res(struct cm_ctx *cm)
 static void register_trust(const stateid4 *stid, uint64_t ino, clientid4 cid,
 			   layoutiomode4 iomode, uint64_t expire_ns)
 {
-	int ret = trust_stateid_register(stid, ino, cid, iomode, expire_ns, "");
+	int ret = trust_stateid_register(stid, ino, cid,
+					 CHUNK_GUARD_CLIENT_ID_NONE, iomode,
+					 expire_ns, "");
 
 	ck_assert_int_eq(ret, 0);
 }

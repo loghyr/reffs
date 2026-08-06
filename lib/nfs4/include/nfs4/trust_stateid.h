@@ -64,6 +64,21 @@ struct trust_entry {
 	 * principal constraint (AUTH_SYS from a trusted MDS).
 	 */
 	char te_principal[TRUST_PRINCIPAL_MAX];
+
+	/*
+	 * The writer identity the metadata server registered for this
+	 * layout (tsa_client_id).  A CHUNK operation that presents a
+	 * cg_client_id must match it; see chunk.c.
+	 *
+	 * Write-once at registration, like te_principal: a layout
+	 * stateid belongs to one client, so a re-registration cannot
+	 * legitimately change the binding, and leaving it immutable
+	 * keeps it readable without atomics while the entry is live.
+	 *
+	 * CHUNK_GUARD_CLIENT_ID_NONE means the metadata server recorded
+	 * no binding.
+	 */
+	uint32_t te_client_id;
 };
 
 /* ------------------------------------------------------------------ */
@@ -98,8 +113,9 @@ void trust_stateid_fini(void);
  * Returns 0 on success, -ENOMEM on allocation failure.
  */
 int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
-			   clientid4 clientid, layoutiomode4 iomode,
-			   uint64_t expire_mono_ns, const char *principal);
+			   clientid4 clientid, uint32_t client_id,
+			   layoutiomode4 iomode, uint64_t expire_mono_ns,
+			   const char *principal);
 
 /*
  * trust_stateid_revoke -- remove the entry for this stateid.other.

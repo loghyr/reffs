@@ -27,6 +27,7 @@
 #include "reffs/dstore.h"
 #include "reffs/identity.h"
 #include "reffs/dstore_ops.h"
+#include "nfs4/client.h" /* ffv2_writer_id */
 #include "reffs/filehandle.h"
 #include "reffs/inode.h"
 #include "reffs/layout_segment.h"
@@ -356,7 +357,14 @@ static int local_trust_stateid(struct dstore *ds __attribute__((unused)),
 	if (expire_mono_ns == 0)
 		return -EINVAL;
 
+	/*
+	 * Combined mode registers by direct call rather than over the
+	 * wire, so it has to derive the writer identity here that
+	 * nfsv4_trust_stateid puts in tsa_client_id -- same function,
+	 * same clientid4, so the two modes record the same binding.
+	 */
 	return trust_stateid_register(&stid, 0, (clientid4)clientid,
+				      ffv2_writer_id((clientid4)clientid),
 				      (layoutiomode4)iomode, expire_mono_ns,
 				      principal);
 }

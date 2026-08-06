@@ -455,9 +455,9 @@ START_TEST(test_shortcircuit_trusted_stateid_accepted)
 	/* Lease deadline well in the future. */
 	uint64_t expire_ns = UINT64_C(1) << 62;
 
-	ck_assert_int_eq(trust_stateid_register(&trusted, ino, cid,
-						LAYOUTIOMODE4_RW, expire_ns,
-						""),
+	ck_assert_int_eq(trust_stateid_register(
+				 &trusted, ino, cid, CHUNK_GUARD_CLIENT_ID_NONE,
+				 LAYOUTIOMODE4_RW, expire_ns, ""),
 			 0);
 
 	const uint8_t payload[] = "trust!";

@@ -758,10 +758,26 @@ S4a (metadata server) -- **LANDED**:
    still carry no binding, and S4b's NONE-means-unconstrained rule
    is what keeps them working.
 
-S4b (data server): store `tsa_client_id` on the trust entry and
-   compare it in the CHUNK validation hook.
+S4b (data server) -- **LANDED**:
+:  `te_client_id` on the trust entry, write-once like
+   `te_principal`, compared in the CHUNK validation hook.  A
+   registered NONE means no binding and skips the comparison.
 
-**Landing S4b first would break the data path.**  Every trust
+   The four duplicated trust-validation blocks (CHUNK_WRITE,
+   CHUNK_READ, CHUNK_WRITE_REPAIR, and the lifecycle helper) are
+   now one `chunk_check_trusted_stateid()`, so the new rule
+   applies everywhere by construction rather than by four copies
+   being kept in step.
+
+   CHUNK_READ presents no writer identity -- it carries a stateid
+   and nothing else -- so a read is authorized by the stateid
+   alone.  The lifecycle operations pass NONE for now; their
+   identity lives in per-chunk `chunk_owner4` arrays, and whether
+   to check every element belongs with the M2 cohort restructure.
+   Both are explicit arguments at the call sites, not omissions.
+
+**Why the order mattered** (kept because the reasoning generalizes):
+landing S4b first would have broken the data path.  Every trust
 entry today registers 0 (CHUNK_GUARD_CLIENT_ID_NONE), while a
 conforming client must present a non-sentinel `cg_client_id`, so
 a strict comparison would reject every CHUNK operation with
