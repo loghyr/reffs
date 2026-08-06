@@ -3398,6 +3398,27 @@ const CHUNK_MAX_CHECKSUMS_PER_OP = 4096;
 const CHUNK_MAX_OWNERS_PER_OP    = 4096;
 const CHUNK_MAX_STATUS_PER_OP    = 4096;
 
+/*
+ * Bit-field typedefs added in draft-haynes-nfsv4-flexfiles-v2 for
+ * forward-compatible per-chunk / per-mirror state.  Kept as
+ * uint32_t so future flag bits fit without another XDR bump.
+ *
+ *   chunk_state_flags4       -- per-chunk state bits, currently
+ *                               CHUNK_STATE_FLAGS_LOCKED (adopted
+ *                               by MDS escrow via CHUNK_LOCK).
+ *
+ *   ffv2_layoutstats_flags4  -- per-mirror bits on the client's
+ *                               ffv2_layoutupdate4 (ffv2l_local).
+ *
+ *   escrow_id4               -- 16-byte opaque identifier for
+ *                               CHUNK_ESCROW handoffs (INSTALL /
+ *                               RELEASE / ENUMERATE / TAKEOVER).
+ */
+const CHUNK_STATE_FLAGS_LOCKED = 0x00000001;
+typedef uint32_t   chunk_state_flags4;
+typedef uint32_t   ffv2_layoutstats_flags4;
+typedef opaque     escrow_id4[16];
+
 struct chunk_guard4 {
         uint32_t   cg_gen_id;
         uint32_t   cg_client_id;
