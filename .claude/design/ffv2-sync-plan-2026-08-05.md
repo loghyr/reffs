@@ -348,9 +348,60 @@ assignment, set the attribute to its final value -- TRUE for a
 chunked encoding, FALSE for PASSTHROUGH -- while the file still
 holds no data.
 
-Work: add the settle step on the layout-assignment path.  Keep or
-drop the create-time provisional value as convenient; what matters
-is that the value is correct before the first write.
+**Implementation design (mapped 2026-08-06, not yet built).**
+
+The layout-assignment path today is one loop (`layout.c:1626-1648`)
+that, per file, pops from the runway and then calls
+`dstore_data_file_fence()` and `dstore_data_file_chmod()` -- two
+SETATTR round-trips per file.  The encoding is not resolved until
+`default_coding_resolve_segment()` at `:1693`, *after* that loop,
+because it needs `nfiles` (how many files the runway actually
+yielded).
+
+That ordering is the whole difficulty.  Settling the attribute
+where the encoding becomes known means a **third** SETATTR per
+file on every LAYOUTGET -- for a 4+2 layout, six extra round-trips,
+raising LAYOUTGET's data-server traffic by half.  That is a real
+hot-path cost, not an implementation detail.
+
+The right shape is therefore a restructure rather than an addition:
+
+    pop loop           (fill files[], count nfiles)
+    resolve encoding   (default_coding_resolve_segment)
+    settle loop        (fence + chmod + attribute 90, one SETATTR)
+
+With that ordering, attribute 90 rides the SETATTR that fence
+already sends and costs nothing extra.  It also puts the fence and
+chmod after the geometry check, which incidentally narrows the
+existing NOT_NOW_BROWN_COW at `:1697` -- today a geometry shortfall
+returns LAYOUTUNAVAILABLE *after* the files were already fenced and
+chmod'd, leaking them; deferring those calls until after the check
+means a shortfall leaks unmodified pool files instead.
+
+Required pieces:
+
+- A `set_chunked` entry in `struct dstore_ops`
+  (`lib/include/reffs/dstore_ops.h`), or an extension of `fence` to
+  carry the attribute, so the value can be set through the vtable.
+- `dstore_ops_nfsv4.c`: SETATTR carrying attribute 90, modelled on
+  `nfsv4_truncate`'s bitmap/attrlist encoding.  Word 2, bit 26.
+- `dstore_ops_local.c`: set `INODE_IS_CHUNKED_DATA_FILE` directly;
+  this is also S1.3.
+- `dstore_ops_nfsv3.c`: leave NULL -- v3 data files are non-chunked
+  by construction.
+- `layout.c`: the loop split described above.
+
+Decide before building: whether to fold the attribute into `fence`
+(fewer moving parts, but overloads an operation whose name means
+credential rotation) or add a distinct vtable op (clearer, but the
+loop restructure is required either way to avoid the third
+round-trip).
+
+Also settle what happens to R4's create-time TRUE.  Simply deleting
+it is safe on its own terms -- an absent attribute is "unidentified",
+which the draft permits and which is strictly better than today's
+wrong value -- but it would leave the attribute unset until the
+settle loop lands, so the two should land together.
 
 Tests: a passthrough layout leaves the attribute FALSE on its data
 files; a chunked layout leaves it TRUE.
