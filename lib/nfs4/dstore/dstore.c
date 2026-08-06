@@ -74,8 +74,11 @@ static void dstore_free_rcu(struct rcu_head *rcu)
 	struct dstore *ds = caa_container_of(rcu, struct dstore, ds_rcu);
 
 	trace_dstore(ds, __func__, __LINE__);
-	if (ds->ds_runway)
-		runway_destroy(ds->ds_runway);
+	struct runway *rw =
+		atomic_load_explicit(&ds->ds_runway, memory_order_acquire);
+
+	if (rw)
+		runway_destroy(rw);
 	if (ds->ds_clnt)
 		clnt_destroy(ds->ds_clnt);
 	pthread_mutex_destroy(&ds->ds_clnt_mutex);
@@ -691,6 +694,13 @@ int dstore_load_config(const struct reffs_config *cfg)
 			    dsc->address, dsc->path);
 			continue;
 		}
+
+		/*
+		 * Remember the pool size here so the renewal thread can
+		 * build a runway for a data server that was not
+		 * reachable at startup; it has no access to the config.
+		 */
+		ds->ds_runway_size = cfg->runway_size;
 		/* Drop the caller ref -- hash table holds the dstore alive. */
 		dstore_put(ds);
 	}

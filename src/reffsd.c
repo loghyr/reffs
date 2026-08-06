@@ -970,10 +970,14 @@ int main(int argc, char *argv[])
 					dstore_put(ds);
 					continue;
 				}
-				ds->ds_runway = runway_create(
-					ds, cfg.runway_size ?
-						    cfg.runway_size :
-						    RUNWAY_DEFAULT_SIZE);
+				atomic_store_explicit(
+					&ds->ds_runway,
+					runway_create(
+						ds,
+						cfg.runway_size ?
+							cfg.runway_size :
+							RUNWAY_DEFAULT_SIZE),
+					memory_order_release);
 				dstore_put(ds);
 			}
 		}

@@ -54,8 +54,22 @@ struct dstore {
 	/* Ops vtable: local (VFS), nfsv3, or nfsv4. */
 	const struct dstore_ops *ds_ops;
 
-	/* Pre-created file pool (set by runway_create at startup). */
-	struct runway *ds_runway;
+	/*
+	 * Pre-created file pool.
+	 *
+	 * _Atomic because it is published by whoever first finds the
+	 * dstore mounted -- startup for a data server that was up
+	 * then, otherwise the renewal thread -- while LAYOUTGET reads
+	 * it on the request path without a lock.
+	 */
+	_Atomic(struct runway *) ds_runway;
+
+	/*
+	 * Runway size from config, kept here so the renewal thread can
+	 * build the pool without reaching back into reffs_config.
+	 * Zero means RUNWAY_DEFAULT_SIZE.
+	 */
+	uint32_t ds_runway_size;
 
 	/* MOUNT result (valid when DSTORE_IS_MOUNTED is set) */
 	uint8_t ds_root_fh[DSTORE_MAX_FH]; /* NFSv3 root filehandle */

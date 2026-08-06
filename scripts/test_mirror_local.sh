@@ -142,6 +142,33 @@ if [ "$ready" -ne 1 ]; then
 fi
 sleep 0.5  # brief grace post-listen, matches other local tests
 
+# Wait for every dstore that failed its startup MOUNT to get a runway.
+#
+# In combined mode the loopback dstores cannot mount during
+# dstore_alloc -- that runs before this process is listening on its own
+# port -- so their pools are built later by the renewal thread (see
+# runway_ensure in lib/nfs4/dstore/ds_renewal.c).  LAYOUTGET answers
+# NFS4ERR_LAYOUTUNAVAILABLE until then, and creating 256 pool files per
+# dstore takes longer than the grace above.
+#
+# A deployment whose data servers were up at startup logs no mount
+# failures and falls straight through.
+want_runways=$(grep -c "mount failed for" "$run_dir/reffsd.log" 2>/dev/null || echo 0)
+if [ "$want_runways" -gt 0 ]; then
+	deadline=$((SECONDS + 120))
+	while [ "$SECONDS" -lt "$deadline" ]; do
+		built=$(grep -c "runway built" "$run_dir/reffsd.log" 2>/dev/null || echo 0)
+		[ "$built" -ge "$want_runways" ] && break
+		sleep 0.5
+	done
+	if [ "$built" -lt "$want_runways" ]; then
+		keep_dir=1
+		echo "only $built/$want_runways runways built; reffsd.log:" >&2
+		tail -40 "$run_dir/reffsd.log" >&2
+		exit 1
+	fi
+fi
+
 # --- 2. input + ec_demo write/verify ---------------------------------
 head -c "$SIZE" /dev/urandom >"$run_dir/input.bin" ||
 	die "could not generate $SIZE bytes of input"

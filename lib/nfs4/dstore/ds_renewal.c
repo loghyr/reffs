@@ -61,6 +61,7 @@
 #include "nfsv42_xdr.h"
 #include "ec_client.h"
 #include "reffs/dstore.h"
+#include "reffs/runway.h"
 #include "reffs/dstore_ops.h"
 #include "reffs/log.h"
 #include "reffs/posix_shims.h"
@@ -257,16 +258,66 @@ static void renewal_tick_one_nfsv3(struct dstore *ds,
  *
  * Returns nothing; caller updates ctx counters via the pointer.
  */
-void ds_renewal_tick_one(struct dstore *ds, struct renewal_tick_ctx *ctx)
+/*
+ * runway_ensure -- build the pre-created file pool for a data server
+ * that has become reachable since startup.
+ *
+ * reffsd builds runways once, in its startup loop, and only for
+ * dstores that are already available at that moment.  Nothing rebuilt
+ * one afterwards, so a data server that was down when the metadata
+ * server booted -- or, in combined mode over a loopback dstore, one
+ * that could not possibly be up yet, because the MOUNT in
+ * dstore_alloc runs before this process is listening on its own port
+ * -- reconnected with an empty pool and stayed that way.  The dstore
+ * then passes dstore_is_available(), LAYOUTGET picks it, runway_pop
+ * finds nothing, and every LAYOUTGET answers
+ * NFS4ERR_LAYOUTUNAVAILABLE until the metadata server is restarted.
+ *
+ * Called from the renewal tick, which is off the request path and
+ * already the place that repairs a dstore's connection.  Only the
+ * never-built case is handled here: replenishing a pool drained by
+ * LAYOUTGETs is the separate background-replenisher item in
+ * .claude/design/mds.md.
+ */
+static void runway_ensure(struct dstore *ds)
 {
-	if (!ds || !ctx)
+	if (!dstore_is_available(ds))
 		return;
 
-	if (ds->ds_ops == &dstore_ops_local) {
-		ctx->skipped_local++;
+	if (atomic_load_explicit(&ds->ds_runway, memory_order_acquire))
+		return;
+
+	struct runway *rw = runway_create(ds, ds->ds_runway_size ?
+						      ds->ds_runway_size :
+						      RUNWAY_DEFAULT_SIZE);
+
+	if (!rw)
+		return;
+
+	/*
+	 * Another tick could have raced us here.  Publish only if the
+	 * slot is still empty, and destroy the loser rather than
+	 * leaking it -- two pools over one dstore would hand out the
+	 * same pool files twice.
+	 */
+	struct runway *expected = NULL;
+
+	if (!atomic_compare_exchange_strong_explicit(&ds->ds_runway, &expected,
+						     rw, memory_order_release,
+						     memory_order_acquire)) {
+		runway_destroy(rw);
 		return;
 	}
 
+	LOG("ds_renewal: dstore[%u] runway built (%u files) after late "
+	    "connect",
+	    ds->ds_id,
+	    ds->ds_runway_size ? ds->ds_runway_size : RUNWAY_DEFAULT_SIZE);
+}
+
+static void renewal_tick_one_body(struct dstore *ds,
+				  struct renewal_tick_ctx *ctx)
+{
 	if (ds->ds_protocol == REFFS_DS_PROTO_NFSV3) {
 		renewal_tick_one_nfsv3(ds, ctx);
 		return;
@@ -398,6 +449,28 @@ void ds_renewal_tick_one(struct dstore *ds, struct renewal_tick_ctx *ctx)
 		    "(next attempt in %us)",
 		    ds->ds_id, ds->ds_address, strerror(-rret), wait_sec);
 	}
+}
+
+void ds_renewal_tick_one(struct dstore *ds, struct renewal_tick_ctx *ctx)
+{
+	if (!ds || !ctx)
+		return;
+
+	if (ds->ds_ops == &dstore_ops_local) {
+		ctx->skipped_local++;
+		return;
+	}
+
+	renewal_tick_one_body(ds, ctx);
+
+	/*
+	 * Unconditionally after the protocol work, and for both
+	 * protocols: the pool is missing whenever this dstore was not
+	 * reachable at startup, which the reconnect above may just
+	 * have fixed.  runway_ensure is a cheap load when the pool is
+	 * already there.
+	 */
+	runway_ensure(ds);
 }
 
 /*

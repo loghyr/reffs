@@ -1685,9 +1685,11 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		for (uint32_t i = 0; i < target; i++) {
 			struct dstore *ds = dstores[i % nds];
 
-			if (!ds->ds_runway ||
-			    runway_pop(ds->ds_runway, files[nfiles].ldf_fh,
-				       &files[nfiles].ldf_fh_len) < 0) {
+			struct runway *rw = atomic_load_explicit(
+				&ds->ds_runway, memory_order_acquire);
+
+			if (!rw || runway_pop(rw, files[nfiles].ldf_fh,
+					      &files[nfiles].ldf_fh_len) < 0) {
 				TRACE("LAYOUTGET: dstore[%u] runway empty",
 				      ds->ds_id);
 				continue;
