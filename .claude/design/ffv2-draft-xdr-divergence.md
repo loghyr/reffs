@@ -266,6 +266,58 @@ The kernel client (`psyklo/ffv2-client`) has not been checked
 against this rename; no tree on mana to grep.  Check before the
 next K-series patch.
 
+## OPEN: who assigns the writer identity (three implementations disagree)
+
+Found 2026-08-06 while inventorying the kernel client, after S4b
+landed.  This is a coherence problem across the draft and both
+clients, not a kernel catch-up item.
+
+**The draft, post-B4:** the metadata server assigns the writer
+identity, publishes it in `ffv2m_client_id`, registers it with each
+data server as `tsa_client_id`, and the client echoes it as
+`cg_client_id` on CHUNK operations.  A mismatch is NFS4ERR_BAD_STATEID
+-- "a client that presents a cwa_client_id different from its layout's
+ffv2m_client_id is spoofing another writer's identity."
+
+**Both clients predate that and self-assign:**
+
+| implementation | source of cg_client_id |
+|---|---|
+| reffs proxy/`ec_demo` (`lib/nfs4/ps/chunk_io.c:48`) | `getpid()`, sentinel-rotated |
+| kernel `ffv2-client` (`flexfilesv2.h:526`) | `get_random_u32()` at module init, one per kernel |
+
+The kernel header states the old model outright: "cg_client_id is
+CLIENT-derived, not from the layout.  Reference client at reffs
+lib/nfs4/ps/chunk_io.c uses getpid() with sentinel rotation; we mirror
+that."  It is faithfully implementing what reffs did before B4.
+
+Notably the kernel already decodes the right value --
+`flexfilesv2xdr.c:258` reads `ffv2m_client_id` into `m->client_id` --
+and then ignores it in favour of the seed.
+
+**Consequence, and it is self-inflicted.**  S4b's comparison is
+correct per the draft, but the moment any data server is tight
+coupled, a client presenting a real layout stateid gets its
+self-assigned id compared against the metadata-server-assigned one and
+every CHUNK_WRITE fails with NFS4ERR_BAD_STATEID.  That includes reffs's
+own client against reffs's own server.
+
+It is latent today only because nothing tight coupled is exercised:
+the loopback dstores are NFSv3, so clients use the anonymous stateid
+and `chunk_check_trusted_stateid` returns at its `stateid4_is_special`
+guard before reaching the comparison.  The 2026-08-06 live run
+confirmed this -- zero trust-table hits across 2304 CHUNK_WRITEs.
+
+**The fix is one decision applied three times:** the identity is the
+metadata server's to assign, so both clients stop self-assigning and
+echo `ffv2m_client_id` from the layout.  Ordering does not matter
+between the two clients; neither can be exercised against a
+tight-coupled server until it lands.
+
+Do not "fix" this by relaxing S4b -- the escape hatch there is for a
+metadata server that registers no binding at all, not for a client
+that presents the wrong one.
+
 ## Deferred: M2 chunk_owner4 restructure
 
 The draft moved from single-owner-per-CHUNK_WRITE to
