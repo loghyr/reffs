@@ -704,12 +704,38 @@ answering GETDEVICEINFO for a v2 layout, and
 (SYNTHETIC_UIDS / TIGHTLY_COUPLED / TRUSTED_STATEID) is
 unreachable; reffs can only express the FFv1 boolean.
 
-**Work.** Flip the v2 GETDEVICEINFO encoder to emit
-`ffv2_device_addr4`, map `ds_tight_coupled` onto the bitmask, and
-update the client decoder.  Keep the FFv1 path untouched -- this
-is another place where the two families sit in one function, so
-scope carefully (see the FFv1/FFv2 trap note in
-`migration-review.md`).
+**LANDED.**  `nfs4_op_getdeviceinfo` emits `ffv2_device_addr4`
+when `gdia_layout_type == LAYOUT4_FLEX_FILES_V2`, and
+`mds_getdeviceinfo` decodes on the same discriminator.  The FFv1
+and file-layout branches are untouched.
+
+`ds_tight_coupled` maps onto `FFV2_COUPLING_TRUSTED_STATEID` and
+nothing else: it is the TRUST_STATEID capability probe's result,
+which is exactly the bit the draft says that probe sets, and reffs
+has no separate notion of TIGHTLY_COUPLED without trusted
+stateids.  No bits set is `FFV2_COUPLING_SYNTHETIC_UIDS`, the
+fallback the draft names.
+
+The client reads the bit by masking rather than comparing the
+field, since it is a bitmask and a metadata server may set others
+alongside it.
+
+**Interop hazard -- the kernel client.**  This changes the v2
+GETDEVICEINFO body on the wire.  `psyklo/ffv2-client` decodes
+`ff_device_addr4` for v2 layouts today, so it will misread the
+reply until the K-series mirrors this.  There is no kernel tree on
+mana to check against, and the unit tests cover the wire shape
+rather than a live exchange, so this has not been demonstrated
+either way.  Mirror it before the next kernel bring-up.
+
+**Not covered.**  No test drives `nfs4_op_getdeviceinfo` end to
+end -- the handler needs a dstore the unit harness does not
+have.  What the tests do pin is the wire contract: that the
+coupling bit survives encode and decode, and that the
+no-bits-set case is distinguishable.  The second matters because
+`FFV2_COUPLING_SYNTHETIC_UIDS` is zero, so a client that compared
+the field for equality instead of masking would pass the first
+test and fail in the field.
 
 ### S4 -- consume tsa_client_id in TRUST_STATEID [small]
 

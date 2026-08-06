@@ -436,24 +436,37 @@ int mds_getdeviceinfo(struct mds_session *ms, const deviceid4 devid,
 
 	device_addr4 *da = &resok->gdir_device_addr;
 
-	/* Decode ff_device_addr4 from the opaque body. */
+	/*
+	 * The device address body is layout-type specific.  A v2 layout
+	 * carries ffv2_device_addr4, whose per-version entry replaces
+	 * v1's bool ffdv_tightly_coupled with the ffv2dv_coupling
+	 * bitmask; decoding one as the other would misread the tail of
+	 * the structure.
+	 */
+	bool is_v2 = layout_type == LAYOUT4_FLEX_FILES_V2;
 	XDR xdrs;
 	ff_device_addr4 ffda;
+	ffv2_device_addr4 ffv2da;
+	multipath_list4 *netaddrs;
 
 	memset(&ffda, 0, sizeof(ffda));
+	memset(&ffv2da, 0, sizeof(ffv2da));
 	xdrmem_create(&xdrs, da->da_addr_body.da_addr_body_val,
 		      da->da_addr_body.da_addr_body_len, XDR_DECODE);
 
-	if (!xdr_ff_device_addr4(&xdrs, &ffda)) {
+	if (!(is_v2 ? xdr_ffv2_device_addr4(&xdrs, &ffv2da) :
+		      xdr_ff_device_addr4(&xdrs, &ffda))) {
 		xdr_destroy(&xdrs);
 		mds_compound_fini(&mc);
 		return -EIO;
 	}
 	xdr_destroy(&xdrs);
 
+	netaddrs = is_v2 ? &ffv2da.ffv2da_netaddrs : &ffda.ffda_netaddrs;
+
 	/* Extract the first network address. */
-	if (ffda.ffda_netaddrs.multipath_list4_len > 0) {
-		netaddr4 *na = &ffda.ffda_netaddrs.multipath_list4_val[0];
+	if (netaddrs->multipath_list4_len > 0) {
+		netaddr4 *na = &netaddrs->multipath_list4_val[0];
 
 		/*
 		 * na_r_addr is a universal address like "192.168.1.1.8.1"
@@ -466,14 +479,33 @@ int mds_getdeviceinfo(struct mds_session *ms, const deviceid4 devid,
 	}
 
 	/*
-	 * Check whether the DS advertises tight coupling for NFSv4.2.
-	 * The MDS sets ffdv_tightly_coupled when TRUST_STATEID is
-	 * supported.  Only consider entries for NFSv4 minor version 2,
-	 * since CHUNK ops are a v2-only path.  When set, the client
-	 * must use the real layout stateid (not the anonymous stateid)
-	 * for CHUNK I/O.
+	 * Does this data server advertise tight coupling for NFSv4.2?
+	 * Only NFSv4 minor version 2 entries count, since CHUNK ops are
+	 * a v2-only path.  When it does, the client must present the
+	 * real layout stateid rather than the anonymous one on CHUNK
+	 * I/O.
+	 *
+	 * v2 says so with the FFV2_COUPLING_TRUSTED_STATEID bit, which
+	 * is what the metadata server sets on a successful TRUST_STATEID
+	 * probe; v1 has only the boolean.  Read the bit rather than
+	 * testing ffv2dv_coupling for equality -- it is a bitmask and a
+	 * metadata server may set other bits alongside it.
 	 */
-	if (ret == 0) {
+	if (ret == 0 && is_v2) {
+		for (u_int v = 0;
+		     v < ffv2da.ffv2da_versions.ffv2da_versions_len; v++) {
+			ffv2_device_versions4 *ver =
+				&ffv2da.ffv2da_versions.ffv2da_versions_val[v];
+
+			if (ver->ffv2dv_version == 4 &&
+			    ver->ffv2dv_minorversion == 2 &&
+			    (ver->ffv2dv_coupling &
+			     FFV2_COUPLING_TRUSTED_STATEID)) {
+				dev->ed_tight_coupled = true;
+				break;
+			}
+		}
+	} else if (ret == 0) {
 		for (u_int v = 0; v < ffda.ffda_versions.ffda_versions_len;
 		     v++) {
 			ff_device_versions4 *ver =
@@ -488,7 +520,10 @@ int mds_getdeviceinfo(struct mds_session *ms, const deviceid4 devid,
 		}
 	}
 
-	xdr_free((xdrproc_t)xdr_ff_device_addr4, (caddr_t)&ffda);
+	if (is_v2)
+		xdr_free((xdrproc_t)xdr_ffv2_device_addr4, (caddr_t)&ffv2da);
+	else
+		xdr_free((xdrproc_t)xdr_ff_device_addr4, (caddr_t)&ffda);
 	mds_compound_fini(&mc);
 	return ret;
 }

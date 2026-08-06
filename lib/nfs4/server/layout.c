@@ -175,9 +175,15 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	uint32_t stripe_idx = 0;
 	multipath_list4 mpl;
 
-	/* Flex files: ff_device_addr4 */
+	/* Flexible file v1: ff_device_addr4 */
 	ff_device_addr4 ffda;
 	ff_device_versions4 ver;
+
+	/* Flexible file v2: ffv2_device_addr4, with the coupling bitmask */
+	ffv2_device_addr4 ffv2da;
+	ffv2_device_versions4 ver2;
+
+	bool is_v2 = args->gdia_layout_type == LAYOUT4_FLEX_FILES_V2;
 
 	if (args->gdia_layout_type == LAYOUT4_NFSV4_1_FILES) {
 		/*
@@ -195,6 +201,46 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 
 		flda.nflda_multipath_ds_list.nflda_multipath_ds_list_len = 1;
 		flda.nflda_multipath_ds_list.nflda_multipath_ds_list_val = &mpl;
+
+	} else if (is_v2) {
+		/*
+		 * Flexible file v2 device address.  Same shape as v1 but
+		 * the boolean ffdv_tightly_coupled is replaced by the
+		 * ffv2dv_coupling bitmask, which is the only way to say
+		 * which coupling model this storage device supports.
+		 *
+		 * draft-haynes-nfsv4-flexfiles-v2: the metadata server
+		 * sets FFV2_COUPLING_TRUSTED_STATEID on a successful
+		 * TRUST_STATEID capability probe and leaves it clear on
+		 * NFS4ERR_NOTSUPP; with no tight-coupling bit set the
+		 * client falls back to the synthetic-uid model, which is
+		 * what FFV2_COUPLING_SYNTHETIC_UIDS (no bits) means.
+		 *
+		 * ds_tight_coupled is exactly that probe's result, so it
+		 * maps onto the TRUSTED_STATEID bit and nothing else --
+		 * reffs has no separate notion of TIGHTLY_COUPLED
+		 * without trusted stateids.
+		 */
+		memset(&ffv2da, 0, sizeof(ffv2da));
+
+		ffv2da.ffv2da_netaddrs.multipath_list4_len = 1;
+		ffv2da.ffv2da_netaddrs.multipath_list4_val = &na;
+
+		memset(&ver2, 0, sizeof(ver2));
+		if (ds->ds_tight_coupled) {
+			ver2.ffv2dv_version = 4;
+			ver2.ffv2dv_minorversion = 2;
+			ver2.ffv2dv_coupling = FFV2_COUPLING_TRUSTED_STATEID;
+		} else {
+			ver2.ffv2dv_version = 3;
+			ver2.ffv2dv_minorversion = 0;
+			ver2.ffv2dv_coupling = FFV2_COUPLING_SYNTHETIC_UIDS;
+		}
+		ver2.ffv2dv_rsize = 1048576;
+		ver2.ffv2dv_wsize = 1048576;
+
+		ffv2da.ffv2da_versions.ffv2da_versions_len = 1;
+		ffv2da.ffv2da_versions.ffv2da_versions_val = &ver2;
 
 	} else {
 		/*
@@ -242,6 +288,9 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	if (args->gdia_layout_type == LAYOUT4_NFSV4_1_FILES)
 		xdr_size = xdr_sizeof(
 			(xdrproc_t)xdr_nfsv4_1_file_layout_ds_addr4, &flda);
+	else if (is_v2)
+		xdr_size =
+			xdr_sizeof((xdrproc_t)xdr_ffv2_device_addr4, &ffv2da);
 	else
 		xdr_size = xdr_sizeof((xdrproc_t)xdr_ff_device_addr4, &ffda);
 
@@ -262,6 +311,8 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 		      xdr_size, XDR_ENCODE);
 	if (args->gdia_layout_type == LAYOUT4_NFSV4_1_FILES)
 		encode_ok = xdr_nfsv4_1_file_layout_ds_addr4(&xdrs, &flda);
+	else if (is_v2)
+		encode_ok = xdr_ffv2_device_addr4(&xdrs, &ffv2da);
 	else
 		encode_ok = xdr_ff_device_addr4(&xdrs, &ffda);
 	if (!encode_ok) {
