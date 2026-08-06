@@ -4916,6 +4916,36 @@ struct ff_device_addr4 {
         ff_device_versions4 ffda_versions<>;
 };
 
+/*
+ * FFv2 forks of the RFC 8435 ff_device_versions4 / ff_device_addr4
+ * pair (draft-haynes-nfsv4-flexfiles-v2 sec-device-addr).  The
+ * bool ffdv_tightly_coupled becomes a uint32_t ffv2dv_coupling
+ * bitmask so an FFv2 data server can independently advertise the
+ * synthetic-uid, tightly-coupled, and trusted-stateid coupling
+ * modes.  Consumers (layout.c encoder, mds_layout.c decoder) still
+ * use the FFv1 struct for the FFv2 wire today; the R5c slice adds
+ * the type surface so a follow-up implementation slice can flip
+ * v2 layouts to emit ffv2_device_addr4 alongside the v1 encoder
+ * without another XDR revision.
+ */
+
+const FFV2_COUPLING_SYNTHETIC_UIDS  = 0x00000000;
+const FFV2_COUPLING_TIGHTLY_COUPLED = 0x00000001;
+const FFV2_COUPLING_TRUSTED_STATEID = 0x00000002;
+
+struct ffv2_device_versions4 {
+        uint32_t        ffv2dv_version;
+        uint32_t        ffv2dv_minorversion;
+        uint32_t        ffv2dv_rsize;
+        uint32_t        ffv2dv_wsize;
+        uint32_t        ffv2dv_coupling;
+};
+
+struct ffv2_device_addr4 {
+        multipath_list4       ffv2da_netaddrs;
+        ffv2_device_versions4 ffv2da_versions<>;
+};
+
 const FF_FLAGS_NO_LAYOUTCOMMIT   = 0x00000001;
 const FF_FLAGS_NO_IO_THRU_MDS    = 0x00000002;
 const FF_FLAGS_NO_READ_IO        = 0x00000004;
