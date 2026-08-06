@@ -4467,10 +4467,11 @@ uint32_t nfs4_op_setattr(struct compound *compound)
 	 * this case.
 	 *
 	 * The attribute stays in nattr_is_settable() because the
-	 * metadata server sets it through the OPEN(CREATE) createattrs
-	 * path, which reaches nattr_from_fattr4() via
-	 * nfs4_apply_createattrs() rather than through here.  Rejecting
-	 * at the SETATTR entry point is what separates the two.
+	 * metadata server does set it -- from the settle step at layout
+	 * assignment (see set_chunked in the dstore vtable), which
+	 * arrives here as an ordinary SETATTR over the control session.
+	 * So this cannot be an unconditional rejection: it must let the
+	 * metadata server through and stop everyone else.
 	 *
 	 * This matters beyond conformance: once CHUNK ops reject
 	 * operations on files whose attribute is clear, a client able to
@@ -4479,8 +4480,41 @@ uint32_t nfs4_op_setattr(struct compound *compound)
 	 */
 	if (bitmap4_attribute_is_set(&fattr->attrmask,
 				     FATTR4_CHUNKED_DATA_FILE)) {
-		*status = NFS4ERR_INVAL;
-		goto out;
+		/*
+		 * A client may never set it.  The metadata server may,
+		 * over its control session, but only while the file is
+		 * still empty -- the value is fixed once the file holds
+		 * data, because it describes the format that data is in.
+		 *
+		 * The control session is identified the same way
+		 * PROXY_REGISTRATION identifies its caller: by the
+		 * EXCHANGE_ID flags recorded on the client record.
+		 */
+		bool from_mds = compound->c_nfs4_client &&
+				(compound->c_nfs4_client->nc_exchgid_flags &
+				 EXCHGID4_FLAG_USE_PNFS_MDS);
+
+		if (!from_mds) {
+			*status = NFS4ERR_INVAL;
+			goto out;
+		}
+
+		/*
+		 * Emptiness predicate.  The draft states the invariant
+		 * and leaves the test to the implementation, so reffs
+		 * takes the conservative union: a file counts as
+		 * holding data if it has a non-zero size OR a chunk
+		 * store.  A false "empty" is the dangerous direction --
+		 * it would admit a format change to a file that already
+		 * holds content -- so either signal is enough to refuse.
+		 */
+		bool has_data = compound->c_inode->i_size > 0 ||
+				compound->c_inode->i_chunk_store != NULL;
+
+		if (has_data) {
+			*status = NFS4ERR_INVAL;
+			goto out;
+		}
 	}
 
 	/*
