@@ -258,7 +258,7 @@ int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 					ffv2_file_info4 *fi =
 						&ds->ffv2ds_file_info
 							 .ffv2ds_file_info_val[0];
-					nfs_fh4 *fh = &fi->fffi_fh_vers;
+					nfs_fh4 *fh = &fi->ffv2fi_fh_vers;
 
 					em->em_fh_len = fh->nfs_fh4_len;
 					if (em->em_fh_len > sizeof(em->em_fh))

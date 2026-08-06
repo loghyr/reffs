@@ -5105,8 +5105,8 @@ const FFV2_FLAGS_ONLY_ONE_WRITER   = 0x00000010;
 typedef uint32_t            ffv2_flags4;
 
 struct ffv2_file_info4 {
-    stateid4                fffi_stateid;
-    nfs_fh4                 fffi_fh_vers;
+    stateid4                ffv2fi_stateid;
+    nfs_fh4                 ffv2fi_fh_vers;
 };
 
 const FFV2_DS_FLAGS_ACTIVE        = 0x00000001;
@@ -5206,20 +5206,20 @@ struct ffv2_layout4 {
 };
 
 struct ffv2_ioerr4 {
-        offset4        ffie_offset;
-        length4        ffie_length;
-        stateid4       ffie_stateid;
-        device_error4  ffie_errors<>;
+        offset4        ffv2ie_offset;
+        length4        ffv2ie_length;
+        stateid4       ffv2ie_stateid;
+        device_error4  ffv2ie_errors<>;
 };
 
 struct ffv2_io_latency4 {
-        uint64_t       ffil_ops_requested;
-        uint64_t       ffil_bytes_requested;
-        uint64_t       ffil_ops_completed;
-        uint64_t       ffil_bytes_completed;
-        uint64_t       ffil_bytes_not_delivered;
-        nfstime4       ffil_total_busy_time;
-        nfstime4       ffil_aggregate_completion_time;
+        uint64_t       ffv2il_ops_requested;
+        uint64_t       ffv2il_bytes_requested;
+        uint64_t       ffv2il_ops_completed;
+        uint64_t       ffv2il_bytes_completed;
+        uint64_t       ffv2il_bytes_not_delivered;
+        nfstime4       ffv2il_total_busy_time;
+        nfstime4       ffv2il_aggregate_completion_time;
 };
 
 struct ffv2_layoutupdate4 {
@@ -5232,18 +5232,18 @@ struct ffv2_layoutupdate4 {
 };
 
 struct ffv2_iostats4 {
-        offset4            ffis_offset;
-        length4            ffis_length;
-        stateid4           ffis_stateid;
-        io_info4           ffis_read;
-        io_info4           ffis_write;
-        deviceid4          ffis_deviceid;
-        ffv2_layoutupdate4 ffis_layoutupdate;
+        offset4            ffv2is_offset;
+        length4            ffv2is_length;
+        stateid4           ffv2is_stateid;
+        io_info4           ffv2is_read;
+        io_info4           ffv2is_write;
+        deviceid4          ffv2is_deviceid;
+        ffv2_layoutupdate4 ffv2is_layoutupdate;
 };
 
 struct ffv2_layoutreturn4 {
-        ffv2_ioerr4     fflr_ioerr_report<>;
-        ffv2_iostats4   fflr_iostats_report<>;
+        ffv2_ioerr4     ffv2lr_ioerr_report<>;
+        ffv2_iostats4   ffv2lr_iostats_report<>;
 };
 
 struct ffv2_layouthint4 {

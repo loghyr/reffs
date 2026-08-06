@@ -1085,14 +1085,14 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 
 		ffv2_file_info4 *fi =
 			&ffds->ffv2ds_file_info.ffv2ds_file_info_val[0];
-		memset(&fi->fffi_stateid, 0, sizeof(fi->fffi_stateid));
-		fi->fffi_fh_vers.nfs_fh4_len = ldf->ldf_fh_len;
-		fi->fffi_fh_vers.nfs_fh4_val = calloc(1, ldf->ldf_fh_len);
-		if (!fi->fffi_fh_vers.nfs_fh4_val) {
+		memset(&fi->ffv2fi_stateid, 0, sizeof(fi->ffv2fi_stateid));
+		fi->ffv2fi_fh_vers.nfs_fh4_len = ldf->ldf_fh_len;
+		fi->ffv2fi_fh_vers.nfs_fh4_val = calloc(1, ldf->ldf_fh_len);
+		if (!fi->ffv2fi_fh_vers.nfs_fh4_val) {
 			ret = NFS4ERR_DELAY;
 			goto out_v2;
 		}
-		memcpy(fi->fffi_fh_vers.nfs_fh4_val, ldf->ldf_fh,
+		memcpy(fi->ffv2fi_fh_vers.nfs_fh4_val, ldf->ldf_fh,
 		       ldf->ldf_fh_len);
 
 		char uid_str[16], gid_str[16];
@@ -1155,7 +1155,8 @@ out_v2:
 				if (f2->ffv2ds_file_info.ffv2ds_file_info_val) {
 					free(f2->ffv2ds_file_info
 						     .ffv2ds_file_info_val[0]
-						     .fffi_fh_vers.nfs_fh4_val);
+						     .ffv2fi_fh_vers
+						     .nfs_fh4_val);
 					free(f2->ffv2ds_file_info
 						     .ffv2ds_file_info_val);
 				}
