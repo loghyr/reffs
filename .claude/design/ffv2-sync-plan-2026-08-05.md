@@ -720,13 +720,26 @@ The client reads the bit by masking rather than comparing the
 field, since it is a bitmask and a metadata server may set others
 alongside it.
 
-**Interop hazard -- the kernel client.**  This changes the v2
-GETDEVICEINFO body on the wire.  `psyklo/ffv2-client` decodes
-`ff_device_addr4` for v2 layouts today, so it will misread the
-reply until the K-series mirrors this.  There is no kernel tree on
-mana to check against, and the unit tests cover the wire shape
-rather than a live exchange, so this has not been demonstrated
-either way.  Mirror it before the next kernel bring-up.
+**Interop -- checked 2026-08-06, and it is benign.**  An earlier
+version of this entry called it a hazard that would make the kernel
+client misread the reply.  That was speculation, and it was wrong.
+
+`fs/nfs/flexfilesv2/flexfilesv2dev.c` in the ffv2-client tree
+decodes the v1 shape for v2 deviceids -- its own header says so --
+but the two are wire-identical here: five 32-bit words per version
+entry, and the decoder reads the fifth with a raw
+`be32_to_cpup(p)` into a `bool tightly_coupled` with no 0/1
+validation.
+
+So `FFV2_COUPLING_TRUSTED_STATEID` (2) lands as a true bool and
+`FFV2_COUPLING_SYNTHETIC_UIDS` (0) as false -- which is the correct
+reading of both.  Every coupling value that means "coupled" is
+non-zero, so the bitmask degrades to exactly the boolean the
+client already wanted.
+
+Still worth mirroring so the client can tell the coupling *kinds*
+apart, but it is a capability gap rather than a break, and it does
+not gate anything.
 
 **Not covered.**  No test drives `nfs4_op_getdeviceinfo` end to
 end -- the handler needs a dstore the unit harness does not
