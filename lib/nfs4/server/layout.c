@@ -1041,7 +1041,7 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 
 	mirror->ffm_striping = FFV2_STRIPING_DENSE;
 	mirror->ffm_striping_unit_size = 4096;
-	mirror->ffm_client_id = 0;
+	mirror->ffv2m_client_id = 0;
 
 	mirror->ffm_stripes.ffm_stripes_len = 1;
 	mirror->ffm_stripes.ffm_stripes_val = calloc(1, sizeof(ffv2_stripes4));
