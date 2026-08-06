@@ -46,23 +46,29 @@
  * require_mds_client -- return true if the compound has an associated
  * nfs4_client that is allowed to issue trust-stateid ops.
  *
- * Phase 2 NFSv4 dstore bring-up: the MDS-to-DS session uses
- * EXCHGID4_FLAG_USE_NON_PNFS per RFC 8881 S18.35 ("MDS is a plain
- * NFSv4 client of the DS, not the DS's MDS"), but the original guard
- * only accepted EXCHGID4_FLAG_USE_PNFS_MDS -- so every TRUST_STATEID
- * /REVOKE_STATEID/BULK_REVOKE_STATEID from the MDS came back with
- * NFS4ERR_PERM.  Probe at startup reported tight coupling disabled
- * for every dstore even though the protocol is wired correctly on
- * both sides.
+ * draft-haynes-nfsv4-flexfiles-v2 sec-tight-coupling-control-session:
+ * the data server MUST verify that TRUST_STATEID, REVOKE_STATEID and
+ * BULK_REVOKE_STATEID arrive on a session whose owning client
+ * presented EXCHGID4_FLAG_USE_PNFS_MDS, and MUST reject every other
+ * session with NFS4ERR_PERM.  That check is the sole access control on
+ * these operations, which is what makes it worth being strict about.
  *
- * Accept either flag: USE_PNFS_MDS for legacy callers, USE_NON_PNFS
- * for the MDS-to-DS path.  Production deployments will want a real
- * allowlist (similar to [[allowed_ps]] for proxy-server registration);
- * tracked as a follow-on.  For now, any session that completed
- * EXCHANGE_ID is allowed to fan out trust state to this DS -- the DS
- * has no authentication wider than the connection's RPCSEC and the
- * TRUST_STATEID op itself is purely advisory (the actual access
- * control is the client's stateid match against the trust table).
+ * This guard briefly also accepted EXCHGID4_FLAG_USE_NON_PNFS, because
+ * ds_session.c left mds_session_create at its USE_NON_PNFS default and
+ * the control plane was otherwise unreachable.  But USE_NON_PNFS is
+ * precisely what an ordinary client presents, so accepting it handed
+ * every client on this data server the ability to register trust
+ * entries and -- via BULK_REVOKE_STATEID -- to revoke another client's.
+ * The flag is now asked for at the source (see ds_session_create); the
+ * guard checks only for it.
+ *
+ * The flag is a self-declaration and nothing more: it distinguishes a
+ * metadata server from a client that is following the protocol, not
+ * from one that is not.  The draft says as much and puts the real
+ * control in the deployment (GSS machine principal, TLS client cert,
+ * or an isolated control-session network).  A local allowlist here,
+ * mirroring [[allowed_ps]] for proxy-server registration, is the
+ * matching reffs-side work and is not yet written.
  */
 static bool require_mds_client(struct compound *compound, nfsstat4 *status)
 {
@@ -72,8 +78,7 @@ static bool require_mds_client(struct compound *compound, nfsstat4 *status)
 	}
 	uint32_t flags = compound->c_nfs4_client->nc_exchgid_flags;
 
-	if (!(flags &
-	      (EXCHGID4_FLAG_USE_PNFS_MDS | EXCHGID4_FLAG_USE_NON_PNFS))) {
+	if (!(flags & EXCHGID4_FLAG_USE_PNFS_MDS)) {
 		*status = NFS4ERR_PERM;
 		return false;
 	}

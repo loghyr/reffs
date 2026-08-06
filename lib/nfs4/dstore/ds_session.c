@@ -76,17 +76,27 @@ int ds_session_create(struct dstore *ds)
 	 * Connect to the DS.  mds_session_create does:
 	 *   clnt_create --> EXCHANGE_ID --> CREATE_SESSION --> RECLAIM_COMPLETE
 	 *
-	 * Slice plan-A.iii flipped mds_session_create's EXCHANGE_ID
-	 * flag from EXCHGID4_FLAG_USE_PNFS_MDS to USE_NON_PNFS (the
-	 * PS is a regular NFSv4 client of its upstream MDS).  The DS
-	 * also wants USE_NON_PNFS, so the change is the right
-	 * direction for this caller too.  Note: any code path on the
-	 * DS server side that previously gated on USE_PNFS_MDS
-	 * (e.g., TRUST_STATEID per
-	 * lib/nfs4/server/trust_stateid_ops.c) now sees USE_NON_PNFS
-	 * here as well; those paths need verification before being
-	 * relied on against an MDS-to-DS session.
+	 * This is the control session, and it MUST present
+	 * EXCHGID4_FLAG_USE_PNFS_MDS.
+	 * draft-haynes-nfsv4-flexfiles-v2 sec-tight-coupling-control-session
+	 * makes that flag the data server's only means of telling the
+	 * metadata server apart from a client: the data server rejects
+	 * TRUST_STATEID / REVOKE_STATEID / BULK_REVOKE_STATEID from any
+	 * session that did not present it, and a pNFS client presents
+	 * USE_NON_PNFS instead.
+	 *
+	 * mds_session_create defaults to USE_NON_PNFS, which is right for
+	 * its other caller (the proxy server, a regular NFSv4 client of
+	 * its upstream metadata server, and required by
+	 * PROXY_REGISTRATION).  Wrong here: with USE_NON_PNFS the data
+	 * server cannot distinguish this session from a client's, so
+	 * either it rejects the control plane outright or it accepts
+	 * USE_NON_PNFS and thereby opens the control plane to every
+	 * client.  Ask for the flag explicitly rather than living with
+	 * that choice.
 	 */
+	ms->ms_exchgid_flags = EXCHGID4_FLAG_USE_PNFS_MDS;
+
 	/*
 	 * mds_session_clnt_open parses the host string for a "host:port"
 	 * suffix and bypasses portmap when a port is present.  When the

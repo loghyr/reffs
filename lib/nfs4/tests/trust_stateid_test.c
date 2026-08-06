@@ -803,6 +803,52 @@ START_TEST(test_op_trust_stateid_not_from_mds)
 END_TEST
 
 /*
+ * EXCHGID4_FLAG_USE_NON_PNFS is what an ordinary NFSv4 client presents,
+ * so it must not open the control plane.
+ *
+ * draft-haynes-nfsv4-flexfiles-v2 sec-tight-coupling-control-session is
+ * explicit that the USE_PNFS_MDS check is the sole access control on
+ * these operations, and that "a pNFS client connecting to the storage
+ * device does not present EXCHGID4_FLAG_USE_PNFS_MDS and therefore
+ * cannot invoke them."  Accepting USE_NON_PNFS would hand every client
+ * on the data server the ability to register and revoke trust entries.
+ *
+ * The flags=0 test above does not cover this: no real client sends
+ * zero.
+ */
+START_TEST(test_op_trust_stateid_plain_client_rejected)
+{
+	struct cm_ctx *cm = cm_alloc(1, EXCHGID4_FLAG_USE_NON_PNFS);
+
+	cm_set_inode(cm, g_op_inode);
+	cm_set_op(cm, 0, OP_TRUST_STATEID);
+
+	TRUST_STATEID4args *args =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.optrust_stateid;
+	args->tsa_layout_stateid = make_stateid(0x23);
+	args->tsa_iomode = LAYOUTIOMODE4_RW;
+	struct timespec now;
+	clock_gettime(CLOCK_REALTIME, &now);
+	args->tsa_expire.seconds = (int64_t)now.tv_sec + 30;
+	args->tsa_expire.nseconds = 0;
+
+	nfs4_op_trust_stateid(cm->compound);
+
+	TRUST_STATEID4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					  .nfs_resop4_u.optrust_stateid;
+	ck_assert_int_eq(res->tsr_status, NFS4ERR_PERM);
+
+	/* Nothing may have been registered. */
+	stateid4 stid = make_stateid(0x23);
+
+	ck_assert_ptr_null(trust_stateid_find(&stid));
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
  * The anonymous stateid (capability probe) must return NFS4ERR_INVAL,
  * not NFS4ERR_BAD_STATEID, so the MDS can distinguish "not supported"
  * from "bad stateid".
@@ -997,6 +1043,46 @@ START_TEST(test_op_revoke_stateid_not_from_mds)
 END_TEST
 
 /*
+ * As above: a plain client (USE_NON_PNFS) must not be able to revoke
+ * another client's trust entry.
+ */
+START_TEST(test_op_revoke_stateid_plain_client_rejected)
+{
+	struct cm_ctx *cm = cm_alloc(1, EXCHGID4_FLAG_USE_NON_PNFS);
+	stateid4 stid = make_stateid(0xBC);
+
+	/* Pre-register the entry the plain client will try to revoke. */
+	ck_assert_int_eq(trust_stateid_register(&stid, g_op_inode->i_ino,
+						0x2222, LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+
+	cm_set_inode(cm, g_op_inode);
+	cm_set_op(cm, 0, OP_REVOKE_STATEID);
+
+	REVOKE_STATEID4args *args =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.oprevoke_stateid;
+	args->rsa_layout_stateid = stid;
+
+	nfs4_op_revoke_stateid(cm->compound);
+
+	REVOKE_STATEID4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					   .nfs_resop4_u.oprevoke_stateid;
+	ck_assert_int_eq(res->rsr_status, NFS4ERR_PERM);
+
+	/* The entry must have survived the rejected revoke. */
+	struct trust_entry *te = trust_stateid_find(&stid);
+
+	ck_assert_ptr_nonnull(te);
+	trust_entry_put(te);
+	trust_stateid_revoke(&stid);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
  * A special stateid (anonymous) must return NFS4ERR_BAD_STATEID.
  */
 START_TEST(test_op_revoke_stateid_special_stateid)
@@ -1108,6 +1194,46 @@ START_TEST(test_op_bulk_revoke_stateid_not_from_mds)
 		&cm->compound->c_res->resarray.resarray_val[0]
 			 .nfs_resop4_u.opbulk_revoke_stateid;
 	ck_assert_int_eq(res->brsr_status, NFS4ERR_PERM);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * The one that matters most: BULK_REVOKE_STATEID from a plain client
+ * would revoke every trust entry belonging to the named client, which
+ * stops that client's I/O on this data server outright.  A session that
+ * presented only USE_NON_PNFS must not get there.
+ */
+START_TEST(test_op_bulk_revoke_stateid_plain_client_rejected)
+{
+	struct cm_ctx *cm = cm_alloc(1, EXCHGID4_FLAG_USE_NON_PNFS);
+	stateid4 stid = make_stateid(0xBD);
+
+	ck_assert_int_eq(trust_stateid_register(&stid, g_op_inode->i_ino,
+						0x3333, LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+
+	cm_set_op(cm, 0, OP_BULK_REVOKE_STATEID);
+
+	BULK_REVOKE_STATEID4args *args =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.opbulk_revoke_stateid;
+	args->brsa_clientid = 0x3333;
+
+	nfs4_op_bulk_revoke_stateid(cm->compound);
+
+	BULK_REVOKE_STATEID4res *res =
+		&cm->compound->c_res->resarray.resarray_val[0]
+			 .nfs_resop4_u.opbulk_revoke_stateid;
+	ck_assert_int_eq(res->brsr_status, NFS4ERR_PERM);
+
+	struct trust_entry *te = trust_stateid_find(&stid);
+
+	ck_assert_ptr_nonnull(te);
+	trust_entry_put(te);
+	trust_stateid_revoke(&stid);
 
 	cm_free(cm);
 }
@@ -1531,6 +1657,7 @@ static Suite *trust_stateid_suite(void)
 	tcase_add_checked_fixture(tc_f, op_setup, op_teardown);
 	tcase_add_test(tc_f, test_op_trust_stateid_ok);
 	tcase_add_test(tc_f, test_op_trust_stateid_not_from_mds);
+	tcase_add_test(tc_f, test_op_trust_stateid_plain_client_rejected);
 	tcase_add_test(tc_f, test_op_trust_stateid_anon_rejected);
 	tcase_add_test(tc_f, test_op_trust_stateid_no_fh);
 	tcase_add_test(tc_f, test_op_trust_stateid_past_expire);
@@ -1541,6 +1668,7 @@ static Suite *trust_stateid_suite(void)
 	tcase_add_checked_fixture(tc_g, op_setup, op_teardown);
 	tcase_add_test(tc_g, test_op_revoke_stateid_ok);
 	tcase_add_test(tc_g, test_op_revoke_stateid_not_from_mds);
+	tcase_add_test(tc_g, test_op_revoke_stateid_plain_client_rejected);
 	tcase_add_test(tc_g, test_op_revoke_stateid_special_stateid);
 	tcase_add_test(tc_g, test_op_revoke_stateid_no_fh);
 	suite_add_tcase(s, tc_g);
@@ -1549,6 +1677,7 @@ static Suite *trust_stateid_suite(void)
 	tcase_add_checked_fixture(tc_h, op_setup, op_teardown);
 	tcase_add_test(tc_h, test_op_bulk_revoke_stateid_ok);
 	tcase_add_test(tc_h, test_op_bulk_revoke_stateid_not_from_mds);
+	tcase_add_test(tc_h, test_op_bulk_revoke_stateid_plain_client_rejected);
 	suite_add_tcase(s, tc_h);
 
 	TCase *tc_i = tcase_create("chunk_trust_hook");
