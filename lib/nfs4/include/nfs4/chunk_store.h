@@ -35,8 +35,11 @@ enum chunk_state {
 	CHUNK_STATE_COMMITTED = 3,
 };
 
-/* Per-block flags (cb_flags).  Wire format: chrr_locked is bool<>,
- * but in-memory we use a flags word for extensibility. */
+/* Per-block flags (cb_flags).  Wire format: chrr_locked (and cr_locked
+ * in read_chunk4) is chunk_state_flags4<> -- a bit-field typedef
+ * whose only defined bit today is CHUNK_STATE_FLAGS_LOCKED (0x1).
+ * In-memory the same bit lives in cb_flags; future flag bits fit
+ * without another XDR revision. */
 #define CHUNK_BLOCK_LOCKED 0x1
 /*
  * Set by OP_CHUNK_WRITE_REPAIR on every block it touches; persisted

@@ -3534,10 +3534,10 @@ struct CHUNK_HEADER_READ4args {
 };
 
 struct CHUNK_HEADER_READ4resok {
-    bool            chrr_eof;
-    nfsstat4        chrr_status<>;
-    bool            chrr_locked<>;
-    chunk_owner4    chrr_chunks<>;
+    bool                chrr_eof;
+    nfsstat4            chrr_status<>;
+    chunk_state_flags4  chrr_locked<>;
+    chunk_owner4        chrr_chunks<>;
 };
 
 union CHUNK_HEADER_READ4res switch (nfsstat4 chrr_status) {
@@ -3572,13 +3572,13 @@ struct CHUNK_READ4args {
 };
 
 struct read_chunk4 {
-    checksum4       cr_checksum;
-    uint32_t        cr_effective_len;
-    chunk_owner4    cr_owner;
-    uint32_t        cr_payload_id;
-    bool            cr_locked<>;
-    nfsstat4        cr_status<>;
-    opaque          cr_chunk<>;
+    checksum4           cr_checksum;
+    uint32_t            cr_effective_len;
+    chunk_owner4        cr_owner;
+    uint32_t            cr_payload_id;
+    chunk_state_flags4  cr_locked<>;
+    nfsstat4            cr_status<>;
+    opaque              cr_chunk<>;
 };
 
 struct CHUNK_READ4resok {
@@ -4994,12 +4994,12 @@ struct ffv2_io_latency4 {
 };
 
 struct ffv2_layoutupdate4 {
-        netaddr4         ffl_addr;
-        nfs_fh4          ffl_fhandle;
-        ffv2_io_latency4 ffl_read;
-        ffv2_io_latency4 ffl_write;
-        nfstime4         ffl_duration;
-        bool             ffl_local;
+        netaddr4                 ffl_addr;
+        nfs_fh4                  ffl_fhandle;
+        ffv2_io_latency4         ffl_read;
+        ffv2_io_latency4         ffl_write;
+        nfstime4                 ffl_duration;
+        ffv2_layoutstats_flags4  ffv2l_local;
 };
 
 struct ffv2_iostats4 {
