@@ -42,6 +42,7 @@
 #include "reffs/inode.h"
 #include "reffs/server.h"
 #include "reffs/super_block.h"
+#include "nfs4/attr.h"
 #include "nfs4/chunk_checksum.h"
 #include "nfs4/chunk_store.h"
 #include "nfs4/client.h"
@@ -1354,9 +1355,22 @@ static void set_chunked_attr_args(struct cm_ctx *cm, bool chunked,
 
 static nfsstat4 run_setattr(struct cm_ctx *cm)
 {
+	SETATTR4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+				    .nfs_resop4_u.opsetattr;
+
 	nfs4_op_setattr(cm->compound);
-	return cm->compound->c_res->resarray.resarray_val[0]
-		.nfs_resop4_u.opsetattr.status;
+
+	nfsstat4 status = res->status;
+
+	/*
+	 * nattr_to_inode() copies the attrmask into res->attrsset on
+	 * the success path, allocating it.  Production releases that
+	 * through the XDR free path once the compound is encoded;
+	 * calling the handler directly means the test owns it.
+	 */
+	bitmap4_destroy(&res->attrsset);
+	memset(&res->attrsset, 0, sizeof(res->attrsset));
+	return status;
 }
 
 START_TEST(test_attr90_client_setattr_rejected)
