@@ -57,6 +57,24 @@ struct dstore_ops {
 		     struct layout_data_file *ldf, uint32_t fence_min,
 		     uint32_t fence_max, struct dstore_wcc *wcc);
 
+	/*
+	 * Settle fattr4_chunked_data_file (attribute 90) on a data
+	 * file, declaring whether it holds chunks or the writer's data
+	 * as supplied.  Called at layout assignment, once the encoding
+	 * is known and while the file is still empty -- the draft fixes
+	 * the value as soon as the file holds data
+	 * (draft-haynes-nfsv4-flexfiles-v2
+	 * sec-fattr4_chunked_data_file).
+	 *
+	 * NULL for NFSv3 dstores: CHUNK operations are NFSv4.2
+	 * operations and chunked encodings require tight coupling, so a
+	 * v3-backed data file is non-chunked by construction and has
+	 * nothing to declare.  Callers MUST tolerate a NULL entry.
+	 */
+	int (*set_chunked)(struct dstore *ds, const uint8_t *fh,
+			   uint32_t fh_len, bool chunked,
+			   struct dstore_wcc *wcc);
+
 	int (*getattr)(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 		       struct layout_data_file *ldf);
 
@@ -161,6 +179,21 @@ static inline int dstore_data_file_fence(struct dstore *ds, const uint8_t *fh,
 {
 	return ds->ds_ops->fence(ds, fh, fh_len, ldf, fence_min, fence_max,
 				 wcc);
+}
+
+/*
+ * Returns 0 when the dstore has no set_chunked entry -- an NFSv3
+ * data file is non-chunked by construction, so "nothing to declare"
+ * is success, not an error the caller must special-case.
+ */
+static inline int dstore_data_file_set_chunked(struct dstore *ds,
+					       const uint8_t *fh,
+					       uint32_t fh_len, bool chunked,
+					       struct dstore_wcc *wcc)
+{
+	if (!ds->ds_ops->set_chunked)
+		return 0;
+	return ds->ds_ops->set_chunked(ds, fh, fh_len, chunked, wcc);
 }
 
 static inline int dstore_data_file_getattr(struct dstore *ds, const uint8_t *fh,

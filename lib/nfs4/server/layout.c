@@ -1639,13 +1639,16 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 			files[nfiles].ldf_gid = fence_min;
 			files[nfiles].ldf_mode = 0640;
 
-			dstore_data_file_fence(ds, files[nfiles].ldf_fh,
-					       files[nfiles].ldf_fh_len,
-					       &files[nfiles], fence_min,
-					       fence_max, NULL);
-			dstore_data_file_chmod(ds, files[nfiles].ldf_fh,
-					       files[nfiles].ldf_fh_len, NULL);
-
+			/*
+			 * Fence / chmod / attribute 90 are deliberately
+			 * NOT done here.  The encoding is not resolved
+			 * until default_coding_resolve_segment() below,
+			 * which needs the final nfiles, and attribute 90
+			 * cannot be settled before the encoding is known.
+			 * Doing all three in one pass after the geometry
+			 * check also means a shortfall strands unmodified
+			 * pool files rather than fenced ones.
+			 */
 			nfiles++;
 		}
 
@@ -1696,24 +1699,21 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 
 		if (code_rc == -EAGAIN) {
 			/*
-			 * NOT_NOW_BROWN_COW: the runway-pop loop above
-			 * already fenced (rotated synthetic uid/gid)
-			 * and chmod'd up to `nfiles` FHs on the DSes
-			 * before we discovered the geometry shortfall.
-			 * Returning NFS4ERR_LAYOUTUNAVAILABLE here
-			 * drops those FHs on the floor -- no
-			 * in-memory layout_segment owns them, the
-			 * runway has no return-to-pool API, and the DS
-			 * doesn't know to clean them up.  The
-			 * pre-fix code accepted the degraded geometry
-			 * so the FHs always got used; this slice
-			 * intentionally refuses the degraded path
-			 * (plan-review BLOCKER B2) which exposes the
-			 * leak.  Permanent fix: add
-			 * runway_return(ds, fh) or DS-side REMOVE
-			 * in this path.  Tracked alongside the
-			 * "Runway pool that pre-allocates k+m FHs per
+			 * NOT_NOW_BROWN_COW: the popped FHs are
+			 * dropped on the floor here -- no in-memory
+			 * layout_segment owns them, the runway has no
+			 * return-to-pool API, and the data server does
+			 * not know to clean them up.  Permanent fix:
+			 * add runway_return(ds, fh) or a data-server
+			 * REMOVE on this path.  Tracked alongside the
+			 * "runway pool that pre-allocates k+m FHs per
 			 * default_coding" deferral in the design.
+			 *
+			 * Narrowed by the S1.1 loop split: fence, chmod
+			 * and attribute 90 now all happen after this
+			 * geometry check, so a shortfall strands
+			 * untouched pool files rather than files whose
+			 * synthetic uid/gid had already been rotated.
 			 */
 			free(files);
 			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
@@ -1721,6 +1721,59 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 			      nfiles, target);
 			*status = NFS4ERR_LAYOUTUNAVAILABLE;
 			return 0;
+		}
+
+		/*
+		 * Settle step (S1.1).  The encoding is now known and the
+		 * files are still empty -- nothing has been written to
+		 * them, the client has not yet been handed the layout.
+		 * That is the only window in which attribute 90 may be
+		 * set: the draft fixes its value once the file holds
+		 * data (sec-fattr4_chunked_data_file).
+		 *
+		 * Fence and chmod moved here from the pop loop so all
+		 * three per-file SETATTRs happen after the geometry
+		 * check.
+		 *
+		 * NOT_NOW_BROWN_COW: this is three round-trips per file
+		 * where two would do.  fence already sends a
+		 * SETATTR(uid, gid) and attribute 90 could ride in the
+		 * same attrmask.  Kept separate here so that a
+		 * credential-rotation operation does not also declare a
+		 * file's content format; fold them if LAYOUTGET
+		 * round-trips become a measured problem.
+		 */
+		{
+			bool seg_chunked =
+				(seg_encoding !=
+				 (uint32_t)REFFS_ENCODING_PASSTHROUGH);
+
+			for (uint32_t i = 0; i < nfiles; i++) {
+				struct dstore *sds =
+					dstore_find(files[i].ldf_dstore_id);
+
+				if (!sds)
+					continue;
+
+				dstore_data_file_fence(sds, files[i].ldf_fh,
+						       files[i].ldf_fh_len,
+						       &files[i], fence_min,
+						       fence_max, NULL);
+				dstore_data_file_chmod(sds, files[i].ldf_fh,
+						       files[i].ldf_fh_len,
+						       NULL);
+				/*
+				 * Best effort: a data server that does
+				 * not support attribute 90 falls back to
+				 * the other identification methods in
+				 * sec-data-file-identification, so a
+				 * failure here is not fatal to LAYOUTGET.
+				 */
+				dstore_data_file_set_chunked(
+					sds, files[i].ldf_fh,
+					files[i].ldf_fh_len, seg_chunked, NULL);
+				dstore_put(sds);
+			}
 		}
 
 		struct layout_segment seg = {

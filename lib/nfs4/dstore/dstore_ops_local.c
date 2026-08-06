@@ -196,6 +196,35 @@ static int local_truncate(struct dstore *ds __attribute__((unused)),
 /* FENCE                                                               */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Settle attribute 90 on a combined-mode (local VFS) data file.
+ * Same contract as the NFSv4.2 backend, applied straight to the
+ * inode instead of over the wire.  Without this, combined-mode
+ * files would stay permanently unidentified and any future
+ * enforcement would have to special-case which vtable created a
+ * file.
+ */
+static int local_set_chunked(struct dstore *ds __attribute__((unused)),
+			     const uint8_t *fh, uint32_t fh_len, bool chunked,
+			     struct dstore_wcc *wcc __attribute__((unused)))
+{
+	struct inode *inode = local_fh_to_inode(fh, fh_len);
+
+	if (!inode)
+		return -ESTALE;
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	if (chunked)
+		inode->i_attr_flags |= INODE_IS_CHUNKED_DATA_FILE;
+	else
+		inode->i_attr_flags &= ~INODE_IS_CHUNKED_DATA_FILE;
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+
+	inode_sync_to_disk(inode);
+	inode_active_put(inode);
+	return 0;
+}
+
 static int local_fence(struct dstore *ds __attribute__((unused)),
 		       const uint8_t *fh, uint32_t fh_len,
 		       struct layout_data_file *ldf, uint32_t fence_min,
@@ -365,6 +394,7 @@ const struct dstore_ops dstore_ops_local = {
 	.chmod = local_chmod,
 	.truncate = local_truncate,
 	.fence = local_fence,
+	.set_chunked = local_set_chunked,
 	.getattr = local_getattr,
 	.probe_tight_coupling = local_probe_tight_coupling,
 	.trust_stateid = local_trust_stateid,

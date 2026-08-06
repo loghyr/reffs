@@ -221,34 +221,28 @@ static int nfsv4_create(struct dstore *ds, const uint8_t *dir_fh,
 	oa->openhow.opentype = OPEN4_CREATE;
 	oa->openhow.openflag4_u.how.mode = UNCHECKED4;
 	/*
-	 * Set fattr4_chunked_data_file = TRUE atomically with file
-	 * creation so a data server that supports attribute 90
-	 * (draft-haynes-nfsv4-flexfiles-v2 sec-fattr4_chunked_data_file)
-	 * classifies the new file as a chunked-encoding data file and
-	 * enforces the CHUNK-family restrictions in sec-ops-client.
+	 * No createattrs.  fattr4_chunked_data_file cannot be set
+	 * here: the runway pre-creates a pool of empty files at
+	 * startup, and which encoding a file will hold is not chosen
+	 * until it is popped at layout assignment.  Setting the
+	 * attribute here would guess, and guessed TRUE is wrong for
+	 * every file that ends up holding passthrough data.
 	 *
-	 * attr 90 lives in bit 26 of bitmap word 2 (word = 90/32 = 2,
-	 * bit = 90%32 = 26).  The XDR encoding of a bool TRUE is the
-	 * four-byte big-endian value 0x00000001.
-	 *
-	 * NOT_NOW_BROWN_COW: on ATTRNOTSUPP from a non-reffs data
-	 * server the OPEN currently fails end-to-end and takes the
-	 * runway file with it; retry-without-createattrs plus a
-	 * per-dstore capability latch is the follow-up.  Every reffs
-	 * data server advertises attribute 90 as of the R3 slice, so
-	 * the reffs-to-reffs deployment we care about first is not
-	 * exposed.
+	 * The draft fixes the value only once the file holds data
+	 * (sec-fattr4_chunked_data_file), and explicitly permits a
+	 * metadata server that allocates before choosing an encoding
+	 * to set the final value while the file is still empty.  That
+	 * is what the settle step at layout assignment does; see
+	 * set_chunked in the dstore vtable.
 	 */
-	static uint32_t chunked_bits[3] = { 0, 0, 1U << 26 };
-	static char chunked_true_val[4] = { 0x00, 0x00, 0x00, 0x01 };
 	oa->openhow.openflag4_u.how.createhow4_u.createattrs.attrmask
-		.bitmap4_len = 3;
+		.bitmap4_len = 0;
 	oa->openhow.openflag4_u.how.createhow4_u.createattrs.attrmask
-		.bitmap4_val = chunked_bits;
+		.bitmap4_val = NULL;
 	oa->openhow.openflag4_u.how.createhow4_u.createattrs.attr_vals
-		.attrlist4_len = 4;
+		.attrlist4_len = 0;
 	oa->openhow.openflag4_u.how.createhow4_u.createattrs.attr_vals
-		.attrlist4_val = chunked_true_val;
+		.attrlist4_val = NULL;
 	oa->claim.claim = CLAIM_NULL;
 	oa->claim.open_claim4_u.file.utf8string_val = (char *)name;
 	oa->claim.open_claim4_u.file.utf8string_len = strlen(name);
@@ -543,6 +537,67 @@ static int nfsv4_truncate(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 	sa->obj_attributes.attrmask.bitmap4_val = size_bits;
 	sa->obj_attributes.attr_vals.attrlist4_len = 8;
 	sa->obj_attributes.attr_vals.attrlist4_val = size_buf;
+
+	ret = send_and_check_ds(&mc, ds, ms, &dead);
+	mds_compound_fini(&mc);
+	ds_after_send(ds, ms, dead);
+	return ret;
+
+err:
+	mds_compound_fini(&mc);
+	dstore_session_release(ds);
+	return -ENOSPC;
+}
+
+/* ------------------------------------------------------------------ */
+/* SET_CHUNKED (SETATTR fattr4_chunked_data_file, attribute 90)        */
+/* ------------------------------------------------------------------ */
+
+static int nfsv4_set_chunked(struct dstore *ds, const uint8_t *fh,
+			     uint32_t fh_len, bool chunked,
+			     struct dstore_wcc *wcc __attribute__((unused)))
+{
+	struct mds_session *ms = dstore_session_borrow(ds);
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+	bool dead = false;
+
+	if (!ms)
+		return -ENOTCONN;
+
+	/* SEQUENCE + PUTFH + SETATTR(fattr4_chunked_data_file) */
+	ret = mds_compound_init(&mc, 3, "ds_set_chunked");
+	if (ret) {
+		dstore_session_release(ds);
+		return ret;
+	}
+
+	if (add_seq_putfh(&mc, ms, fh, fh_len))
+		goto err;
+
+	slot = mds_compound_add_op(&mc, OP_SETATTR);
+	if (!slot)
+		goto err;
+
+	SETATTR4args *sa = &slot->nfs_argop4_u.opsetattr;
+
+	memset(&sa->stateid, 0, sizeof(sa->stateid));
+
+	/*
+	 * Attribute 90 lives in bit 26 of bitmap word 2 (90 / 32 = 2,
+	 * 90 % 32 = 26).  The XDR encoding of a bool is a four-byte
+	 * big-endian 0 or 1, so the buffer is order-independent.
+	 */
+	static uint32_t chunked_bits[3] = { 0, 0, 1U << 26 };
+	char chunked_val[4] = { 0, 0, 0, 0 };
+
+	chunked_val[3] = chunked ? 1 : 0;
+
+	sa->obj_attributes.attrmask.bitmap4_len = 3;
+	sa->obj_attributes.attrmask.bitmap4_val = chunked_bits;
+	sa->obj_attributes.attr_vals.attrlist4_len = 4;
+	sa->obj_attributes.attr_vals.attrlist4_val = chunked_val;
 
 	ret = send_and_check_ds(&mc, ds, ms, &dead);
 	mds_compound_fini(&mc);
@@ -1059,6 +1114,7 @@ const struct dstore_ops dstore_ops_nfsv4 = {
 	.chmod = nfsv4_chmod,
 	.truncate = nfsv4_truncate,
 	.fence = nfsv4_fence,
+	.set_chunked = nfsv4_set_chunked,
 	.getattr = nfsv4_getattr,
 	.read = nfsv4_read,
 	.write = nfsv4_write,
