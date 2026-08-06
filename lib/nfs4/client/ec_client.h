@@ -615,6 +615,20 @@ struct ec_mirror {
 	 */
 	uint32_t em_checksum_algorithm;
 	/*
+	 * Writer identity this client must stamp on CHUNK operations
+	 * against this mirror, from the layout's ffv2m_client_id.
+	 *
+	 * draft-haynes-nfsv4-flexfiles-v2: the metadata server assigns
+	 * it and registers the same value with the data server, which
+	 * rejects a CHUNK operation presenting anything else with
+	 * NFS4ERR_BAD_STATEID.  It is not the client's to choose.
+	 *
+	 * CHUNK_GUARD_CLIENT_ID_NONE means the metadata server did not
+	 * assign one -- see chunk_writer_client_id() for what the
+	 * client does then.
+	 */
+	uint32_t em_client_id;
+	/*
 	 * em_local: set by ec_resolve_mirrors when the mirror's
 	 * deviceinfo resolves to one of the PS's own bound addresses
 	 * (Phase 5 short-circuit).  When true, ec_chunk_read /
@@ -737,7 +751,8 @@ int ds_read(struct ds_conn *dc, const uint8_t *fh, uint32_t fh_len,
 int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		   uint64_t block_offset, uint32_t chunk_size,
 		   const uint8_t *data, uint32_t data_len, uint32_t owner_id,
-		   const stateid4 *stateid, const chunk_guard4 *guard);
+		   uint32_t layout_client_id, const stateid4 *stateid,
+		   const chunk_guard4 *guard);
 
 /*
  * ds_chunk_write_repair -- OP_CHUNK_WRITE_REPAIR to a data server.
@@ -749,7 +764,7 @@ int ds_chunk_write_repair(struct mds_session *ds, const uint8_t *fh,
 			  uint32_t fh_len, uint64_t block_offset,
 			  uint32_t chunk_size, const uint8_t *data,
 			  uint32_t data_len, uint32_t owner_id,
-			  const stateid4 *stateid);
+			  uint32_t layout_client_id, const stateid4 *stateid);
 
 /*
  * mds_chunk_repaired -- OP_CHUNK_REPAIRED to the MDS.

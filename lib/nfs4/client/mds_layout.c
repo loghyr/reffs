@@ -252,6 +252,7 @@ int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 				 */
 				em->em_checksum_algorithm =
 					m0->ffv2m_checksum_algorithm;
+				em->em_client_id = m0->ffv2m_client_id;
 
 				if (ds->ffv2ds_file_info.ffv2ds_file_info_len >
 				    0) {

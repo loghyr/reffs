@@ -45,8 +45,35 @@
 /* v=N+1, the stale-read writer's guard {N} mismatches current {N+1}). */
 /* ------------------------------------------------------------------ */
 
-static uint32_t chunk_writer_client_id(void)
+/*
+ * chunk_writer_client_id -- the cg_client_id to stamp on a CHUNK
+ * operation against this mirror.
+ *
+ * draft-haynes-nfsv4-flexfiles-v2: the writer identity belongs to the
+ * metadata server.  It assigns it, publishes it to the client as the
+ * layout's ffv2m_client_id, and registers the same value with each
+ * data server as tsa_client_id; a data server rejects a CHUNK
+ * operation presenting anything else with NFS4ERR_BAD_STATEID,
+ * because a client presenting another writer's identity is
+ * indistinguishable from one spoofing it.  So when the layout carries
+ * an identity, echo it -- this is not the client's choice to make.
+ *
+ * layout_client_id == CHUNK_GUARD_CLIENT_ID_NONE means the metadata
+ * server assigned nothing.  Presenting NONE would be rejected outright
+ * (it is a reserved sentinel), so fall back to the older self-assigned
+ * value, which is what every metadata server expected before the
+ * identity became server-assigned.  A data server that registered no
+ * binding does not compare, so this stays interoperable in both
+ * directions; one that did register a binding will reject us, which is
+ * the correct answer to a metadata server and data server that
+ * disagree.
+ */
+static uint32_t chunk_writer_client_id(uint32_t layout_client_id)
 {
+	if (layout_client_id != CHUNK_GUARD_CLIENT_ID_NONE &&
+	    layout_client_id != CHUNK_GUARD_CLIENT_ID_MDS)
+		return layout_client_id;
+
 	pid_t pid = getpid();
 	uint32_t cid = (uint32_t)pid;
 	/* Sentinels NONE=0, MDS=0xFFFFFFFF: rotate either away to keep
@@ -79,7 +106,8 @@ static uint32_t chunk_writer_next_gen_id(void)
 int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		   uint64_t block_offset, uint32_t chunk_size,
 		   const uint8_t *data, uint32_t data_len, uint32_t owner_id,
-		   const stateid4 *stateid, const chunk_guard4 *guard)
+		   uint32_t layout_client_id, const stateid4 *stateid,
+		   const chunk_guard4 *guard)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -121,7 +149,8 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	cwa->cwa_offset = block_offset;
 	cwa->cwa_stable = FILE_SYNC4;
 	cwa->cwa_owner.co_guard.cg_gen_id = chunk_writer_next_gen_id();
-	cwa->cwa_owner.co_guard.cg_client_id = chunk_writer_client_id();
+	cwa->cwa_owner.co_guard.cg_client_id =
+		chunk_writer_client_id(layout_client_id);
 	cwa->cwa_owner.co_id = owner_id;
 	cwa->cwa_payload_id = 0;
 	cwa->cwa_flags = 0;
@@ -282,7 +311,7 @@ int ds_chunk_write_repair(struct mds_session *ds, const uint8_t *fh,
 			  uint32_t fh_len, uint64_t block_offset,
 			  uint32_t chunk_size, const uint8_t *data,
 			  uint32_t data_len, uint32_t owner_id,
-			  const stateid4 *stateid)
+			  uint32_t layout_client_id, const stateid4 *stateid)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -321,7 +350,8 @@ int ds_chunk_write_repair(struct mds_session *ds, const uint8_t *fh,
 	cwra->cwra_offset = block_offset;
 	cwra->cwra_stable = FILE_SYNC4;
 	cwra->cwra_owner.co_guard.cg_gen_id = chunk_writer_next_gen_id();
-	cwra->cwra_owner.co_guard.cg_client_id = chunk_writer_client_id();
+	cwra->cwra_owner.co_guard.cg_client_id =
+		chunk_writer_client_id(layout_client_id);
 	cwra->cwra_owner.co_id = owner_id;
 	cwra->cwra_payload_id = 0;
 	cwra->cwra_chunk_size = chunk_size;

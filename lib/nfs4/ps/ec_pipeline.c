@@ -364,7 +364,8 @@ int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
 
 		ret = ds_chunk_write(ctx->ctx_ds_sess[mirror_idx], em->em_fh,
 				     em->em_fh_len, block_offset, chunk_sz, src,
-				     wsz, owner_id, stid, guard);
+				     wsz, owner_id, em->em_client_id, stid,
+				     guard);
 		if (ret != -ESTALE)
 			return ret;
 
@@ -2726,11 +2727,10 @@ int ec_repair_encoding(struct mds_session *ms, const char *path, int k, int m,
 			uint64_t blk_off =
 				(uint64_t)s * DIV_CEIL(ds_stride, rd_chunk_sz);
 
-			ret = ds_chunk_write_repair(ctx.ctx_ds_sess[i],
-						    em->em_fh, em->em_fh_len,
-						    blk_off, rd_chunk_sz,
-						    shards[i], rsz, 1,
-						    &ctx.ctx_layout.el_stateid);
+			ret = ds_chunk_write_repair(
+				ctx.ctx_ds_sess[i], em->em_fh, em->em_fh_len,
+				blk_off, rd_chunk_sz, shards[i], rsz, 1,
+				em->em_client_id, &ctx.ctx_layout.el_stateid);
 			if (ret)
 				break;
 			stats.shards_repaired++;
