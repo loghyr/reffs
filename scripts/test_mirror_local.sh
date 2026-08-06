@@ -103,18 +103,38 @@ cat >"$run_dir/reffsd.toml" <<-EOF
 
 EOF
 
-# N data_server blocks, all pointing at the local reffsd.  Combined
-# mode picks dstore_ops_local on a 127.0.0.1 address, so I/O is via
-# the local VFS, not a loopback RPC.
+# N data_server blocks, all pointing at the local reffsd.
+#
+# The vtable is chosen by dstore_alloc's `force_remote = port > 0`, so
+# naming a port is what puts these on the loopback NFSv3 path rather
+# than the local VFS -- an earlier comment here claimed the opposite.
+#
+# COUPLING=local drops the port, which gives dstore_ops_local: mounted
+# immediately, always tight coupled, and therefore the configuration
+# that makes the metadata server advertise
+# FFV2_COUPLING_TRUSTED_STATEID, the client use a real layout stateid,
+# and the data server actually compare the writer identity on every
+# CHUNK operation.  That path is untested under the default.
+COUPLING=${COUPLING:-loopback}
 for i in $(seq 1 "$MIRRORS"); do
-	cat >>"$run_dir/reffsd.toml" <<-EOF
+	if [ "$COUPLING" = "local" ]; then
+		cat >>"$run_dir/reffsd.toml" <<-EOF
 
-		[[data_server]]
-		id      = $i
-		address = "127.0.0.1"
-		port    = $NFS_PORT
-		path    = "/"
-	EOF
+			[[data_server]]
+			id      = $i
+			address = "127.0.0.1"
+			path    = "/"
+		EOF
+	else
+		cat >>"$run_dir/reffsd.toml" <<-EOF
+
+			[[data_server]]
+			id      = $i
+			address = "127.0.0.1"
+			port    = $NFS_PORT
+			path    = "/"
+		EOF
+	fi
 done
 
 "$REFFSD" \

@@ -159,7 +159,26 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	 * benchmarks pack multiple DSes onto one host with distinct ports.
 	 */
 	char uaddr[64];
-	uint16_t ds_port = ds->ds_port > 0 ? ds->ds_port : 2049;
+	uint16_t ds_port;
+
+	if (ds->ds_port > 0) {
+		ds_port = ds->ds_port;
+	} else if (ds->ds_ops == &dstore_ops_local) {
+		/*
+		 * A local dstore IS this server, so the address handed
+		 * to the client has to be the port this server is
+		 * actually listening on.  Defaulting to 2049 here sends
+		 * combined-mode clients to a port nothing is on whenever
+		 * reffsd runs anywhere else, and the failure surfaces
+		 * far away, as a connection refused inside the client's
+		 * mirror resolution.
+		 */
+		ds_port = compound->c_server_state ?
+				  (uint16_t)compound->c_server_state->ss_port :
+				  2049;
+	} else {
+		ds_port = 2049;
+	}
 
 	snprintf(uaddr, sizeof(uaddr), "%s.%u.%u", ds->ds_ip,
 		 (ds_port >> 8) & 0xff, ds_port & 0xff);

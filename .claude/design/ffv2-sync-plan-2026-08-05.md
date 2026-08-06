@@ -1024,6 +1024,55 @@ use a real layout stateid.  That is a different fixture than this
 script builds, and it is the next piece of live coverage worth
 having.
 
+## K.C blocked: reffs cannot label a mirror layout as chunked
+
+Trying to build the tight-coupled fixture turned up a defect the
+enforcement slices had been hiding from, and it is worth stating
+carefully because the gate is right and the surrounding code is not.
+
+Local dstores (`dstore_ops_local`) are mounted immediately and always
+tight coupled, so configuring the mirror test with no `port` -- the
+`force_remote = port > 0` switch in `dstore_alloc` -- is a much
+cheaper route to a tight-coupled configuration than standing up
+NFSv4.2 dstores.  In that configuration `local_set_chunked` actually
+runs, so attribute 90 is settled for real.
+
+And the value it settles is **FALSE**, for a mirror layout.
+
+`seg_chunked` is `seg_encoding != PASSTHROUGH`, which is correct.  The
+problem is upstream: with no `default_coding` on the export, LAYOUTGET
+picks the encoding from geometry, and `m == 0` means PASSTHROUGH.  A
+mirror layout is k+0, so it is labelled PASSTHROUGH, the data files
+are marked non-chunked, and the client then sends CHUNK operations
+against them.  S1.5(B) refuses every one with NFS4ERR_NOTSUPP, which
+is exactly what the draft asks of it.
+
+`parse_coding_spec` cannot express the alternative.  Its own comment:
+"Mirror encoding (REFFS_ENCODING_REPLICATED) is intentionally not
+parsed here ... If mirror is ever needed as a default encoding, add it
+as a separate slice."  So no export can declare itself replicated.
+
+**The mirror data path has only ever worked because identification
+never worked.**  NFSv3 dstores have no `set_chunked` entry, files stay
+UNIDENTIFIED, and the gate stays silent.  Every green run of
+`test_mirror_local.sh`, including today's, is that configuration.
+
+This is a design decision, not a patch: either teach
+`parse_coding_spec` a `replicated:K+0` form, or make the geometry
+fallback distinguish "k replicas, no parity" from "one copy, no
+encoding", or let the client's layout hint drive it.  Whichever, the
+encoding a layout advertises and the attribute 90 value settled from
+it have to agree, because a client that believes one and a data
+server that believes the other cannot interoperate at all.
+
+Until then K.C cannot be built, and S1.6 / S4 / K.A stay unverified
+for the same reason they already were.
+
+**Landed while getting here:** local dstores advertised port 2049 in
+GETDEVICEINFO regardless of what the server was listening on, so a
+combined-mode client on any non-default port failed mirror resolution
+with a connection refused far from the cause.
+
 ## Verification and rollout
 
 - Every reffs slice runs `make -f Makefile.reffs license style
