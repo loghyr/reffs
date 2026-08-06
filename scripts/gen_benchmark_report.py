@@ -396,7 +396,8 @@ write-temp/fdatasync/rename pattern.  The file format is:</p>""")
 <li><strong>chunk_owner4</strong>: gen_id + client_id + owner_id — identifies which client wrote each block</li>
 <li><strong>crc32</strong>: CRC32 checksum as received in CHUNK_WRITE, validated server-side</li>
 <li><strong>flags</strong>: uint32_t with <code>CHUNK_BLOCK_LOCKED = 0x1</code> (wire format
-    remains <code>chrr_locked</code> as <code>bool&lt;&gt;</code>)</li>
+    is <code>chrr_locked</code> as <code>chunk_state_flags4&lt;&gt;</code>, whose
+    only defined bit today is <code>CHUNK_STATE_FLAGS_LOCKED = 0x1</code>)</li>
 <li><strong>chunk_size</strong>: actual payload size per block — critical for Mojette, where
     parity projections have different sizes per direction
     (B&nbsp;=&nbsp;|p|(Q&minus;1)&nbsp;+&nbsp;|q|(P&minus;1)&nbsp;+&nbsp;1)</li>
