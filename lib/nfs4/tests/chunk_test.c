@@ -1314,6 +1314,181 @@ END_TEST
  * disk-computed).  READ and verify the wire cs_value equals the
  * mutated stored value, not the disk-derived CRC.
  */
+/*
+ * S7: cover the R7c behavioral change.
+ *
+ * R7c turned read_chunk4's cr_locked from an always-empty array
+ * into a populated scalar, and cr_guard into a dual-write of the
+ * per-block guard.  Nothing exercised either.  The existing tests
+ * only read unlocked blocks, where the calloc'd zero happens to be
+ * the right answer -- so a regression that stopped populating
+ * cr_locked entirely would still have passed the whole suite.
+ */
+START_TEST(test_chunk_read_locked_flag_reported)
+{
+	static char buf[CHUNK_SZ];
+	uint32_t good_crc = (uint32_t)crc32(0L, (const Bytef *)buf, CHUNK_SZ);
+	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, &good_crc, 1);
+	nfs4_op_chunk_write(cm->compound);
+	free_write_args(cm);
+	free_write_res(cm);
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_FINALIZE);
+	{
+		CHUNK_FINALIZE4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_finalize;
+		a->cfa_offset = 0;
+		a->cfa_count = 1;
+		a->cfa_chunks.cfa_chunks_val = &owner;
+		a->cfa_chunks.cfa_chunks_len = 1;
+	}
+	nfs4_op_chunk_finalize(cm->compound);
+	free_finalize_res(cm);
+
+	/* Unlocked block: cr_locked must report no state flags. */
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_READ);
+	{
+		CHUNK_READ4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_read;
+		memset(&a->cra_stateid, 0, sizeof(a->cra_stateid));
+		a->cra_offset = 0;
+		a->cra_count = 1;
+	}
+	nfs4_op_chunk_read(cm->compound);
+	{
+		CHUNK_READ4res *res =
+			&cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_read;
+		ck_assert_int_eq(res->crr_status, NFS4_OK);
+
+		CHUNK_READ4resok *resok = &res->CHUNK_READ4res_u.crr_resok4;
+
+		ck_assert_uint_eq(resok->crr_chunks.crr_chunks_len, 1);
+		ck_assert_uint_eq(resok->crr_chunks.crr_chunks_val[0].cr_locked,
+				  0);
+	}
+	free_read_res(cm);
+
+	/*
+	 * Now set the in-memory lock bit and re-read.  This is the
+	 * assertion that would have caught a regression: it fails if
+	 * cr_locked is left at its calloc'd zero.
+	 */
+	{
+		struct chunk_block *blk =
+			chunk_store_lookup(g_inode->i_chunk_store, 0);
+
+		ck_assert_ptr_nonnull(blk);
+		blk->cb_flags |= CHUNK_BLOCK_LOCKED;
+	}
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_READ);
+	{
+		CHUNK_READ4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_read;
+		memset(&a->cra_stateid, 0, sizeof(a->cra_stateid));
+		a->cra_offset = 0;
+		a->cra_count = 1;
+	}
+	nfs4_op_chunk_read(cm->compound);
+	{
+		CHUNK_READ4res *res =
+			&cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_read;
+		ck_assert_int_eq(res->crr_status, NFS4_OK);
+
+		CHUNK_READ4resok *resok = &res->CHUNK_READ4res_u.crr_resok4;
+
+		ck_assert_uint_eq(resok->crr_chunks.crr_chunks_len, 1);
+		ck_assert_uint_eq(resok->crr_chunks.crr_chunks_val[0].cr_locked,
+				  CHUNK_STATE_FLAGS_LOCKED);
+		/* cr_status is per-chunk and scalar since R7c. */
+		ck_assert_int_eq(resok->crr_chunks.crr_chunks_val[0].cr_status,
+				 NFS4_OK);
+	}
+	free_read_res(cm);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * cr_guard is dual-written from the same per-block (gen_id,
+ * client_id) as cr_owner.co_guard.  While reffs keeps the older
+ * single-owner chunk_owner4 shape both carry the same value; the
+ * draft's M2 restructure makes cr_guard the authoritative one.
+ * Assert they agree so a change to either site has to face this.
+ */
+START_TEST(test_chunk_read_guard_matches_owner)
+{
+	static char buf[CHUNK_SZ];
+	uint32_t good_crc = (uint32_t)crc32(0L, (const Bytef *)buf, CHUNK_SZ);
+	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, &good_crc, 1);
+	nfs4_op_chunk_write(cm->compound);
+	free_write_args(cm);
+	free_write_res(cm);
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_FINALIZE);
+	{
+		CHUNK_FINALIZE4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_finalize;
+		a->cfa_offset = 0;
+		a->cfa_count = 1;
+		a->cfa_chunks.cfa_chunks_val = &owner;
+		a->cfa_chunks.cfa_chunks_len = 1;
+	}
+	nfs4_op_chunk_finalize(cm->compound);
+	free_finalize_res(cm);
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_READ);
+	{
+		CHUNK_READ4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_read;
+		memset(&a->cra_stateid, 0, sizeof(a->cra_stateid));
+		a->cra_offset = 0;
+		a->cra_count = 1;
+	}
+	nfs4_op_chunk_read(cm->compound);
+	{
+		CHUNK_READ4res *res =
+			&cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_read;
+		ck_assert_int_eq(res->crr_status, NFS4_OK);
+
+		read_chunk4 *rc = &res->CHUNK_READ4res_u.crr_resok4.crr_chunks
+					   .crr_chunks_val[0];
+
+		ck_assert_uint_eq(rc->cr_guard.cg_gen_id,
+				  rc->cr_owner.co_guard.cg_gen_id);
+		ck_assert_uint_eq(rc->cr_guard.cg_client_id,
+				  rc->cr_owner.co_guard.cg_client_id);
+	}
+	free_read_res(cm);
+
+	cm_free(cm);
+}
+END_TEST
+
 START_TEST(test_chunk_read_bit_rot_preserves_stored_checksum)
 {
 	static char buf[CHUNK_SZ]; /* zero-filled */
@@ -2066,6 +2241,8 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_inv1_fragmentation_zero_runs);
 	tcase_add_test(tc_h, test_inv1_fragmentation_one_run);
 	tcase_add_test(tc_h, test_inv1_fragmentation_three_runs);
+	tcase_add_test(tc_h, test_chunk_read_locked_flag_reported);
+	tcase_add_test(tc_h, test_chunk_read_guard_matches_owner);
 	suite_add_tcase(s, tc_h);
 
 	return s;
