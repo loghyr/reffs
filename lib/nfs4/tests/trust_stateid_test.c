@@ -841,8 +841,11 @@ START_TEST(test_op_trust_stateid_plain_client_rejected)
 
 	/* Nothing may have been registered. */
 	stateid4 stid = make_stateid(0x23);
+	struct trust_entry *te = trust_stateid_find(&stid);
 
-	ck_assert_ptr_null(trust_stateid_find(&stid));
+	if (te)
+		trust_entry_put(te);
+	ck_assert_ptr_null(te);
 
 	cm_free(cm);
 }

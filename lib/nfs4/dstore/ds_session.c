@@ -8,7 +8,9 @@
 /*
  * MDS-->DS NFSv4.2 session for control-plane and InBand I/O.
  *
- * The MDS acts as a plain NFSv4 client (USE_NON_PNFS) to the DS.
+ * The MDS is the DS's client on this session and presents
+ * EXCHGID4_FLAG_USE_PNFS_MDS, which is how the DS tells the control
+ * session apart from a client's (see ds_session_create).
  * Uses the ec_demo client library (mds_session / mds_compound)
  * for session management and compound building.
  *

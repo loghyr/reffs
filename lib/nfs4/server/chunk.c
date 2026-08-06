@@ -144,13 +144,20 @@ static nfsstat4 chunk_lifecycle_check_bounds(uint32_t chunks_len)
  * no chunk envelope, so a CHUNK op against one cannot mean anything.
  *
  * UNIDENTIFIED is deliberately not a FALSE.  Settling attribute 90 at
- * layout assignment is best effort, and only dstore_ops_nfsv4 does it
- * -- combined mode goes through dstore_ops_local and never crosses the
- * wire, so every file there is unidentified.  Treating that as FALSE
- * would return NFS4ERR_NOTSUPP for every CHUNK operation in combined
- * mode.  The draft is explicit that a data server which cannot
- * identify the file relies on the client-side MUST NOT and on stateid
- * validation instead, which is what this returning false preserves.
+ * layout assignment is best effort: a file reaches a data server by
+ * paths that never settle it at all -- an NFSv3 dstore has no
+ * set_chunked entry, and anything created outside layout assignment
+ * carries no attribute either.  The draft is explicit that a data
+ * server which cannot identify the file relies on the client-side
+ * MUST NOT and on stateid validation instead, which is what this
+ * returning false preserves.
+ *
+ * Both settling paths do reach here, so neither is the reason: the
+ * wire path sets the flags in nattr_to_inode(), and combined mode's
+ * local_set_chunked() sets the same flags on the inode directly.
+ * An earlier version of this comment claimed combined mode left every
+ * file unidentified.  It does not, and enforcement is deliberately
+ * unable to tell the two apart.
  */
 static bool chunk_op_on_non_chunked(const struct compound *compound)
 {

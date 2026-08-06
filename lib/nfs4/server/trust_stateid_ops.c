@@ -66,9 +66,17 @@
  * metadata server from a client that is following the protocol, not
  * from one that is not.  The draft says as much and puts the real
  * control in the deployment (GSS machine principal, TLS client cert,
- * or an isolated control-session network).  A local allowlist here,
- * mirroring [[allowed_ps]] for proxy-server registration, is the
- * matching reffs-side work and is not yet written.
+ * or an isolated control-session network).
+ *
+ * NOT_NOW_BROWN_COW: local metadata-server allowlist, mirroring
+ * [[allowed_ps]] for proxy-server registration.
+ *
+ * Note also that the flag reuses an RFC 8881 S13.1 role-*request*
+ * bit, whose RFC meaning is "I want to use you as my metadata
+ * server" -- not what a metadata server means towards its data
+ * server.  That is legal: S13.1 lets a client request contradictory
+ * combinations and constrains only the server's eir_flags reply.
+ * The draft overloads the bit rather than contradicting the RFC.
  */
 static bool require_mds_client(struct compound *compound, nfsstat4 *status)
 {

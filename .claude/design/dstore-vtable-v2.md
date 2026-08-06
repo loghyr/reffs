@@ -81,11 +81,35 @@ session is used for both control plane and InBand I/O.
 
 #### MDS-->DS Session: EXCHANGE_ID Flags
 
-The MDS acts as an NFSv4.2 **client** to the DS.  Per RFC 8881
-§18.35, the MDS uses `EXCHGID4_FLAG_USE_NON_PNFS` -- it is a
-plain NFSv4 client doing control-plane operations and proxy I/O.
-It does NOT set `USE_PNFS_MDS` (that would mean "I want you to
-be my metadata server", which is the opposite of the intent).
+The MDS acts as an NFSv4.2 **client** to the DS, and presents
+`EXCHGID4_FLAG_USE_PNFS_MDS` (implemented in `ds_session_create`,
+commit `f1b2d0c3d326`).
+
+This reverses what this section said originally, so the reasoning
+is worth keeping.  The original argument was that RFC 8881 §13.1
+defines the bit as a role *request* -- "I want to use you as my
+metadata server" -- which is the opposite of what an MDS means
+towards its DS, so `USE_NON_PNFS` was the honest flag.  That
+reading of the RFC is correct.
+
+It is nonetheless the wrong flag here, because
+draft-haynes-nfsv4-flexfiles-v2
+`sec-tight-coupling-control-session` makes `USE_PNFS_MDS` the data
+server's *only* means of telling the control session apart from a
+client's, and the sole access control on TRUST_STATEID /
+REVOKE_STATEID / BULK_REVOKE_STATEID.  Sending `USE_NON_PNFS`
+leaves the DS with no way to distinguish the two, which in
+practice meant either the control plane was rejected outright or
+the guard was widened to accept the flag every client sends --
+and the second is what happened, opening the control plane to
+every client until `f1b2d0c3d326`.
+
+The overload is legal.  RFC 8881 §13.1 permits a client to request
+contradictory role combinations and constrains only the server's
+`eir_flags` reply; reffs never derives `eir_flags` from
+`eia_flags`, and its client never inspects `eir_flags`.  The
+residual risk is interop with a third-party NFSv4.2 DS that does
+act on the requested role.
 
 ```c
 struct dstore {

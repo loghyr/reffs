@@ -509,10 +509,13 @@ both live:
 
 1. The attribute-90 settle step at layout assignment is an ordinary
    SETATTR over that session, and its gate checks USE_PNFS_MDS only.
-   The settle was answered NFS4ERR_INVAL, no file was ever identified
-   as chunked, and S1.5(B) -- which sits downstream of identification
-   -- could not fire in production at all.  S1.5(B)'s tests set the
-   flag by hand, so they passed over the gap.
+   The settle was answered NFS4ERR_INVAL, so no file served from a
+   remote NFSv4.2 dstore was ever identified as chunked and S1.5(B)
+   -- which sits downstream of identification -- could not fire on
+   that path.  S1.5(B)'s tests set the flag by hand, so they passed
+   over the gap.  Combined mode was never affected:
+   `local_set_chunked` sets the inode flags directly and never
+   crosses the wire, so it never met the gate.
 2. `require_mds_client()` had been widened to accept USE_NON_PNFS to
    get the control plane working again.  Since that is what a client
    presents, any client on the data server could register trust
@@ -558,13 +561,21 @@ Recorded because both errors would have shipped breakage.
 1. It described enforcement in one direction only, missing (A) --
    the direction the draft's own operations section leads with.
 2. Its rule, "reject CHUNK ops when the bit is clear", conflated
-   "marked FALSE" with "never identified".  Since only
-   `dstore_ops_nfsv4` sets the attribute, and combined mode uses
-   `dstore_ops_local`, and `scripts/test_mirror_local.sh` drives
-   `ec_demo --layout v2` -- real CHUNK ops -- against exactly that
-   path, the naive rule would have returned NFS4ERR_NOTSUPP for
-   every CHUNK operation in combined mode, breaking the mirror
-   test, the v2 benchmark variants, and the ec_demo v2 flow.
+   "marked FALSE" with "never identified".  Files reach a data
+   server by paths that never settle the attribute -- an NFSv3
+   dstore has no `set_chunked` entry at all -- and the naive rule
+   answers NFS4ERR_NOTSUPP for every CHUNK operation against them.
+   The mutation measured 33 failures across the chunk suite.
+
+   Correction (2026-08-06, from the review of `f1b2d0c3d326`):
+   an earlier version of this entry blamed combined mode, on the
+   belief that `dstore_ops_local` never settles the attribute.  It
+   does -- `local_set_chunked` sets the same inode flags the wire
+   path sets, deliberately, so that enforcement cannot tell
+   combined mode from a real data server.  The naive rule is still
+   wrong, and `scripts/test_mirror_local.sh` and the v2 benchmark
+   variants still exercise the code it would have broken; the
+   reason is unsettled files generally, not combined mode.
 
 It was also scoped "small".  It is five slices.
 

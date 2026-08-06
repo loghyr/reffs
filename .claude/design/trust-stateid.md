@@ -234,10 +234,12 @@ if (!(compound->c_nfs4_client->nc_exchgid_flags
 }
 ```
 
-Note: the pre-existing NOT_NOW_BROWN_COW in `ds_session.c` (MDS
-sends `EXCHGID4_FLAG_USE_PNFS_MDS` when it should send
-`USE_NON_PNFS`) means the MDS control session will pass the check
-correctly.  Fixing the flag is tracked in dstore-vtable-v2.md.
+Note: `ds_session_create` presents `EXCHGID4_FLAG_USE_PNFS_MDS` on
+the control session (`f1b2d0c3d326`), so the check passes for the
+MDS and fails for every client -- which is the whole point of it.
+An earlier note here had this backwards, calling the flag a bug to
+be fixed towards `USE_NON_PNFS`; see dstore-vtable-v2.md for why
+the draft's requirement wins over that reading of RFC 8881.
 
 ## Phase 1: DS-side (new ops + validation hook)
 
@@ -667,8 +669,6 @@ TRUST_STATEID within `lease_period / 2` of expiry.
 - MDS persistence of trust table (Open Question 4 in stateids.md)
 - DS detection of MDS reboot via EXCHANGE_ID epoch change and auto-pending
   of trust entries
-- Fix MDS-to-DS session flag (USE_NON_PNFS vs USE_PNFS_MDS, tracked in
-  dstore-vtable-v2.md)
 - Full Kerberos integration test (requires mini-KDC fixture)
 
 ## Key Files
