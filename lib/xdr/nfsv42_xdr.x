@@ -3636,16 +3636,16 @@ struct CHUNK_REPAIRED4args {
     chunk_owner4    cpa_owner;
 };
 
-struct CHUNK_REPAIRED4resok {
-    /* intentionally empty — status-only response */
-    uint32_t        cpr_reserved;
-};
-
-union CHUNK_REPAIRED4res switch (nfsstat4 cpr_status) {
-    case NFS4_OK:
-        CHUNK_REPAIRED4resok   cpr_resok4;
-    default:
-        void;
+/*
+ * draft-haynes-nfsv4-flexfiles-v2 sec-CHUNK_REPAIRED defines this
+ * response as `union ... switch { case NFS4_OK: void; default: void }`.
+ * That lowers to a C empty-union that clang -Werror rejects with
+ * -Wgnu-empty-struct on stricter builds, so we use a bare struct that
+ * carries only the status word.  Wire is identical (both encode as a
+ * single nfsstat4).
+ */
+struct CHUNK_REPAIRED4res {
+    nfsstat4        cpr_status;
 };
 
 struct CHUNK_ROLLBACK4args {
@@ -3675,16 +3675,9 @@ struct CHUNK_UNLOCK4args {
     chunk_owner4    cua_owner;
 };
 
-struct CHUNK_UNLOCK4resok {
-    /* intentionally empty — status-only response */
-    uint32_t        cur_reserved;
-};
-
-union CHUNK_UNLOCK4res switch (nfsstat4 cur_status) {
-    case NFS4_OK:
-        CHUNK_UNLOCK4resok   cur_resok4;
-    default:
-        void;
+/* See CHUNK_REPAIRED4res above for the union-vs-struct rationale. */
+struct CHUNK_UNLOCK4res {
+    nfsstat4        cur_status;
 };
 
 union write_chunk_guard4 switch (bool cwg_check) {
