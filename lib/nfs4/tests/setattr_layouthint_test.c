@@ -78,8 +78,8 @@ START_TEST(test_layouthint_accept_valid_full_hints)
 			.ffv2lh_supported_types_val = types,
 		},
 		.ffv2lh_preferred_protection = {
-			.fdp_data = 4,
-			.fdp_parity = 2,
+			.ffv2dp_data = 4,
+			.ffv2dp_parity = 2,
 		},
 		.ffv2lh_stripe_unit = 1u << 20,           /* 1 MiB   */
 		.ffv2lh_expected_file_size = 16ull << 30, /* 16 GiB  */

@@ -2477,8 +2477,8 @@ nfsstat4 nfs4_layouthint_validate(const fattr4_layout_hint *hint)
 	      lh.ffv2lh_stripe_unit,
 	      (unsigned long long)lh.ffv2lh_expected_file_size,
 	      lh.ffv2lh_supported_types.ffv2lh_supported_types_len,
-	      lh.ffv2lh_preferred_protection.fdp_data,
-	      lh.ffv2lh_preferred_protection.fdp_parity);
+	      lh.ffv2lh_preferred_protection.ffv2dp_data,
+	      lh.ffv2lh_preferred_protection.ffv2dp_parity);
 
 out:
 	xdr_free((xdrproc_t)xdr_ffv2_layouthint4, (char *)&lh);

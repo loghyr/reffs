@@ -1003,8 +1003,8 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 	 * Deferred section.
 	 */
 	mirror->ffv2m_coding_type = ffv2m_coding_type;
-	mirror->ffv2m_protection.fdp_data = seg->ls_k;
-	mirror->ffv2m_protection.fdp_parity = seg->ls_m;
+	mirror->ffv2m_protection.ffv2dp_data = seg->ls_k;
+	mirror->ffv2m_protection.ffv2dp_parity = seg->ls_m;
 
 	/*
 	 * Per draft-haynes-nfsv4-flexfiles-v2 (tigran-5e), ffv2m_checksum_algorithm

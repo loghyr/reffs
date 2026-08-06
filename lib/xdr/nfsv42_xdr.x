@@ -5157,8 +5157,8 @@ enum ffv2_encoding_type4 {
  * responses for all coding types.
  */
 struct ffv2_data_protection4 {
-    uint32_t fdp_data;    /* data shards (k) */
-    uint32_t fdp_parity;  /* parity/redundancy shards (m) */
+    uint32_t ffv2dp_data;    /* data shards (k) */
+    uint32_t ffv2dp_parity;  /* parity/redundancy shards (m) */
 };
 
 /*
@@ -5185,7 +5185,7 @@ struct ffv2_stripes4 {
  * sec-ffv2_coding_type_data4).  The wire bytes are identical --
  * every union arm carries ffv2_data_protection4, so the encoding
  * is discriminator + protection either way -- but the generated C
- * API differs (m->ffv2m_coding_type_data.fctd_coding plus a union
+ * API differs (m->ffv2m_coding_type_data.ffv2ctd_coding plus a union
  * body accessor).  Deferred as a structural change separate from
  * this naming sweep.
  */
@@ -5223,12 +5223,12 @@ struct ffv2_io_latency4 {
 };
 
 struct ffv2_layoutupdate4 {
-        netaddr4                 ffv2l_addr;
-        nfs_fh4                  ffv2l_fhandle;
-        ffv2_io_latency4         ffv2l_read;
-        ffv2_io_latency4         ffv2l_write;
-        nfstime4                 ffv2l_duration;
-        ffv2_layoutstats_flags4  ffv2l_flags;
+        netaddr4                 ffv2lu_addr;
+        nfs_fh4                  ffv2lu_fhandle;
+        ffv2_io_latency4         ffv2lu_read;
+        ffv2_io_latency4         ffv2lu_write;
+        nfstime4                 ffv2lu_duration;
+        ffv2_layoutstats_flags4  ffv2lu_flags;
 };
 
 struct ffv2_iostats4 {
