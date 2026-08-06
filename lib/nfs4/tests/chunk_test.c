@@ -42,6 +42,7 @@
 #include "reffs/inode.h"
 #include "reffs/server.h"
 #include "reffs/super_block.h"
+#include "nfs4/attr.h"
 #include "nfs4/chunk_checksum.h"
 #include "nfs4/chunk_store.h"
 #include "nfs4/client.h"
@@ -1315,6 +1316,141 @@ END_TEST
  * mutated stored value, not the disk-derived CRC.
  */
 /*
+ * Attribute-90 SETATTR gate.
+ *
+ * This is the path that was silently dead for a commit: S1.1's
+ * metadata-server settle step reaches a real NFSv4.2 data server as
+ * an ordinary SETATTR over the control session, and S1b's original
+ * guard rejected it unconditionally.  Combined mode could not catch
+ * that -- dstore_ops_local sets the inode bit directly and never
+ * crosses the wire -- so nothing exercised the wire path at all.
+ *
+ * These drive nfs4_op_setattr() the way the wire would.
+ */
+static void set_chunked_attr_args(struct cm_ctx *cm, bool chunked,
+				  uint32_t *bits, char *val)
+{
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_SETATTR);
+
+	SETATTR4args *a = &cm->compound->c_args->argarray.argarray_val[0]
+				   .nfs_argop4_u.opsetattr;
+
+	memset(&a->stateid, 0, sizeof(a->stateid));
+
+	/* Attribute 90: word 2, bit 26. */
+	bits[0] = 0;
+	bits[1] = 0;
+	bits[2] = 1U << 26;
+	val[0] = 0;
+	val[1] = 0;
+	val[2] = 0;
+	val[3] = chunked ? 1 : 0;
+
+	a->obj_attributes.attrmask.bitmap4_len = 3;
+	a->obj_attributes.attrmask.bitmap4_val = bits;
+	a->obj_attributes.attr_vals.attrlist4_len = 4;
+	a->obj_attributes.attr_vals.attrlist4_val = val;
+}
+
+static nfsstat4 run_setattr(struct cm_ctx *cm)
+{
+	SETATTR4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+				    .nfs_resop4_u.opsetattr;
+
+	nfs4_op_setattr(cm->compound);
+
+	nfsstat4 status = res->status;
+
+	/*
+	 * nattr_to_inode() copies the attrmask into res->attrsset on
+	 * the success path, allocating it.  Production releases that
+	 * through the XDR free path once the compound is encoded;
+	 * calling the handler directly means the test owns it.
+	 */
+	bitmap4_destroy(&res->attrsset);
+	memset(&res->attrsset, 0, sizeof(res->attrsset));
+	return status;
+}
+
+START_TEST(test_attr90_client_setattr_rejected)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	uint32_t bits[3];
+	char val[4];
+
+	cm_set_inode(cm, g_inode);
+	/* A plain client: no control-session flag. */
+	cm->compound->c_nfs4_client->nc_exchgid_flags = 0;
+
+	set_chunked_attr_args(cm, true, bits, val);
+	ck_assert_int_eq(run_setattr(cm), NFS4ERR_INVAL);
+
+	/* And the inode must be untouched -- still unidentified. */
+	ck_assert_int_eq(inode_chunked_state(g_inode),
+			 INODE_CHUNKED_UNIDENTIFIED);
+
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_attr90_mds_setattr_on_empty_accepted)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	uint32_t bits[3];
+	char val[4];
+
+	cm_set_inode(cm, g_inode);
+	cm->compound->c_nfs4_client->nc_exchgid_flags =
+		EXCHGID4_FLAG_USE_PNFS_MDS;
+
+	/* Empty file: the metadata server may settle the value. */
+	set_chunked_attr_args(cm, true, bits, val);
+	ck_assert_int_eq(run_setattr(cm), NFS4_OK);
+	ck_assert_int_eq(inode_chunked_state(g_inode), INODE_CHUNKED_YES);
+
+	/* FALSE is equally settable while empty, and is not the same
+	 * state as never having been told. */
+	set_chunked_attr_args(cm, false, bits, val);
+	ck_assert_int_eq(run_setattr(cm), NFS4_OK);
+	ck_assert_int_eq(inode_chunked_state(g_inode), INODE_CHUNKED_NO);
+
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_attr90_mds_setattr_on_nonempty_rejected)
+{
+	static char buf[CHUNK_SZ];
+	uint32_t good_crc = (uint32_t)crc32(0L, (const Bytef *)buf, CHUNK_SZ);
+	struct cm_ctx *cm = cm_alloc(1);
+	uint32_t bits[3];
+	char val[4];
+
+	cm_set_inode(cm, g_inode);
+	cm->compound->c_nfs4_client->nc_exchgid_flags =
+		EXCHGID4_FLAG_USE_PNFS_MDS;
+
+	/* Give the file content: a chunk store is one of the two
+	 * signals reffs treats as "not empty". */
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, &good_crc, 1);
+	nfs4_op_chunk_write(cm->compound);
+	free_write_args(cm);
+	free_write_res(cm);
+	ck_assert_ptr_nonnull(g_inode->i_chunk_store);
+
+	/*
+	 * Even the metadata server may not change the value now: the
+	 * attribute describes the format the content is already in.
+	 */
+	set_chunked_attr_args(cm, true, bits, val);
+	ck_assert_int_eq(run_setattr(cm), NFS4ERR_INVAL);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
  * S7: cover the R7c behavioral change.
  *
  * R7c turned read_chunk4's cr_locked from an always-empty array
@@ -2243,6 +2379,9 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_inv1_fragmentation_three_runs);
 	tcase_add_test(tc_h, test_chunk_read_locked_flag_reported);
 	tcase_add_test(tc_h, test_chunk_read_guard_matches_owner);
+	tcase_add_test(tc_h, test_attr90_client_setattr_rejected);
+	tcase_add_test(tc_h, test_attr90_mds_setattr_on_empty_accepted);
+	tcase_add_test(tc_h, test_attr90_mds_setattr_on_nonempty_rejected);
 	suite_add_tcase(s, tc_h);
 
 	return s;
