@@ -230,6 +230,42 @@ Reffs stays on the pre-B4 wire for now:
   mirror whose encoding is not PASSTHROUGH; reject inconsistent
   configurations at load time.
 
+## Deferred: encoding-type-data union naming (draft 69f822225425)
+
+The draft finished the `coding` -> `encoding` rename at the union
+that switches on `ffv2_encoding_type4`:
+
+| Draft before | Draft now |
+|---|---|
+| `ffv2_coding_type_data4` | `ffv2_encoding_type_data4` |
+| `ffv2m_coding_type_data` | `ffv2m_encoding_type_data` |
+| `ffv2ctd_coding` | `ffv2etd_encoding` |
+| `ffv2ctd_protection` | `ffv2etd_protection` |
+
+No wire change: same discriminated union, same discriminant type,
+same arm types, same values.
+
+Reffs is unaffected in structure because it never adopted the
+union -- `ffv2_mirror4` carries `ffv2m_coding_type` plus
+`ffv2m_protection` flattened, under the NOT_NOW_BROWN_COW at
+`lib/xdr/nfsv42_xdr.x:5181`.  Two things do need doing:
+
+1. That NOT_NOW_BROWN_COW and the comment above
+   `ffv2_data_protection4` still name `ffv2_coding_type_data4`,
+   `ffv2ctd_coding` and `sec-ffv2_coding_type_data4`.  A reader
+   following them lands on identifiers the draft no longer has.
+   Comment-only, but it goes in `lib/xdr/nfsv42_xdr.x`, so it
+   takes its own slice and its own `make check`.
+2. `ffv2m_coding_type` is reffs's own field name and carries the
+   retired vocabulary independently of the union question.
+   `ffv2m_encoding_type` matches the draft's enum rename.  This
+   one does touch generated API and every consumer, so it is a
+   real slice, not a comment fix.
+
+The kernel client (`psyklo/ffv2-client`) has not been checked
+against this rename; no tree on mana to grep.  Check before the
+next K-series patch.
+
 ## Deferred: M2 chunk_owner4 restructure
 
 The draft moved from single-owner-per-CHUNK_WRITE to
