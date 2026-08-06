@@ -1065,8 +1065,34 @@ encoding a layout advertises and the attribute 90 value settled from
 it have to agree, because a client that believes one and a data
 server that believes the other cannot interoperate at all.
 
-Until then K.C cannot be built, and S1.6 / S4 / K.A stay unverified
-for the same reason they already were.
+**Resolved 2026-08-06 by only ever settling TRUE.**  The metadata
+server is required to set the attribute when it allocates a
+chunked-encoding data file; it is never required to assert FALSE, and
+asserting FALSE rests on an encoding this server derived rather than
+was told.  Absent is the honest answer for a file it did not
+deliberately make chunked, and the draft treats absent as "cannot
+classify" -- degrading to the client-side MUST NOT and stateid
+validation instead of refusing.  `COUPLING=local` now passes.
+
+The mislabel itself survives and is now quiet, which is the part to
+watch: the layout still advertises PASSTHROUGH for a mirror.  `ec_demo`
+gets away with it because it does what `--encoding` says and ignores
+`ffv2m_encoding_type_data`.  A client that honours that field would
+choose plain READ/WRITE and disagree with a CHUNK-writing peer about
+the bytes -- silent corruption rather than a refusal.  Fixing the
+label is still owed.
+
+**S4 / K.A are still not exercised.**  With local dstores
+`ds_tight_coupled` is true, so the chain should be: metadata server
+advertises FFV2_COUPLING_TRUSTED_STATEID -> client sets
+`ed_tight_coupled` -> `em_tight_coupled` -> real layout stateid on
+CHUNK operations -> `chunk_check_trusted_stateid` compares the writer
+identity.  The trace shows zero trust-table activity across 2304
+CHUNK_WRITEs, so a link in that chain is broken and it is not yet
+known which.  First suspects: which layout type `ec_demo` asks
+GETDEVICEINFO for (the v2 encoder only runs for
+LAYOUT4_FLEX_FILES_V2), and whether the client's v2 decode path is
+reached at all.  That is the next thing to trace.
 
 **Landed while getting here:** local dstores advertised port 2049 in
 GETDEVICEINFO regardless of what the server was listening on, so a

@@ -1842,15 +1842,41 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 						       files[i].ldf_fh_len,
 						       NULL);
 				/*
-				 * Best effort: a data server that does
-				 * not support attribute 90 falls back to
-				 * the other identification methods in
-				 * sec-data-file-identification, so a
-				 * failure here is not fatal to LAYOUTGET.
+				 * Declare the file chunked, or say nothing.
+				 *
+				 * The attribute is only ever set TRUE here.
+				 * A metadata server is required to set it
+				 * when it allocates a chunked-encoding data
+				 * file; it is never required to assert
+				 * FALSE, and asserting FALSE is a claim this
+				 * server is not in a position to make.  The
+				 * encoding it would rest on is itself
+				 * derived -- from the export's
+				 * default_coding when there is one, from
+				 * geometry when there is not -- and a
+				 * mistake there becomes a data server that
+				 * refuses every CHUNK operation on a file
+				 * the client is correctly writing chunks to.
+				 *
+				 * Leaving it absent is the honest answer for
+				 * a file this server did not deliberately
+				 * make chunked.  The draft treats absent as
+				 * "cannot classify" and falls back to the
+				 * client-side MUST NOT and stateid
+				 * validation, which degrades instead of
+				 * breaking.
+				 *
+				 * Best effort either way: a data server that
+				 * does not support attribute 90 falls back
+				 * to the other identification methods in
+				 * sec-data-file-identification, so a failure
+				 * here is not fatal to LAYOUTGET.
 				 */
-				dstore_data_file_set_chunked(
-					sds, files[i].ldf_fh,
-					files[i].ldf_fh_len, seg_chunked, NULL);
+				if (seg_chunked)
+					dstore_data_file_set_chunked(
+						sds, files[i].ldf_fh,
+						files[i].ldf_fh_len, true,
+						NULL);
 				dstore_put(sds);
 			}
 		}
