@@ -149,6 +149,133 @@ nfs4_op_cb op_table[OP_MAX] = {
 	[OP_PROXY_CANCEL] = nfs4_op_proxy_cancel,
 };
 
+/*
+ * op_allowed_on_chunked_data_file -- S1.5(A) enforcement gate.
+ *
+ * draft-haynes-nfsv4-flexfiles-v2 sec-ops-client: a client with an
+ * active layout MUST restrict what it sends against a data file to the
+ * operations that section lists, and a data server that has identified
+ * the file as a chunked data file MUST reject any other operation on
+ * it with NFS4ERR_NOTSUPP.
+ *
+ * The rule is stated as default-deny, so this is an allowlist rather
+ * than a list of forbidden operations.  That also fails safe: an
+ * operation added to op_table later is rejected on chunked data files
+ * until someone decides it belongs here, rather than silently
+ * inheriting permission.
+ */
+static bool op_allowed_on_chunked_data_file(uint32_t op)
+{
+	switch (op) {
+	/*
+	 * Session and identity plumbing, listed as supported on data
+	 * files as on any other file.
+	 */
+	case OP_SEQUENCE:
+	case OP_EXCHANGE_ID:
+	case OP_CREATE_SESSION:
+	case OP_DESTROY_SESSION:
+	case OP_BIND_CONN_TO_SESSION:
+	case OP_DESTROY_CLIENTID:
+	case OP_RECLAIM_COMPLETE:
+	case OP_SECINFO:
+	case OP_SECINFO_NO_NAME:
+	/*
+	 * Filehandle plumbing.  The draft names PUTFH, GETFH and
+	 * PUTROOTFH; PUTPUBFH, SAVEFH and RESTOREFH are the same class
+	 * of operation -- they move a filehandle around rather than act
+	 * on the file -- and rejecting them would break compounds that
+	 * merely carry a data-file handle past another operation.
+	 */
+	case OP_PUTFH:
+	case OP_PUTROOTFH:
+	case OP_PUTPUBFH:
+	case OP_GETFH:
+	case OP_SAVEFH:
+	case OP_RESTOREFH:
+	/*
+	 * GETATTR is explicitly permitted for repair and diagnostics.
+	 * The draft separately forbids the ACL-scoped attribute bits;
+	 * that is per-bit and belongs in the GETATTR handler, not in a
+	 * per-operation gate.  NOT_NOW_BROWN_COW: FATTR4_ACL / _DACL /
+	 * _SACL rejection on a chunked data file.
+	 */
+	case OP_GETATTR:
+	/* The CHUNK family is what a chunked data file exists for. */
+	case OP_CHUNK_WRITE:
+	case OP_CHUNK_WRITE_REPAIR:
+	case OP_CHUNK_READ:
+	case OP_CHUNK_FINALIZE:
+	case OP_CHUNK_COMMIT:
+	case OP_CHUNK_ROLLBACK:
+	case OP_CHUNK_HEADER_READ:
+	case OP_CHUNK_LOCK:
+	case OP_CHUNK_UNLOCK:
+	case OP_CHUNK_ERROR:
+	case OP_CHUNK_REPAIRED:
+	case OP_CHUNK_ESCROW_INSTALL:
+	case OP_CHUNK_ESCROW_RELEASE:
+	case OP_CHUNK_ESCROW_ENUMERATE:
+	case OP_CHUNK_ESCROW_TAKEOVER:
+	/*
+	 * The trust operations are control-plane and a client must not
+	 * send them -- but the draft specifies NFS4ERR_PERM for that,
+	 * from their own guard.  Letting them past this gate keeps the
+	 * error code the draft asks for; rejecting here would answer
+	 * NFS4ERR_NOTSUPP instead.
+	 */
+	case OP_TRUST_STATEID:
+	case OP_REVOKE_STATEID:
+	case OP_BULK_REVOKE_STATEID:
+		return true;
+	default:
+		return false;
+	}
+}
+
+/*
+ * compound_on_control_session -- true when this compound arrived on the
+ * metadata server's control session.
+ *
+ * The restrictions above are on what a *client* may send.  The metadata
+ * server reaches the same files over its own session to do the things
+ * the draft assigns to it -- SETATTR for truncate and for attribute 90,
+ * REMOVE for data-file lifecycle -- so the gate must not apply to it.
+ * Identified the same way the attribute-90 gate identifies it; see
+ * sec-tight-coupling-control-session.
+ */
+static bool compound_on_control_session(const struct compound *compound)
+{
+	return compound->c_nfs4_client &&
+	       (compound->c_nfs4_client->nc_exchgid_flags &
+		EXCHGID4_FLAG_USE_PNFS_MDS);
+}
+
+/*
+ * chunk_gate_rejects -- S1.5(A) predicate for one dispatched operation.
+ *
+ * Keyed on inode_chunked_state() == YES, so a file the data server has
+ * not identified is left alone.  UNIDENTIFIED is not a TRUE here for
+ * the same reason it is not a FALSE in the CHUNK gate: the draft leans
+ * on the client-side MUST NOT and on stateid validation when the data
+ * server cannot classify the file.
+ *
+ * Only the current filehandle is consulted.  Operations whose current
+ * filehandle is the parent directory rather than the file -- REMOVE,
+ * RENAME, LINK, CREATE -- are therefore not caught, and neither is a
+ * chunked file that is only the saved filehandle (LINK's source).  The
+ * draft does forbid those on a data file.  Catching them needs a
+ * name-resolution or saved-filehandle check that this gate deliberately
+ * does not do; see the S1.5(A) entry in the sync plan.
+ */
+static bool chunk_gate_rejects(const struct compound *compound, uint32_t op)
+{
+	return compound->c_inode &&
+	       inode_chunked_state(compound->c_inode) == INODE_CHUNKED_YES &&
+	       !op_allowed_on_chunked_data_file(op) &&
+	       !compound_on_control_session(compound);
+}
+
 bool dispatch_compound(struct compound *compound)
 {
 	COMPOUND4args *args = compound->c_args;
@@ -266,6 +393,30 @@ bool dispatch_compound(struct compound *compound)
 
 		if (argop->argop < OP_MAX && op_table[argop->argop]) {
 			compound->c_op_start_ns = reffs_now_ns();
+
+			/*
+			 * S1.5(A): reject this operation before the
+			 * handler runs if the current filehandle is a
+			 * chunked data file and the operation is not one
+			 * the draft allows against one.
+			 *
+			 * Inside this branch, not above it, so that an
+			 * unknown opcode still reaches nfs4_op_illegal
+			 * and is answered NFS4ERR_OP_ILLEGAL rather than
+			 * being reported as a chunked-file violation.
+			 */
+			if (chunk_gate_rejects(compound, argop->argop)) {
+				TRACE("chunked data file: op=%s(%d) rejected",
+				      nfs4_op_name(argop->argop), argop->argop);
+				resop->nfs_resop4_u.opillegal.status =
+					NFS4ERR_NOTSUPP;
+				RECORD_OP_STATS(resop);
+				res->status = NFS4ERR_NOTSUPP;
+				res->resarray.resarray_len =
+					compound->c_curr_op + 1;
+				return false;
+			}
+
 			TRACE("dispatch op=%s(%d) curr_op=%u ss=%p seq=%lu",
 			      nfs4_op_name(argop->argop), argop->argop,
 			      compound->c_curr_op,

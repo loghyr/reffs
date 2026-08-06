@@ -475,6 +475,53 @@ described only one:
 
 Do (B) first.  Do not fold (A) into the same commit.
 
+**(A) LANDED.**  The gate is in the dispatch loop
+(`lib/nfs4/server/dispatch.c`), not in the handlers, because the
+rule covers every operation rather than a named few.
+
+The draft states the rule default-deny -- restrict what is sent to
+the listed operations, reject anything else -- so the code is an
+allowlist, `op_allowed_on_chunked_data_file()`.  That also fails
+safe: an operation added to `op_table` later is refused on chunked
+data files until someone decides it belongs, rather than
+inheriting permission silently.  Allowed: session and filehandle
+plumbing, GETATTR, the CHUNK family, and the three trust ops --
+those last because the draft wants NFS4ERR_PERM from their own
+guard, and gating them here would answer NFS4ERR_NOTSUPP instead.
+
+The gate sits inside the known-opcode branch, so an unknown opcode
+still reaches `nfs4_op_illegal` and is answered NFS4ERR_OP_ILLEGAL
+rather than being reported as a chunked-file violation.
+
+The control session is exempt: the restriction is on what a client
+sends, and the metadata server reaches the same files to do what
+the draft assigns to it.  Identified as in S1.6.
+
+Two mutations on dreamer:
+
+| mutation | result |
+|---|---|
+| gate keyed on UNIDENTIFIED instead of YES | 3 red, in both directions -- the chunked file stops being refused and the unidentified file starts being refused |
+| control-session exemption removed | 1 red |
+
+**Debt (A) leaves.**  The gate consults only the current
+filehandle.  Operations whose current filehandle is the parent
+directory -- REMOVE, RENAME, LINK, CREATE -- are not caught, and
+neither is a chunked file that is only the saved filehandle
+(LINK's source).  The draft forbids those against a data file too.
+Catching them needs name resolution or a saved-filehandle check,
+which is a separate slice.
+
+The ACL-scoped attribute bits (FATTR4_ACL, _DACL, _SACL) are
+forbidden on a data file per-bit rather than per-operation, so
+GETATTR stays allowed as a whole and the bit-level rule is a
+NOT_NOW_BROWN_COW in the allowlist.
+
+**Not yet verified end to end.**  Same gap S1.6 leaves: the unit
+tests drive `dispatch_compound()` directly.  A live metadata
+server plus data server would show the settle, the identification,
+and both enforcement directions working together.
+
 **(B) LANDED ab4f1509c25a.**  The gate is
 `chunk_op_on_non_chunked()` in `lib/nfs4/server/chunk.c`, keyed on
 `inode_chunked_state()` so UNIDENTIFIED stays unenforced.  Six call

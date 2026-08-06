@@ -2515,6 +2515,185 @@ START_TEST(test_inv1_fragmentation_three_runs)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* S1.5(A): non-CHUNK operations on a chunked data file                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * These drive dispatch_compound() rather than an op handler directly,
+ * because the gate lives in the dispatch loop and a handler call would
+ * walk straight past it.
+ *
+ * OP_ACCESS is the probe for the three state cases below.  It is not on
+ * the draft's list of operations permitted against a data file, so the
+ * gate covers it -- and unlike READ or SETATTR its handler is safe to
+ * actually run on this mock (it only consults the inode's mode bits),
+ * so the "gate stays silent" cases can be told apart from the "gate
+ * fires" case by the status alone.
+ */
+static nfsstat4 dispatch_one(struct cm_ctx *cm, nfs_opnum4 opnum)
+{
+	cm_set_op(cm, 0, opnum);
+	dispatch_compound(cm->compound);
+	return cm->compound->c_res->status;
+}
+
+/*
+ * The rule itself: an operation the draft does not permit against a
+ * data file is refused once the file is identified as chunked.
+ */
+START_TEST(test_non_chunk_op_rejected_on_chunked_file)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+
+	ck_assert_int_eq(dispatch_one(cm, OP_ACCESS), NFS4ERR_NOTSUPP);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * UNIDENTIFIED is not a YES.  A data server that cannot classify the
+ * file must not start refusing ordinary NFSv4 traffic on it -- every
+ * file on a data server that never had attribute 90 settled would stop
+ * working.  The handler runs and answers for itself.
+ */
+START_TEST(test_non_chunk_op_allowed_when_unidentified)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_UNIDENTIFIED);
+
+	ck_assert_int_ne(dispatch_one(cm, OP_ACCESS), NFS4ERR_NOTSUPP);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * Identified non-chunked is likewise not a YES -- that direction is
+ * S1.5(B)'s business, and this gate must leave it alone.
+ */
+START_TEST(test_non_chunk_op_allowed_when_non_chunked)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_NO);
+
+	ck_assert_int_ne(dispatch_one(cm, OP_ACCESS), NFS4ERR_NOTSUPP);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * The restriction is on what a client sends.  The metadata server
+ * reaches the same file over its control session to do the things the
+ * draft assigns to it, so the gate must not close on it.
+ */
+START_TEST(test_non_chunk_op_allowed_on_control_session)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+	cm->compound->c_nfs4_client->nc_exchgid_flags =
+		EXCHGID4_FLAG_USE_PNFS_MDS;
+
+	ck_assert_int_ne(dispatch_one(cm, OP_ACCESS), NFS4ERR_NOTSUPP);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * The operations the draft names explicitly.  Each is refused before
+ * its handler runs, which is also why running them against this mock
+ * is safe -- none of them is ever entered.
+ */
+START_TEST(test_named_non_chunk_ops_rejected_on_chunked_file)
+{
+	static const nfs_opnum4 ops[] = {
+		OP_READ,      OP_WRITE,	       OP_COMMIT,   OP_SETATTR,
+		OP_READ_PLUS, OP_SEEK,	       OP_ALLOCATE, OP_DEALLOCATE,
+		OP_OPEN,      OP_CLOSE,	       OP_LOCK,	    OP_LOCKU,
+		OP_LAYOUTGET, OP_LAYOUTRETURN, OP_CLONE,    OP_COPY,
+	};
+
+	/*
+	 * One compound reused across the list rather than one per op:
+	 * cm_alloc registers an nfs4_client, and sixteen of them in a
+	 * single test exhausts the client table.
+	 */
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+
+	for (size_t i = 0; i < sizeof(ops) / sizeof(ops[0]); i++) {
+		cm->compound->c_res->status = NFS4_OK;
+		ck_assert_int_eq(dispatch_one(cm, ops[i]), NFS4ERR_NOTSUPP);
+		cm_reset_slot(cm, 0);
+	}
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * GETFH is filehandle plumbing, not an operation on the file, and a
+ * client legitimately issues it after PUTFH on a data file.  Guards the
+ * allowlist against being narrowed to the CHUNK family alone.
+ */
+START_TEST(test_filehandle_plumbing_allowed_on_chunked_file)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+
+	ck_assert_int_ne(dispatch_one(cm, OP_GETFH), NFS4ERR_NOTSUPP);
+
+	/* GETFH ran for real, so its result owns a copy of the handle. */
+	free(cm->compound->c_res->resarray.resarray_val[0]
+		     .nfs_resop4_u.opgetfh.GETFH4res_u.resok4.object
+		     .nfs_fh4_val);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * The regression that matters: the whole point of a chunked data file
+ * is that CHUNK operations work on it.  A full CHUNK_WRITE through
+ * dispatch, not through the handler, so the gate is in the path.
+ */
+START_TEST(test_chunk_write_still_works_through_dispatch)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	char buf[CHUNK_SZ];
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+
+	memset(buf, 'D', sizeof(buf));
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, NULL, 0);
+	cm_set_op(cm, 0, OP_CHUNK_WRITE);
+
+	dispatch_compound(cm->compound);
+
+	ck_assert_int_eq(cm->compound->c_res->status, NFS4_OK);
+
+	free_write_res(cm);
+	cm_free(cm);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -2593,6 +2772,13 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_chunk_ops_allowed_when_unidentified);
 	tcase_add_test(tc_h, test_chunk_ops_allowed_when_chunked);
 	tcase_add_test(tc_h, test_chunk_lifecycle_ops_rejected_on_non_chunked);
+	tcase_add_test(tc_h, test_non_chunk_op_rejected_on_chunked_file);
+	tcase_add_test(tc_h, test_non_chunk_op_allowed_when_unidentified);
+	tcase_add_test(tc_h, test_non_chunk_op_allowed_when_non_chunked);
+	tcase_add_test(tc_h, test_non_chunk_op_allowed_on_control_session);
+	tcase_add_test(tc_h, test_named_non_chunk_ops_rejected_on_chunked_file);
+	tcase_add_test(tc_h, test_filehandle_plumbing_allowed_on_chunked_file);
+	tcase_add_test(tc_h, test_chunk_write_still_works_through_dispatch);
 	suite_add_tcase(s, tc_h);
 
 	return s;
