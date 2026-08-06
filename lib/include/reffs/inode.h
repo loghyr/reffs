@@ -114,6 +114,14 @@ struct inode {
 #define INODE_IS_SYSTEM (1ULL << 3)
 #define INODE_IS_UNCACHEABLE_FILE_DATA (1ULL << 4)
 #define INODE_IS_UNCACHEABLE_DIRENT_METADATA (1ULL << 5)
+/*
+ * Set by the metadata server on data-server files it allocates as
+ * chunked-encoding data files.  A data server that sees this bit
+ * enforces the CHUNK-family restrictions in
+ * draft-haynes-nfsv4-flexfiles-v2 sec-fattr4_chunked_data_file
+ * (attribute 90).  Persists via id_attr_flags in the on-disk inode.
+ */
+#define INODE_IS_CHUNKED_DATA_FILE (1ULL << 6)
 	uint64_t i_attr_flags;
 
 	/* Security label (RFC 7861 Labeled NFS) */

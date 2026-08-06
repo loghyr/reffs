@@ -151,6 +151,7 @@ struct nfsv42_attr {
 	fattr4_uncacheable_file_data uncacheable_file_data;
 	fattr4_uncacheable_dirent_metadata uncacheable_dirent_metadata;
 	fattr4_coding_block_size coding_block_size;
+	fattr4_chunked_data_file chunked_data_file;
 };
 
 static struct nfsv42_attr system_attrs = {
@@ -2072,6 +2073,25 @@ static bool coding_block_size_equal(struct nfsv42_attr *a,
 	return a->coding_block_size == b->coding_block_size;
 }
 
+static count4 chunked_data_file_count(struct nfsv42_attr *nattr)
+{
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_chunked_data_file,
+			  &nattr->chunked_data_file);
+}
+
+static nfsstat4 chunked_data_file_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
+{
+	if (!xdr_fattr4_chunked_data_file(xdrs, &nattr->chunked_data_file))
+		return NFS4ERR_BADXDR;
+	return NFS4_OK;
+}
+
+static bool chunked_data_file_equal(struct nfsv42_attr *a,
+				    struct nfsv42_attr *b)
+{
+	return a->chunked_data_file == b->chunked_data_file;
+}
+
 static struct nfsv42_attr_ops nao[] = {
 	{ FATTR4_SUPPORTED_ATTRS, supported_attrs_count, supported_attrs_xdr,
 	  supported_attrs_equal },
@@ -2228,7 +2248,9 @@ static struct nfsv42_attr_ops nao[] = {
 	{ FATTR4_UNCACHEABLE_DIRENT_METADATA, uncacheable_dirent_metadata_count,
 	  uncacheable_dirent_metadata_xdr, uncacheable_dirent_metadata_equal },
 	{ FATTR4_CODING_BLOCK_SIZE, coding_block_size_count,
-	  coding_block_size_xdr, coding_block_size_equal }
+	  coding_block_size_xdr, coding_block_size_equal },
+	{ FATTR4_CHUNKED_DATA_FILE, chunked_data_file_count,
+	  chunked_data_file_xdr, chunked_data_file_equal }
 };
 
 int nfs4_attribute_init(void)
@@ -2333,6 +2355,7 @@ int nfs4_attribute_init(void)
 	bitmap4_attribute_set(bm, FATTR4_UNCACHEABLE_FILE_DATA);
 	bitmap4_attribute_set(bm, FATTR4_UNCACHEABLE_DIRENT_METADATA);
 	bitmap4_attribute_set(bm, FATTR4_CODING_BLOCK_SIZE);
+	bitmap4_attribute_set(bm, FATTR4_CHUNKED_DATA_FILE);
 
 	/*
 	 * suppattr_exclcreat: attributes this server will honour when set
@@ -2497,6 +2520,7 @@ static bool nattr_is_settable(uint32_t attr)
 	case FATTR4_UNCACHEABLE_FILE_DATA:
 	case FATTR4_UNCACHEABLE_DIRENT_METADATA:
 	case FATTR4_SEC_LABEL:
+	case FATTR4_CHUNKED_DATA_FILE:
 		return true;
 	default:
 		return false;
@@ -2598,6 +2622,10 @@ static nfsstat4 nattr_from_fattr4(fattr4 *fattr, struct nfsv42_attr *nattr)
 		case FATTR4_UNCACHEABLE_DIRENT_METADATA:
 			ok = xdr_fattr4_uncacheable_dirent_metadata(
 				&sptr, &nattr->uncacheable_dirent_metadata);
+			break;
+		case FATTR4_CHUNKED_DATA_FILE:
+			ok = xdr_fattr4_chunked_data_file(
+				&sptr, &nattr->chunked_data_file);
 			break;
 		case FATTR4_SEC_LABEL:
 			ok = xdr_fattr4_sec_label(&sptr, &nattr->sec_label);
@@ -2824,6 +2852,14 @@ static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
 				inode->i_attr_flags &=
 					~INODE_IS_UNCACHEABLE_DIRENT_METADATA;
 			break;
+		case FATTR4_CHUNKED_DATA_FILE:
+			if (nattr->chunked_data_file)
+				inode->i_attr_flags |=
+					INODE_IS_CHUNKED_DATA_FILE;
+			else
+				inode->i_attr_flags &=
+					~INODE_IS_CHUNKED_DATA_FILE;
+			break;
 		case FATTR4_TIME_CREATE:
 			if (nattr->time_create.nseconds >= 1000000000U) {
 				pthread_mutex_unlock(&inode->i_attr_mutex);
@@ -3047,6 +3083,8 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 	nattr->uncacheable_dirent_metadata =
 		inode->i_attr_flags & INODE_IS_UNCACHEABLE_DIRENT_METADATA;
 	nattr->coding_block_size = system_attrs.coding_block_size;
+	nattr->chunked_data_file = inode->i_attr_flags &
+				   INODE_IS_CHUNKED_DATA_FILE;
 
 	/*
 	 * Advertise Flex Files layout support when the server role
