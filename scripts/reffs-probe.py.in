@@ -983,6 +983,34 @@ def ps_write_buffer_stats_cmd(client, args):
               f"{p.ppwbs_shortcircuit_total:<10}")
 
 
+def trust_stateid_stats_cmd(client, args):
+    """Tight-coupling trust-table counters.  The registration and
+    validation paths are silent on success, so this is how you tell a
+    working tightly-coupled deployment from one where clients fell
+    back to the anonymous stateid: a large "bypassed" against a small
+    "accepted" means tight coupling is not engaging."""
+    res = client.trust_stateid_stats()
+    probe_error_handler(res)
+    k = res.ptssr_resok
+    print("trust table")
+    print(f"  live entries       {k.ptss_entries}")
+    print(f"  registers          {k.ptss_registers}")
+    print(f"  renewals           {k.ptss_renewals}")
+    print(f"  revokes            {k.ptss_revokes}")
+    print(f"  bulk revokes       {k.ptss_bulk_revokes}")
+    print(f"  expired            {k.ptss_expired}")
+    print(f"  lookups            {k.ptss_lookups} "
+          f"({k.ptss_lookup_misses} missed)")
+    print("validation")
+    print(f"  accepted           {k.ptss_validate_ok}")
+    print(f"  bypassed (special) {k.ptss_validate_special}")
+    print(f"  no entry           {k.ptss_validate_no_entry}")
+    print(f"  expired            {k.ptss_validate_expired}")
+    print(f"  pending            {k.ptss_validate_pending}")
+    print(f"  iomode             {k.ptss_validate_iomode}")
+    print(f"  identity mismatch  {k.ptss_validate_identity}")
+
+
 def dstore_list_cmd(client, args):
     res = client.dstore_list()
     probe_error_handler(res)
@@ -1419,6 +1447,11 @@ def parse_args():
         'ps-write-buffer-stats',
         help='Per-listener PS Phase 4a write-buffer counters')
     p_ps_write_buffer_stats.set_defaults(func=ps_write_buffer_stats_cmd)
+
+    p_trust_stateid_stats = subparsers.add_parser(
+        'trust-stateid-stats',
+        help='Tight-coupling trust-table counters and validation outcomes')
+    p_trust_stateid_stats.set_defaults(func=trust_stateid_stats_cmd)
 
     p_dstore_list = subparsers.add_parser(
         'dstore-list',

@@ -72,6 +72,7 @@ struct rpc_trans *probe1_client_op_ps_listener_list(void);
  * lib/xdr/probe1_xdr.x PS_WRITE_BUFFER_STATS.
  */
 struct rpc_trans *probe1_client_op_ps_write_buffer_stats(void);
+struct rpc_trans *probe1_client_op_trust_stateid_stats(void);
 
 /* Slice B: dstore lifecycle ops. */
 struct rpc_trans *probe1_client_op_dstore_list(void);

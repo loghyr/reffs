@@ -331,6 +331,18 @@ class Probe1Client(ProtocolClient):
         return self.proc(PROBEPROC1_PS_WRITE_BUFFER_STATS,
                          response_type='PS_WRITE_BUFFER_STATS1res')
 
+    def trust_stateid_stats(self):
+        """Tight-coupling trust-table counters: registrations,
+        renewals, revocations, expiries, lookups, live entry count,
+        and the validation outcome breakdown.  The trust path emits
+        no trace on success, so these counters are the only way to
+        tell a working tightly-coupled deployment from one where
+        clients silently fell back to the anonymous stateid -- a
+        large validate_special against a small validate_ok is the
+        signature of tight coupling not engaging."""
+        return self.proc(PROBEPROC1_TRUST_STATEID_STATS,
+                         response_type='TRUST_STATEID_STATS1res')
+
     # Slice B: dstore lifecycle.
     def dstore_list(self):
         """Operator dashboard for the dstore pool.  Returns

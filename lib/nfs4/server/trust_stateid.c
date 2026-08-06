@@ -51,6 +51,82 @@ static pthread_mutex_t trust_reaper_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t trust_reaper_cv = PTHREAD_COND_INITIALIZER;
 static _Atomic bool trust_reaper_running;
 
+/*
+ * Counters.  Relaxed throughout: these are diagnostics, and no
+ * decision is made on their values, so ordering them against the
+ * table operations they describe would cost the I/O path for nothing.
+ * They are deliberately not reset by trust_stateid_fini -- an
+ * operator comparing two samples wants monotonic totals for the
+ * lifetime of the process.
+ */
+static _Atomic uint64_t ts_registers;
+static _Atomic uint64_t ts_renewals;
+static _Atomic uint64_t ts_revokes;
+static _Atomic uint64_t ts_bulk_revokes;
+static _Atomic uint64_t ts_expired;
+static _Atomic uint64_t ts_lookups;
+static _Atomic uint64_t ts_lookup_misses;
+static _Atomic uint64_t ts_validate[TRUST_VALIDATE_MAX];
+
+static inline void ts_bump(_Atomic uint64_t *c)
+{
+	atomic_fetch_add_explicit(c, 1, memory_order_relaxed);
+}
+
+void trust_stateid_count_validation(enum trust_validation_outcome outcome)
+{
+	if ((unsigned)outcome >= TRUST_VALIDATE_MAX)
+		return;
+	ts_bump(&ts_validate[outcome]);
+}
+
+void trust_stateid_get_stats(struct trust_stateid_stats *out)
+{
+	if (!out)
+		return;
+
+	memset(out, 0, sizeof(*out));
+
+	out->ts_registers =
+		atomic_load_explicit(&ts_registers, memory_order_relaxed);
+	out->ts_renewals =
+		atomic_load_explicit(&ts_renewals, memory_order_relaxed);
+	out->ts_revokes =
+		atomic_load_explicit(&ts_revokes, memory_order_relaxed);
+	out->ts_bulk_revokes =
+		atomic_load_explicit(&ts_bulk_revokes, memory_order_relaxed);
+	out->ts_expired =
+		atomic_load_explicit(&ts_expired, memory_order_relaxed);
+	out->ts_lookups =
+		atomic_load_explicit(&ts_lookups, memory_order_relaxed);
+	out->ts_lookup_misses =
+		atomic_load_explicit(&ts_lookup_misses, memory_order_relaxed);
+
+	for (unsigned i = 0; i < TRUST_VALIDATE_MAX; i++)
+		out->ts_validate[i] = atomic_load_explicit(
+			&ts_validate[i], memory_order_relaxed);
+
+	/*
+	 * Live entry count: a lazy walk, matching how
+	 * PS_WRITE_BUFFER_STATS counts live write buffers.  The table
+	 * has no maintained counter and adding one would put a shared
+	 * cacheline in the registration path.
+	 */
+	if (!trust_ht)
+		return;
+
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+
+	rcu_read_lock();
+	cds_lfht_first(trust_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+		out->ts_entries++;
+		cds_lfht_next(trust_ht, &iter);
+	}
+	rcu_read_unlock();
+}
+
 /* ------------------------------------------------------------------ */
 /* Hash and match                                                      */
 
@@ -231,6 +307,7 @@ static void *trust_reaper_thread_fn(void *arg __attribute__((unused)))
 			/* Drop find ref + creation ref to destroy the entry. */
 			trust_entry_put(te);
 			trust_entry_put(te);
+			ts_bump(&ts_expired);
 		}
 		rcu_read_unlock();
 
@@ -370,6 +447,7 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 			te->te_iomode = iomode;
 			rcu_read_unlock();
 			trust_entry_put(te);
+			ts_bump(&ts_renewals);
 			return 0;
 		}
 		/* Entry is dying; fall through to allocate a replacement. */
@@ -402,6 +480,7 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 	cds_lfht_add(trust_ht, hash, &te->te_ht_node);
 	rcu_read_unlock();
 
+	ts_bump(&ts_registers);
 	return 0;
 }
 
@@ -431,6 +510,7 @@ void trust_stateid_revoke(const stateid4 *stateid)
 			rcu_read_unlock();
 			trust_entry_put(te); /* find ref */
 			trust_entry_put(te); /* creation ref */
+			ts_bump(&ts_revokes);
 			return;
 		}
 	}
@@ -441,6 +521,8 @@ void trust_stateid_bulk_revoke(clientid4 clientid)
 {
 	if (!trust_ht)
 		return;
+
+	ts_bump(&ts_bulk_revokes);
 
 	bool clear_all = (clientid == 0);
 	struct cds_lfht_iter iter;
@@ -521,6 +603,8 @@ struct trust_entry *trust_stateid_find(const stateid4 *stateid)
 	if (!trust_ht)
 		return NULL;
 
+	ts_bump(&ts_lookups);
+
 	rcu_read_lock();
 	cds_lfht_lookup(trust_ht, hash, trust_match, stateid->other, &iter);
 	node = cds_lfht_iter_get_node(&iter);
@@ -533,6 +617,9 @@ struct trust_entry *trust_stateid_find(const stateid4 *stateid)
 			te = tmp;
 	}
 	rcu_read_unlock();
+
+	if (!te)
+		ts_bump(&ts_lookup_misses);
 
 	return te;
 }

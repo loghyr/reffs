@@ -138,31 +138,48 @@ static bool creds_match(const struct inode *inode, uint32_t fwd_uid,
  */
 static int check_stateid(const stateid4 *layout_stid)
 {
-	if (!layout_stid)
+	/*
+	 * No stateid to check: ec_pipeline passes NULL when the mirror
+	 * is not tight coupled.  Counted in the same bucket as a special
+	 * stateid -- both mean "validation was bypassed", which is the
+	 * reading that matters when asking whether tight coupling is
+	 * engaging at all.
+	 */
+	if (!layout_stid) {
+		trust_stateid_count_validation(TRUST_VALIDATE_SPECIAL);
 		return 0;
+	}
 
 	struct trust_entry *te = trust_stateid_find(layout_stid);
 
-	if (!te)
+	if (!te) {
+		trust_stateid_count_validation(TRUST_VALIDATE_NO_ENTRY);
 		return -EBADSTATEID;
+	}
 
 	uint32_t flags =
 		atomic_load_explicit(&te->te_flags, memory_order_acquire);
 	int ret = 0;
+	enum trust_validation_outcome outcome = TRUST_VALIDATE_OK;
 
 	if (flags & TRUST_PENDING) {
 		ret = -EAGAIN;
+		outcome = TRUST_VALIDATE_PENDING;
 	} else if (!(flags & TRUST_ACTIVE)) {
 		ret = -EBADSTATEID;
+		outcome = TRUST_VALIDATE_EXPIRED;
 	} else {
 		uint64_t now = sc_now_mono_ns();
 		uint64_t exp = atomic_load_explicit(&te->te_expire_ns,
 						    memory_order_acquire);
 
-		if (exp != 0 && exp <= now)
+		if (exp != 0 && exp <= now) {
 			ret = -EEXPIREDSTATEID;
+			outcome = TRUST_VALIDATE_EXPIRED;
+		}
 	}
 	trust_entry_put(te);
+	trust_stateid_count_validation(outcome);
 	return ret;
 }
 

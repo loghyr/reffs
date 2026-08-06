@@ -813,6 +813,57 @@ union PS_WRITE_BUFFER_STATS1res switch (probe_stat1 pwbsr_status) {
 		void;
 };
 
+/* ------------------------------------------------------------------ */
+/* TRUST_STATEID_STATS (op 40) -- tight-coupling trust-table counters. */
+/*                                                                     */
+/* The trust table is silent on success: registration, renewal, and    */
+/* every accepted validation emit no trace, so a tightly-coupled       */
+/* deployment and one where clients quietly fell back to the anonymous */
+/* stateid look identical in a log.  These counters are how an         */
+/* operator (or a test) tells them apart.                              */
+/*                                                                     */
+/* All fields are monotonic totals since server start except           */
+/* ptss_entries, the live entry count at the moment the handler ran    */
+/* (lazy walk, like ppwbs_active_buffers above).                       */
+/*                                                                     */
+/* The validation fields partition every gated operation:              */
+/*   ptss_validate_special    bypassed -- special stateid, or the      */
+/*                            proxy short-circuit passing none         */
+/*                            (a large value here against a small      */
+/*                            ptss_validate_ok is the signature of     */
+/*                            tight coupling NOT engaging)             */
+/*   ptss_validate_ok         real stateid, accepted                   */
+/*   ptss_validate_no_entry   no trust entry -- NFS4ERR_BAD_STATEID    */
+/*   ptss_validate_expired    entry past its expiry, or not ACTIVE     */
+/*   ptss_validate_pending    TRUST_PENDING -- NFS4ERR_DELAY           */
+/*   ptss_validate_iomode     read-only entry, write attempted         */
+/*   ptss_validate_identity   presented writer identity did not match  */
+/*                            the one the metadata server registered   */
+struct TRUST_STATEID_STATS1resok {
+	unsigned hyper	ptss_registers;
+	unsigned hyper	ptss_renewals;
+	unsigned hyper	ptss_revokes;
+	unsigned hyper	ptss_bulk_revokes;
+	unsigned hyper	ptss_expired;
+	unsigned hyper	ptss_lookups;
+	unsigned hyper	ptss_lookup_misses;
+	unsigned hyper	ptss_validate_special;
+	unsigned hyper	ptss_validate_ok;
+	unsigned hyper	ptss_validate_no_entry;
+	unsigned hyper	ptss_validate_expired;
+	unsigned hyper	ptss_validate_pending;
+	unsigned hyper	ptss_validate_iomode;
+	unsigned hyper	ptss_validate_identity;
+	unsigned hyper	ptss_entries;
+};
+
+union TRUST_STATEID_STATS1res switch (probe_stat1 ptssr_status) {
+	case PROBE1_OK:
+		TRUST_STATEID_STATS1resok	ptssr_resok;
+	default:
+		void;
+};
+
 /* SB_LINT_FLAVORS (op 20) */
 struct SB_LINT_FLAVORS1resok {
 	unsigned int	lfr_warnings;
@@ -1074,5 +1125,9 @@ program PROBE_PROGRAM {
 		/* Deterministic CB_NOTIFY_DEVICEID test trigger */
 		NOTIFY_DEVICEID1res
 		PROBEPROC1_NOTIFY_DEVICEID(NOTIFY_DEVICEID1args) = 39;
+
+		/* Tight-coupling trust-table counters */
+		TRUST_STATEID_STATS1res
+		PROBEPROC1_TRUST_STATEID_STATS(void) = 40;
 	} = 1;
 } = 211768;

@@ -82,6 +82,70 @@ struct trust_entry {
 };
 
 /* ------------------------------------------------------------------ */
+/* Observability                                                       */
+
+/*
+ * Outcome of validating one presented layout stateid against the
+ * table.  Every consumer that gates I/O on a trust entry reports one
+ * of these, so the counters describe the whole tight-coupling path
+ * rather than a single caller's slice of it.
+ *
+ * These exist because the path is otherwise invisible.  Nothing on
+ * the success side of registration or validation is traced, so a
+ * working tight-coupled deployment and one where the client silently
+ * fell back to the anonymous stateid produce identical logs.  On
+ * 2026-08-06 that cost a wrong conclusion -- a passing run was read
+ * as proof the chain was dead, on a grep that could not have matched
+ * either way.  A counter answers the question a trace cannot.
+ */
+enum trust_validation_outcome {
+	TRUST_VALIDATE_SPECIAL = 0, /* special stateid; check bypassed */
+	TRUST_VALIDATE_OK, /* real stateid, accepted */
+	TRUST_VALIDATE_NO_ENTRY, /* no trust entry -- BAD_STATEID */
+	TRUST_VALIDATE_EXPIRED, /* entry past te_expire_ns */
+	TRUST_VALIDATE_PENDING, /* TRUST_PENDING -- DELAY */
+	TRUST_VALIDATE_IOMODE, /* read-only entry, write asked */
+	TRUST_VALIDATE_IDENTITY, /* writer identity mismatch */
+	TRUST_VALIDATE_MAX
+};
+
+/*
+ * Snapshot of the table's counters.  All monotonic since startup
+ * except ts_entries, which is the live entry count at snapshot time.
+ */
+struct trust_stateid_stats {
+	uint64_t ts_registers; /* new entries inserted */
+	uint64_t ts_renewals; /* re-registration of a live entry */
+	uint64_t ts_revokes; /* REVOKE_STATEID that found an entry */
+	uint64_t ts_bulk_revokes; /* BULK_REVOKE_STATEID operations */
+	uint64_t ts_expired; /* entries reaped on expiry */
+	uint64_t ts_lookups; /* trust_stateid_find calls */
+	uint64_t ts_lookup_misses; /* of those, returning NULL */
+	uint64_t ts_validate[TRUST_VALIDATE_MAX];
+	uint64_t ts_entries; /* live entries, counted at snapshot */
+};
+
+/*
+ * trust_stateid_count_validation -- record one validation outcome.
+ *
+ * Called by every gate that consumes a trust entry (the CHUNK family
+ * in chunk.c, the proxy short-circuit in ps_shortcircuit.c) so the
+ * counters stay complete as consumers are added.
+ */
+void trust_stateid_count_validation(enum trust_validation_outcome outcome);
+
+/*
+ * trust_stateid_get_stats -- fill *out with a counter snapshot.
+ *
+ * The counters are read with relaxed ordering and the live entry
+ * count is a lazy walk, so the snapshot is not a consistent
+ * cross-section of a running server.  That is deliberate: this is a
+ * diagnostic surface, and making it consistent would mean locking the
+ * table against the I/O path it exists to measure.
+ */
+void trust_stateid_get_stats(struct trust_stateid_stats *out);
+
+/* ------------------------------------------------------------------ */
 /* Lifecycle                                                           */
 
 /*

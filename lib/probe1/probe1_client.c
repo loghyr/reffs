@@ -927,6 +927,73 @@ struct rpc_trans *probe1_client_op_ps_write_buffer_stats(void)
 	return rt;
 }
 
+static int trust_stateid_stats_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	TRUST_STATEID_STATS1res *res = ph->ph_res;
+
+	if (res->ptssr_status) {
+		LOG("trust-stateid-stats error = %d", res->ptssr_status);
+	} else {
+		TRUST_STATEID_STATS1resok *k =
+			&res->TRUST_STATEID_STATS1res_u.ptssr_resok;
+
+		printf("trust table\n");
+		printf("  live entries       %" PRIu64 "\n", k->ptss_entries);
+		printf("  registers          %" PRIu64 "\n", k->ptss_registers);
+		printf("  renewals           %" PRIu64 "\n", k->ptss_renewals);
+		printf("  revokes            %" PRIu64 "\n", k->ptss_revokes);
+		printf("  bulk revokes       %" PRIu64 "\n",
+		       k->ptss_bulk_revokes);
+		printf("  expired            %" PRIu64 "\n", k->ptss_expired);
+		printf("  lookups            %" PRIu64 " (%" PRIu64
+		       " missed)\n",
+		       k->ptss_lookups, k->ptss_lookup_misses);
+		printf("validation\n");
+		printf("  accepted           %" PRIu64 "\n",
+		       k->ptss_validate_ok);
+		printf("  bypassed (special) %" PRIu64 "\n",
+		       k->ptss_validate_special);
+		printf("  no entry           %" PRIu64 "\n",
+		       k->ptss_validate_no_entry);
+		printf("  expired            %" PRIu64 "\n",
+		       k->ptss_validate_expired);
+		printf("  pending            %" PRIu64 "\n",
+		       k->ptss_validate_pending);
+		printf("  iomode             %" PRIu64 "\n",
+		       k->ptss_validate_iomode);
+		printf("  identity mismatch  %" PRIu64 "\n",
+		       k->ptss_validate_identity);
+	}
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_trust_stateid_stats(void)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_TRUST_STATEID_STATS;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+
+	rt->rt_cb = trust_stateid_stats_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
 struct rpc_trans *probe1_client_op_dstore_list(void)
 {
 	int ret;

@@ -92,13 +92,17 @@ static inline bool chunk_cid_is_reserved(uint32_t cid)
 static nfsstat4 chunk_check_trusted_stateid(const stateid4 *stid,
 					    uint32_t client_id, bool require_rw)
 {
-	if (stateid4_is_special(stid))
+	if (stateid4_is_special(stid)) {
+		trust_stateid_count_validation(TRUST_VALIDATE_SPECIAL);
 		return NFS4_OK;
+	}
 
 	struct trust_entry *te = trust_stateid_find(stid);
 
-	if (!te)
+	if (!te) {
+		trust_stateid_count_validation(TRUST_VALIDATE_NO_ENTRY);
 		return NFS4ERR_BAD_STATEID;
+	}
 
 	uint64_t now = reffs_now_ns();
 	uint64_t exp =
@@ -108,18 +112,22 @@ static nfsstat4 chunk_check_trusted_stateid(const stateid4 *stid,
 
 	if (flags & TRUST_PENDING) {
 		trust_entry_put(te);
+		trust_stateid_count_validation(TRUST_VALIDATE_PENDING);
 		return NFS4ERR_DELAY;
 	}
 	if (exp != 0 && now > exp) {
 		trust_entry_put(te);
+		trust_stateid_count_validation(TRUST_VALIDATE_EXPIRED);
 		return NFS4ERR_BAD_STATEID;
 	}
 	if (!(flags & TRUST_ACTIVE)) {
 		trust_entry_put(te);
+		trust_stateid_count_validation(TRUST_VALIDATE_EXPIRED);
 		return NFS4ERR_BAD_STATEID;
 	}
 	if (require_rw && te->te_iomode != LAYOUTIOMODE4_RW) {
 		trust_entry_put(te);
+		trust_stateid_count_validation(TRUST_VALIDATE_IOMODE);
 		return NFS4ERR_ACCESS;
 	}
 
@@ -143,10 +151,12 @@ static nfsstat4 chunk_check_trusted_stateid(const stateid4 *stid,
 	    client_id != CHUNK_GUARD_CLIENT_ID_NONE &&
 	    te->te_client_id != client_id) {
 		trust_entry_put(te);
+		trust_stateid_count_validation(TRUST_VALIDATE_IDENTITY);
 		return NFS4ERR_BAD_STATEID;
 	}
 
 	trust_entry_put(te);
+	trust_stateid_count_validation(TRUST_VALIDATE_OK);
 	return NFS4_OK;
 }
 

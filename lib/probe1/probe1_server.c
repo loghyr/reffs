@@ -41,6 +41,7 @@
 #include "reffs/identity_map.h"
 #include "reffs/probe1.h"
 #include "nfs4/cb.h"
+#include "nfs4/trust_stateid.h"
 #include "reffs/server.h"
 #include "reffs/coding_spec.h"
 #include "reffs/super_block.h"
@@ -1691,6 +1692,43 @@ static int probe1_op_ps_write_buffer_stats(struct rpc_trans *rt)
 	return 0;
 }
 
+/*
+ * TRUST_STATEID_STATS (op 40) -- tight-coupling trust-table counters.
+ *
+ * A snapshot, not a consistent cross-section: the counters are read
+ * with relaxed ordering and the entry count is a lazy walk.  Making
+ * it consistent would mean locking the table against the CHUNK path
+ * these counters exist to measure.
+ */
+static int probe1_op_trust_stateid_stats(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	TRUST_STATEID_STATS1res *res = ph->ph_res;
+	TRUST_STATEID_STATS1resok *resok =
+		&res->TRUST_STATEID_STATS1res_u.ptssr_resok;
+	struct trust_stateid_stats st;
+
+	trust_stateid_get_stats(&st);
+
+	resok->ptss_registers = st.ts_registers;
+	resok->ptss_renewals = st.ts_renewals;
+	resok->ptss_revokes = st.ts_revokes;
+	resok->ptss_bulk_revokes = st.ts_bulk_revokes;
+	resok->ptss_expired = st.ts_expired;
+	resok->ptss_lookups = st.ts_lookups;
+	resok->ptss_lookup_misses = st.ts_lookup_misses;
+	resok->ptss_validate_special = st.ts_validate[TRUST_VALIDATE_SPECIAL];
+	resok->ptss_validate_ok = st.ts_validate[TRUST_VALIDATE_OK];
+	resok->ptss_validate_no_entry = st.ts_validate[TRUST_VALIDATE_NO_ENTRY];
+	resok->ptss_validate_expired = st.ts_validate[TRUST_VALIDATE_EXPIRED];
+	resok->ptss_validate_pending = st.ts_validate[TRUST_VALIDATE_PENDING];
+	resok->ptss_validate_iomode = st.ts_validate[TRUST_VALIDATE_IOMODE];
+	resok->ptss_validate_identity = st.ts_validate[TRUST_VALIDATE_IDENTITY];
+	resok->ptss_entries = st.ts_entries;
+
+	return 0;
+}
+
 static int probe1_op_dstore_list(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -2582,6 +2620,9 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 			   xdr_PS_WRITE_BUFFER_STATS1res,
 			   PS_WRITE_BUFFER_STATS1res,
 			   probe1_op_ps_write_buffer_stats),
+	RPC_OPERATION_INIT(PROBEPROC1, TRUST_STATEID_STATS, NULL, NULL,
+			   xdr_TRUST_STATEID_STATS1res, TRUST_STATEID_STATS1res,
+			   probe1_op_trust_stateid_stats),
 	RPC_OPERATION_INIT(PROBEPROC1, SB_SET_CHECKSUM_ALGORITHM,
 			   xdr_SB_SET_CHECKSUM_ALGORITHM1args,
 			   SB_SET_CHECKSUM_ALGORITHM1args, xdr_probe_stat1,

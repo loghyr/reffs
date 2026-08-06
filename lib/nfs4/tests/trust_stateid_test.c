@@ -1878,6 +1878,273 @@ END_TEST
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* Group K: counters                                                   */
+/*                                                                     */
+/* The counters exist because the trust path is silent on success --   */
+/* see trust_stateid.h.  They are only worth having if they are        */
+/* correct, so these assert deltas rather than absolutes: the counters */
+/* are deliberately not reset by trust_stateid_fini, so a test that    */
+/* asserted absolute values would pass or fail depending on which      */
+/* tests ran before it.                                                */
+
+static struct trust_stateid_stats stats_snapshot(void)
+{
+	struct trust_stateid_stats st;
+
+	trust_stateid_get_stats(&st);
+	return st;
+}
+
+START_TEST(test_stats_register_counts)
+{
+	struct trust_stateid_stats a = stats_snapshot();
+	stateid4 s1 = make_stateid(0x11);
+	stateid4 s2 = make_stateid(0x12);
+
+	ck_assert_int_eq(trust_stateid_register(&s1, 1, 0, 0, LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+	ck_assert_int_eq(trust_stateid_register(&s2, 2, 0, 0, LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+
+	struct trust_stateid_stats b = stats_snapshot();
+
+	ck_assert_uint_eq(b.ts_registers - a.ts_registers, 2);
+	ck_assert_uint_eq(b.ts_renewals - a.ts_renewals, 0);
+	ck_assert_uint_eq(b.ts_entries, 2);
+}
+END_TEST
+
+START_TEST(test_stats_renewal_counts_separately)
+{
+	stateid4 s = make_stateid(0x13);
+
+	ck_assert_int_eq(trust_stateid_register(&s, 1, 0, 0, LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+
+	struct trust_stateid_stats a = stats_snapshot();
+
+	/* Same stateid.other: updates in place, does not insert. */
+	ck_assert_int_eq(trust_stateid_register(&s, 1, 0, 0, LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+
+	struct trust_stateid_stats b = stats_snapshot();
+
+	ck_assert_uint_eq(b.ts_renewals - a.ts_renewals, 1);
+	ck_assert_uint_eq(b.ts_registers - a.ts_registers, 0);
+	ck_assert_uint_eq(b.ts_entries, 1);
+}
+END_TEST
+
+START_TEST(test_stats_revoke_counts)
+{
+	stateid4 s = make_stateid(0x14);
+
+	ck_assert_int_eq(trust_stateid_register(&s, 1, 0, 0, LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+
+	struct trust_stateid_stats a = stats_snapshot();
+
+	trust_stateid_revoke(&s);
+
+	struct trust_stateid_stats b = stats_snapshot();
+
+	ck_assert_uint_eq(b.ts_revokes - a.ts_revokes, 1);
+	ck_assert_uint_eq(b.ts_entries, 0);
+
+	/* Revoking what is not there is idempotent and is not counted. */
+	trust_stateid_revoke(&s);
+
+	struct trust_stateid_stats c = stats_snapshot();
+
+	ck_assert_uint_eq(c.ts_revokes - b.ts_revokes, 0);
+}
+END_TEST
+
+START_TEST(test_stats_bulk_revoke_counts_operations)
+{
+	stateid4 s1 = make_stateid(0x15);
+	stateid4 s2 = make_stateid(0x16);
+
+	ck_assert_int_eq(trust_stateid_register(&s1, 1, 7, 0, LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+	ck_assert_int_eq(trust_stateid_register(&s2, 2, 7, 0, LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+
+	struct trust_stateid_stats a = stats_snapshot();
+
+	trust_stateid_bulk_revoke(7);
+
+	struct trust_stateid_stats b = stats_snapshot();
+
+	/*
+	 * One operation, two entries removed -- the counter is per
+	 * operation, so it moves by one and the entry count carries the
+	 * rest of the story.
+	 */
+	ck_assert_uint_eq(b.ts_bulk_revokes - a.ts_bulk_revokes, 1);
+	ck_assert_uint_eq(b.ts_entries, 0);
+}
+END_TEST
+
+START_TEST(test_stats_lookup_hit_and_miss)
+{
+	stateid4 present = make_stateid(0x17);
+	stateid4 absent = make_stateid(0x18);
+
+	ck_assert_int_eq(trust_stateid_register(&present, 1, 0, 0,
+						LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+
+	struct trust_stateid_stats a = stats_snapshot();
+	struct trust_entry *te = trust_stateid_find(&present);
+
+	ck_assert_ptr_nonnull(te);
+	trust_entry_put(te);
+
+	struct trust_stateid_stats b = stats_snapshot();
+
+	ck_assert_uint_eq(b.ts_lookups - a.ts_lookups, 1);
+	ck_assert_uint_eq(b.ts_lookup_misses - a.ts_lookup_misses, 0);
+
+	ck_assert_ptr_null(trust_stateid_find(&absent));
+
+	struct trust_stateid_stats c = stats_snapshot();
+
+	ck_assert_uint_eq(c.ts_lookups - b.ts_lookups, 1);
+	ck_assert_uint_eq(c.ts_lookup_misses - b.ts_lookup_misses, 1);
+}
+END_TEST
+
+START_TEST(test_stats_validation_buckets_are_independent)
+{
+	/*
+	 * Each outcome must land in its own slot.  An off-by-one or a
+	 * copy-paste in the seven-way array would otherwise be invisible
+	 * -- the totals would still look plausible.
+	 */
+	static const enum trust_validation_outcome all[] = {
+		TRUST_VALIDATE_SPECIAL,	 TRUST_VALIDATE_OK,
+		TRUST_VALIDATE_NO_ENTRY, TRUST_VALIDATE_EXPIRED,
+		TRUST_VALIDATE_PENDING,	 TRUST_VALIDATE_IOMODE,
+		TRUST_VALIDATE_IDENTITY,
+	};
+
+	for (unsigned i = 0; i < sizeof(all) / sizeof(all[0]); i++) {
+		struct trust_stateid_stats a = stats_snapshot();
+
+		trust_stateid_count_validation(all[i]);
+
+		struct trust_stateid_stats b = stats_snapshot();
+
+		for (unsigned j = 0; j < TRUST_VALIDATE_MAX; j++) {
+			uint64_t delta = b.ts_validate[j] - a.ts_validate[j];
+
+			ck_assert_uint_eq(delta,
+					  (j == (unsigned)all[i]) ? 1 : 0);
+		}
+	}
+}
+END_TEST
+
+START_TEST(test_stats_validation_out_of_range_ignored)
+{
+	struct trust_stateid_stats a = stats_snapshot();
+
+	trust_stateid_count_validation(TRUST_VALIDATE_MAX);
+	trust_stateid_count_validation((enum trust_validation_outcome)999);
+
+	struct trust_stateid_stats b = stats_snapshot();
+
+	for (unsigned j = 0; j < TRUST_VALIDATE_MAX; j++)
+		ck_assert_uint_eq(b.ts_validate[j] - a.ts_validate[j], 0);
+}
+END_TEST
+
+START_TEST(test_stats_chunk_write_counts_accept)
+{
+	stateid4 stid = make_stateid(0x19);
+
+	ck_assert_int_eq(trust_stateid_register(&stid, g_op_inode->i_ino, 0,
+						0xBEEF, LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+
+	struct trust_stateid_stats a = stats_snapshot();
+	struct cm_ctx *cm = cm_alloc(1, 0);
+
+	cm_set_inode(cm, g_op_inode);
+	chunk_set_write_args(cm, &stid);
+
+	nfs4_op_chunk_write(cm->compound);
+
+	CHUNK_WRITE4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					.nfs_resop4_u.opchunk_write;
+
+	ck_assert_int_ne(res->cwr_status, NFS4ERR_BAD_STATEID);
+
+	CHUNK_WRITE4resok *ok = &res->CHUNK_WRITE4res_u.cwr_resok4;
+
+	free(ok->cwr_block_status.cwr_block_status_val);
+	free(ok->cwr_block_activated.cwr_block_activated_val);
+	free(ok->cwr_owners.cwr_owners_val);
+	memset(ok, 0, sizeof(*ok));
+	cm_free(cm);
+
+	struct trust_stateid_stats b = stats_snapshot();
+
+	ck_assert_uint_eq(b.ts_validate[TRUST_VALIDATE_OK] -
+				  a.ts_validate[TRUST_VALIDATE_OK],
+			  1);
+}
+END_TEST
+
+START_TEST(test_stats_chunk_write_counts_identity_mismatch)
+{
+	stateid4 stid = make_stateid(0x1A);
+
+	/*
+	 * Registered to writer 0x1234; chunk_set_write_args presents
+	 * 0xBEEF, so the binding check must reject.
+	 */
+	ck_assert_int_eq(trust_stateid_register(&stid, g_op_inode->i_ino, 0,
+						0x1234, LAYOUTIOMODE4_RW,
+						future_expire_ns(), ""),
+			 0);
+
+	struct trust_stateid_stats a = stats_snapshot();
+	struct cm_ctx *cm = cm_alloc(1, 0);
+
+	cm_set_inode(cm, g_op_inode);
+	chunk_set_write_args(cm, &stid);
+
+	nfs4_op_chunk_write(cm->compound);
+
+	CHUNK_WRITE4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					.nfs_resop4_u.opchunk_write;
+
+	ck_assert_int_eq(res->cwr_status, NFS4ERR_BAD_STATEID);
+	cm_free(cm);
+
+	struct trust_stateid_stats b = stats_snapshot();
+
+	ck_assert_uint_eq(b.ts_validate[TRUST_VALIDATE_IDENTITY] -
+				  a.ts_validate[TRUST_VALIDATE_IDENTITY],
+			  1);
+	ck_assert_uint_eq(b.ts_validate[TRUST_VALIDATE_OK] -
+				  a.ts_validate[TRUST_VALIDATE_OK],
+			  0);
+}
+END_TEST
+
 static Suite *trust_stateid_suite(void)
 {
 	Suite *s = suite_create("trust_stateid");
@@ -1982,6 +2249,23 @@ static Suite *trust_stateid_suite(void)
 	tcase_add_test(tc_j, test_trust_renewal_multiple);
 	tcase_add_test(tc_j, test_trust_renewal_zero_lease);
 	suite_add_tcase(s, tc_j);
+
+	TCase *tc_k = tcase_create("counters");
+	tcase_add_checked_fixture(tc_k, setup, teardown);
+	tcase_add_test(tc_k, test_stats_register_counts);
+	tcase_add_test(tc_k, test_stats_renewal_counts_separately);
+	tcase_add_test(tc_k, test_stats_revoke_counts);
+	tcase_add_test(tc_k, test_stats_bulk_revoke_counts_operations);
+	tcase_add_test(tc_k, test_stats_lookup_hit_and_miss);
+	tcase_add_test(tc_k, test_stats_validation_buckets_are_independent);
+	tcase_add_test(tc_k, test_stats_validation_out_of_range_ignored);
+	suite_add_tcase(s, tc_k);
+
+	TCase *tc_l = tcase_create("counters_chunk");
+	tcase_add_checked_fixture(tc_l, op_setup, op_teardown);
+	tcase_add_test(tc_l, test_stats_chunk_write_counts_accept);
+	tcase_add_test(tc_l, test_stats_chunk_write_counts_identity_mismatch);
+	suite_add_tcase(s, tc_l);
 
 	return s;
 }
