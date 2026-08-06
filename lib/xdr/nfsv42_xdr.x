@@ -254,7 +254,12 @@ enum nfsstat4 {
  NFS4ERR_CHUNK_LOCKED   = 10099,/* chunk is locked  */
  NFS4ERR_CHUNK_GUARDED  = 10100,/* chunk is guarded  */
  NFS4ERR_PAYLOAD_LOST   = 10101,/* unrecoverable per CB_CHUNK_REPAIR */
- NFS4ERR_LAYOUT_CHECKSUM_NOT_SUPPORTED = 10102/* layout names checksum algorithm client cannot speak */
+ NFS4ERR_LAYOUT_CHECKSUM_NOT_SUPPORTED = 10102,/* layout names checksum algorithm client cannot speak */
+ NFS4ERR_NO_PREDECESSOR = 10103,/* CHUNK_ROLLBACK predecessor absent */
+ NFS4ERR_NO_ADOPTABLE_LOCK = 10104,/* CHUNK_LOCK adopt has no matching escrow */
+ NFS4ERR_STALE_ESCROW   = 10105,/* CHUNK_ESCROW_RELEASE escrow identity mismatch */
+ NFS4ERR_STALE_MDS_EPOCH = 10106,/* CHUNK_ESCROW_* metadata-server epoch stale */
+ NFS4ERR_PARTIAL        = 10107/* CB_CHUNK_REPAIR per-range status: some ranges did not reach completion */
 };
 
 /*
