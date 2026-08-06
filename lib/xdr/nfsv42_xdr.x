@@ -3414,7 +3414,8 @@ const CHUNK_MAX_STATUS_PER_OP    = 4096;
  *                               CHUNK_ESCROW handoffs (INSTALL /
  *                               RELEASE / ENUMERATE / TAKEOVER).
  */
-const CHUNK_STATE_FLAGS_LOCKED = 0x00000001;
+const CHUNK_STATE_FLAGS_LOCKED       = 0x00000001;
+const FFV2_LAYOUTSTATS_FLAGS_LOCAL   = 0x00000001;
 typedef uint32_t   chunk_state_flags4;
 typedef uint32_t   ffv2_layoutstats_flags4;
 typedef opaque     escrow_id4[16];
@@ -5006,12 +5007,12 @@ struct ffv2_io_latency4 {
 };
 
 struct ffv2_layoutupdate4 {
-        netaddr4                 ffl_addr;
-        nfs_fh4                  ffl_fhandle;
-        ffv2_io_latency4         ffl_read;
-        ffv2_io_latency4         ffl_write;
-        nfstime4                 ffl_duration;
-        ffv2_layoutstats_flags4  ffv2l_local;
+        netaddr4                 ffv2l_addr;
+        nfs_fh4                  ffv2l_fhandle;
+        ffv2_io_latency4         ffv2l_read;
+        ffv2_io_latency4         ffv2l_write;
+        nfstime4                 ffv2l_duration;
+        ffv2_layoutstats_flags4  ffv2l_flags;
 };
 
 struct ffv2_iostats4 {
