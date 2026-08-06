@@ -3746,6 +3746,7 @@ const TRUST_PRINCIPAL_MAX = 256;
 
 struct TRUST_STATEID4args {
     stateid4      tsa_layout_stateid;
+    uint32_t      tsa_client_id;
     layoutiomode4 tsa_iomode;
     nfstime4      tsa_expire;
     utf8str_cs    tsa_principal;
@@ -4976,7 +4977,7 @@ struct ffv2_mirror4 {
         ffv2_data_protection4   ffm_protection;
         ffv2_striping4          ffm_striping;
         uint32_t                ffm_striping_unit_size; /* The minimum stripe unit size is 64 bytes. */
-        uint32_t                ffm_client_id;
+        uint32_t                ffv2m_client_id;
         checksum_algorithm4     ffm_checksum_algorithm;
         ffv2_stripes4           ffm_stripes<>; /* Length of this array is the stripe count */
 };
