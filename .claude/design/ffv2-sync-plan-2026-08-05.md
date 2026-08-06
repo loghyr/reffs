@@ -716,13 +716,51 @@ scope carefully (see the FFv1/FFv2 trap note in
 **Gap.** R2d added `uint32_t tsa_client_id` to
 `TRUST_STATEID4args`; the handler ignores it (0 C uses).
 
-**Work.** Decide what the field governs -- most plausibly it
-binds the trust entry to a specific `cg_client_id` so that a
-CHUNK op's guard client-id must match the registered one -- then
-store it on the trust entry and check it in the CHUNK validation
-hook alongside the existing expiry and principal checks.  Cross-
-reference `.claude/design/trust-stateid.md`, which predates the
-field.
+**What it governs -- settled, from the draft.**  The guess in the
+earlier version of this entry was right, and the draft is
+explicit at two sites: the metadata server registers the writer's
+`ffv2m_client_id` via `tsa_client_id`, the data server compares
+the client id presented on a CHUNK operation against it, and a
+mismatch MUST be rejected with NFS4ERR_BAD_STATEID -- "a client
+that presents a cwa_client_id different from its layout's
+ffv2m_client_id is spoofing another writer's identity."
+
+In reffs the presented value is `chunk_guard4.cg_client_id`, not
+`cwa_client_id`: reffs is still on the single-owner shape and the
+draft's batched-cohort restructure is the deferred M2 item.  The
+comparison is the same one.
+
+**This is two slices, and the order matters.**
+
+S4a (metadata server, must land first):
+:  `layout.c:1045` hardcodes `mirror->ffv2m_client_id = 0` and the
+   TRUST_STATEID fanout never sets `tsa_client_id`.  The metadata
+   server has to assign a real per-writer identity and carry it
+   into the fanout.  Open question that makes this a design item
+   rather than a mechanical change: what generates the id, whether
+   it is stable across successive LAYOUTGETs by the same client,
+   and how it is allocated when several clients hold layouts on
+   one file.  The clientid4 slot field is the obvious source.
+
+S4b (data server): store `tsa_client_id` on the trust entry and
+   compare it in the CHUNK validation hook.
+
+**Landing S4b first would break the data path.**  Every trust
+entry today registers 0 (CHUNK_GUARD_CLIENT_ID_NONE), while a
+conforming client must present a non-sentinel `cg_client_id`, so
+a strict comparison would reject every CHUNK operation with
+NFS4ERR_BAD_STATEID.
+
+If S4b is wanted before S4a, the safe form is to treat a
+registered NONE as "no binding recorded" and skip the comparison,
+exactly as an empty `te_principal` means no principal constraint.
+That makes enforcement switch on by itself the moment S4a starts
+supplying real ids.  It is a deliberate permissiveness, not
+conformance: the draft does not contemplate a metadata server
+that registers the reserved value.
+
+Cross-reference `.claude/design/trust-stateid.md`, which predates
+the field.
 
 ### S5 -- CHUNK_HEADER_READ handler [medium]
 
