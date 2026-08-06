@@ -475,6 +475,28 @@ described only one:
 
 Do (B) first.  Do not fold (A) into the same commit.
 
+**(B) LANDED ab4f1509c25a.**  The gate is
+`chunk_op_on_non_chunked()` in `lib/nfs4/server/chunk.c`, keyed on
+`inode_chunked_state()` so UNIDENTIFIED stays unenforced.  Six call
+sites cover the seven working ops:
+`chunk_write_validate_payload` carries it for CHUNK_WRITE and
+CHUNK_WRITE_REPAIR; CHUNK_READ, CHUNK_FINALIZE, CHUNK_COMMIT,
+CHUNK_ROLLBACK and CHUNK_REPAIRED carry it in their own prologues.
+
+Two mutations on dreamer confirmed the tests are load-bearing:
+forcing the gate off turns 2 tests red, and encoding the naive
+"UNIDENTIFIED means FALSE" rule turns **33** red across the whole
+chunk suite -- so the failure mode the plan predicted below is not
+hypothetical, and it is not quiet either.
+
+**Debt (B) leaves:** CHUNK_ERROR, CHUNK_HEADER_READ, CHUNK_LOCK and
+CHUNK_UNLOCK are unconditional `NFS4ERR_NOTSUPP` stubs.  They already
+return the right answer for a non-chunked file, so the gate would be
+dead code today -- but S5 implements CHUNK_HEADER_READ, and that
+slice must add the gate as part of the implementation or it will
+silently open a hole.  Same for S2's escrow ops if they become
+reachable.
+
 #### Ordering
 
 S1.1 -> S1.2 -> S1.3 -> (S1.4 if still required) -> S1.5(B) ->
@@ -610,6 +632,14 @@ consumers, so the shape is currently inert.
 store, bounded by `CHUNK_HEADER_READ_MAX4`.  `chrr_predecessors`
 needs retained-generation tracking that the chunk store does not
 have yet -- that is the real cost of this slice, not the encoding.
+
+**Also required.** Add the S1.5(B) gate.  CHUNK_HEADER_READ is one
+of the ops the draft names, and today its unconditional
+`NFS4ERR_NOTSUPP` happens to satisfy the rule by accident.  The
+moment this slice makes the handler answer for real, the accident
+stops covering it: call `chunk_op_on_non_chunked()` after the
+filehandle and inode checks, and add a reject test alongside the
+existing four in `chunk_test.c`.
 
 **Unblocks.** `NFS4ERR_NO_PREDECESSOR`.
 
