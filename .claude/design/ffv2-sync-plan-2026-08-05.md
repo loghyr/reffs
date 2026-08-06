@@ -969,45 +969,47 @@ which has real diagnostic value and can ride with S7.
 The two draft-side follow-ups are independent of all of the above
 and can go whenever the draft is next opened.
 
-## Live-run attempt 2026-08-06 -- combined-mode v2 path does not run on dreamer
+## Live run 2026-08-06 -- what it did and did not verify
 
 The unit suite covers S1.5(A)/(B), S1.6, S3 and S4 against
-`dispatch_compound()` and the handlers directly.  The obvious next
-evidence is a live exchange, and `scripts/test_mirror_local.sh` is
-the script for it: combined-mode reffsd plus `ec_demo` over the v2
-CHUNK path, which touches all four at once.
+`dispatch_compound()` and the handlers directly.  The live check is
+`scripts/test_mirror_local.sh`: combined-mode reffsd plus `ec_demo`
+over the v2 CHUNK path.
 
-**It does not currently run on dreamer, and not because of these
-slices.**  The three loopback dstores fail MOUNT inside
-`dstore_alloc` during startup -- `clnttcp_create(127.0.0.1:12049)
-MOUNT failed` -- because that runs before reffsd is listening on
-its own port.  The NFSv3 renewal thread later reports the dstores
-reconnected, but LAYOUTGET still answers
-NFS4ERR_LAYOUTUNAVAILABLE, so the reconnect is not restoring
-whatever `dstore_alloc` failed to build (root filehandle, runway,
-or both).
+It had been failing before it reached any of them, on a defect that
+predates this week's slices (established by A/B against
+`aa4ce4478af7`, not assumed): runways were built once at startup and
+never for a data server that connected later, so combined mode --
+where the loopback MOUNT in `dstore_alloc` cannot succeed, because it
+runs before the process listens on its own port -- always had empty
+pools and always answered NFS4ERR_LAYOUTUNAVAILABLE.  Fixed in
+`12fe12d20004`; the script now passes: write, verify, and degraded
+verify with one mirror dropped.
 
-Starting rpcbind (it was inactive) cleared the RPC registration
-failures but changed nothing about the mount failures or the
-LAYOUTGET result.
+**What the passing run actually exercised**, counted from the trace
+rather than inferred from the exit status:
 
-Attribution was established by A/B rather than assumed: the same
-script on `aa4ce4478af7` -- the last commit before S1.6 -- fails
-identically, same error, same exit status.
+| slice | evidence | verified |
+|---|---|---|
+| S1.5(A) allowlist | 2304 CHUNK_WRITE + 3840 CHUNK_READ on chunked files, none refused | yes -- the gate does not over-block |
+| S1.5(B) gate | same traffic, files identified via `local_set_chunked` | yes |
+| S3 `ffv2_device_addr4` | 54 GETDEVICEINFO, and the client derived data-server addresses from the replies well enough to write | yes -- encoder and new decoder agree |
+| S4a/S4b writer identity | **0** trust-table hits | **no** |
+| S1.6 control session | no NFSv4 control session in this configuration | **no** |
 
-**What this costs us.**  This plan repeatedly cites
-`test_mirror_local.sh` and the v2 benchmark variants as the thing
-a wrong enforcement rule would have broken -- the S1.5(B) naive-
-rule argument leans on it directly.  That evidence is theoretical
-while the script cannot run.  The 33-failure mutation result
-stands on its own, but "and it would have broken the mirror test"
-is currently an inference.
+The last two rows are the point of the table.  The loopback dstores
+are NFSv3 and not tight coupled, so `ec_demo` presents the anonymous
+stateid and `chunk_check_trusted_stateid` returns at its
+`stateid4_is_special` guard before any binding comparison.  Nothing
+in this run touched a trust entry, an attribute-90 wire settle, or a
+control session.
 
-**Follow-up, unowned:** find out whether the dstore startup
-ordering is a real defect or a dreamer-only environment gap.  The
-script's docstring says it is wired as the `mirror` target in
-Makefile.ci and is not run by default, so it may have been
-bit-rotting for a while.
+**To verify those** needs a configuration with an NFSv4.2 dstore, so
+that the control session exists, the settle crosses the wire, the
+capability probe sets `ds_tight_coupled`, and the client is told to
+use a real layout stateid.  That is a different fixture than this
+script builds, and it is the next piece of live coverage worth
+having.
 
 ## Verification and rollout
 
