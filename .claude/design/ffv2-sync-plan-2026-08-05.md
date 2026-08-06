@@ -497,13 +497,59 @@ slice must add the gate as part of the implementation or it will
 silently open a hole.  Same for S2's escrow ops if they become
 reachable.
 
+#### S1.6 -- control-session identification [small; LANDED f1b2d0c3d326]
+
+Found while scoping S1.5(A), because (A) needs the same "is this
+the metadata server?" predicate that the attribute-90 gate uses.
+
+`ds_session_create` left `mds_session_create` at its USE_NON_PNFS
+default, so the metadata-server-to-data-server session presented the
+same EXCHANGE_ID flag an ordinary client does.  Two consequences,
+both live:
+
+1. The attribute-90 settle step at layout assignment is an ordinary
+   SETATTR over that session, and its gate checks USE_PNFS_MDS only.
+   The settle was answered NFS4ERR_INVAL, no file was ever identified
+   as chunked, and S1.5(B) -- which sits downstream of identification
+   -- could not fire in production at all.  S1.5(B)'s tests set the
+   flag by hand, so they passed over the gap.
+2. `require_mds_client()` had been widened to accept USE_NON_PNFS to
+   get the control plane working again.  Since that is what a client
+   presents, any client on the data server could register trust
+   entries and revoke another client's via BULK_REVOKE_STATEID.
+
+Fix: ask for USE_PNFS_MDS in `ds_session_create`, narrow the guard
+back to it.  `sec-tight-coupling-control-session` is explicit that
+this flag is the sole access control on the three trust ops.
+
+Mutation: restoring the widened guard turns exactly the three new
+tests red, each reporting NFS4_OK where NFS4ERR_PERM is required --
+the plain client's control-plane call succeeding.
+
+**Still open.** The flag is a self-declaration; it separates a
+metadata server from a client that follows the protocol, not from
+one that does not.  The draft puts the real control in the
+deployment (GSS machine principal, TLS client certificate, or an
+isolated control-session network).  The reffs-side match is a local
+allowlist like `[[allowed_ps]]`; not written.
+
+**Not yet verified end to end.** The unit tests cover the guard.
+That the settle now succeeds over a real NFSv4 dstore, and that
+files consequently come out identified, needs a live metadata
+server plus data server -- the natural place is the S1.5(A) run.
+
 #### Ordering
 
 S1.1 -> S1.2 -> S1.3 -> (S1.4 if still required) -> S1.5(B) ->
-S1.5(A).  S1.1 is independently worth doing even if enforcement is
-never built: the attribute is currently wrong on passthrough files,
-and a wrong label is worse than an absent one because it invites
-exactly the enforcement that would then misfire.
+S1.6 -> S1.5(A).  S1.1 is independently worth doing even if
+enforcement is never built: the attribute is currently wrong on
+passthrough files, and a wrong label is worse than an absent one
+because it invites exactly the enforcement that would then misfire.
+
+S1.6 landed after S1.5(B) because that is when it was found, but it
+gates both: until the control session is identifiable, nothing sets
+attribute 90 over the wire and neither enforcement direction has
+anything to act on.
 
 #### What the earlier version of this slice got wrong
 
