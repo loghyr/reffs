@@ -340,6 +340,46 @@ against a file with the attribute clear -> NFS4ERR_NOTSUPP; with
 it set -> current behavior unchanged.  Plus a regression test that
 a PASSTHROUGH-encoding file is rejected.
 
+### S1b -- reject client SETATTR of attribute 90 [small, do with S1]
+
+**Gap.** Found by the fable audit 2026-08-06.  The draft
+(sec-fattr4_chunked_data_file, :8311-8313) says: "Clients MUST NOT
+SETATTR this attribute; a data server MUST reject a client SETATTR
+of FATTR4_CHUNKED_DATA_FILE with NFS4ERR_INVAL."
+
+R3 added `FATTR4_CHUNKED_DATA_FILE` to `nattr_is_settable()`
+(`lib/nfs4/server/attr.c:2520`), which `nattr_from_fattr4()` applies
+to **both** the OPEN-createattrs path and the SETATTR path with no
+caller discrimination.  Any client can therefore set or clear the
+bit.  This is a MUST-level draft violation in shipped code.
+
+**Why it pairs with S1.**  It makes S1's gap strictly worse rather
+than merely adjacent: once the CHUNK-op guard lands, a client that
+can still SETATTR the bit can strip the classification off a chunked
+file and walk straight through the new check, or plant it on a
+PASSTHROUGH file.  Landing S1 without S1b would build a lock and
+leave the key in it.
+
+**Work.** Keep acceptance on the OPEN(CREATE) createattrs path --
+R4 depends on it -- and reject on the SETATTR entry path.  Note the
+draft specifies NFS4ERR_INVAL, not NFS4ERR_ATTRNOTSUPP, so simply
+removing the attribute from `nattr_is_settable()` is the wrong lever
+(that path returns ATTRNOTSUPP).  The alternative shape worth
+considering is gating on control-session identity, the way
+TRUST_STATEID gates on `EXCHGID4_FLAG_USE_PNFS_MDS` -- that would
+also let a genuine metadata server re-SETATTR the bit, which the
+create-path-only rule forbids.
+
+**Also resolves** NOTE 6 from the fable audit: the
+`suppattr_exclcreat` comment at `attr.c:2361` ("Must match
+nattr_is_settable() exactly") is currently inaccurate because
+attribute 90 is in one list and not the other.  Whichever shape S1b
+takes decides how that comment reconciles.
+
+**Tests.** Client SETATTR of attribute 90 -> NFS4ERR_INVAL; metadata
+server OPEN(CREATE) with attribute 90 in createattrs -> still
+succeeds (R4 regression).
+
 ### S2 -- CHUNK_ESCROW semantics [large]
 
 **Gap.** Ops 92-95 decode and dispatch, and all four handlers
@@ -421,6 +461,77 @@ those land, confirm each code is raised on the path the draft
 names.  No standalone work; this is a checklist item to close out
 S2/S5.
 
+### S7 -- test the R7c behavioral change and the attribute-90 round-trip [small]
+
+**Gap.** Found by the fable audit 2026-08-06.
+`lib/nfs4/tests/chunk_test.c` contains **zero** references to
+`cr_locked`, `cr_guard`, or `CHUNK_STATE_FLAGS_LOCKED`.  R7c was the
+only slice in the whole R1-R7 range that changed runtime behavior,
+and nothing covers it.
+
+**Why it matters more than it looks.**  Existing tests exercise only
+unlocked blocks, where the calloc'd 0 happens to be the correct
+answer.  So a regression that stops populating `cr_locked` entirely
+would still pass 25/25 on dreamer.  The green result that gated the
+R7 landing is weaker evidence than it appeared.
+
+**Work.**
+- CHUNK_READ against a block with `CHUNK_BLOCK_LOCKED` set asserts
+  `cr_locked == CHUNK_STATE_FLAGS_LOCKED`; against an unlocked block
+  asserts 0.
+- Assert the `cr_guard` dual-write equals `cr_owner.co_guard`.
+- SETATTR/GETATTR round-trip of attribute 90.  Write this one to the
+  **post-S1b** contract, since S1b changes what a client SETATTR is
+  allowed to do.
+
+### S8 -- naming and diagnostic cleanup [small, mechanical]
+
+Collected NOTEs from the fable audit; none affect the wire.
+
+- **`data_block_read` failure is reported as success**
+  (`lib/nfs4/server/chunk.c:948-953`): the return value is ignored, so
+  a failed read yields a zero-filled `cr_chunk` with
+  `cr_status = NFS4_OK` and no LOG line.  Only CRC32-verifying clients
+  notice.  Pre-existing, but R7c made `cr_status` a per-chunk scalar,
+  which is exactly the field this needs -- set `NFS4ERR_IO`.  *This is
+  the one item here with real behavioral value; consider splitting it
+  out if S8 gets deferred.*
+- Stale comments naming retired identifiers (`ffv2l_local`,
+  `ffm_coding_type`, `ffm_checksum_algorithm`,
+  `ffm_striping_unit_size`) across ~12 sites in `nfsv42_xdr.x`,
+  `layout.c`, `probe1_server.c`, `ps/chunk_io.c`, `ec_client.h`,
+  `layout_segment.h`, `settings.h`, and three test files.  Doc-only,
+  but they break grep for anyone tracing a field.
+- Stale draft anchor `sec-encoding-mirrored` cited at
+  `lib/include/reffs/ec.h:130` and `lib/ec/tests/mirror_test.c:11`;
+  the draft's anchor is now `sec-encoding-replicated`.
+- Dead reffs-only `enum ffv2_protection_type` /
+  `FFV2_PROTECTION_TYPE_MIRRORED` (`nfsv42_xdr.x:5094-5098`): absent
+  from the draft, zero consumers, retired terminology.  Remove or
+  mark reserved.
+- `op_errors[]` has no entries for the four CHUNK_ESCROW ops and none
+  of the five new error codes appear in an `ne_allowed` list.
+  Test-only consumer today; fold into S2 rather than doing it here.
+
+### Draft-side follow-ups (not reffs slices)
+
+Two items land in `draft-haynes-nfsv4-flexfiles-v2`, not here:
+
+- **Status-only responses should use the RFC 8881 struct form.**  Both
+  reviewers independently reached this.  RFC 8881 itself uses
+  `struct { nfsstat4 status; }` for PUTFH4res / SAVEFH4res /
+  RENEW4res / DELEGPURGE4res.  The draft's all-void discriminated
+  union is wire-identical but nonstandard for an NFSv4 document, and
+  lowers to an empty C union that strict clang rejects -- reffs
+  already had to work around it twice.  Affects
+  `CHUNK_REPAIRED4res`, `CHUNK_UNLOCK4res`,
+  `CHUNK_ESCROW_RELEASE4res`, `CHUNK_ESCROW_TAKEOVER4res`.
+- **Convention text nuance**: `ffv2ie_` (`ffv2_ioerr4`) does not
+  literally follow the stated one-letter-per-word rule, since "ioerr"
+  is one word -- it is inherited from RFC 8435's `ffie_`.  A
+  half-sentence acknowledging inherited initialisms would close the
+  gap between the stated rule and actual practice.
+
 ### Not in this list
 
 Two items are tracked elsewhere and are deliberately not S-slices:
@@ -436,11 +547,22 @@ Two items are tracked elsewhere and are deliberately not S-slices:
 
 ### Suggested order
 
-S1 first and on its own -- it is small, it is the one live
-correctness gap, and it does not depend on anything else.  Then
-S3 (self-contained, unblocks the coupling model).  Then S4.  S2
-and S5 are the big ones and should each get a design pass before
-implementation; S6 closes out behind them.
+**S1 + S1b together, first.**  They are the one live correctness
+gap and they must land as a pair -- S1 without S1b builds the
+CHUNK-op guard and leaves clients able to SETATTR their way around
+it.  Both are small.
+
+Then S7 (tests the already-shipped R7c behavior; small, and it
+retires the false confidence in the current 25/25).  Then S3
+(self-contained, unblocks the coupling model).  Then S4.
+
+S2 and S5 are the large ones and should each get a design pass
+before implementation; S6 closes out behind them.  S8 is
+opportunistic cleanup -- except the `data_block_read` status item,
+which has real diagnostic value and can ride with S7.
+
+The two draft-side follow-ups are independent of all of the above
+and can go whenever the draft is next opened.
 
 ## Verification and rollout
 
