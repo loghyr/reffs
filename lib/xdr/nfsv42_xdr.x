@@ -986,6 +986,7 @@ typedef open_arguments4 fattr4_open_arguments;
  */
 
 typedef length4         fattr4_coding_block_size;
+typedef bool            fattr4_chunked_data_file;
 
 %/*
 % * REQUIRED Attributes
@@ -1120,6 +1121,7 @@ const FATTR4_UNCACHEABLE_FILE_DATA        = 87;
 const FATTR4_UNCACHEABLE_DIRENT_METADATA  = 88;
 
 const FATTR4_CODING_BLOCK_SIZE  = 89;
+const FATTR4_CHUNKED_DATA_FILE  = 90;
 
 /*
  * File attribute container
