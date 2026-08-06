@@ -732,15 +732,31 @@ comparison is the same one.
 
 **This is two slices, and the order matters.**
 
-S4a (metadata server, must land first):
-:  `layout.c:1045` hardcodes `mirror->ffv2m_client_id = 0` and the
-   TRUST_STATEID fanout never sets `tsa_client_id`.  The metadata
-   server has to assign a real per-writer identity and carry it
-   into the fanout.  Open question that makes this a design item
-   rather than a mechanical change: what generates the id, whether
-   it is stable across successive LAYOUTGETs by the same client,
-   and how it is allocated when several clients hold layouts on
-   one file.  The clientid4 slot field is the obvious source.
+S4a (metadata server) -- **LANDED**:
+:  The identity is the clientid4 slot, via `ffv2_writer_id()` in
+   `nfs4/client.h`.  Slots come from a persistent monotonic
+   counter that starts at 1 and never reuses, so the value is
+   unique per client, stable across that client's successive
+   LAYOUTGETs, and never CHUNK_GUARD_CLIENT_ID_NONE; the top of
+   the range is mapped off CHUNK_GUARD_CLIENT_ID_MDS.  Boot
+   sequence and incarnation are deliberately excluded, so a server
+   restart does not change a client's writer identity.
+
+   Both sites call that one function -- `layoutget_build_v2` for
+   `ffv2m_client_id`, `nfsv4_trust_stateid` for `tsa_client_id` --
+   rather than passing a value between them.  The fanout already
+   carried the clientid4, so no new parameter was needed, and
+   drift between what the layout advertises and what the data
+   server records is structurally impossible rather than merely
+   tested for.  That mattered: those two disagreeing would lock a
+   client out of every CHUNK operation on the file once S4b
+   enforces the comparison.
+
+   Not covered: combined mode.  `dstore_ops_local` registers trust
+   entries by direct call, and the trust entry has nowhere to put
+   a writer id until S4b adds the field.  So combined-mode entries
+   still carry no binding, and S4b's NONE-means-unconstrained rule
+   is what keeps them working.
 
 S4b (data server): store `tsa_client_id` on the trust entry and
    compare it in the CHUNK validation hook.

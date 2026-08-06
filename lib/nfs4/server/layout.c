@@ -971,7 +971,8 @@ int default_coding_resolve_segment(const struct reffs_coding_spec *coding,
 }
 
 static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
-				   uint32_t ffv2m_coding_type, char **out_body,
+				   uint32_t ffv2m_coding_type,
+				   uint32_t writer_id, char **out_body,
 				   u_long *out_size)
 {
 	ffv2_layout4 ffl;
@@ -1042,7 +1043,13 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 
 	mirror->ffv2m_striping = FFV2_STRIPING_DENSE;
 	mirror->ffv2m_striping_unit_size = 4096;
-	mirror->ffv2m_client_id = 0;
+	/*
+	 * The writer identity this client presents on CHUNK operations.
+	 * Must equal the tsa_client_id registered with each data server
+	 * for this layout's stateid; both come from ffv2_writer_id() so
+	 * they cannot drift apart.
+	 */
+	mirror->ffv2m_client_id = writer_id;
 
 	mirror->ffv2m_stripes.ffv2m_stripes_len = 1;
 	mirror->ffv2m_stripes.ffv2m_stripes_val =
@@ -1939,8 +1946,14 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		} else {
 			coding_type = (uint32_t)FFV2_ENCODING_RS_VANDERMONDE;
 		}
-		*status = layoutget_build_v2(build_seg, coding_type, &body,
-					     &xdr_size);
+		*status = layoutget_build_v2(
+			build_seg, coding_type,
+			compound->c_nfs4_client ?
+				ffv2_writer_id((clientid4)nfs4_client_to_client(
+						       compound->c_nfs4_client)
+						       ->c_id) :
+				CHUNK_GUARD_CLIENT_ID_NONE,
+			&body, &xdr_size);
 	} else {
 		*status = layoutget_build_v1(
 			build_seg, compound->c_server_state->ss_stripe_width,

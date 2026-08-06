@@ -26,6 +26,7 @@
 #include "reffs/dstore.h"
 #include "reffs/dstore_ops.h"
 #include "reffs/layout_segment.h"
+#include "nfs4/client.h" /* ffv2_writer_id */
 #include "reffs/log.h"
 
 #include "ds_renewal.h"
@@ -904,6 +905,7 @@ static int nfsv4_probe_tight_coupling(struct dstore *ds)
 
 	/* Anonymous stateid: seqid=0, other=all-zeros. */
 	memset(&ta->tsa_layout_stateid, 0, sizeof(ta->tsa_layout_stateid));
+	ta->tsa_client_id = CHUNK_GUARD_CLIENT_ID_NONE;
 	ta->tsa_iomode = LAYOUTIOMODE4_READ;
 	ta->tsa_expire.seconds = 0;
 	ta->tsa_expire.nseconds = 0;
@@ -954,9 +956,8 @@ err:
 static int nfsv4_trust_stateid(struct dstore *ds, const uint8_t *fh,
 			       uint32_t fh_len, uint32_t stid_seqid,
 			       const uint8_t *stid_other, uint32_t iomode,
-			       uint64_t clientid __attribute__((unused)),
-			       int64_t expire_sec, uint32_t expire_nsec,
-			       const char *principal)
+			       uint64_t clientid, int64_t expire_sec,
+			       uint32_t expire_nsec, const char *principal)
 {
 	struct mds_session *ms = dstore_session_borrow(ds);
 	struct mds_compound mc;
@@ -985,6 +986,15 @@ static int nfsv4_trust_stateid(struct dstore *ds, const uint8_t *fh,
 
 	ta->tsa_layout_stateid.seqid = stid_seqid;
 	memcpy(ta->tsa_layout_stateid.other, stid_other, NFS4_OTHER_SIZE);
+
+	/*
+	 * The writer identity the data server will compare against the
+	 * client id on each CHUNK operation.  Derived from the same
+	 * clientid4 that layoutget_build_v2 derives ffv2m_client_id
+	 * from, so the layout the client holds and the entry the data
+	 * server records cannot disagree.
+	 */
+	ta->tsa_client_id = ffv2_writer_id((clientid4)clientid);
 	ta->tsa_iomode = (layoutiomode4)iomode;
 	ta->tsa_expire.seconds = expire_sec;
 	ta->tsa_expire.nseconds = expire_nsec;

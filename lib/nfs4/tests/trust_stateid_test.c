@@ -1609,6 +1609,69 @@ START_TEST(test_trust_renewal_zero_lease)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* J. ffv2_writer_id                                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The writer identity a layout advertises and the metadata server
+ * registers.  Both sites derive it from the clientid4 with this one
+ * function, so what it must guarantee is that the value is usable as a
+ * cg_client_id at all: never either reserved sentinel.
+ */
+START_TEST(test_writer_id_never_sentinel)
+{
+	/* Slot 1 is the first the server allocates. */
+	ck_assert_uint_ne(ffv2_writer_id(clientid_make(1, 0, 0)),
+			  CHUNK_GUARD_CLIENT_ID_NONE);
+
+	/* The top of the slot range must be mapped off the MDS value. */
+	ck_assert_uint_ne(
+		ffv2_writer_id(clientid_make(CHUNK_GUARD_CLIENT_ID_MDS, 0, 0)),
+		CHUNK_GUARD_CLIENT_ID_MDS);
+	ck_assert_uint_ne(
+		ffv2_writer_id(clientid_make(CHUNK_GUARD_CLIENT_ID_MDS, 0, 0)),
+		CHUNK_GUARD_CLIENT_ID_NONE);
+}
+END_TEST
+
+/*
+ * Stable for one client across successive LAYOUTGETs: the identity has
+ * to survive from the layout that advertised it to every CHUNK
+ * operation issued under it, so it cannot be freshly allocated per
+ * layout.
+ */
+START_TEST(test_writer_id_stable_per_client)
+{
+	clientid4 clid = clientid_make(7, 3, 42);
+
+	ck_assert_uint_eq(ffv2_writer_id(clid), ffv2_writer_id(clid));
+}
+END_TEST
+
+/*
+ * Distinct per client, or one writer could present another's identity
+ * and pass the data server's comparison.
+ */
+START_TEST(test_writer_id_distinct_per_client)
+{
+	ck_assert_uint_ne(ffv2_writer_id(clientid_make(7, 0, 0)),
+			  ffv2_writer_id(clientid_make(8, 0, 0)));
+}
+END_TEST
+
+/*
+ * The boot sequence and incarnation must not disturb it.  Both change
+ * on a server restart while the slot does not, and the identity is
+ * scoped to the slot deliberately.
+ */
+START_TEST(test_writer_id_ignores_boot_and_incarnation)
+{
+	ck_assert_uint_eq(ffv2_writer_id(clientid_make(9, 0, 0)),
+			  ffv2_writer_id(clientid_make(9, 5, 11)));
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -1621,6 +1684,13 @@ static Suite *trust_stateid_suite(void)
 	tcase_add_test(tc_init, test_init_fini_idempotent);
 	tcase_add_test(tc_init, test_find_before_init);
 	suite_add_tcase(s, tc_init);
+
+	TCase *tc_wid = tcase_create("writer_id");
+	tcase_add_test(tc_wid, test_writer_id_never_sentinel);
+	tcase_add_test(tc_wid, test_writer_id_stable_per_client);
+	tcase_add_test(tc_wid, test_writer_id_distinct_per_client);
+	tcase_add_test(tc_wid, test_writer_id_ignores_boot_and_incarnation);
+	suite_add_tcase(s, tc_wid);
 
 	TCase *tc_register = tcase_create("register");
 	tcase_add_checked_fixture(tc_register, setup, teardown);

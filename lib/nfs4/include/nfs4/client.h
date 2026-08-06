@@ -376,4 +376,34 @@ static inline uint16_t clientid_boot_seq(clientid4 clid)
 	return (clid >> CLIENTID_BOOT_SHIFT) & CLIENTID_BOOT_MASK;
 }
 
+/*
+ * ffv2_writer_id -- the per-writer identity a flexible file v2 layout
+ * advertises in ffv2m_client_id, and that the metadata server registers
+ * with each data server as tsa_client_id.
+ *
+ * draft-haynes-nfsv4-flexfiles-v2: the data server compares the client
+ * id presented on a CHUNK operation against the registered one and
+ * rejects a mismatch with NFS4ERR_BAD_STATEID.  Both values therefore
+ * have to be the same number, and deriving them from the clientid4
+ * rather than allocating separately is what makes that structural: a
+ * layout advertising one value while the trust entry holds another
+ * would lock the client out of every CHUNK operation on the file.
+ *
+ * The slot is the right source.  It is allocated from a persistent
+ * monotonic counter starting at 1 and never reused, so the identity is
+ * unique per client, stable across that client's successive LAYOUTGETs,
+ * and never CHUNK_GUARD_CLIENT_ID_NONE.
+ *
+ * Slot 0 does not occur (the counter starts at 1 precisely because 0 is
+ * a sentinel), so only the top of the range needs mapping away.
+ */
+static inline uint32_t ffv2_writer_id(clientid4 clid)
+{
+	uint32_t slot = clientid_slot(clid);
+
+	if (slot == CHUNK_GUARD_CLIENT_ID_MDS)
+		return CHUNK_GUARD_CLIENT_ID_MDS - 1;
+	return slot;
+}
+
 #endif /* _REFFS_NFS4_CLIENT_H */
