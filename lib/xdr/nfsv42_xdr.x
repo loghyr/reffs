@@ -3557,12 +3557,42 @@ struct CHUNK_HEADER_READ4args {
     count4      chra_count;
 };
 
+/*
+ * Draft-authoritative types for CHUNK_HEADER_READ4resok's fifth
+ * co-indexed array (chrr_predecessors).  optional_retained4 is a
+ * discriminated union carrying a retained_predecessor4 payload
+ * when present or errored, or void when absent.  See
+ * draft-haynes-nfsv4-flexfiles-v2 sec-CHUNK_HEADER_READ.
+ */
+const CHUNK_HEADER_READ_MAX4 = 1024;
+
+struct retained_predecessor4 {
+    chunk_owner4    rp_owner;
+};
+
+enum retained_generation_disposition4 {
+    RETAINED_GENERATION_DISPOSITION_ABSENT  = 0,
+    RETAINED_GENERATION_DISPOSITION_PRESENT = 1,
+    RETAINED_GENERATION_DISPOSITION_ERRORED = 2
+};
+
+union optional_retained4
+    switch (retained_generation_disposition4 disposition) {
+    case RETAINED_GENERATION_DISPOSITION_ABSENT:
+        void;
+    case RETAINED_GENERATION_DISPOSITION_PRESENT:
+        retained_predecessor4  restorable;
+    case RETAINED_GENERATION_DISPOSITION_ERRORED:
+        retained_predecessor4  errored;
+};
+
 struct CHUNK_HEADER_READ4resok {
     bool                chrr_eof;
-    nfsstat4            chrr_status<>;
-    chunk_state_flags4  chrr_locked<>;
-    chunk_owner4        chrr_chunks<>;
-    chunk_guard4        chrr_guards<>;
+    nfsstat4            chrr_status<CHUNK_HEADER_READ_MAX4>;
+    chunk_state_flags4  chrr_locked<CHUNK_HEADER_READ_MAX4>;
+    chunk_owner4        chrr_owners<CHUNK_HEADER_READ_MAX4>;
+    chunk_guard4        chrr_guards<CHUNK_HEADER_READ_MAX4>;
+    optional_retained4  chrr_predecessors<CHUNK_HEADER_READ_MAX4>;
 };
 
 union CHUNK_HEADER_READ4res switch (nfsstat4 chrr_status) {
