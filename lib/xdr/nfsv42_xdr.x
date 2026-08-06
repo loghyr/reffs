@@ -3795,11 +3795,17 @@ struct CHUNK_ESCROW_RELEASE4args {
     escrow_id4      cera_escrow_id;
 };
 
-union CHUNK_ESCROW_RELEASE4res switch (nfsstat4 cerr_status) {
-    case NFS4_OK:
-        void;
-    default:
-        void;
+/*
+ * Draft has `union ... switch { case NFS4_OK: void; default: void; }`
+ * for CHUNK_ESCROW_RELEASE4res and CHUNK_ESCROW_TAKEOVER4res.  The
+ * generated C code lands an empty C union that clang -Werror flags
+ * with -Wgnu-empty-struct on stricter build configurations
+ * (Fedora aarch64 clang, dreamer's default).  All-void arms serialise
+ * as bare `nfsstat4`, so a plain struct is wire-identical to the
+ * draft's union form.
+ */
+struct CHUNK_ESCROW_RELEASE4res {
+    nfsstat4        cerr_status;
 };
 
 struct escrow_enum_entry4 {
@@ -3839,11 +3845,9 @@ struct CHUNK_ESCROW_TAKEOVER4args {
     opaque               ceta_proof_data<CETA_INCARNATION_PROOF_MAX4>;
 };
 
-union CHUNK_ESCROW_TAKEOVER4res switch (nfsstat4 cetar_status) {
-    case NFS4_OK:
-        void;
-    default:
-        void;
+/* See RELEASE4res above for the union-vs-struct rationale. */
+struct CHUNK_ESCROW_TAKEOVER4res {
+    nfsstat4        cetar_status;
 };
 
 /*
