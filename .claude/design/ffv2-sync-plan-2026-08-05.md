@@ -293,6 +293,155 @@ FFv2-specific handlers and the draft is authoritative.  But
 there may be reasons in the reffs codebase to keep the short
 form; your call.
 
+## Semantics slices (S1-S6) -- added 2026-08-06
+
+R1-R7 synchronized the **wire format** only.  That was deliberate:
+the goal was for reffs and the draft to agree on bytes before any
+behavior was built on top.  The consequence is that a good deal of
+newly-landed wire surface currently has no code behind it.  This
+section is the ledger of that gap, so it is tracked work rather
+than an implicit TODO.
+
+Audit basis (2026-08-06, on `fef9c82168a2`): each item below was
+confirmed by counting live C consumers of the symbol, not by
+recollection.
+
+### S1 -- enforce fattr4_chunked_data_file on CHUNK ops [HIGHEST]
+
+**Gap.** R3 stores attribute 90 as `INODE_IS_CHUNKED_DATA_FILE`
+(bit 6 of `i_attr_flags`) and R4 SETs it on every file the
+metadata server creates on an NFSv4.2 data server.  Nothing reads
+it for enforcement: the symbol appears only in
+`lib/nfs4/server/attr.c` (set + report).  `lib/nfs4/server/chunk.c`
+has **zero** references.
+
+**Why this ranks first.** The draft's stated purpose for
+attribute 90 (sec-fattr4_chunked_data_file, and the reciprocal
+rule in sec-ops-client) is that a data server which has
+identified a file as non-chunked MUST reject CHUNK operations
+against it with NFS4ERR_NOTSUPP.  reffs currently advertises the
+classification and then ignores it, so a client can still drive
+CHUNK_WRITE / CHUNK_READ at a PASSTHROUGH file and reffs will
+process it.  We are shipping the label without the check that
+makes the label mean anything.
+
+**Work.** Add a guard at the head of the CHUNK-family handlers
+that returns NFS4ERR_NOTSUPP when the current filehandle's inode
+does not carry `INODE_IS_CHUNKED_DATA_FILE`.  Decide explicitly
+what happens for files that predate the attribute (bit 0 =
+"not chunked" is the safe default, but that would reject CHUNK
+ops on files created before R4 landed -- so the guard likely
+needs to be opt-in per export, or gated on the file having
+layout segments).  That decision is the substance of this slice;
+the code is small.
+
+**Tests.** CHUNK_WRITE / CHUNK_READ / CHUNK_FINALIZE / CHUNK_COMMIT
+against a file with the attribute clear -> NFS4ERR_NOTSUPP; with
+it set -> current behavior unchanged.  Plus a regression test that
+a PASSTHROUGH-encoding file is rejected.
+
+### S2 -- CHUNK_ESCROW semantics [large]
+
+**Gap.** Ops 92-95 decode and dispatch, and all four handlers
+return NFS4ERR_NOTSUPP (`lib/nfs4/server/chunk.c`).  `escrow_id4`
+has zero C consumers.
+
+**Work.** An escrow table (lifetime per patterns/ref-counting.md
+Rule 6 if it is an lfht), metadata-server epoch tracking for
+`ceia_mds_epoch` / `cera_mds_epoch` / `ceea_mds_epoch`, and
+proof-profile validation for CHUNK_ESCROW_TAKEOVER
+(`PROOF_PROFILE_HA_AUTHORITY_ED25519` is mandatory-to-implement
+per the draft).  ENUMERATE needs cookie-based paging bounded by
+`CHUNK_ESCROW_ENUMERATE_MAX4`.
+
+**Unblocks.** The four error codes in S6.
+
+**Note.** This is the largest item here and deserves its own
+design doc before implementation, not just a slice entry.
+
+### S3 -- emit ffv2_device_addr4 for v2 layouts [medium]
+
+**Gap.** R5c added `ffv2_device_versions4` / `ffv2_device_addr4`
+with the `ffv2dv_coupling` bitmask, but nothing uses them
+(`ffv2_device_addr4`: 0 C uses, `ffv2dv_coupling`: 0).
+`lib/nfs4/server/layout.c:179` still builds an FFv1
+`ff_device_addr4` with `bool ffdv_tightly_coupled` even when
+answering GETDEVICEINFO for a v2 layout, and
+`lib/nfs4/client/mds_layout.c:441` decodes it to match.
+
+**Consequence.** The tri-state coupling model
+(SYNTHETIC_UIDS / TIGHTLY_COUPLED / TRUSTED_STATEID) is
+unreachable; reffs can only express the FFv1 boolean.
+
+**Work.** Flip the v2 GETDEVICEINFO encoder to emit
+`ffv2_device_addr4`, map `ds_tight_coupled` onto the bitmask, and
+update the client decoder.  Keep the FFv1 path untouched -- this
+is another place where the two families sit in one function, so
+scope carefully (see the FFv1/FFv2 trap note in
+`migration-review.md`).
+
+### S4 -- consume tsa_client_id in TRUST_STATEID [small]
+
+**Gap.** R2d added `uint32_t tsa_client_id` to
+`TRUST_STATEID4args`; the handler ignores it (0 C uses).
+
+**Work.** Decide what the field governs -- most plausibly it
+binds the trust entry to a specific `cg_client_id` so that a
+CHUNK op's guard client-id must match the registered one -- then
+store it on the trust entry and check it in the CHUNK validation
+hook alongside the existing expiry and principal checks.  Cross-
+reference `.claude/design/trust-stateid.md`, which predates the
+field.
+
+### S5 -- CHUNK_HEADER_READ handler [medium]
+
+**Gap.** Handler is NFS4ERR_NOTSUPP.  R7b built the full
+five-array response shape (`chrr_status` / `chrr_locked` /
+`chrr_owners` / `chrr_guards` / `chrr_predecessors`) plus
+`optional_retained4` and `retained_predecessor4`; all have zero
+consumers, so the shape is currently inert.
+
+**Work.** Populate the five co-indexed arrays from the chunk
+store, bounded by `CHUNK_HEADER_READ_MAX4`.  `chrr_predecessors`
+needs retained-generation tracking that the chunk store does not
+have yet -- that is the real cost of this slice, not the encoding.
+
+**Unblocks.** `NFS4ERR_NO_PREDECESSOR`.
+
+### S6 -- retire the unreachable error codes [tiny, gated]
+
+**Gap.** Four of the five error codes added in R2a are never
+returned: `NFS4ERR_NO_PREDECESSOR`, `NFS4ERR_NO_ADOPTABLE_LOCK`,
+`NFS4ERR_STALE_ESCROW`, `NFS4ERR_STALE_MDS_EPOCH`.
+(`NFS4ERR_ENCODING_NOT_SUPPORTED` is live at 10 sites.)
+
+This is not itself a defect -- the codes are on the wire because
+the draft defines them -- but it is the tell for S2 and S5.  When
+those land, confirm each code is raised on the path the draft
+names.  No standalone work; this is a checklist item to close out
+S2/S5.
+
+### Not in this list
+
+Two items are tracked elsewhere and are deliberately not S-slices:
+
+- **`ffv2_coding_type_data4` union restructure** -- marked
+  NOT_NOW_BROWN_COW in `lib/xdr/nfsv42_xdr.x`.  Asserted
+  wire-identical (every arm carries `ffv2_data_protection4`), so
+  it is an API-shape change, not a semantics gap.
+- **M2 `chunk_owner4` cohort restructure** -- long-standing, see
+  `.claude/design/ffv2-draft-xdr-divergence.md`.  This is the one
+  that breaks interop with a batched-cohort peer, and it needs the
+  client-side rollback semantic before it can land safely.
+
+### Suggested order
+
+S1 first and on its own -- it is small, it is the one live
+correctness gap, and it does not depend on anything else.  Then
+S3 (self-contained, unblocks the coupling model).  Then S4.  S2
+and S5 are the big ones and should each get a design pass before
+implementation; S6 closes out behind them.
+
 ## Verification and rollout
 
 - Every reffs slice runs `make -f Makefile.reffs license style
