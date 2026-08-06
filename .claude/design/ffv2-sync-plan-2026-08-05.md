@@ -325,20 +325,70 @@ CHUNK_WRITE / CHUNK_READ at a PASSTHROUGH file and reffs will
 process it.  We are shipping the label without the check that
 makes the label mean anything.
 
-**Work.** Add a guard at the head of the CHUNK-family handlers
-that returns NFS4ERR_NOTSUPP when the current filehandle's inode
-does not carry `INODE_IS_CHUNKED_DATA_FILE`.  Decide explicitly
-what happens for files that predate the attribute (bit 0 =
-"not chunked" is the safe default, but that would reject CHUNK
-ops on files created before R4 landed -- so the guard likely
-needs to be opt-in per export, or gated on the file having
-layout segments).  That decision is the substance of this slice;
-the code is small.
+**Correction 2026-08-06.**  The original sketch for this slice was
+wrong in two ways, found while starting implementation.  Recording
+both, because the naive version would have broken working setups.
 
-**Tests.** CHUNK_WRITE / CHUNK_READ / CHUNK_FINALIZE / CHUNK_COMMIT
-against a file with the attribute clear -> NFS4ERR_NOTSUPP; with
-it set -> current behavior unchanged.  Plus a regression test that
-a PASSTHROUGH-encoding file is rejected.
+*First:* the draft defines enforcement in **two directions**, and
+the sketch described only one.  Re-reading sec-ops-client and
+sec-data-file-identification:
+
+- **(A)** A data server that has identified a file **as chunked**
+  MUST reject *non-CHUNK* operations on it with NFS4ERR_NOTSUPP.
+  This is the direction sec-ops-client leads with, and the sketch
+  missed it entirely.
+- **(B)** A data server that has identified a file as **non-chunked**
+  (`fattr4_chunked_data_file` = FALSE) MUST reject *CHUNK*
+  operations with NFS4ERR_NOTSUPP.  This is what the sketch
+  described.
+
+*Second:* the sketch's rule -- "reject CHUNK ops when the bit is
+clear" -- conflates "the metadata server marked this FALSE" with
+"this file was never identified at all".  The draft is explicit
+that those are different: sec-data-file-identification says the
+MUST-reject rules "apply on the data server side only to files the
+data server has identified", and a data server that cannot identify
+a file "relies on the client-side MUST NOT as the primary defense".
+An unidentified file must **not** be rejected.
+
+reffs's single `INODE_IS_CHUNKED_DATA_FILE` bit cannot express that
+three-way distinction (chunked / non-chunked / unidentified); 0
+currently means both "FALSE" and "never set".
+
+**Why this matters concretely.**  Only `dstore_ops_nfsv4` sets
+attribute 90 (that is what R4 added).  `dstore_ops_local` and
+`dstore_ops_nfsv3` do not.  Combined mode uses `dstore_ops_local`
+(`lib/nfs4/dstore/dstore.c:516`), and `scripts/test_mirror_local.sh`
+drives `ec_demo --layout v2` -- real CHUNK ops -- against exactly
+that path.  So a naive "reject when the bit is clear" would return
+NFS4ERR_NOTSUPP for every CHUNK op in combined mode, breaking the
+mirror test, the v2 benchmark variants, and the ec_demo v2 flow.
+
+**Revised work.**
+1. Decide how to represent "identified" separately from
+   "identified as FALSE".  Options: a second `i_attr_flags` bit
+   (`INODE_CHUNKED_ATTR_PRESENT`), or treating a live TRUST_STATEID
+   entry as the identification path (the draft lists it as the
+   second-authority means, which reffs already has infrastructure
+   for), or gating per export.
+2. Implement direction (B) using that representation.
+3. Implement direction (A) -- reject non-CHUNK ops on identified
+   chunked files -- which is a separate and wider change, since it
+   touches READ / WRITE / SETATTR / etc. on the data-server path.
+4. Consider extending attribute 90 to `dstore_ops_local` and
+   `dstore_ops_nfsv3` so combined and v3-backed setups can be
+   identified too, rather than permanently living in the
+   unidentified fallback.
+
+Item 1 is the real decision and should be settled before any code.
+This slice is **larger than "small"** as originally scoped, and
+step 3 may deserve its own slice.
+
+**Tests.** Once the representation is settled: CHUNK ops against an
+identified-non-chunked file -> NFS4ERR_NOTSUPP; against an
+identified-chunked file -> unchanged; against an **unidentified**
+file -> unchanged (explicitly not rejected).  Plus a combined-mode
+regression asserting `test_mirror_local.sh` still passes.
 
 ### S1b -- reject client SETATTR of attribute 90 [small, do with S1]
 
@@ -547,7 +597,15 @@ Two items are tracked elsewhere and are deliberately not S-slices:
 
 ### Suggested order
 
-**S1 + S1b together, first.**  They are the one live correctness
+**S1b first, alone.**  It is small, unambiguous, and closes a
+MUST-level violation in shipped code.  It is now landed.
+
+**S1 needs a design decision before any code** -- see the 2026-08-06
+correction in the slice: representing "identified" separately from
+"identified as FALSE", and the fact that enforcement runs in two
+directions, not one.  Do not start it as a "small" slice.
+
+Original note, kept for context: S1 and S1b are the one live correctness
 gap and they must land as a pair -- S1 without S1b builds the
 CHUNK-op guard and leaves clients able to SETATTR their way around
 it.  Both are small.

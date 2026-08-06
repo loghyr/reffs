@@ -2359,8 +2359,16 @@ int nfs4_attribute_init(void)
 
 	/*
 	 * suppattr_exclcreat: attributes this server will honour when set
-	 * during an EXCLUSIVE4_1 create.  Must match nattr_is_settable()
-	 * exactly -- read-only required attributes must not appear here.
+	 * during an EXCLUSIVE4_1 create.  Tracks nattr_is_settable()
+	 * except where an attribute is settable only on a create path --
+	 * read-only required attributes must not appear here.
+	 *
+	 * FATTR4_CHUNKED_DATA_FILE is the one such exception today: it is
+	 * settable (the metadata server sets it in OPEN(CREATE)
+	 * createattrs) but a client SETATTR of it is rejected with
+	 * NFS4ERR_INVAL in nfs4_op_setattr, and it is deliberately absent
+	 * from this bitmap because it is not a client-supplied
+	 * exclusive-create attribute.
 	 */
 	if (bitmap4_init(&system_attrs.suppattr_exclcreat,
 			 FATTR4_ATTRIBUTE_MAX))
@@ -4447,6 +4455,31 @@ uint32_t nfs4_op_setattr(struct compound *compound)
 
 	if (nfs4_check_grace()) {
 		*status = NFS4ERR_GRACE;
+		goto out;
+	}
+
+	/*
+	 * fattr4_chunked_data_file is set by the metadata server when it
+	 * allocates a chunked data file, and never changes afterwards.
+	 * A client MUST NOT SETATTR it; see
+	 * draft-haynes-nfsv4-flexfiles-v2 sec-fattr4_chunked_data_file,
+	 * which specifies NFS4ERR_INVAL (not NFS4ERR_ATTRNOTSUPP) for
+	 * this case.
+	 *
+	 * The attribute stays in nattr_is_settable() because the
+	 * metadata server sets it through the OPEN(CREATE) createattrs
+	 * path, which reaches nattr_from_fattr4() via
+	 * nfs4_apply_createattrs() rather than through here.  Rejecting
+	 * at the SETATTR entry point is what separates the two.
+	 *
+	 * This matters beyond conformance: once CHUNK ops reject
+	 * operations on files whose attribute is clear, a client able to
+	 * SETATTR the attribute could clear it on a chunked file to walk
+	 * past that check, or set it on a passthrough file.
+	 */
+	if (bitmap4_attribute_is_set(&fattr->attrmask,
+				     FATTR4_CHUNKED_DATA_FILE)) {
+		*status = NFS4ERR_INVAL;
 		goto out;
 	}
 
