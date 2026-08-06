@@ -306,91 +306,155 @@ Audit basis (2026-08-06, on `fef9c82168a2`): each item below was
 confirmed by counting live C consumers of the symbol, not by
 recollection.
 
-### S1 -- enforce fattr4_chunked_data_file on CHUNK ops [HIGHEST]
+### S1 -- fattr4_chunked_data_file: settle it, freeze it, enforce it
 
-**Gap.** R3 stores attribute 90 as `INODE_IS_CHUNKED_DATA_FILE`
-(bit 6 of `i_attr_flags`) and R4 SETs it on every file the
-metadata server creates on an NFSv4.2 data server.  Nothing reads
-it for enforcement: the symbol appears only in
-`lib/nfs4/server/attr.c` (set + report).  `lib/nfs4/server/chunk.c`
-has **zero** references.
+Rewritten 2026-08-06 against the draft invariant added in
+`e5871d41fb16`.  The earlier version of this slice was wrong twice
+over; both errors and the reasoning are kept at the end so the
+correction is auditable.
 
-**Why this ranks first.** The draft's stated purpose for
-attribute 90 (sec-fattr4_chunked_data_file, and the reciprocal
-rule in sec-ops-client) is that a data server which has
-identified a file as non-chunked MUST reject CHUNK operations
-against it with NFS4ERR_NOTSUPP.  reffs currently advertises the
-classification and then ignores it, so a client can still drive
-CHUNK_WRITE / CHUNK_READ at a PASSTHROUGH file and reffs will
-process it.  We are shipping the label without the check that
-makes the label mean anything.
+The draft now states: the attribute describes the **format of the
+file's content**, so its value is fixed once the file holds data.
+A metadata server MUST NOT change it on a non-empty file, and a
+data server MUST reject such a SETATTR with NFS4ERR_INVAL --
+including one arriving over the metadata server's control session.
+A metadata server that allocates data files before choosing their
+encoding MAY set the final value at any point while the file is
+still empty.  How emptiness is determined is explicitly left to the
+implementation.
 
-**Correction 2026-08-06.**  The original sketch for this slice was
-wrong in two ways, found while starting implementation.  Recording
-both, because the naive version would have broken working setups.
+That reframes the whole slice.  The attribute is not a label to be
+enforced against; it is a commitment made once, before any data
+exists, and honored thereafter.  The work splits along that line.
 
-*First:* the draft defines enforcement in **two directions**, and
-the sketch described only one.  Re-reading sec-ops-client and
-sec-data-file-identification:
+#### S1.1 -- settle the value while the file is empty [small]
 
-- **(A)** A data server that has identified a file **as chunked**
-  MUST reject *non-CHUNK* operations on it with NFS4ERR_NOTSUPP.
-  This is the direction sec-ops-client leads with, and the sketch
-  missed it entirely.
+R4 sets the attribute TRUE from `nfsv4_create`, which is reached
+through `runway_batch_create` -- the runway **pre-create** path.
+The runway builds a pool of empty files at startup; `runway_pop`
+hands one out later at LAYOUTGET, which is where
+`default_coding_resolve_segment()` finally picks the encoding.
+
+So today every NFSv4.2 runway file is marked TRUE before anyone
+knows whether it will hold chunks or passthrough data.  The
+attribute is therefore *wrong* on passthrough files right now, not
+merely unenforced -- enforcement built on it today would reject
+correct client behavior.
+
+Under the new invariant this is not a misplacement to relocate but
+a value left unsettled.  Runway files are empty until popped, so
+the correction is legal exactly where it is needed: at layout
+assignment, set the attribute to its final value -- TRUE for a
+chunked encoding, FALSE for PASSTHROUGH -- while the file still
+holds no data.
+
+Work: add the settle step on the layout-assignment path.  Keep or
+drop the create-time provisional value as convenient; what matters
+is that the value is correct before the first write.
+
+Tests: a passthrough layout leaves the attribute FALSE on its data
+files; a chunked layout leaves it TRUE.
+
+#### S1.2 -- reject SETATTR on a non-empty file, from either origin [small]
+
+S1b already rejects **client** SETATTR of the attribute
+unconditionally (landed, `e6058df22df4`).  The draft's new rule is
+wider: a SETATTR against a **non-empty** file MUST be rejected with
+NFS4ERR_INVAL whoever sends it, metadata server included.
+
+Work: add the non-empty check.  reffs must choose its own emptiness
+predicate -- the draft deliberately does not specify one.  The
+conservative reading is the union of "has file content" and "has
+any non-EMPTY chunk-store block", since a chunked data file can
+plausibly hold chunk state while its plain size is uninformative,
+and a false "empty" is the dangerous direction: it would admit a
+format change to a file that already holds data.  Confirm against
+`lib/nfs4/server/chunk_store.c` before settling on the predicate.
+
+Tests: SETATTR of the attribute on a populated file -> NFS4ERR_INVAL,
+exercised from both a client compound and a control-session
+compound; on an empty file from the control session -> permitted.
+
+#### S1.3 -- close the combined-mode identification gap [small]
+
+Only `dstore_ops_nfsv4` sets the attribute.  `dstore_ops_local`
+does not, so every combined-mode data file is unidentified.
+Enforcement that has to special-case which vtable created a file
+is the kind of conditional that rots, so close this before any
+enforcement lands.
+
+NFSv3 dstores are **not** in scope and need no gate: CHUNK
+operations are NFSv4.2 operations, and chunked encodings require
+tight coupling (B4.1), which NFSv3 cannot provide.  A v3-backed
+data file is non-chunked by construction, not "unidentified pending
+a decision."
+
+#### S1.4 -- represent "unidentified" distinctly [small, gated on S1.1-S1.3]
+
+Only once the above land is this still needed, and possibly not.
+`sec-data-file-identification` says the MUST-reject rules apply
+only to files the data server has **identified**, and that a data
+server which cannot identify a file relies on the client-side MUST
+NOT instead.  A single bit cannot say chunked / non-chunked /
+unidentified -- 0 currently means both of the last two.
+
+If S1.1 and S1.3 together mean every data file reffs creates is
+explicitly settled, then "unidentified" becomes an empty category
+for files reffs allocated, and no second bit is needed.  Decide at
+that point rather than now.  If it is still needed, a second
+`i_attr_flags` bit (`INODE_CHUNKED_ATTR_PRESENT`) is the cheapest
+form -- persistent, unlike the trust table, which a data-server
+restart clears and which would make enforcement evaporate
+unpredictably.
+
+#### S1.5 -- enforce, in two directions [medium; (A) deserves its own review]
+
+The draft enforces both ways, and the earlier version of this slice
+described only one:
+
 - **(B)** A data server that has identified a file as **non-chunked**
-  (`fattr4_chunked_data_file` = FALSE) MUST reject *CHUNK*
-  operations with NFS4ERR_NOTSUPP.  This is what the sketch
-  described.
+  MUST reject **CHUNK** operations on it with NFS4ERR_NOTSUPP.
+  Contained; the CHUNK handlers are one file.
+- **(A)** A data server that has identified a file as **chunked**
+  MUST reject **non-CHUNK** operations on it with NFS4ERR_NOTSUPP.
+  This is the direction `sec-ops-client` leads with.  Much wider
+  blast radius -- READ, WRITE, SETATTR, COMMIT on the data-server
+  path -- and it should be its own slice with its own review and
+  its own dreamer run.
 
-*Second:* the sketch's rule -- "reject CHUNK ops when the bit is
-clear" -- conflates "the metadata server marked this FALSE" with
-"this file was never identified at all".  The draft is explicit
-that those are different: sec-data-file-identification says the
-MUST-reject rules "apply on the data server side only to files the
-data server has identified", and a data server that cannot identify
-a file "relies on the client-side MUST NOT as the primary defense".
-An unidentified file must **not** be rejected.
+Do (B) first.  Do not fold (A) into the same commit.
 
-reffs's single `INODE_IS_CHUNKED_DATA_FILE` bit cannot express that
-three-way distinction (chunked / non-chunked / unidentified); 0
-currently means both "FALSE" and "never set".
+#### Ordering
 
-**Why this matters concretely.**  Only `dstore_ops_nfsv4` sets
-attribute 90 (that is what R4 added).  `dstore_ops_local` and
-`dstore_ops_nfsv3` do not.  Combined mode uses `dstore_ops_local`
-(`lib/nfs4/dstore/dstore.c:516`), and `scripts/test_mirror_local.sh`
-drives `ec_demo --layout v2` -- real CHUNK ops -- against exactly
-that path.  So a naive "reject when the bit is clear" would return
-NFS4ERR_NOTSUPP for every CHUNK op in combined mode, breaking the
-mirror test, the v2 benchmark variants, and the ec_demo v2 flow.
+S1.1 -> S1.2 -> S1.3 -> (S1.4 if still required) -> S1.5(B) ->
+S1.5(A).  S1.1 is independently worth doing even if enforcement is
+never built: the attribute is currently wrong on passthrough files,
+and a wrong label is worse than an absent one because it invites
+exactly the enforcement that would then misfire.
 
-**Revised work.**
-1. Decide how to represent "identified" separately from
-   "identified as FALSE".  Options: a second `i_attr_flags` bit
-   (`INODE_CHUNKED_ATTR_PRESENT`), or treating a live TRUST_STATEID
-   entry as the identification path (the draft lists it as the
-   second-authority means, which reffs already has infrastructure
-   for), or gating per export.
-2. Implement direction (B) using that representation.
-3. Implement direction (A) -- reject non-CHUNK ops on identified
-   chunked files -- which is a separate and wider change, since it
-   touches READ / WRITE / SETATTR / etc. on the data-server path.
-4. Consider extending attribute 90 to `dstore_ops_local` and
-   `dstore_ops_nfsv3` so combined and v3-backed setups can be
-   identified too, rather than permanently living in the
-   unidentified fallback.
+#### What the earlier version of this slice got wrong
 
-Item 1 is the real decision and should be settled before any code.
-This slice is **larger than "small"** as originally scoped, and
-step 3 may deserve its own slice.
+Recorded because both errors would have shipped breakage.
 
-**Tests.** Once the representation is settled: CHUNK ops against an
-identified-non-chunked file -> NFS4ERR_NOTSUPP; against an
-identified-chunked file -> unchanged; against an **unidentified**
-file -> unchanged (explicitly not rejected).  Plus a combined-mode
-regression asserting `test_mirror_local.sh` still passes.
+1. It described enforcement in one direction only, missing (A) --
+   the direction the draft's own operations section leads with.
+2. Its rule, "reject CHUNK ops when the bit is clear", conflated
+   "marked FALSE" with "never identified".  Since only
+   `dstore_ops_nfsv4` sets the attribute, and combined mode uses
+   `dstore_ops_local`, and `scripts/test_mirror_local.sh` drives
+   `ec_demo --layout v2` -- real CHUNK ops -- against exactly that
+   path, the naive rule would have returned NFS4ERR_NOTSUPP for
+   every CHUNK operation in combined mode, breaking the mirror
+   test, the v2 benchmark variants, and the ec_demo v2 flow.
 
-### S1b -- reject client SETATTR of attribute 90 [small, do with S1]
+It was also scoped "small".  It is five slices.
+
+### S1b -- reject client SETATTR of attribute 90 [LANDED e6058df22df4]
+
+**Status.** Landed 2026-08-06.  Superseded in part by S1.2, which
+widens the same rejection to any SETATTR against a non-empty file
+regardless of origin -- S1b rejects client SETATTR unconditionally,
+which remains correct and is the narrower rule.
 
 **Gap.** Found by the fable audit 2026-08-06.  The draft
 (sec-fattr4_chunked_data_file, :8311-8313) says: "Clients MUST NOT
@@ -597,18 +661,20 @@ Two items are tracked elsewhere and are deliberately not S-slices:
 
 ### Suggested order
 
-**S1b first, alone.**  It is small, unambiguous, and closes a
-MUST-level violation in shipped code.  It is now landed.
+**S1b is landed** (`e6058df22df4`) -- client SETATTR of attribute
+90 is rejected.
 
-**S1 needs a design decision before any code** -- see the 2026-08-06
-correction in the slice: representing "identified" separately from
-"identified as FALSE", and the fact that enforcement runs in two
-directions, not one.  Do not start it as a "small" slice.
+**S1 is now five sub-slices** (S1.1-S1.5), rewritten 2026-08-06
+against the draft invariant in `e5871d41fb16`.  Start with **S1.1**:
+the attribute is currently *wrong* on passthrough data files, since
+R4 sets it TRUE at runway pre-create, before the encoding is known.
+A wrong label is worse than an absent one, because it invites the
+enforcement that would then misfire.  S1.1 is worth doing even if
+enforcement is never built.
 
-Original note, kept for context: S1 and S1b are the one live correctness
-gap and they must land as a pair -- S1 without S1b builds the
-CHUNK-op guard and leaves clients able to SETATTR their way around
-it.  Both are small.
+Then S1.2, S1.3, and only then decide whether S1.4 is still needed.
+Enforcement (S1.5) comes last, direction (B) before (A), never in
+one commit.
 
 Then S7 (tests the already-shipped R7c behavior; small, and it
 retires the false confidence in the current 25/25).  Then S3
