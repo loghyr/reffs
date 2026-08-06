@@ -1082,17 +1082,61 @@ choose plain READ/WRITE and disagree with a CHUNK-writing peer about
 the bytes -- silent corruption rather than a refusal.  Fixing the
 label is still owed.
 
-**S4 / K.A are still not exercised.**  With local dstores
-`ds_tight_coupled` is true, so the chain should be: metadata server
-advertises FFV2_COUPLING_TRUSTED_STATEID -> client sets
-`ed_tight_coupled` -> `em_tight_coupled` -> real layout stateid on
-CHUNK operations -> `chunk_check_trusted_stateid` compares the writer
-identity.  The trace shows zero trust-table activity across 2304
-CHUNK_WRITEs, so a link in that chain is broken and it is not yet
-known which.  First suspects: which layout type `ec_demo` asks
-GETDEVICEINFO for (the v2 encoder only runs for
-LAYOUT4_FLEX_FILES_V2), and whether the client's v2 decode path is
-reached at all.  That is the next thing to trace.
+**S4 / K.A are exercised after all** (2026-08-06).  An earlier
+revision of this section read the same run as proof that the chain was
+broken, on the strength of "zero trust-table activity across 2304
+CHUNK_WRITEs".  That measurement was empty: every step of the trust
+chain's success path is trace-silent.  `trust_stateid_register`,
+`local_trust_stateid`, the LAYOUTGET fan-out, and
+`chunk_check_trusted_stateid` all emit nothing when they succeed --
+only expiry, renewal, and init failure are traced.  Grepping a passing
+run for trust activity could not have produced a hit no matter what
+the code did, so the absence was evidence of nothing.
+
+Instrumenting both ends temporarily and re-running `COUPLING=local`
+gives the real picture:
+
+| observation | count |
+|---|---|
+| TRUST_STATEID registrations | 18 |
+| CHUNK operations presenting a real layout stateid | 2048 |
+| of those, trust entry found | 2048 |
+| of those, trust entry missing | 0 |
+| CHUNK operations presenting a special stateid | 6 |
+
+The whole chain runs: the metadata server advertises
+FFV2_COUPLING_TRUSTED_STATEID, the client sets `ed_tight_coupled` ->
+`em_tight_coupled` and presents the real layout stateid, and
+`chunk_check_trusted_stateid` resolves it against the trust table on
+every operation.  The writer-identity comparison runs too, and splits
+exactly as S4b designed: writes present `client_id=1` and match the
+registered binding, reads present `0` (NONE) and are authorized by the
+stateid alone.
+
+So S1.6, S4a, S4b and K.A are verified live, not merely
+correct-by-construction.
+
+What this leaves owed is observability, not correctness.  A path whose
+success is invisible cannot be regression-tested from a trace, and the
+next person to ask "is tight coupling actually engaging?" has the same
+empty measurement available to mislead them.  A registration counter
+and a validation counter on the trust table, surfaced through the
+probe protocol next to the existing per-op stats, would make the
+question answerable without a private build.  Worth doing before this
+path is relied on.
+
+**A second defect surfaced on the way** (`39d1da3436f1`).  Both mirror
+configurations were exiting non-zero under LeakSanitizer *after*
+printing "write OK" -- `mds_session_destroy` never destroyed the AUTH
+its session installed, on a comment's unchecked claim that libtirpc's
+`clnt_destroy` does it.  It does not.  572 bytes per session,
+unconditionally, on every `ec_demo` run in every configuration.  This
+is the failure mode of
+[[feedback_update_contradicted_prose_same_commit]] exactly: a "why"
+comment asserting another component's behaviour without checking it,
+and code built on the assertion.  It also means the earlier claim in
+this document that both configurations passed was wrong -- they
+reported success on the data path and failed at exit.
 
 **Landed while getting here:** local dstores advertised port 2049 in
 GETDEVICEINFO regardless of what the server was listening on, so a
