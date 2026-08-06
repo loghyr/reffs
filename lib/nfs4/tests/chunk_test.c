@@ -316,9 +316,18 @@ static void free_read_res(struct cm_ctx *cm)
 	CHUNK_READ4resok *resok = &res->CHUNK_READ4res_u.crr_resok4;
 
 	for (u_int i = 0; i < resok->crr_chunks.crr_chunks_len; i++) {
-		free(resok->crr_chunks.crr_chunks_val[i].cr_chunk.cr_chunk_val);
-		resok->crr_chunks.crr_chunks_val[i].cr_chunk.cr_chunk_val =
-			NULL;
+		read_chunk4 *rc = &resok->crr_chunks.crr_chunks_val[i];
+
+		/*
+		 * cr_checksum.cs_value_val is allocated by
+		 * chunk_checksum_pack() in nfs4_op_chunk_read; production
+		 * releases it via the XDR-free path, tests must release it
+		 * here.
+		 */
+		free(rc->cr_checksum.cs_value.cs_value_val);
+		rc->cr_checksum.cs_value.cs_value_val = NULL;
+		free(rc->cr_chunk.cr_chunk_val);
+		rc->cr_chunk.cr_chunk_val = NULL;
 	}
 	free(resok->crr_chunks.crr_chunks_val);
 	resok->crr_chunks.crr_chunks_val = NULL;
