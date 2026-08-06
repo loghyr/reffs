@@ -911,10 +911,21 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 		rc->cr_guard.cg_gen_id = blk->cb_gen_id;
 		rc->cr_guard.cg_client_id = blk->cb_client_id;
 		rc->cr_payload_id = blk->cb_payload_id;
-		rc->cr_locked.cr_locked_len = 0;
-		rc->cr_locked.cr_locked_val = NULL;
-		rc->cr_status.cr_status_len = 0;
-		rc->cr_status.cr_status_val = NULL;
+		/*
+		 * cr_locked reports read-time chunk state orthogonally to
+		 * cr_status, so a locked chunk still surfaces its lifecycle
+		 * state to the inspector.  The in-memory CHUNK_BLOCK_LOCKED
+		 * bit and the wire CHUNK_STATE_FLAGS_LOCKED bit are both
+		 * 0x1 (see chunk_store.h).
+		 */
+		rc->cr_locked = (blk->cb_flags & CHUNK_BLOCK_LOCKED) ?
+					CHUNK_STATE_FLAGS_LOCKED :
+					0;
+		/*
+		 * Reaching here means the per-chunk read succeeded; the
+		 * loop bails out before this point on any failure.  Leave
+		 * cr_status at its calloc'd NFS4_OK.
+		 */
 
 		/* Read chunk data from data block. */
 		rc->cr_chunk.cr_chunk_val = calloc(1, blk->cb_chunk_size);

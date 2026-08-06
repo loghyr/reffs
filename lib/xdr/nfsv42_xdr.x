@@ -3641,8 +3641,8 @@ struct read_chunk4 {
     chunk_owner4        cr_owner;
     chunk_guard4        cr_guard;
     uint32_t            cr_payload_id;
-    chunk_state_flags4  cr_locked<>;
-    nfsstat4            cr_status<>;
+    chunk_state_flags4  cr_locked;
+    nfsstat4            cr_status;
     opaque              cr_chunk<>;
 };
 
