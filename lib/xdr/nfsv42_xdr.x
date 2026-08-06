@@ -1497,11 +1497,24 @@ enum nfs_opnum4 {
  OP_BULK_REVOKE_STATEID = 91,
 
 %/*
+% * CHUNK_ESCROW ops: draft-haynes-nfsv4-flexfiles-v2 sec-chunk-escrow.
+% * Op numbers 92-95 are TBD pending IANA assignment; assigned in the
+% * flexfiles-v2 draft, so the reffs-owned proxy-server and swap ops
+% * were relocated (see the OP_PROXY_* and OP_EXCHANGE_RANGE blocks
+% * below) to make room.  Handlers land in a follow-up slice
+% * (R5b) returning NFS4ERR_NOTSUPP; only the number reservation is
+% * held here today, which matters when a mid-review reviewer
+% * (adversarial or supervisor) walks the enum and expects the
+% * draft-authoritative op-number layout.
+% */
+
+%/*
 % * Proxy-server fore-channel ops: draft-haynes-nfsv4-flexfiles-v2-proxy-server.
-% * Op numbers 92-95 are TBD pending IANA assignment; same caveat as
-% * CHUNK / TRUST_STATEID above.  Assigned sequentially after the
-% * trust-stateid block on the assumption that the proxy-server draft
-% * lands after the flexfiles-v2 draft on the IETF datatracker.
+% * Op numbers 96-99 are TBD pending IANA assignment; same caveat as
+% * CHUNK / TRUST_STATEID above.  Renumbered from 92-95 in the R5a
+% * slice of the FFv2 draft sync (plan at
+% * .claude/design/ffv2-sync-plan-2026-08-05.md) to make room for the
+% * draft-authoritative CHUNK_ESCROW block at 92-95.
 % *
 % * Architecture revision (2026-04-26, see
 % * .claude/design/proxy-server-phase6c.md): the back-channel
@@ -1511,18 +1524,19 @@ enum nfs_opnum4 {
 % * PROXY_DONE and PROXY_CANCEL operate on the persisted migration
 % * record only; LAYOUTRETURN (existing op) handles layout state.
 % */
- OP_PROXY_REGISTRATION  = 92,
- OP_PROXY_PROGRESS      = 93,
- OP_PROXY_DONE          = 94,
- OP_PROXY_CANCEL        = 95,
+ OP_PROXY_REGISTRATION  = 96,
+ OP_PROXY_PROGRESS      = 97,
+ OP_PROXY_DONE          = 98,
+ OP_PROXY_CANCEL        = 99,
 
 %/*
-% * EXCHANGE_RANGE: draft-haynes-nfsv4-swap.  Placed after the proxy
-% * block to resolve an op-number collision with OP_TRUST_STATEID;
-% * the original assignment at 89 conflicted with the trust-stateid
-% * block.  Op number remains TBD pending IANA assignment.
+% * EXCHANGE_RANGE: draft-haynes-nfsv4-swap.  Renumbered from 96 to
+% * 100 in the R5a slice of the FFv2 draft sync, alongside the
+% * PROXY_* block, to make room for the draft-authoritative
+% * CHUNK_ESCROW block at 92-95.  Op number remains TBD pending IANA
+% * assignment.
 % */
- OP_EXCHANGE_RANGE      = 96,
+ OP_EXCHANGE_RANGE      = 100,
 
  OP_ILLEGAL             = 10044
 };
