@@ -303,6 +303,77 @@ END_TEST
  * Intent: a non-trivial default_coding (RS 4+2) survives a
  * save/destroy/load cycle byte-for-byte.
  */
+/*
+ * super_block_set_default_coding is the admin boundary the probe op
+ * lands on, and it enforced "non-PASSTHROUGH requires m > 0"
+ * independently of the TOML parser.  REPLICATED is the one encoding
+ * that legitimately carries m == 0, so the boundary has to admit it
+ * or "mirrored:K+0" is unreachable however it is submitted.
+ */
+START_TEST(test_set_default_coding_replicated_accepted)
+{
+	ck_assert_int_eq(reffs_fs_mkdir("/coding_rep", 0755), 0);
+
+	struct super_block *sb = super_block_alloc(24, (char *)"/coding_rep",
+						   REFFS_STORAGE_RAM, NULL);
+	ck_assert_ptr_nonnull(sb);
+	uuid_generate(sb->sb_uuid);
+
+	struct reffs_coding_spec spec = {
+		.cs_encoding_type = REFFS_ENCODING_REPLICATED,
+		.cs_k = 3,
+		.cs_m = 0,
+	};
+
+	ck_assert_int_eq(super_block_set_default_coding(sb, &spec), 0);
+	ck_assert_int_eq(sb->sb_default_coding.cs_encoding_type,
+			 REFFS_ENCODING_REPLICATED);
+	ck_assert_uint_eq(sb->sb_default_coding.cs_k, 3);
+	ck_assert_uint_eq(sb->sb_default_coding.cs_m, 0);
+
+	super_block_destroy(sb);
+	super_block_release_dirents(sb);
+	super_block_put(sb);
+}
+END_TEST
+
+/*
+ * Replication with parity shards, and replication of a single copy,
+ * are both incoherent -- rejected at the boundary rather than stored
+ * and puzzled over at LAYOUTGET time.
+ */
+START_TEST(test_set_default_coding_replicated_rejects_bad_shapes)
+{
+	ck_assert_int_eq(reffs_fs_mkdir("/coding_rep2", 0755), 0);
+
+	struct super_block *sb = super_block_alloc(25, (char *)"/coding_rep2",
+						   REFFS_STORAGE_RAM, NULL);
+	ck_assert_ptr_nonnull(sb);
+	uuid_generate(sb->sb_uuid);
+
+	struct reffs_coding_spec parity = {
+		.cs_encoding_type = REFFS_ENCODING_REPLICATED,
+		.cs_k = 3,
+		.cs_m = 1,
+	};
+	ck_assert_int_eq(super_block_set_default_coding(sb, &parity), -EINVAL);
+
+	struct reffs_coding_spec single = {
+		.cs_encoding_type = REFFS_ENCODING_REPLICATED,
+		.cs_k = 1,
+		.cs_m = 0,
+	};
+	ck_assert_int_eq(super_block_set_default_coding(sb, &single), -EINVAL);
+
+	/* Neither attempt may have disturbed the stored policy. */
+	ck_assert(reffs_coding_spec_is_unset(&sb->sb_default_coding));
+
+	super_block_destroy(sb);
+	super_block_release_dirents(sb);
+	super_block_put(sb);
+}
+END_TEST
+
 START_TEST(test_registry_default_coding_persisted)
 {
 	ck_assert_int_eq(reffs_fs_mkdir("/coding_a", 0755), 0);
@@ -649,6 +720,9 @@ static Suite *sb_persistence_suite(void)
 	tcase_add_checked_fixture(tc, persist_setup, persist_teardown);
 	tcase_add_test(tc, test_registry_default_coding_persisted);
 	tcase_add_test(tc, test_registry_default_coding_absent_legacy);
+	tcase_add_test(tc, test_set_default_coding_replicated_accepted);
+	tcase_add_test(tc,
+		       test_set_default_coding_replicated_rejects_bad_shapes);
 	suite_add_tcase(s, tc);
 
 	tc = tcase_create("alloc_id");
