@@ -1082,6 +1082,50 @@ choose plain READ/WRITE and disagree with a CHUNK-writing peer about
 the bytes -- silent corruption rather than a refusal.  Fixing the
 label is still owed.
 
+**Replication is now declarable** (`a2fc7cfe350b`, `581f25895638`).
+The invariant "M == 0 IFF PASSTHROUGH" was written out longhand in
+three places, and all three rejected the only form that describes a
+replicated layout:
+
+| site | role | fixed in |
+|---|---|---|
+| `parse_coding_spec` | TOML | `a2fc7cfe350b` |
+| `default_coding_resolve_segment` | LAYOUTGET | `a2fc7cfe350b` |
+| `super_block_set_default_coding` | probe / admin | `581f25895638` |
+
+The third was missed on the first pass precisely because the rule was
+duplicated rather than shared: a grep for the old wording found two
+sites and the third phrased it differently.  Collapsing them onto one
+predicate is a follow-up worth doing.
+
+**Two things this turned up, both still open.**
+
+*`[[export]] default_coding` in TOML is inert.*  It is parsed,
+validated, and stored on `reffs_export_config` -- and nothing outside
+`lib/config/` ever reads that field.  `sb_default_coding` is only ever
+written by `super_block_set_default_coding`, which only the probe op
+calls.  This is consistent with the registry-v3 decision that "probe
+is the sole authority for export creation, `[[export]]` remains for
+root flavour config only", but it means the TOML key silently does
+nothing, and `config_test` asserts on a value that never reaches a
+server.  Either wire it or reject it at load time; quietly accepting
+configuration that has no effect is the worst of the three.
+
+*The mirror fixture still runs undeclared.*  Adding
+`default_coding = "mirrored:N+0"` to `test_mirror_local.sh` was
+measured to change nothing -- 0 calls to `local_set_chunked` -- which
+is the inert-TOML finding above, not a layout bug.  Declaring it for
+real needs the probe op after startup.  Until then the mirror path
+still runs with identification off, so the S1.5 gates remain
+unexercised against it.
+
+**Still a decision, not a patch:** what an export that declares
+nothing should advertise for K files with no parity.  From geometry
+alone that shape is equally "K replicas" and "one plain copy spread
+over K data servers", and guessing between them is the failure this
+whole thread exists to stop.  The default stays PASSTHROUGH until
+someone decides otherwise.
+
 **S4 / K.A are exercised after all** (2026-08-06).  An earlier
 revision of this section read the same run as proof that the chain was
 broken, on the strength of "zero trust-table activity across 2304
