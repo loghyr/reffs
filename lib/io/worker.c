@@ -244,11 +244,27 @@ int create_worker_threads(volatile sig_atomic_t *running, unsigned int nworkers)
 
 void wait_for_worker_threads(void)
 {
-	// Wait for worker threads to finish
+	/*
+	 * Idempotent.  Joining an already-joined thread is undefined
+	 * behaviour -- ASAN's interceptor calls it out and aborts the
+	 * process -- and callers legitimately arrive here twice:
+	 * io_handler_fini() joins, and a caller that also has error
+	 * paths where fini never runs must join for itself on the way
+	 * out.  reffs_probe1_clnt has exactly that shape, and aborted
+	 * at exit on every operation because of it.
+	 *
+	 * Take the count to zero before joining so the second call
+	 * iterates nothing.  No atomics: thread creation and this
+	 * teardown both run on the main thread, and pretending
+	 * otherwise would imply a concurrency that does not exist.
+	 */
 	TRACE("Waiting for worker threads to exit...");
-	for (int i = 0; i < num_worker_threads; i++) {
+
+	int n = num_worker_threads;
+
+	num_worker_threads = 0;
+	for (int i = 0; i < n; i++)
 		pthread_join(worker_threads[i], NULL);
-	}
 }
 
 void wake_worker_threads(void)
