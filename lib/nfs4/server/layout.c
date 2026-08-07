@@ -1069,8 +1069,9 @@ int default_coding_resolve_segment(const struct reffs_coding_spec *coding,
 
 static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 				   uint32_t ffv2m_coding_type,
-				   uint32_t writer_id, char **out_body,
-				   u_long *out_size)
+				   uint32_t writer_id,
+				   const stateid4 *layout_stateid,
+				   char **out_body, u_long *out_size)
 {
 	ffv2_layout4 ffl;
 
@@ -1174,6 +1175,7 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 		deviceid_from_dstore(ffds->ffv2ds_deviceid, ldf->ldf_dstore_id);
 
 		struct dstore *ds = dstore_find(ldf->ldf_dstore_id);
+		bool ds_tight = ds && ds->ds_tight_coupled;
 
 		ffds->ffv2ds_efficiency =
 			(ds && ds->ds_ops == &dstore_ops_local) ? 255 : 1;
@@ -1189,7 +1191,29 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 
 		ffv2_file_info4 *fi =
 			&ffds->ffv2ds_file_info.ffv2ds_file_info_val[0];
-		memset(&fi->ffv2fi_stateid, 0, sizeof(fi->ffv2fi_stateid));
+		/*
+		 * Per-data-server stateid.
+		 *
+		 * A tight-coupled data server validates CHUNK operations
+		 * against its trust table, which is keyed on the layout
+		 * stateid this same LAYOUTGET registers via TRUST_STATEID.
+		 * Handing the client anything else -- an all-zero stateid
+		 * included -- guarantees the check cannot match: a special
+		 * stateid is bypassed outright, so the writer-identity
+		 * comparison never runs and tight coupling buys nothing.
+		 * Give the client the value the data server is holding.
+		 *
+		 * Loose coupling keeps the zeroed stateid.  There is no
+		 * trust entry to match against, the data server authorizes
+		 * on synthetic uid/gid instead, and per
+		 * draft-haynes-nfsv4-flexfiles-v2 that combination is
+		 * confined to PASSTHROUGH.
+		 */
+		if (ds_tight && layout_stateid)
+			fi->ffv2fi_stateid = *layout_stateid;
+		else
+			memset(&fi->ffv2fi_stateid, 0,
+			       sizeof(fi->ffv2fi_stateid));
 		fi->ffv2fi_fh_vers.nfs_fh4_len = ldf->ldf_fh_len;
 		fi->ffv2fi_fh_vers.nfs_fh4_val = calloc(1, ldf->ldf_fh_len);
 		if (!fi->ffv2fi_fh_vers.nfs_fh4_val) {
@@ -2044,6 +2068,25 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	}
 
 	/*
+	 * Bump the layout stateid's seqid and pack it before the body is
+	 * built, not after: a v2 body embeds this stateid for every
+	 * tight-coupled data server, and the TRUST_STATEID fan-out below
+	 * registers the same value.  All three have to agree, so there
+	 * is only one place it can be computed.
+	 *
+	 * The cost is that a build failure after this point returns an
+	 * error having already consumed a seqid.  That is benign: the
+	 * layout stateid's seqid is server-controlled and need only be
+	 * monotonic, the client's cached stateid is untouched by a failed
+	 * LAYOUTGET, and the paths in between are allocation failures.
+	 */
+	__atomic_add_fetch(&ls->ls_stid.s_seqid, 1, __ATOMIC_RELAXED);
+
+	stateid4 layout_stid;
+
+	pack_stateid4(&layout_stid, &ls->ls_stid);
+
+	/*
 	 * Build the layout body.  Dispatch based on what the client
 	 * requested: ff_layout4 (v1) or ffv2_layout4 (v2).
 	 */
@@ -2078,7 +2121,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 						       compound->c_nfs4_client)
 						       ->c_id) :
 				CHUNK_GUARD_CLIENT_ID_NONE,
-			&body, &xdr_size);
+			&layout_stid, &body, &xdr_size);
 	} else {
 		*status = layoutget_build_v1(
 			build_seg, compound->c_server_state->ss_stripe_width,
@@ -2125,9 +2168,8 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	/* Build the response. */
 	resok->logr_return_on_close = true;
 
-	/* Bump seqid and pack the layout stateid. */
-	__atomic_add_fetch(&ls->ls_stid.s_seqid, 1, __ATOMIC_RELAXED);
-	pack_stateid4(&resok->logr_stateid, &ls->ls_stid);
+	/* Publish the stateid packed before the body build. */
+	resok->logr_stateid = layout_stid;
 
 	resok->logr_layout.logr_layout_len = 1;
 	resok->logr_layout.logr_layout_val = calloc(1, sizeof(layout4));
