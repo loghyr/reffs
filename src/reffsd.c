@@ -50,6 +50,7 @@
 #include "reffs/rpc.h"
 #include "reffs/evictor.h"
 #include "reffs/server.h"
+#include "reffs/coding_spec.h"
 #include "reffs/super_block.h"
 #include "reffs/trace/common.h"
 #include "reffs/trace/lifecycle.h"
@@ -1008,8 +1009,39 @@ int main(int argc, char *argv[])
 					       cfg.exports[0].dstores,
 					       nd * sizeof(rs->sb_dstore_ids[0]));
 				}
-				TRACE("root export: layout_types=0x%x ndstores=%u",
-				      rs->sb_layout_types, rs->sb_ndstores);
+				/*
+				 * default_coding, same reasoning: the root
+				 * superblock is created by ns_init rather
+				 * than by the probe protocol, so nothing
+				 * else ever applies the TOML key to it.
+				 * Until this it was parsed, validated, and
+				 * dropped -- an operator could write
+				 * default_coding into the config and get no
+				 * error and no effect.
+				 *
+				 * Routed through the validating setter, not
+				 * a struct assignment, so the config path
+				 * and the probe path accept exactly the
+				 * same specs.  A spec that fails validation
+				 * here already failed the TOML parser, so
+				 * this should not fire -- say so if it
+				 * does rather than starting with a policy
+				 * the operator did not write.
+				 */
+				if (!reffs_coding_spec_is_unset(
+					    &cfg.exports[0].default_coding)) {
+					int cret = super_block_set_default_coding(
+						rs,
+						&cfg.exports[0].default_coding);
+
+					if (cret)
+						LOG("root export: default_coding rejected (%d) -- not applied",
+						    cret);
+				}
+				TRACE("root export: layout_types=0x%x ndstores=%u encoding=%u",
+				      rs->sb_layout_types, rs->sb_ndstores,
+				      (unsigned)rs->sb_default_coding
+					      .cs_encoding_type);
 				super_block_put(rs);
 			} else {
 				LOG("root sb not found after ns_init: pNFS layout config not applied");

@@ -93,6 +93,7 @@ cat >"$run_dir/reffsd.toml" <<-EOF
 	[[export]]
 	path         = "/"
 	layout_types = ["ffv2"]
+	default_coding = "mirrored:${MIRRORS}+0"
 	dstores      = [$(seq -s, 1 "$MIRRORS")]
 
 	    [[export.clients]]
