@@ -1098,33 +1098,38 @@ duplicated rather than shared: a grep for the old wording found two
 sites and the third phrased it differently.  Collapsing them onto one
 predicate is a follow-up worth doing.
 
-**Two things this turned up, both still open.**
+**Both follow-ups this turned up are now closed** (`8e1f0e861850`).
 
-*`[[export]] default_coding` in TOML is inert.*  It is parsed,
-validated, and stored on `reffs_export_config` -- and nothing outside
-`lib/config/` ever reads that field.  `sb_default_coding` is only ever
-written by `super_block_set_default_coding`, which only the probe op
-calls.  This is consistent with the registry-v3 decision that "probe
-is the sole authority for export creation, `[[export]]` remains for
-root flavour config only", but it means the TOML key silently does
-nothing, and `config_test` asserts on a value that never reaches a
-server.  Either wire it or reject it at load time; quietly accepting
-configuration that has no effect is the worst of the three.
+*`[[export]] default_coding` in TOML was inert.*  Parsed, validated,
+stored on `reffs_export_config` -- and read by nothing outside
+`lib/config/`.  `sb_default_coding` is only written by
+`super_block_set_default_coding`, which only the probe op calls, so
+the root superblock (created by `ns_init`, not by probe) never got
+it.  An operator could write the key and get no error and no effect.
+Now applied at startup beside `layout_types` and `dstores`, which
+already had to be re-applied from TOML every boot for the same
+reason, and routed through the validating setter so the config and
+probe paths accept identical specs.
 
-*The mirror fixture still runs undeclared.*  Adding
-`default_coding = "mirrored:N+0"` to `test_mirror_local.sh` was
-measured to change nothing -- 0 calls to `local_set_chunked` -- which
-is the inert-TOML finding above, not a layout bug.  Declaring it for
-real needs the probe op after startup.  Until then the mirror path
-still runs with identification off, so the S1.5 gates remain
-unexercised against it.
+*Identification is live on the mirror path.*  `test_mirror_local.sh`
+now declares `mirrored:${MIRRORS}+0`, making it the first fixture to
+exercise a chunked encoding with attribute 90 actually settled.
+Measured with `COUPLING=local`: root export comes up `encoding=5`
+(REPLICATED), `local_set_chunked` fires 3 times with chunked=TRUE,
+and the S1.5 gate -- live against those files for the first time --
+rejects nothing, because the client uses CHUNK operations throughout.
+The loopback configuration reports the same encoding and settles
+nothing, correctly: NFSv3 dstores have no `set_chunked` entry.
 
-**Still a decision, not a patch:** what an export that declares
-nothing should advertise for K files with no parity.  From geometry
-alone that shape is equally "K replicas" and "one plain copy spread
-over K data servers", and guessing between them is the failure this
-whole thread exists to stop.  The default stays PASSTHROUGH until
-someone decides otherwise.
+That closes the K.C observation above that the mirror data path had
+only ever worked because identification never did.  It works with
+identification on.
+
+**Decided, not deferred:** an export that declares nothing keeps
+PASSTHROUGH for K files with no parity.  From geometry alone that
+shape is equally "K replicas" and "one plain copy spread over K data
+servers"; the server states what it was told and does not guess.
+Deployments that want replication declare it.
 
 **S4 / K.A are exercised after all** (2026-08-06).  An earlier
 revision of this section read the same run as proof that the chain was
