@@ -1235,6 +1235,62 @@ force-update of `psyklo/ffv2-client`).  Reset to the sanitized line
 and K.B re-applied there, restoring the single-branch invariant of
 [[feedback_ffv2_client_single_branch]].
 
+## Kernel wire test 2026-08-06: v2 interop is broken, and K.B is not the reason
+
+First attempt to wire-verify K.B, and it found something bigger.
+Fixture: reffsd combined role, 6 local (therefore tight-coupled)
+dstores, `default_coding = "rs:4+2"`, kernel client mounting
+127.0.0.1 over NFSv4.2, `dd` 1 MB.
+
+Result: **the write never landed.**  `dd` hung, the file is 0 bytes,
+and the mount had to be lazily unmounted with `dd` still holding it.
+
+The new counters made the state readable without a private build:
+
+| counter | value | reading |
+|---|---|---|
+| validate bypassed (special) | 512 | every CHUNK op presented a special stateid |
+| validate accepted | 0 | the trust comparison never ran |
+| validate identity mismatch | 0 | -- nor could it |
+| registers / renewals / expired | 1 / 107 / 1 | one entry registered, renewed, then expired unused |
+
+Server-side error tally: **640 NFS4ERR_DELAY**, 42 BADSESSION, and
+**18 NFS4ERR_BADXDR, 9 of them at `nfs4_op_layoutreturn:2584`** --
+the kernel's LAYOUTRETURN body does not decode on the reffs side.
+
+Three things follow.
+
+*The writer-identity comparison is unreachable from the kernel
+today.*  The client presents a special stateid on every CHUNK
+operation, so `chunk_check_trusted_stateid` returns at its
+`stateid4_is_special` guard before the identity comparison.  K.B is
+necessary but nowhere near sufficient: the kernel also needs the
+tight-coupling decode (delta item 10 -- it still reads
+`ff_device_versions4`'s `bool tightly_coupled` where reffs now
+encodes `ffv2_device_versions4` with the `ffdv_coupling` bitmask,
+landed in S3).  Until that lands the client cannot know it is
+tightly coupled, so it has no reason to present the real layout
+stateid.
+
+*The K.B commit message overstates.*  It says that against a tightly
+coupled server the old random identity "is a rejection on the first
+write".  Measured, there is no rejection -- the comparison is never
+reached.  The correct claim is that the identity was wrong and
+unreachable, and becomes load-bearing only once the tight-coupling
+decode lands.
+
+*A LAYOUTRETURN XDR divergence and a DELAY storm are open.*  Not yet
+root-caused, and deliberately not chased in the same pass -- either
+could be cause or effect of the other, and this fixture is new
+enough that the fixture itself is a suspect.  What is solid: reffs
+refuses to decode the body the kernel sends, and 320 DELAYs came
+back through `dispatch_compound`.
+
+Next on this thread, in order: kernel delta item 10 (tight-coupling
+decode), then re-run this fixture, then the LAYOUTRETURN body.  The
+fixture script is worth keeping -- it is the first configuration that
+puts a kernel client against a tight-coupled reffs at all.
+
 ## Verification and rollout
 
 - Every reffs slice runs `make -f Makefile.reffs license style
