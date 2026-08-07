@@ -1261,16 +1261,36 @@ the kernel's LAYOUTRETURN body does not decode on the reffs side.
 Three things follow.
 
 *The writer-identity comparison is unreachable from the kernel
-today.*  The client presents a special stateid on every CHUNK
-operation, so `chunk_check_trusted_stateid` returns at its
-`stateid4_is_special` guard before the identity comparison.  K.B is
-necessary but nowhere near sufficient: the kernel also needs the
-tight-coupling decode (delta item 10 -- it still reads
-`ff_device_versions4`'s `bool tightly_coupled` where reffs now
-encodes `ffv2_device_versions4` with the `ffdv_coupling` bitmask,
-landed in S3).  Until that lands the client cannot know it is
-tightly coupled, so it has no reason to present the real layout
-stateid.
+today, and delta item 10 is not why.*  A first reading of this blamed
+the tight-coupling decode.  That was wrong, and checking it was
+cheap: the kernel reads five u32s at `flexfilesv2dev.c:107-119` in
+exactly the order reffs encodes `ffv2_device_versions4`, and the
+fifth lands in a `bool`, so reffs's `FFV2_COUPLING_TRUSTED_STATEID`
+(0x2) coerces to `true`.  The decode already works.  It is
+semantically fragile -- a bitmask read as a boolean -- and worth
+tightening, but it is not the blocker.
+
+The blocker is which stateid the client puts on the operation.
+`layoutget_build_v2` does `memset(&fi->ffv2fi_stateid, 0, ...)`: reffs
+hands out an all-zero per-data-server stateid even when the data
+server is tight coupled and reffs has registered the real layout
+stateid in its trust table.  The kernel faithfully sends what it was
+given (`flexfilesv2_write.c:553`, `w->wire.args.stateid =
+fi->stateid`), so every CHUNK operation carries a special stateid and
+`chunk_check_trusted_stateid` returns at its `stateid4_is_special`
+guard.
+
+The reference client shows the intended shape unambiguously:
+`ec_pipeline.c:335` uses the *layout* stateid when the mirror is
+tight coupled, and NULL otherwise.  That is also the stateid reffs
+registers in the trust table, so it is the only value that can match.
+
+The kernel fix is therefore at the stateid selection, not the device
+decode: when the data server is tight coupled, use the lseg's layout
+stateid in place of `fi->stateid`.  Deliberately not written in the
+same pass -- the driver does not read `plh_stateid` anywhere today,
+and its access rules deserve a proper look rather than a guess.  K.B
+remains correct and remains inert until this lands.
 
 *The K.B commit message overstates.*  It says that against a tightly
 coupled server the old random identity "is a rejection on the first
