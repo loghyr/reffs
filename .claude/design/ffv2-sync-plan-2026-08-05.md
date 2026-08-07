@@ -1311,6 +1311,50 @@ decode), then re-run this fixture, then the LAYOUTRETURN body.  The
 fixture script is worth keeping -- it is the first configuration that
 puts a kernel client against a tight-coupled reffs at all.
 
+## Wire-verified 2026-08-07: the trust chain works against the kernel client
+
+Re-ran the fixture on a rebooted dreamer with both fixes in place --
+reffs `53a7a0a110eb` (real stateid to a tight-coupled data server) and
+kernel `9f02a5d91045` (K.B writer identity).  The loaded module was
+confirmed current by rebuilding and comparing the object: byte
+identical, and `ffv2_cg_client_id(mirror)` present in the source it
+was built from.
+
+| counter | before | after |
+|---|---|---|
+| validate bypassed (special) | 512 | **0** |
+| validate accepted | 0 | **81** |
+| validate identity mismatch | 0 (unreachable) | **0** (reached, matched) |
+| lookups / missed | 0 / 0 | **81 / 0** |
+
+Both fixes are confirmed by this, and each is load-bearing:
+
+- `bypassed` falling from 512 to 0 is the reffs fix.  The client now
+  receives the layout stateid and presents it, so validation runs
+  instead of short-circuiting at the special-stateid guard.
+- `identity mismatch` staying at 0 *while* `accepted` is 81 is K.B.
+  The comparison is now reached on every operation, and the identity
+  the kernel stamps matches what the metadata server registered.
+  Without K.B the kernel would present its random per-module value
+  and all 81 would have been mismatches.
+
+**The write still does not complete**, and the cause is a known,
+already-tracked gap rather than anything in this thread: 66
+NFS4ERR_DELAY with no client-side retry (the DELAY retry-with-backoff
+follow-up).  DELAY is terminal in the kernel today, so the write
+stalls after the chunks are accepted.  Error volume is down sharply
+from the first run (640 DELAY, 18 BADXDR) to 66 DELAY and 6 BADXDR,
+and none of the BADXDR are at LAYOUTRETURN this time -- so the
+LAYOUTRETURN divergence recorded earlier was at least partly a
+consequence of the poisoned client state, not a standing defect.  It
+stays open but is no longer reproduced.
+
+Lab note: a hard NFS mount against a fixture whose server is later
+killed leaves `dd` in uninterruptible D state, which no signal
+clears.  Two runs were lost to this before the pattern was
+recognised.  Use a soft mount or a bounded-retry option for this
+fixture, or accept a reboot per run.
+
 ## Verification and rollout
 
 - Every reffs slice runs `make -f Makefile.reffs license style
