@@ -1214,7 +1214,7 @@ with a connection refused far from the cause.
 
 ## K.B landed (2026-08-06)
 
-Kernel client `9f02a5d91045` on `psyklo/ffv2-client`: CHUNK operations
+Kernel client `884e56b3912e` on `psyklo/ffv2-client`: CHUNK operations
 now stamp the layout's writer identity rather than a random
 per-module value.  `ffv2m_client_id` was already decoded into
 `nfs4_ffv2_mirror.client_id` and read nowhere, so every CHUNK_WRITE
@@ -1315,7 +1315,7 @@ puts a kernel client against a tight-coupled reffs at all.
 
 Re-ran the fixture on a rebooted dreamer with both fixes in place --
 reffs `53a7a0a110eb` (real stateid to a tight-coupled data server) and
-kernel `9f02a5d91045` (K.B writer identity).  The loaded module was
+kernel `884e56b3912e` (K.B writer identity).  The loaded module was
 confirmed current by rebuilding and comparing the object: byte
 identical, and `ffv2_cg_client_id(mirror)` present in the source it
 was built from.
@@ -1411,7 +1411,7 @@ This thread is set aside here.  What is settled and landed:
 
 - reffs `53a7a0a110eb` -- a tight-coupled data server gets the layout
   stateid it validates against.
-- kernel `9f02a5d91045` -- CHUNK operations stamp the layout's writer
+- kernel `884e56b3912e` -- CHUNK operations stamp the layout's writer
   identity.
 - Both wire-verified together: 81 validations accepted, 0 bypassed,
   0 identity mismatches.
