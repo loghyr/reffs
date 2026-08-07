@@ -1214,7 +1214,7 @@ with a connection refused far from the cause.
 
 ## K.B landed (2026-08-06)
 
-Kernel client `884e56b3912e` on `psyklo/ffv2-client`: CHUNK operations
+Kernel client `d32e61017a2f` on `psyklo/ffv2-client`: CHUNK operations
 now stamp the layout's writer identity rather than a random
 per-module value.  `ffv2m_client_id` was already decoded into
 `nfs4_ffv2_mirror.client_id` and read nowhere, so every CHUNK_WRITE
@@ -1315,7 +1315,7 @@ puts a kernel client against a tight-coupled reffs at all.
 
 Re-ran the fixture on a rebooted dreamer with both fixes in place --
 reffs `53a7a0a110eb` (real stateid to a tight-coupled data server) and
-kernel `884e56b3912e` (K.B writer identity).  The loaded module was
+kernel `d32e61017a2f` (K.B writer identity).  The loaded module was
 confirmed current by rebuilding and comparing the object: byte
 identical, and `ffv2_cg_client_id(mirror)` present in the source it
 was built from.
@@ -1411,7 +1411,7 @@ This thread is set aside here.  What is settled and landed:
 
 - reffs `53a7a0a110eb` -- a tight-coupled data server gets the layout
   stateid it validates against.
-- kernel `884e56b3912e` -- CHUNK operations stamp the layout's writer
+- kernel `d32e61017a2f` -- CHUNK operations stamp the layout's writer
   identity.
 - Both wire-verified together: 81 validations accepted, 0 bypassed,
   0 identity mismatches.
@@ -1450,6 +1450,30 @@ The fixture lives at `dreamer:/var/tmp/kwire.sh`.  Every wire run will
 wedge a `dd` in D state until item 2 lands, so budget a reboot per
 run.  Do not reach for a soft mount to avoid that -- see
 [[feedback_no_soft_mount_for_dstate]].
+
+### Kernel: NO_IO_THRU_MDS gate coverage
+
+`d32e61017a2f` routed the unsupported-encoding return in
+`ffv2_write_pagelist_chunked` through `ffv2_write_fallback_to_mds()`,
+which honours `FFV2_FLAGS_NO_IO_THRU_MDS`.  Before it, a layout whose
+encoding the client has no encoder for was proxied through the
+metadata server, which the draft says the client MUST NOT do.
+Reachable for REPLICATED and MOJETTE_NON_SYSTEMATIC -- the encoder
+table registers XOR_PARITY, LINUX_MD_RAID, RS_VANDERMONDE and
+MOJETTE_SYSTEMATIC, and PASSTHROUGH needs none.
+
+**Open, and deliberately not changed:** `flexfilesv2.c` has about a
+dozen more bare `PNFS_NOT_ATTEMPTED` returns in the data-server
+resolution helper -- no stripes, index out of range, deviceid lookup
+failure, `nfs4_pnfs_ds_connect` failure.  They bypass the same gate.
+
+They are a different class: "cannot reach the data server" rather
+than "will not attempt this encoding".  Whether the MUST NOT is meant
+to bind a client that physically cannot reach a data server is a spec
+question, and answering it wrong is not cheap -- forcing
+`PNFS_TRY_AGAIN` on an unreachable data server trades a MUST-NOT
+violation for a LAYOUTGET retry loop.  Settle the spec reading before
+touching those returns.
 
 ## Verification and rollout
 
