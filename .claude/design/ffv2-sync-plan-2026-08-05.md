@@ -1349,11 +1349,61 @@ LAYOUTRETURN divergence recorded earlier was at least partly a
 consequence of the poisoned client state, not a standing defect.  It
 stays open but is no longer reproduced.
 
-Lab note: a hard NFS mount against a fixture whose server is later
-killed leaves `dd` in uninterruptible D state, which no signal
-clears.  Two runs were lost to this before the pattern was
-recognised.  Use a soft mount or a bounded-retry option for this
-fixture, or accept a reboot per run.
+### What consistently causes the D state
+
+Not the transport, and not the fixture.  It is a livelock in the
+CHUNK_WRITE guard protocol, and a hard mount is the correct posture
+that exposes it -- a soft mount would have converted the hang into an
+EIO and hidden the defect.
+
+All 66 DELAYs are on CHUNK_WRITE, one inode, and there were 180
+CHUNK_WRITE dispatches for a 256 KB file that needs about 96.  The
+surplus is retries.
+
+`nfs4_op_chunk_write` refuses a write on two axes, both with
+NFS4ERR_DELAY:
+
+- **Axis (ii), the guard CAS**: `guarded && prev && (prev->cb_gen_id
+  != guard->cg_gen_id || prev->cb_client_id != guard->cg_client_id)`.
+- **Axis (i), a PENDING block from a different writer**, compared on
+  `(co_id, cg_client_id)`.
+
+The kernel always ships `cwg_check=TRUE`, with a `{0,0}` sentinel when
+it has captured no guard, and mints a fresh `co_id` per write.  So:
+
+1. First write to a chunk: `prev` is NULL, the CAS short-circuits, the
+   write is accepted and the block goes PENDING carrying that write's
+   gen and client id.
+2. Any retry of that chunk -- from any cause -- arrives with the same
+   `{0,0}` sentinel and a *new* `co_id`.  `prev` now exists and does
+   not match, on either axis.  DELAY.
+3. The client retries.  Nothing about the request has changed, because
+   the client neither captures the guard nor refreshes it on DELAY.
+   DELAY again.  Forever.
+
+DELAY means "retry later", so a hard mount retries indefinitely, which
+is correct client behaviour.  The defect is that the retry cannot
+ever succeed: the state the server demands is state the client has no
+mechanism to obtain.  **The first retry of any chunk permanently
+wedges the file.**
+
+This is exactly the pair already queued as follow-ups, and this run is
+the evidence that they are not optional:
+
+- guard capture -- a CHUNK_READ before write so the client holds the
+  real `(cg_gen_id, cg_client_id)` rather than a sentinel.
+- DELAY handling -- re-read the guard and retry with it, instead of
+  replaying an identical request.
+
+Until one of them lands, any condition that causes a chunk to be
+written twice -- a dropped reply, a session error, a re-dispatch --
+converts into an unbounded DELAY loop.  That is why every run wedged,
+and why it wedged regardless of which fixes were in place.
+
+Lab consequence: a wedged run leaves `dd` in uninterruptible D state
+that no signal clears, and it poisons later runs on that host
+(STALE_CLIENTID, BADSESSION, no LAYOUTGET at all).  Budget a reboot
+per wire run until the livelock is fixed.
 
 ## Verification and rollout
 
