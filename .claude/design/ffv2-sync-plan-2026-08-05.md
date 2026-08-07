@@ -36,8 +36,8 @@ Companion tree references:
 | 4 | `chunk_state_flags4` typedef + `CHUNK_STATE_FLAGS_LOCKED = 0x1`, widen `chrr_locked` / `cr_locked` | still `bool<>` | still `bool<>` (enforced zero-length) |
 | 5 | `ffv2_layoutstats_flags4` typedef, widen `ffv2l_local` bool | still `bool ffl_local` (also name delta) | n/a-for-client (MDS-return path) |
 | 6 | `chunk_cohort_id4` split + cohort restructure (M2) | **deferred** per divergence doc | **deferred** |
-| 7 | CHUNK_ESCROW ops 92-95 (INSTALL / RELEASE / ENUMERATE / TAKEOVER) | absent, **op collision** (92/93 are PROXY_REGISTRATION / PROXY_PROGRESS) | absent |
-| 8 | `escrow_id4` opaque[16] | absent | absent |
+| 7 | CHUNK_ESCROW ops 92-95 (INSTALL / RELEASE / ENUMERATE / TAKEOVER) | **DONE** -- ops at 92-95, XDR + dispatch + NOTSUPP stubs; semantics outstanding | absent |
+| 8 | `escrow_id4` opaque[16] | **DONE** | absent |
 | 9 | `tsa_client_id` field in TRUST_STATEID4args | ops present but field absent | entire family absent |
 | 10 | `ffv2_device_versions4` fork with `ffdv_coupling` bitflags | still uses `ff_device_versions4` with `bool ffdv_tightly_coupled` | still `struct nfs4_ffv2_ds_version { bool tightly_coupled; }` |
 | 11 | Retire `FFV2_DS_FLAGS_SPARE` + First-Line Substitution | still `FFV2_DS_FLAGS_SPARE = 0x00000002` | already clean |
@@ -52,7 +52,7 @@ Name-delta surprises the Explore pass found:
   layoutstats.
 - Reffs uses ops 92/93 for PROXY_REGISTRATION / PROXY_PROGRESS
   which directly collide with the draft's CHUNK_ESCROW range.
-  See "Open decision A" below.
+  Resolved: see "Open decision A" below.
 
 ## Slice plan
 
@@ -134,13 +134,18 @@ Verify: single-host bench + real-network 3-host variant a/b
 (chunked writes create files on DSes that will start seeing the
 setattr).
 
-### R5 -- reffs op-collision resolution + CHUNK_ESCROW skeleton [medium, gated on decision A]
+### R5 -- reffs op-collision resolution + CHUNK_ESCROW skeleton -- DONE
 
 Items 7, 8 (escrow_id4 already covered by R2), 10.
 
-**Depends on Open decision A.**
+**Shipped.**  The renumbering landed in `ba42443520bf` (PROXY_* 92-95
+-> 96-99, EXCHANGE_RANGE 96 -> 100), which freed the range, and the
+escrow skeleton followed.  Verified 2026-08-07: reffs has all four
+ops at 92-95, `escrow_id4`, all four args/res structs, all four
+handlers registered in `dispatch.c` and listed in the S1.5(A)
+allowlist, and four `NFS4ERR_NOTSUPP` stubs in `chunk.c`.
 
-Once the op-number question is resolved, add:
+What that slice added:
 - Op 92 CHUNK_ESCROW_INSTALL + args/res + escrow_id4-typed
   fields.
 - Op 93 CHUNK_ESCROW_RELEASE.
@@ -153,10 +158,17 @@ Once the op-number question is resolved, add:
   `_TRUSTED_STATEID`).
 
 Skeleton only in this slice: XDR types + no-op handlers that
-return NFS4ERR_NOTSUPP.  Real behavior lands in a follow-up.
+return NFS4ERR_NOTSUPP.  The stub is deliberate and its comment says
+why -- a capability probe from a compliant metadata server sees a
+known operation refusing, rather than a decode error.
 
-Verify: build + XDR round-trip test that the args/res encode
-and decode.
+**Still outstanding, and the whole of what "S2" now means:** the
+semantics behind those four stubs -- install, release, enumerate,
+takeover, the incarnation-lease proof format, and wiring
+NFS4ERR_STALE_ESCROW (10105, already in the enum) to the right
+rejection.  There are also no escrow tests at all.  That is a real
+feature slice against a system-model section plus four operation
+sections in the draft, and it is not blocked on anything.
 
 ### R6 -- reffs .claude/design/ffv2-draft-xdr-divergence.md refresh [tiny]
 
@@ -251,15 +263,17 @@ Phase 6 work opens bandwidth.
 
 ## Open decisions (resolved above)
 
-### A. Op-number collision (item 7)
+### A. Op-number collision (item 7) -- RESOLVED
 
-Reffs uses op 92 for PROXY_REGISTRATION and op 93 for
-PROXY_PROGRESS -- both proprietary reffs ops added before the
-draft's CHUNK_ESCROW range settled.  The draft is now
-authoritative for wire format and needs 92/93 for
-CHUNK_ESCROW_INSTALL / CHUNK_ESCROW_RELEASE.
+**Closed.**  Reffs moved: `ba42443520bf` renumbered PROXY_* from
+92-95 to 96-99 and EXCHANGE_RANGE from 96 to 100, ceding 92-95 to the
+draft.  The draft family records the same allocation in
+`XDR-MAP.md` (added 2026-08-06): 92-95 escrow, base draft; 96-99
+PROXY_*, proxy-server draft.  Both sides agree and nothing is
+pending.
 
-Options:
+Kept below because the reasoning is worth having if the range is ever
+revisited.  The original framing was:
 - **A1. Renumber the PROXY_* ops in reffs** to whatever range
   the proxy-server draft settles on (or an experimental range
   above the CHUNK_ESCROW block).  Preserves the draft's op
