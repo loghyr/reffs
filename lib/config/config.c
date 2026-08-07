@@ -518,16 +518,8 @@ static int parse_coding_spec(const char *s, struct reffs_coding_spec *out)
 	     i < sizeof(encoding_names) / sizeof(encoding_names[0]); i++) {
 		if (strcmp(encoding_name, encoding_names[i].name) == 0) {
 			enum reffs_encoding_type t = encoding_names[i].type;
-			bool parityless = (t == REFFS_ENCODING_PASSTHROUGH ||
-					   t == REFFS_ENCODING_REPLICATED);
 
-			/* Parity-bearing encodings need shards to bear it. */
-			if (parityless && m != 0)
-				return -1;
-			if (!parityless && m == 0)
-				return -1;
-			/* K copies means at least two of them. */
-			if (t == REFFS_ENCODING_REPLICATED && k < 2)
+			if (!reffs_coding_spec_shape_ok(t, k, m))
 				return -1;
 			out->cs_encoding_type = t;
 			out->cs_k = (uint16_t)k;

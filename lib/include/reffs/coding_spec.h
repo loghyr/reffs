@@ -70,13 +70,14 @@ enum reffs_encoding_type {
  *
  * cs_k -- number of data shards.  Must be in [1, LAYOUT_SEG_MAX_FILES].
  * cs_m -- number of parity shards.  Must be in [0, LAYOUT_SEG_MAX_FILES - cs_k].
- *         cs_m == 0 implies PASSTHROUGH (no parity, no encoding).
  *
- * cs_encoding_type -- one of REFFS_ENCODING_*.  For PASSTHROUGH cs_m
- *                  must be zero; for any other encoding cs_m must be
- *                  positive.  The TOML parser and the
- *                  SB_SET_DEFAULT_CODING probe handler both
- *                  enforce these invariants.
+ * cs_encoding_type -- one of REFFS_ENCODING_*.  Whether cs_m may be
+ *                  zero depends on the encoding: see
+ *                  reffs_coding_spec_shape_ok() below, which is the
+ *                  single statement of that rule.  Every entry point
+ *                  that accepts a spec from outside -- the TOML
+ *                  parser and the SB_SET_DEFAULT_CODING probe
+ *                  handler -- validates through it.
  */
 struct reffs_coding_spec {
 	enum reffs_encoding_type cs_encoding_type;
@@ -96,6 +97,49 @@ static inline bool
 reffs_coding_spec_is_unset(const struct reffs_coding_spec *cs)
 {
 	return cs->cs_encoding_type == 0 && cs->cs_k == 0 && cs->cs_m == 0;
+}
+
+/*
+ * Does this encoding carry parity shards?
+ *
+ * PASSTHROUGH ships the bytes plain and REPLICATED ships K copies of
+ * them; neither computes parity, so both take cs_m == 0.  Every other
+ * encoding requires cs_m > 0 -- without parity shards it has nothing
+ * to encode into and collapses to PASSTHROUGH.
+ */
+static inline bool reffs_encoding_is_parityless(enum reffs_encoding_type t)
+{
+	return t == REFFS_ENCODING_PASSTHROUGH ||
+	       t == REFFS_ENCODING_REPLICATED;
+}
+
+/*
+ * Is (encoding, k, m) a coherent shape?
+ *
+ * This is the one statement of the rule.  It used to be written out
+ * longhand at each entry point, and on 2026-08-06 a change to two of
+ * the three sites shipped while the third went on enforcing the old
+ * version -- which made "mirrored:K+0" unreachable by the only route
+ * that reaches a superblock.  Callers apply their own k and k+m
+ * bounds on top; those legitimately differ (the TOML form
+ * "passthrough" with no geometry yields k == 0).
+ */
+static inline bool reffs_coding_spec_shape_ok(enum reffs_encoding_type t,
+					      unsigned int k, unsigned int m)
+{
+	if (reffs_encoding_is_parityless(t)) {
+		if (m != 0)
+			return false;
+	} else if (m == 0) {
+		return false;
+	}
+
+	/* One copy of the data and no parity is passthrough, not
+	 * replication. */
+	if (t == REFFS_ENCODING_REPLICATED && k < 2)
+		return false;
+
+	return true;
 }
 
 #endif /* _REFFS_CODING_SPEC_H */

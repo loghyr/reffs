@@ -986,29 +986,14 @@ int super_block_set_default_coding(struct super_block *sb,
 		return -EINVAL;
 
 	/*
-	 * REPLICATED is K copies and no parity, so it is the one
-	 * non-PASSTHROUGH encoding that legitimately carries m == 0.
-	 * It does not collapse to the legacy path the way a degenerate
-	 * "rs:4+0" would: default_coding_resolve_segment picks it off
-	 * by encoding type and keeps the declared K.
-	 *
-	 * K >= 2 for the same reason the TOML parser requires it -- one
-	 * copy and no parity is passthrough, not replication.
+	 * Encoding-shape rules live in one place, shared with the TOML
+	 * parser -- see reffs_coding_spec_shape_ok().  This boundary
+	 * enforced its own copy until 2026-08-06, when a change to the
+	 * parser left this one behind and "mirrored:K+0" stayed
+	 * unreachable by the only route that reaches a superblock.
 	 */
-	if (spec->cs_encoding_type == REFFS_ENCODING_REPLICATED) {
-		if (spec->cs_m != 0)
-			return -EINVAL;
-		if (spec->cs_k < 2)
-			return -EINVAL;
-		sb->sb_default_coding = *spec;
-		return 0;
-	}
-
-	/* Every other non-PASSTHROUGH encoding requires m > 0, otherwise
-	 * it collapses to the legacy path which is what PASSTHROUGH is
-	 * for.  Reject the degenerate "rs:4+0" / "mojette-sys:8+0"
-	 * shape at the admin boundary. */
-	if (spec->cs_m == 0)
+	if (!reffs_coding_spec_shape_ok(spec->cs_encoding_type, spec->cs_k,
+					spec->cs_m))
 		return -EINVAL;
 
 	sb->sb_default_coding = *spec;
