@@ -5162,10 +5162,13 @@ struct ffv2_data_protection4 {
 };
 
 /*
- * ffv2_coding_type_data4 was a union switched on coding type, but
- * all arms carry the same ffv2_data_protection4.  The coding type
- * is already in ffv2_encoding_type4; the geometry is just (k, m).
- * Replaced by ffv2_data_protection4 directly.
+ * ffv2_encoding_type_data4 was a union switched on encoding type,
+ * but all arms carry the same ffv2_data_protection4.  The encoding
+ * type is already in ffv2_encoding_type4; the geometry is just
+ * (k, m).  Replaced by ffv2_data_protection4 directly.
+ *
+ * The draft renamed this type from ffv2_coding_type_data4 on
+ * 2026-08-06, part of retiring "coding" in favour of "encoding".
  */
 
 enum ffv2_striping4 {
@@ -5181,13 +5184,18 @@ struct ffv2_stripes4 {
 /*
  * NOT_NOW_BROWN_COW: the draft collapses ffv2m_coding_type +
  * ffv2m_protection into a single discriminated union
- * ffv2_coding_type_data4 (draft-haynes-nfsv4-flexfiles-v2
- * sec-ffv2_coding_type_data4).  The wire bytes are identical --
+ * ffv2_encoding_type_data4 (draft-haynes-nfsv4-flexfiles-v2, the
+ * ffv2_encoding_type_data4 section -- cited by name because that
+ * section carries no sec- anchor).  The wire bytes are identical --
  * every union arm carries ffv2_data_protection4, so the encoding
  * is discriminator + protection either way -- but the generated C
- * API differs (m->ffv2m_coding_type_data.ffv2ctd_coding plus a union
- * body accessor).  Deferred as a structural change separate from
- * this naming sweep.
+ * API differs (m->ffv2m_encoding_type_data.ffv2etd_encoding plus a
+ * union body accessor).  Deferred as a structural change separate
+ * from this naming sweep.
+ *
+ * ffv2m_coding_type below keeps the retired "coding" spelling; the
+ * draft has no such field at all now, so renaming it is a reffs-only
+ * decision and a code change rather than a comment sweep.
  */
 struct ffv2_mirror4 {
         ffv2_encoding_type4     ffv2m_coding_type;

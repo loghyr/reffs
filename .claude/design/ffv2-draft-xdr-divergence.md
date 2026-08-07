@@ -250,21 +250,28 @@ union -- `ffv2_mirror4` carries `ffv2m_coding_type` plus
 `ffv2m_protection` flattened, under the NOT_NOW_BROWN_COW at
 `lib/xdr/nfsv42_xdr.x:5181`.  Two things do need doing:
 
-1. That NOT_NOW_BROWN_COW and the comment above
-   `ffv2_data_protection4` still name `ffv2_coding_type_data4`,
-   `ffv2ctd_coding` and `sec-ffv2_coding_type_data4`.  A reader
-   following them lands on identifiers the draft no longer has.
-   Comment-only, but it goes in `lib/xdr/nfsv42_xdr.x`, so it
-   takes its own slice and its own `make check`.
+1. **Done 2026-08-07.**  The NOT_NOW_BROWN_COW and the comment
+   above `ffv2_data_protection4` named `ffv2_coding_type_data4`,
+   `ffv2ctd_coding` and `sec-ffv2_coding_type_data4`, so a reader
+   following them landed on identifiers the draft no longer has.
+   Swept to the current names.  One mention of the old name
+   survives on purpose, as a dated "renamed from" note, so that
+   grepping the old identifier still finds the explanation.
+
+   The `sec-` citation was replaced by the section's name rather
+   than a new anchor: the draft's `## ffv2_encoding_type_data4`
+   heading carries no `sec-` anchor at all, so the old citation
+   pointed at something that never existed.
 2. `ffv2m_coding_type` is reffs's own field name and carries the
    retired vocabulary independently of the union question.
    `ffv2m_encoding_type` matches the draft's enum rename.  This
    one does touch generated API and every consumer, so it is a
    real slice, not a comment fix.
 
-The kernel client (`psyklo/ffv2-client`) has not been checked
-against this rename; no tree on mana to grep.  Check before the
-next K-series patch.
+The kernel client (`psyklo/ffv2-client`) carries one stale
+`ffv2_coding_type4` reference (checked 2026-08-07 on dreamer's
+tree).  Identifier only, no interop consequence, so it can ride
+along with the next K-series patch rather than justify its own.
 
 ## OPEN: who assigns the writer identity (three implementations disagree)
 
