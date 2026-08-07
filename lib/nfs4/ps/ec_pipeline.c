@@ -975,6 +975,29 @@ int ec_write_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
 	}
 	memcpy(padded, data, data_len);
 
+	/*
+	 * Some encodings fix their own parity count.  linux-md-raid is
+	 * RAID6: it always generates the P and Q syndrome, so ec_m is 2
+	 * whatever the caller asked for.  Sizing the parity array from
+	 * the caller's m while the encoder writes ec_m shards runs off
+	 * the end -- a 4+1 request reached linux_md_encode's parity[1]
+	 * and read a pointer past a one-element allocation.
+	 *
+	 * Growing the array instead would not help: the layout carries
+	 * k+m data servers, so there is nowhere to put the extra shard.
+	 * A geometry the encoding cannot satisfy is a caller error, so
+	 * say so rather than encode into memory that is not there.
+	 */
+	if (ctx.ctx_encoding && ctx.ctx_encoding->ec_m != m) {
+		ec_log("ec_write: %s fixes m=%d, caller asked for m=%d\n",
+		       ctx.ctx_encoding->ec_name ? ctx.ctx_encoding->ec_name :
+						   "encoding",
+		       ctx.ctx_encoding->ec_m, m);
+		free(padded);
+		ret = -EINVAL;
+		goto out_conns;
+	}
+
 	/* Allocate shard pointer arrays. */
 	uint8_t **data_shards = calloc(k, sizeof(uint8_t *));
 	uint8_t **parity_shards = calloc(m, sizeof(uint8_t *));

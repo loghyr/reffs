@@ -139,6 +139,23 @@ static inline bool reffs_coding_spec_shape_ok(enum reffs_encoding_type t,
 	if (t == REFFS_ENCODING_REPLICATED && k < 2)
 		return false;
 
+	/*
+	 * LINUX_MD_RAID is Linux md/raid6: it always produces the P and
+	 * Q syndrome, so m is fixed at 2.  The draft says so in both the
+	 * encoding registry and the encoding's own section, and
+	 * ec_linux_md_create() hardcodes ec_m = 2 to match.  The draft
+	 * also forbids the degenerate k=1 case (one data shard with P
+	 * and Q), directing callers who want triple-mirror semantics to
+	 * REPLICATED with N=3.
+	 *
+	 * Enforced here because the alternative is worse than a refused
+	 * config: "linux-md-raid:4+1" reached the encoder, which wrote a
+	 * second syndrome shard into a parity array sized for one --
+	 * a heap overrun, found by the encoding matrix on 2026-08-07.
+	 */
+	if (t == REFFS_ENCODING_LINUX_MD_RAID && (m != 2 || k < 2))
+		return false;
+
 	return true;
 }
 
