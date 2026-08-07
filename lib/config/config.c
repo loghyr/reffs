@@ -444,20 +444,31 @@ static void parse_one_client_rule(struct reffs_client_rule_config *rule,
  *
  * Accepted forms:
  *   "passthrough"          -> {PASSTHROUGH, 0, 0}
- *   "rs:K+M"               -> {RS_VANDERMONDE, K, M}      M > 0
- *   "mojette-sys:K+M"      -> {MOJETTE_SYSTEMATIC, K, M}  M > 0
+ *   "rs:K+M"               -> {RS_VANDERMONDE, K, M}        M > 0
+ *   "mojette-sys:K+M"      -> {MOJETTE_SYSTEMATIC, K, M}    M > 0
  *   "mojette-nonsys:K+M"   -> {MOJETTE_NON_SYSTEMATIC, K, M} M > 0
+ *   "mirrored:K+0"         -> {REPLICATED, K, 0}            K >= 2
+ *   "xor-parity:K+M"       -> {XOR_PARITY, K, M}            M > 0
+ *   "linux-md-raid:K+M"    -> {LINUX_MD_RAID, K, M}         M > 0
+ * plus "snapraid-cauchy" and "isa-l-rs" when built with
+ * REFFS_ENABLE_PRIVATE_ENCODINGS.
  *
  * Invariants enforced:
  *   - K in [1, LAYOUT_SEG_MAX_FILES]
  *   - K + M <= LAYOUT_SEG_MAX_FILES
- *   - M == 0 IFF encoding == PASSTHROUGH
+ *   - PASSTHROUGH and REPLICATED take M == 0; every other encoding
+ *     requires M > 0
+ *   - REPLICATED additionally requires K >= 2: one copy of the data
+ *     and no parity is passthrough, not replication
  *
- * Mirror encoding (REFFS_ENCODING_REPLICATED) is intentionally not parsed
- * here; the TOML surface listed in
- * .claude/design/per-export-default-coding.md "Coding spec
- * format" enumerates four encodings.  If mirror is ever needed as a
- * default encoding, add it as a separate slice.
+ * REPLICATED is the reason the old "M == 0 IFF PASSTHROUGH" invariant
+ * had to go.  A replicated layout is K copies and no parity, so the
+ * only form that describes it is K+0 -- which that rule rejected,
+ * leaving the encoding present in the table below but unreachable in
+ * its natural form.  An export therefore could not declare itself
+ * replicated at all, and LAYOUTGET fell back to deriving the encoding
+ * from geometry, where M == 0 meant PASSTHROUGH.  Mirror layouts went
+ * out labelled PASSTHROUGH while their clients wrote chunks to them.
  */
 static int parse_coding_spec(const char *s, struct reffs_coding_spec *out)
 {
@@ -507,11 +518,16 @@ static int parse_coding_spec(const char *s, struct reffs_coding_spec *out)
 	     i < sizeof(encoding_names) / sizeof(encoding_names[0]); i++) {
 		if (strcmp(encoding_name, encoding_names[i].name) == 0) {
 			enum reffs_encoding_type t = encoding_names[i].type;
+			bool parityless = (t == REFFS_ENCODING_PASSTHROUGH ||
+					   t == REFFS_ENCODING_REPLICATED);
 
-			/* m == 0 IFF PASSTHROUGH */
-			if (t == REFFS_ENCODING_PASSTHROUGH && m != 0)
+			/* Parity-bearing encodings need shards to bear it. */
+			if (parityless && m != 0)
 				return -1;
-			if (t != REFFS_ENCODING_PASSTHROUGH && m == 0)
+			if (!parityless && m == 0)
+				return -1;
+			/* K copies means at least two of them. */
+			if (t == REFFS_ENCODING_REPLICATED && k < 2)
 				return -1;
 			out->cs_encoding_type = t;
 			out->cs_k = (uint16_t)k;

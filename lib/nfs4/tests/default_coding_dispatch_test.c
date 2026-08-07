@@ -264,9 +264,10 @@ END_TEST
  * spec is therefore NOT formally "unset", but
  * default_coding_resolve_segment must observe the same legacy
  * behaviour: the runway count drives ls_k, ls_m = 0,
- * encoding = PASSTHROUGH.  The helper keys off cs_m == 0 (which
- * the setter invariant ties to PASSTHROUGH) so the explicit
- * and unset paths converge cleanly.
+ * encoding = PASSTHROUGH.  The helper keys off cs_m == 0, which
+ * PASSTHROUGH shares with REPLICATED -- REPLICATED is picked off
+ * by encoding type before this fallthrough, so the explicit and
+ * unset PASSTHROUGH paths still converge cleanly.
  */
 START_TEST(test_segment_explicit_passthrough_equals_unset)
 {
@@ -288,6 +289,72 @@ START_TEST(test_segment_explicit_passthrough_equals_unset)
 	ck_assert_uint_eq(k, 4);
 	ck_assert_uint_eq(m, 0);
 	ck_assert_uint_eq(encoding, FFV2_ENCODING_PASSTHROUGH);
+}
+END_TEST
+
+/*
+ * REPLICATED is K copies and no parity, so cs_m is 0 and the
+ * "m > 0" branch cannot see it.  Before it was picked off
+ * separately, a declared "mirrored:K+0" fell through to the legacy
+ * path and came back out as PASSTHROUGH -- the export said
+ * replicated and the layout said plain.
+ */
+START_TEST(test_segment_replicated_honoured)
+{
+	struct reffs_coding_spec rep = {
+		.cs_encoding_type = REFFS_ENCODING_REPLICATED,
+		.cs_k = 3,
+		.cs_m = 0,
+	};
+	uint16_t k = 0, m = 99;
+	uint32_t encoding = 99;
+
+	int rc = default_coding_resolve_segment(&rep, 3, &k, &m, &encoding);
+
+	ck_assert_int_eq(rc, 0);
+	ck_assert_uint_eq(k, 3);
+	ck_assert_uint_eq(m, 0);
+	ck_assert_uint_eq(encoding, FFV2_ENCODING_REPLICATED);
+}
+END_TEST
+
+/*
+ * The declared replica count wins over the runway count.  A surplus
+ * runway must not silently widen the layout -- the same bug the
+ * m > 0 path was fixed for in plan-review B2.
+ */
+START_TEST(test_segment_replicated_ignores_surplus_runway)
+{
+	struct reffs_coding_spec rep = {
+		.cs_encoding_type = REFFS_ENCODING_REPLICATED,
+		.cs_k = 3,
+		.cs_m = 0,
+	};
+	uint16_t k = 0, m = 99;
+	uint32_t encoding = 99;
+
+	int rc = default_coding_resolve_segment(&rep, 8, &k, &m, &encoding);
+
+	ck_assert_int_eq(rc, 0);
+	ck_assert_uint_eq(k, 3);
+	ck_assert_uint_eq(encoding, FFV2_ENCODING_REPLICATED);
+}
+END_TEST
+
+/* Too few runway files for the declared replica count. */
+START_TEST(test_segment_replicated_short_runway_eagain)
+{
+	struct reffs_coding_spec rep = {
+		.cs_encoding_type = REFFS_ENCODING_REPLICATED,
+		.cs_k = 4,
+		.cs_m = 0,
+	};
+	uint16_t k = 0, m = 0;
+	uint32_t encoding = 0;
+
+	int rc = default_coding_resolve_segment(&rep, 3, &k, &m, &encoding);
+
+	ck_assert_int_eq(rc, -EAGAIN);
 }
 END_TEST
 
@@ -313,6 +380,9 @@ static Suite *default_coding_dispatch_suite(void)
 	tcase_add_test(tc_seg, test_segment_dstore_count_drops_returns_eagain);
 	tcase_add_test(tc_seg, test_segment_unset_falls_back_to_legacy);
 	tcase_add_test(tc_seg, test_segment_explicit_passthrough_equals_unset);
+	tcase_add_test(tc_seg, test_segment_replicated_honoured);
+	tcase_add_test(tc_seg, test_segment_replicated_ignores_surplus_runway);
+	tcase_add_test(tc_seg, test_segment_replicated_short_runway_eagain);
 	suite_add_tcase(s, tc_seg);
 
 	return s;

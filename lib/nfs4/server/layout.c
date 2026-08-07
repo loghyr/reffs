@@ -994,9 +994,15 @@ uint32_t default_coding_resolve_target(const struct reffs_coding_spec *coding,
  *     of k+m, return -EAGAIN; the caller maps to
  *     NFS4ERR_LAYOUTUNAVAILABLE rather than silently emitting a
  *     degraded geometry.
+ *   - Explicit REPLICATED: ls_k comes from the spec, ls_m is 0, and
+ *     the runway must hold at least ls_k files.  Handled separately
+ *     because a replicated layout has no parity shards, so the
+ *     "m > 0" test above cannot see it.
  *   - Unset default_coding: legacy behaviour -- ls_k = nfiles,
  *     ls_m = 0, encoding = PASSTHROUGH (driven from the ls_m == 0
- *     branch of the original layoutget_build_v2 dispatch).
+ *     branch of the original layoutget_build_v2 dispatch).  Note
+ *     this cannot distinguish K replicas from one plain copy spread
+ *     over K data servers; only a declared encoding can.
  *
  * Pure function -- no globals, no I/O.  Unit-tested in
  * lib/nfs4/tests/default_coding_dispatch_test.c.
@@ -1027,6 +1033,27 @@ int default_coding_resolve_segment(const struct reffs_coding_spec *coding,
 		*out_k = coding->cs_k;
 		*out_m = coding->cs_m;
 		*out_encoding_type = (uint32_t)coding->cs_encoding_type;
+		return 0;
+	}
+
+	/*
+	 * REPLICATED is the one declared encoding the test above cannot
+	 * reach: it is K copies and no parity, so cs_m is 0.  Without
+	 * this branch a declared "mirrored:K+0" fell through to the
+	 * legacy path and came back out as PASSTHROUGH -- the export
+	 * said replicated, the layout said plain, and the attribute 90
+	 * value derived from it said not-chunked while the client wrote
+	 * chunks.  Honour what the export declared.
+	 *
+	 * The runway check is against cs_k alone for the same reason:
+	 * there are no parity shards to account for.
+	 */
+	if (coding && coding->cs_encoding_type == REFFS_ENCODING_REPLICATED) {
+		if (nfiles < (uint32_t)coding->cs_k)
+			return -EAGAIN;
+		*out_k = coding->cs_k;
+		*out_m = 0;
+		*out_encoding_type = (uint32_t)REFFS_ENCODING_REPLICATED;
 		return 0;
 	}
 

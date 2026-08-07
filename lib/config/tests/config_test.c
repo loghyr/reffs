@@ -679,6 +679,73 @@ START_TEST(test_config_default_coding_invalid_format)
 END_TEST
 
 /*
+ * "mirrored:3+0" -> REFFS_ENCODING_REPLICATED, k=3, m=0.
+ *
+ * K+0 is the only form that describes replication, and the old
+ * "M == 0 IFF PASSTHROUGH" invariant rejected it -- so an export
+ * could not declare itself replicated, and LAYOUTGET derived
+ * PASSTHROUGH from geometry instead while the client wrote chunks.
+ */
+START_TEST(test_config_default_coding_mirrored)
+{
+	struct reffs_config cfg;
+
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[export]]\n"
+				"path = \"/mir\"\n"
+				"default_coding = \"mirrored:3+0\"\n"
+				"\n"
+				"    [[export.clients]]\n"
+				"    match = \"*\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_int_eq(cfg.exports[0].default_coding.cs_encoding_type,
+			 REFFS_ENCODING_REPLICATED);
+	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_k, 3);
+	ck_assert_uint_eq(cfg.exports[0].default_coding.cs_m, 0);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+/*
+ * Replication has no parity shards and needs at least two copies,
+ * so "mirrored:3+1" and "mirrored:1+0" are both rejected and the
+ * spec stays unset.
+ */
+START_TEST(test_config_default_coding_mirrored_invalid)
+{
+	struct reffs_config cfg;
+	char *path;
+
+	/* Parity shards on a parityless encoding. */
+	reffs_config_defaults(&cfg);
+	path = write_toml("[[export]]\n"
+			  "path = \"/mi1\"\n"
+			  "default_coding = \"mirrored:3+1\"\n");
+	ck_assert_ptr_nonnull(path);
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert(reffs_coding_spec_is_unset(&cfg.exports[0].default_coding));
+	unlink(path);
+	free(path);
+
+	/* One copy is passthrough, not replication. */
+	reffs_config_defaults(&cfg);
+	path = write_toml("[[export]]\n"
+			  "path = \"/mi2\"\n"
+			  "default_coding = \"mirrored:1+0\"\n");
+	ck_assert_ptr_nonnull(path);
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert(reffs_coding_spec_is_unset(&cfg.exports[0].default_coding));
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+/*
  * k + m exceeds LAYOUT_SEG_MAX_FILES (32) -> spec stays zero.
  * Plan-review B1 corrected the cap from 16 to 32; this test
  * pins the right boundary.  Try k+m = 33 (one over the cap).
@@ -1336,6 +1403,8 @@ Suite *config_suite(void)
 	tcase_add_test(tc_load, test_load_export_multi_rule);
 	tcase_add_test(tc_load, test_config_default_coding_absent);
 	tcase_add_test(tc_load, test_config_default_coding_passthrough);
+	tcase_add_test(tc_load, test_config_default_coding_mirrored);
+	tcase_add_test(tc_load, test_config_default_coding_mirrored_invalid);
 	tcase_add_test(tc_load, test_config_default_coding_rs_4_2);
 	tcase_add_test(tc_load, test_config_default_coding_mojette_sys_8_2);
 	tcase_add_test(tc_load, test_config_default_coding_invalid_encoding);
