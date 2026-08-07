@@ -1212,6 +1212,29 @@ GETDEVICEINFO regardless of what the server was listening on, so a
 combined-mode client on any non-default port failed mirror resolution
 with a connection refused far from the cause.
 
+## K.B landed (2026-08-06)
+
+Kernel client `9f02a5d91045` on `psyklo/ffv2-client`: CHUNK operations
+now stamp the layout's writer identity rather than a random
+per-module value.  `ffv2m_client_id` was already decoded into
+`nfs4_ffv2_mirror.client_id` and read nowhere, so every CHUNK_WRITE
+carried an identity the server had no reason to accept -- a rejection
+on the first write against a tightly coupled server, unnoticed
+because every configuration exercised so far is loosely coupled and
+bypasses the trust-table check before the comparison is reached.
+
+Builds clean, checkpatch --strict clean.  **Not wire-verified**, and
+that is the gate before it can be trusted: it changes the wire, and
+the comparison it exists to satisfy only runs against a tightly
+coupled server.  The existing dd/md5 harnesses take a mountpoint and
+do not stand one up.
+
+Reconciliation note: dreamer's kernel tree was still on the
+pre-sanitization line (626/68 divergence after the 2026-08-04
+force-update of `psyklo/ffv2-client`).  Reset to the sanitized line
+and K.B re-applied there, restoring the single-branch invariant of
+[[feedback_ffv2_client_single_branch]].
+
 ## Verification and rollout
 
 - Every reffs slice runs `make -f Makefile.reffs license style
