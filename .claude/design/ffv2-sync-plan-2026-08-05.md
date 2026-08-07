@@ -1405,6 +1405,52 @@ that no signal clears, and it poisons later runs on that host
 (STALE_CLIENTID, BADSESSION, no LAYOUTGET at all).  Budget a reboot
 per wire run until the livelock is fixed.
 
+### Parked 2026-08-07
+
+This thread is set aside here.  What is settled and landed:
+
+- reffs `53a7a0a110eb` -- a tight-coupled data server gets the layout
+  stateid it validates against.
+- kernel `9f02a5d91045` -- CHUNK operations stamp the layout's writer
+  identity.
+- Both wire-verified together: 81 validations accepted, 0 bypassed,
+  0 identity mismatches.
+
+What is open, in the order it should be picked up:
+
+1. **Find what re-sends a chunk in the first place.**  Every chunk's
+   first write is accepted (`prev` is NULL), so something resent a
+   chunk before any DELAY existed.  Not yet identified, and not worth
+   guessing at -- locate the resend path first.
+2. **Cap CHUNK_WRITE DELAY retries.**  Small and safe, with an
+   in-tree precedent: CHUNK_READ already retries DELAY with linear
+   backoff and a cap (`FFV2_CHUNK_READ_MAX_DELAY_ATTEMPTS`,
+   `rpc_delay` + `rpc_restart_call_prepare`).  CHUNK_WRITE has none.
+   A cap does not make the write succeed, but it turns an unbounded
+   livelock into a surfaced error, which is what stops a wire run
+   wedging the host.
+3. **DELAY refresh-and-retry.**  On DELAY, re-issue CHUNK_READ to
+   capture the real guard and retry the write with it, capped.
+4. **Parity guard capture.**  Correctness work in its own right;
+   note it does *not* address the livelock, which is on the
+   full-stripe path where no read happens at all.
+
+An earlier revision of this plan had 4 first, on the reasoning that it
+"removes the sentinel".  It does not: the writer already consumes a
+captured guard when one exists, and the two categories that lack one
+are parity mirrors *and* full-stripe writes.  The livelock is in the
+second.
+
+`ffv2-client-wip` on dreamer (`d374c14c2e10`, RMW fetch engine for
+partial-stripe writes, tracking `stash/ffv2-client`) is parked
+alongside and can be deleted once this issue is solved -- it is not
+carrying anything the landed line needs.  Not deleted here.
+
+The fixture lives at `dreamer:/var/tmp/kwire.sh`.  Every wire run will
+wedge a `dd` in D state until item 2 lands, so budget a reboot per
+run.  Do not reach for a soft mount to avoid that -- see
+[[feedback_no_soft_mount_for_dstate]].
+
 ## Verification and rollout
 
 - Every reffs slice runs `make -f Makefile.reffs license style
