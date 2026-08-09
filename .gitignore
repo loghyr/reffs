@@ -83,3 +83,7 @@ secrets.yml
 
 # clang files
 .cache
+
+# Bench harness output; regenerable, and the reports that matter are
+# kept in reffs-docs alongside their analysis.
+open-bench-results-*/
