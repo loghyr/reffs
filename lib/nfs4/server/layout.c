@@ -2492,6 +2492,90 @@ nfs4_layout_implicit_return_rw(struct compound *compound,
 }
 
 /*
+ * layout_shard_to_file_size -- turn the largest DS-reported shard
+ * length into the file's length.
+ *
+ * A mirrored layout puts the whole file on every data server, so the
+ * largest shard IS the file length.  An erasure-coded layout spreads
+ * each ls_k * ls_stripe_unit stripe across ls_k data shards, so every
+ * shard holds one striping unit per stripe and the file is ls_k times
+ * as long as any one of them.  Reading the shard length straight out
+ * of an erasure-coded layout under-reports the file by a factor of k.
+ *
+ * The erasure-coded answer is an upper bound.  A trailing partial
+ * stripe is padded before encoding and nothing on the wire records how
+ * much of it was real, so this can overshoot by up to
+ * ls_k * ls_stripe_unit - 1 bytes.  LAYOUTCOMMIT carries the exact
+ * value and wins wherever a client sends one; this path exists because
+ * the metadata server sets FFV2_FLAGS_NO_LAYOUTCOMMIT, which per
+ * draft-haynes-nfsv4-flexfiles-v2 lets the client omit LAYOUTCOMMIT
+ * entirely and leaves the reflected GETATTR as the only thing the
+ * metadata server can size the file from.
+ *
+ * ls_m == 0 covers both a replicated layout, where every shard is a
+ * whole copy, and the legacy PASSTHROUGH geometry, which records
+ * ls_k = nfiles without recording whether those files are copies or a
+ * plain spread (see default_coding_resolve_segment).  Both keep the
+ * shard length: exact for replication, and for the ambiguous case it
+ * declines to invent a multiplier the geometry cannot justify.
+ *
+ * Pure function -- no globals, no I/O.  Unit-tested in
+ * lib/nfs4/tests/layout_shard_size_test.c.
+ */
+int64_t layout_shard_to_file_size(const struct layout_segment *seg,
+				  int64_t max_shard)
+{
+	if (max_shard <= 0 || !seg || seg->ls_m == 0 || seg->ls_k <= 1)
+		return max_shard;
+
+	if (max_shard > INT64_MAX / (int64_t)seg->ls_k)
+		return INT64_MAX;
+
+	return max_shard * (int64_t)seg->ls_k;
+}
+
+/*
+ * layout_adopt_ds_size -- publish a DS-derived file length on the
+ * inode and rebalance the superblock's space accounting.
+ *
+ * Only ever grows.  A smaller value means some data server has not
+ * reported yet, not that the file shrank, and LAYOUTCOMMIT is the
+ * authority whenever a client sends one -- neither may be walked back
+ * by a partial fan-out result.
+ *
+ * Caller holds inode->i_attr_mutex.
+ */
+static void layout_adopt_ds_size(struct inode *inode, int64_t new_size)
+{
+	if (new_size <= inode->i_size)
+		return;
+
+	struct timespec now;
+
+	clock_gettime(CLOCK_REALTIME, &now);
+	inode->i_size = new_size;
+	inode->i_mtime = now;
+	inode->i_ctime = now;
+
+	/* Update space accounting -- MDS inode has no local data block,
+	 * the data lives on the data servers. */
+	struct super_block *sb = inode->i_sb;
+	int64_t old_used = inode->i_used;
+
+	inode->i_used = inode->i_size / sb->sb_block_size +
+			(inode->i_size % sb->sb_block_size ? 1 : 0);
+
+	int64_t delta = (inode->i_used - old_used) * sb->sb_block_size;
+
+	if (delta > 0)
+		atomic_fetch_add_explicit(&sb->sb_bytes_used, (size_t)delta,
+					  memory_order_relaxed);
+	else if (delta < 0)
+		atomic_fetch_sub_explicit(&sb->sb_bytes_used, (size_t)(-delta),
+					  memory_order_relaxed);
+}
+
+/*
  * nfs4_op_layoutreturn_resume - resume callback after reflected GETATTR fan-out.
  *
  * Updates the inode's cached size/mtime from the DS responses and frees
@@ -2522,34 +2606,8 @@ uint32_t nfs4_op_layoutreturn_resume(struct rpc_trans *rt)
 		}
 
 		pthread_mutex_lock(&inode->i_attr_mutex);
-		if (max_size > inode->i_size) {
-			struct timespec now;
-
-			clock_gettime(CLOCK_REALTIME, &now);
-			inode->i_size = max_size;
-			inode->i_mtime = now;
-			inode->i_ctime = now;
-
-			/* Update space accounting -- MDS inode has no
-			 * local data block, data lives on the DS. */
-			struct super_block *sb = inode->i_sb;
-			int64_t old_used = inode->i_used;
-
-			inode->i_used =
-				inode->i_size / sb->sb_block_size +
-				(inode->i_size % sb->sb_block_size ? 1 : 0);
-
-			int64_t delta =
-				(inode->i_used - old_used) * sb->sb_block_size;
-			if (delta > 0)
-				atomic_fetch_add_explicit(&sb->sb_bytes_used,
-							  (size_t)delta,
-							  memory_order_relaxed);
-			else if (delta < 0)
-				atomic_fetch_sub_explicit(&sb->sb_bytes_used,
-							  (size_t)(-delta),
-							  memory_order_relaxed);
-		}
+		layout_adopt_ds_size(inode,
+				     layout_shard_to_file_size(seg, max_size));
 		pthread_mutex_unlock(&inode->i_attr_mutex);
 
 		inode_sync_to_disk(inode);
@@ -3267,30 +3325,7 @@ uint32_t nfs4_op_layout_wcc(struct compound *compound)
 	 * Propagate the largest reported DS size to the inode.
 	 * Mirror the same logic as nfs4_op_layoutreturn_resume.
 	 */
-	if (max_size > 0 && max_size > inode->i_size) {
-		struct timespec now;
-
-		clock_gettime(CLOCK_REALTIME, &now);
-		inode->i_size = max_size;
-		inode->i_mtime = now;
-		inode->i_ctime = now;
-
-		struct super_block *sb = inode->i_sb;
-		int64_t old_used = inode->i_used;
-
-		inode->i_used = inode->i_size / sb->sb_block_size +
-				(inode->i_size % sb->sb_block_size ? 1 : 0);
-
-		int64_t delta = (inode->i_used - old_used) * sb->sb_block_size;
-		if (delta > 0)
-			atomic_fetch_add_explicit(&sb->sb_bytes_used,
-						  (size_t)delta,
-						  memory_order_relaxed);
-		else if (delta < 0)
-			atomic_fetch_sub_explicit(&sb->sb_bytes_used,
-						  (size_t)(-delta),
-						  memory_order_relaxed);
-	}
+	layout_adopt_ds_size(inode, layout_shard_to_file_size(seg, max_size));
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
