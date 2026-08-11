@@ -275,6 +275,14 @@ typedef uint32_t        mode4;
 typedef uint64_t        nfs_cookie4;
 typedef opaque  nfs_fh4<NFS4_FHSIZE>;
 typedef uint64_t        offset4;
+/*
+ * Names a single write transaction -- a cohort of chunks written
+ * together.  Each distinct chunk-write transaction from a given
+ * client MUST carry a unique co_cohort_id, so lifecycle operations
+ * can be correlated with the transactions that produced them.
+ * See draft-haynes-nfsv4-flexfiles-v2 sec-chunk_cohort_id4.
+ */
+typedef uint64_t        chunk_cohort_id4;
 typedef uint32_t        qop4;
 typedef opaque  sec_oid4<>;
 typedef uint32_t        sequenceid4;
@@ -3449,22 +3457,33 @@ struct chunk_guard4 {
 };
 
 /*
- * chunk_owner4.co_id is a writer-chosen opaque identifier the
- * data server tracks alongside cg_client_id and cg_gen_id for
- * CAS-guard bookkeeping and repair correlation.  Typically a
- * monotonic per-writer serial (reference client: see
- * ec_pipeline.c owner_id assignment; kernel client: see
- * ffv2_owner_id_next in fs/nfs/flexfilesv2/flexfilesv2.h).  The
- * data server MUST NOT require co_id to equal cwa_offset -- an
- * earlier draft revision spoke of a MUST relationship; both this
- * reffs server and the reference client have always treated
- * co_id as writer identity, and the draft prose was corrected in
- * sync with this comment (see co_id text in
- * draft-haynes-nfsv4-flexfiles-v2 sec-CHUNK_WRITE).
+ * Identifies the write transaction that produced a chunk, and which
+ * of that transaction's chunks this is.
+ *
+ * co_cohort_id names the transaction; every chunk written together
+ * shares it.  co_client_id is the writer's layout-granted client id.
+ * co_id is a writer-supplied opaque per-chunk identifier: it is NOT
+ * required to equal the chunk's file index, and the data server
+ * treats it opaquely, comparing only for equality against values it
+ * previously accepted for this cohort.  A writer MAY use file-index
+ * values, but the wire semantics do not privilege that choice.
+ *
+ * Uniqueness (normative): within a single (co_cohort_id,
+ * co_client_id) all co_id values MUST be distinct, so a later
+ * lifecycle operation can name individual chunks unambiguously.
+ *
+ * The per-chunk compare-and-swap state is chunk_guard4, a SEPARATE
+ * field -- it is not part of the owner.  An earlier revision of this
+ * file nested chunk_guard4 inside chunk_owner4 and described co_id as
+ * writer identity; that predates the cohort, and writer identity is
+ * now co_client_id.
+ *
+ * See draft-haynes-nfsv4-flexfiles-v2 sec-chunk_owner4.
  */
 struct chunk_owner4 {
-	chunk_guard4   co_guard;
-	uint32_t       co_id;
+	chunk_cohort_id4  co_cohort_id;
+	uint32_t          co_client_id;
+	uint32_t          co_id;
 };
 
 /*
@@ -3629,11 +3648,10 @@ struct CHUNK_READ4args {
 /*
  * cr_guard carries the data server's current per-chunk CAS state
  * (cg_gen_id, cg_client_id) so multi-writer callers can obtain the
- * expected prior value race-free.  reffs's chunk_owner4 still embeds
- * chunk_guard4 co_guard (older shape) so the server dual-writes
- * cr_owner.co_guard and cr_guard; once the M2 owner-triple restructure
- * lands (see .claude/design/ffv2-draft-xdr-divergence.md), cr_guard is
- * the authoritative source.
+ * expected prior value race-free.  It is the sole carrier of the
+ * generation: chunk_owner4 is the {cohort, client, chunk} triple and
+ * holds no guard, so cr_owner and cr_guard answer separate questions
+ * -- who wrote this chunk, and what must the next writer present.
  */
 struct read_chunk4 {
     checksum4           cr_checksum;

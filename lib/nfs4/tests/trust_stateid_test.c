@@ -1291,8 +1291,7 @@ static void chunk_set_write_args(struct cm_ctx *cm, const stateid4 *stid)
 	 * Without setting this the wire validation rejects the
 	 * compound before the trust-hook check we are exercising.
 	 */
-	args->cwa_owner.co_guard.cg_client_id = 0xBEEF;
-	args->cwa_owner.co_guard.cg_gen_id = 1;
+	args->cwa_owner.co_client_id = 0xBEEF;
 	args->cwa_owner.co_id = 99;
 	/* no checksum array */
 }

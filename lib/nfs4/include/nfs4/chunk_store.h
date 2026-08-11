@@ -22,6 +22,7 @@
 #ifndef NFS4_CHUNK_STORE_H
 #define NFS4_CHUNK_STORE_H
 
+#include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -63,8 +64,24 @@ enum chunk_state {
 struct chunk_block {
 	enum chunk_state cb_state;
 	uint32_t cb_flags; /* CHUNK_BLOCK_LOCKED, etc. */
-	uint32_t cb_gen_id; /* chunk_guard4.cg_gen_id */
-	uint32_t cb_client_id; /* chunk_guard4.cg_client_id (client-supplied) */
+	/*
+	 * chunk_guard4.cg_gen_id -- the DATA SERVER's per-chunk monotonic
+	 * generation counter, not a client-supplied value.  Starts at 0
+	 * when the chunk is first written and increments on each
+	 * successful CHUNK_WRITE by any client (draft-haynes-nfsv4-
+	 * flexfiles-v2 sec-chunk_guard4).  The client's cwa_guard carries
+	 * only the value it EXPECTS to find, which the CAS compares
+	 * against this.
+	 */
+	uint32_t cb_gen_id;
+	/*
+	 * The layout-granted writer identity.  Appears on the wire twice
+	 * -- as chunk_owner4.co_client_id and chunk_guard4.cg_client_id --
+	 * which the draft calls redundant carriers of the same value so
+	 * that cohort records and CAS state are each self-contained.
+	 */
+	uint32_t cb_client_id;
+	uint64_t cb_cohort_id; /* chunk_owner4.co_cohort_id */
 	uint32_t cb_owner_id; /* chunk_owner4.co_id */
 	uint32_t cb_payload_id;
 	/*
@@ -126,9 +143,34 @@ struct chunk_block_disk {
 	uint32_t cbd_checksum_len; /* bytes valid in cbd_checksum_value */
 	uint8_t cbd_checksum_value[CHUNK_VALUE_MAX];
 	uint32_t cbd_chunk_size;
-	uint32_t cbd_pad; /* keep 8-byte alignment for cbd_writer_clientid */
+	uint32_t cbd_pad; /* keep 8-byte alignment for the u64s below */
 	uint64_t cbd_writer_clientid; /* see chunk_block.cb_writer_clientid */
+	/*
+	 * chunk_owner4.co_cohort_id.  Appended rather than reusing
+	 * cbd_pad because it is 64-bit.  No CHUNK_STORE_VERSION bump and
+	 * no migration code: per CLAUDE.md "Deployment Status", no
+	 * persistent storage has been deployed and all on-disk formats
+	 * are version 1.  Re-read that section before assuming this still
+	 * holds -- once a deployment with persistent data ships, changes
+	 * here need a version bump plus migration.
+	 */
+	uint64_t cbd_cohort_id;
 };
+
+/*
+ * chunk_store_load validates magic, version, inode and block count,
+ * but nothing tells it the record size it was written with -- a file
+ * written by a build with a different sizeof() parses as garbage and
+ * the store is silently re-created empty.  Pin the size so the next
+ * change to this struct is a compile error here rather than a silent
+ * data loss on somebody's soak host.  Changing this number means
+ * every existing per-inode file under <state_dir>/chunks must be
+ * cleared.
+ */
+static_assert(sizeof(struct chunk_block_disk) == 120,
+	      "chunk_block_disk size changed -- on-disk chunk metadata "
+	      "written by an older build will misparse; clear "
+	      "<state_dir>/chunks before running, then update this size");
 
 /*
  * In-memory chunk store for an inode.  Grows on demand as blocks

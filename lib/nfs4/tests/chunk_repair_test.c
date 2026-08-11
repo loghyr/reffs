@@ -290,13 +290,12 @@ static void set_repair_args(struct cm_ctx *cm, const stateid4 *stid, char *buf,
 	args->cwra_chunks.cwra_chunks_val = buf;
 	args->cwra_chunks.cwra_chunks_len = buf_len;
 
-	/* cwra_owner.co_guard.cg_client_id is the wire-level repair
+	/* cwra_owner.co_client_id is the wire-level repair
 	 * owner; use a real client id (not the reserved NONE/MDS
 	 * values).  cg_seq is the per-owner monotonic counter; the
 	 * handler does not interpret it.
 	 */
-	args->cwra_owner.co_guard.cg_client_id = 0xDEAD0001;
-	args->cwra_owner.co_guard.cg_gen_id = 1;
+	args->cwra_owner.co_client_id = 0xDEAD0001;
 
 	if (ncrc > 0 && crcs != NULL) {
 		args->cwra_checksums.cwra_checksums_val =
@@ -479,7 +478,7 @@ START_TEST(test_repair_reserved_client_id_none)
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_write_repair;
 
-	args->cwra_owner.co_guard.cg_client_id = CHUNK_GUARD_CLIENT_ID_NONE;
+	args->cwra_owner.co_client_id = CHUNK_GUARD_CLIENT_ID_NONE;
 
 	nfs4_op_chunk_write_repair(cm->compound);
 
@@ -507,7 +506,7 @@ START_TEST(test_repair_reserved_client_id_mds)
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_write_repair;
 
-	args->cwra_owner.co_guard.cg_client_id = CHUNK_GUARD_CLIENT_ID_MDS;
+	args->cwra_owner.co_client_id = CHUNK_GUARD_CLIENT_ID_MDS;
 
 	nfs4_op_chunk_write_repair(cm->compound);
 
@@ -860,8 +859,7 @@ START_TEST(test_repair_bypasses_pending_collision_gate)
 	wargs->cwa_chunk_size = CHUNK_SZ;
 	wargs->cwa_chunks.cwa_chunks_val = buf;
 	wargs->cwa_chunks.cwa_chunks_len = CHUNK_SZ;
-	wargs->cwa_owner.co_guard.cg_client_id = 0x0BAD0001;
-	wargs->cwa_owner.co_guard.cg_gen_id = 1;
+	wargs->cwa_owner.co_client_id = 0x0BAD0001;
 	wargs->cwa_checksums.cwa_checksums_val = calloc(1, sizeof(checksum4));
 	wargs->cwa_checksums.cwa_checksums_len = 1;
 	(void)chunk_checksum_pack_crc32(
@@ -956,8 +954,7 @@ static void set_repaired_args(struct cm_ctx *cm, const stateid4 *stid,
 	args->cpa_stateid = *stid;
 	args->cpa_offset = offset;
 	args->cpa_count = count;
-	args->cpa_owner.co_guard.cg_client_id = 0xDEAD0001;
-	args->cpa_owner.co_guard.cg_gen_id = 1;
+	args->cpa_owner.co_client_id = 0xDEAD0001;
 }
 
 /*
@@ -1064,7 +1061,7 @@ START_TEST(test_repaired_reserved_client_id_none)
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_repair;
 
-	args->cpa_owner.co_guard.cg_client_id = CHUNK_GUARD_CLIENT_ID_NONE;
+	args->cpa_owner.co_client_id = CHUNK_GUARD_CLIENT_ID_NONE;
 
 	nfs4_op_chunk_repaired(cm->compound);
 
@@ -1089,7 +1086,7 @@ START_TEST(test_repaired_reserved_client_id_mds)
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_repair;
 
-	args->cpa_owner.co_guard.cg_client_id = CHUNK_GUARD_CLIENT_ID_MDS;
+	args->cpa_owner.co_client_id = CHUNK_GUARD_CLIENT_ID_MDS;
 
 	nfs4_op_chunk_repaired(cm->compound);
 

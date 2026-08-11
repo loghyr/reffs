@@ -818,13 +818,18 @@ struct ec_repair_stats {
  *   capture the version it just read so the matching CHUNK_WRITE can
  *   present a CAS guard.  Blocks not returned (server returned fewer
  *   than `count`) leave their out_owners[i] zeroed.
+ * out_guards: when non-NULL, same shape as out_owners, populated with
+ *   each block's chunk_guard4.  The guard is SEPARATE from the owner
+ *   on the wire -- the owner names the writer and its transaction,
+ *   the guard is the data server's per-chunk CAS state -- so a caller
+ *   building a cwa_guard wants this array, not the owner's fields.
  * Returns 0 on success, -ESTALE if DS returns NFS4ERR_BAD_STATEID,
  * or other negative errno on failure.
  */
 int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		  uint64_t block_offset, uint32_t count, uint8_t *out_data,
 		  uint32_t chunk_size, uint32_t *nread, const stateid4 *stateid,
-		  chunk_owner4 *out_owners);
+		  chunk_owner4 *out_owners, chunk_guard4 *out_guards);
 
 /*
  * ds_chunk_finalize -- CHUNK_FINALIZE on a data server.

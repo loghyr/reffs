@@ -110,12 +110,10 @@ deliberately deferred.
     until a real handler lands (which should carry the co-indexing
     invariant docs across all four `<>` arrays).
   - Server: `nfs4_op_chunk_read` in `lib/nfs4/server/chunk.c`
-    dual-writes `cr_owner.co_guard.{cg_gen_id, cg_client_id}` and
-    `cr_guard.{cg_gen_id, cg_client_id}` from
-    `blk->cb_gen_id/cb_client_id` -- redundant while
-    `chunk_owner4` still embeds `chunk_guard4 co_guard`; the
-    embedded copy goes away with the M2 restructure below and
-    `cr_guard` becomes the sole guard on the read path.
+    used to dual-write the guard into both `cr_owner.co_guard`
+    and `cr_guard`.  The M2 owner-triple slice below removed the
+    embedded copy: `cr_guard` is now the sole guard on the read
+    path, and `cr_owner` carries only the triple.
 
 - **M3 lifecycle stateids** (branch `xdr-sync-m2-m3-m5`, sync
   session):
@@ -151,12 +149,11 @@ deliberately deferred.
     expected-value contract from the draft's multi-writer rules.
   - `CHUNK_HEADER_READ4resok` gained `chunk_guard4 chrr_guards<>`
     after `chrr_chunks<>`; one guard per chunk header.
-  - Server: `lib/nfs4/server/chunk.c` dual-writes into
-    `rc->cr_owner.co_guard` and `rc->cr_guard` from the same
-    `chunk_block` pair, so the older single-owner shape and the
-    new additive guard coexist until M2 lands.  No server
-    behavioural change; the extra field is a pure read-path
-    observation.
+  - Server: `lib/nfs4/server/chunk.c` originally dual-wrote into
+    `rc->cr_owner.co_guard` and `rc->cr_guard` so the older
+    single-owner shape and the new additive guard could coexist.
+    The M2 owner-triple slice retired that: `cr_guard` alone
+    carries the guard.
   - Kernel client mirror: `psyklo/ffv2-client` at `06a10ddebbca`
     decodes `cr_guard` into `struct ffv2_read_chunk4.guard` on
     every CHUNK_READ.
@@ -325,7 +322,7 @@ Do not "fix" this by relaxing S4b -- the escape hatch there is for a
 metadata server that registers no binding at all, not for a client
 that presents the wrong one.
 
-## Deferred: M2 chunk_owner4 restructure
+## M2 chunk_owner4 restructure: owner triple LANDED, batching deferred
 
 The draft moved from single-owner-per-CHUNK_WRITE to
 **batched-cohort** semantics:
@@ -338,21 +335,37 @@ The draft moved from single-owner-per-CHUNK_WRITE to
 - `chunk_guard4` remains but is now purely per-chunk CAS state,
   no longer an owner-triple carrier.
 
-Reffs stays on the older single-owner shape:
-- `chunk_owner4` = `{ chunk_guard4 co_guard, uint32 co_id }`
-  (two fields; embedded chunk_guard4).
-- `CHUNK_WRITE4args` = `{ ..., chunk_owner4 cwa_owner, ... }` --
-  ONE owner per op, not a batched cohort.
+**Landed** (branch `ffv2-owner-triple`, slice R1) -- the struct
+half, which is what removed the divergence in the shape itself:
+- `chunk_cohort_id4` typedef added.
+- `chunk_owner4` is the three-field triple.  The embedded
+  `chunk_guard4 co_guard` is GONE; every identity site moved to
+  `co_client_id`.
+- `chunk_guard4` is now purely per-chunk CAS state.  The read
+  path no longer dual-writes: `cr_guard` is the sole guard.
+- `cg_gen_id` became **server-assigned** in the same slice.  This
+  was not cosmetic -- while `chunk_owner4` carried the guard, the
+  client minted the generation and the server stored it verbatim,
+  so the client supplied both sides of the server's CAS
+  comparison and the guard could not fail.  `chunk_block` and
+  `chunk_block_disk` gained `cb_cohort_id` / `cbd_cohort_id`
+  (no version bump; see Deployment Status in `CLAUDE.md`).
 
-### Why deferred
+**Still deferred** -- the batching half:
+- `CHUNK_WRITE4args` still carries ONE `chunk_owner4 cwa_owner`,
+  not `(cwa_cohort_id, cwa_client_id, cwa_co_ids<>)`.
+- Cohort assignment is not implemented: writers pin
+  `co_cohort_id = 0`, so the draft's uniqueness invariant --
+  within one `(co_cohort_id, co_client_id)` all `co_id` MUST be
+  distinct -- is contradicted by reffs's own writer on every op.
+  Nothing breaks today (the server matches on `co_id` alone), but
+  this is a spec/implementation gap, not merely incomplete work.
+- The M1 client-driven rollback-and-retry-under-fresh-cohort
+  semantic is still absent, which is why the batching half did
+  not land with the struct half.
 
-- **Refactor scope**: multi-day, touching
-  `lib/xdr/nfsv42_xdr.x`, `lib/nfs4/server/chunk.c` (15 refs),
-  `lib/nfs4/ps/chunk_io.c` (10 refs),
-  `lib/nfs4/ps/ec_pipeline.c` (3 refs),
-  `lib/nfs4/client/mds_layout.c` (2 refs),
-  `lib/nfs4/tests/chunk_test.c` (20 refs),
-  `lib/nfs4/tests/chunk_repair_test.c` (11 refs).
+### Why the batching half is still deferred
+
 - **Missing client semantic**: the draft's M1 fix requires the
   CLIENT to rollback and retry under a fresh cohort_id on
   `NFS4ERR_CHUNK_GUARDED`.  Reffs's PS-side client does not yet
@@ -360,18 +373,15 @@ Reffs stays on the older single-owner shape:
   without the retry loop would leave a live regression on
   multi-writer paths.
 - **BAT priority**: STABLE_BAT is Phase 3 (NFSv4.2 ops) and
-  Phase 6 (BAT demo).  M2 restructure would push those back
-  without unblocking any deliverable currently on the BAT
-  critical path.
+  Phase 6 (BAT demo).  Batching would push those back without
+  unblocking any deliverable currently on the BAT critical path.
 - **In-flight draft rule**: per user memory
   `feedback_xdr_proposed_vs_established`, in-flight draft
-  fields revise freely.  Reffs staying on the older shape is
-  fine while the draft settles; the wire is not deployed.
+  fields revise freely.  The wire is not deployed.
 
-### When to pick this back up
+### When to pick the batching half back up
 
-Any of the following would move M2 restructure onto the
-schedule:
+Any of the following would move it onto the schedule:
 
 1. Reffs's PS client starts driving multi-writer scenarios
    where the M1 client-rollback semantic is a correctness
@@ -379,20 +389,25 @@ schedule:
 2. The Linux kernel client (`fs/nfs/flexfilesv2/`) adopts the
    batched-cohort wire and reffs needs to interop with it.
 3. STABLE_BAT Phase 6 is complete and there is bandwidth for
-   a proper M2 restructure design + implementation slice.
+   a proper cohort-assignment design + implementation slice.
 
 ### Contract for interim behaviour
 
-- The current reffs CHUNK ops are self-consistent: server and
-  client both use the single-owner shape.  Interop is fine
-  between reffs and the ec_demo client that ships with reffs.
-- Interop with a batched-cohort peer would break.  A client or
-  server built against the current draft cannot talk to a reffs
-  built from this branch.  Deployments that want cross-family
-  interop MUST wait for the M2 restructure to land.
-- Test coverage: existing chunk tests exercise the single-owner
-  shape.  New tests for the batched-cohort shape will land with
-  the M2 restructure.
+- **Flag day already spent.** `chunk_owner4` grew 8 -> 16 bytes
+  and sits mid-struct in `CHUNK_WRITE4args` and `read_chunk4`, so
+  a reffs built from this branch cannot talk to any peer on the
+  pre-triple shape, in either direction.  The matching kernel
+  client change must land in lockstep.
+- On-disk records grew 112 -> 120 bytes.  Clear
+  `<state_dir>/chunks` before running this build against a state
+  directory written by an older one; the `static_assert` in
+  `chunk_store.h` is what makes the next such change loud.
+- Interop with a *batched-cohort* peer still breaks -- that half
+  has not landed.
+- Test coverage: `chunk_test.c` covers the generation semantics
+  directly (server-assigned, increments, stale guard rejected
+  with `NFS4ERR_DELAY`).  Tests for the batched-cohort shape land
+  with that slice.
 
 ## Deferred (implementation slices, not draft divergence)
 

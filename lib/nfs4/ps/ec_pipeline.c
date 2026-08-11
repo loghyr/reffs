@@ -106,9 +106,11 @@ struct ec_context {
 	 * design/chunk-collision-validation.md).  When the RMW prefix
 	 * read in ec_write_encoding_range captures per-shard chunk_owner4
 	 * values via ec_read_stripe_with_file, they land here.  The
-	 * matching ec_write_stripe_with_file picks them up and presents
-	 * each (co_guard) as a cwa_guard on the corresponding data-shard
-	 * CHUNK_WRITE so the server can CAS-check.
+	 * matching ec_write_stripe_with_file picks up the paired
+	 * ctx_read_guards entry and presents it as a cwa_guard on the
+	 * corresponding data-shard CHUNK_WRITE so the server can
+	 * CAS-check.  The guard used to be read out of the owner's
+	 * co_guard; it is a separate wire field now.
 	 *
 	 * Valid only when ctx_read_owners_valid is true; producer
 	 * (ec_read_stripe_with_file shared-ctx path) sets the flag,
@@ -118,8 +120,27 @@ struct ec_context {
 	 * pattern's `ctx = *shared_ctx` step; geometry exceeding
 	 * EC_CTX_MAX_MIRRORS leaves the flag false (no guards), which
 	 * degrades to today's unguarded behaviour.
+	 *
+	 * The captured owners themselves have no reader yet -- the write
+	 * path needs only the guard.  They are retained for the cohort
+	 * slice, which carries the read-time co_cohort_id into the
+	 * matching write so an RMW keeps one transaction identity.  Until
+	 * then only ctx_read_owners_valid is load-bearing; do not read
+	 * this array expecting it to be consumed anywhere today.
 	 */
 	chunk_owner4 ctx_read_owners[EC_CTX_MAX_MIRRORS];
+	/*
+	 * The per-chunk CAS state that came back with those owners.
+	 * Separate array because the guard is a separate wire field:
+	 * the owner names the writer and its transaction, the guard is
+	 * the data server's generation counter.  This is what a later
+	 * cwa_guard presents.
+	 *
+	 * MUST stay layout-identical with the mirror in
+	 * ec_pipeline_internal.h -- that boundary is resolved by binary
+	 * layout, not by the compiler.
+	 */
+	chunk_guard4 ctx_read_guards[EC_CTX_MAX_MIRRORS];
 	bool ctx_read_owners_valid;
 };
 
@@ -399,7 +420,8 @@ int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
  */
 int ec_chunk_read(struct ec_context *ctx, int mirror_idx, uint64_t block_offset,
 		  uint32_t nblk, uint8_t *shard, uint32_t rd_chunk_sz,
-		  uint32_t *nread, chunk_owner4 *out_owners)
+		  uint32_t *nread, chunk_owner4 *out_owners,
+		  chunk_guard4 *out_guards)
 {
 	struct ec_mirror *em = &ctx->ctx_layout.el_mirrors[mirror_idx];
 	const stateid4 *stid =
@@ -442,7 +464,8 @@ int ec_chunk_read(struct ec_context *ctx, int mirror_idx, uint64_t block_offset,
 
 		ret = ds_chunk_read(ctx->ctx_ds_sess[mirror_idx], em->em_fh,
 				    em->em_fh_len, block_offset, nblk, shard,
-				    rd_chunk_sz, nread, stid, out_owners);
+				    rd_chunk_sz, nread, stid, out_owners,
+				    out_guards);
 		if (ret != -ESTALE && ret != -EAGAIN)
 			return ret;
 
@@ -1492,10 +1515,11 @@ retry_stripe:
 	}
 
 	/* Write data shards to mirrors 0..k-1 at the stripe's DS offset.
-	 * If the shared ctx has captured chunk_owner4 from a matching
+	 * If the shared ctx captured guards from a matching
 	 * ec_read_stripe_with_file (the RMW prefix read), present each
-	 * shard's read-time co_guard as a cwa_guard on the CHUNK_WRITE
-	 * so the server CAS-checks the version.  -EAGAIN bubbles up
+	 * shard's read-time chunk_guard4 as a cwa_guard on the
+	 * CHUNK_WRITE so the server CAS-checks the generation it
+	 * assigned.  -EAGAIN bubbles up
 	 * (mapped from NFS4ERR_DELAY) and the outer RMW retry redoes
 	 * the read with fresh state. */
 	for (int i = 0; i < k; i++) {
@@ -1507,7 +1531,7 @@ retry_stripe:
 
 		if (shared_ctx && ctx.ctx_read_owners_valid &&
 		    i < EC_CTX_MAX_MIRRORS)
-			guard = &ctx.ctx_read_owners[i].co_guard;
+			guard = &ctx.ctx_read_guards[i];
 
 		if (ctx.ctx_ds_sess) {
 			ret = ec_chunk_write(&ctx, i,
@@ -1813,21 +1837,25 @@ retry_stripe_read: {
 			 * the multi-block guard story is NOT_NOW_BROWN_COW.
 			 */
 			chunk_owner4 owner_capture = { 0 };
+			chunk_guard4 guard_capture = { 0 };
 			chunk_owner4 *capture_arg = NULL;
 
 			if (shared_ctx && i < EC_CTX_MAX_MIRRORS && i < k)
 				capture_arg = &owner_capture;
 
 			err_opnum = OP_CHUNK_READ;
-			ret = ec_chunk_read(&ctx, i,
-					    stripe_no * DIV_CEIL(ds_stride,
-								 rd_chunk_sz),
-					    nblk, shards[i], rd_chunk_sz,
-					    &nread, capture_arg);
+			ret = ec_chunk_read(
+				&ctx, i,
+				stripe_no * DIV_CEIL(ds_stride, rd_chunk_sz),
+				nblk, shards[i], rd_chunk_sz, &nread,
+				capture_arg,
+				capture_arg ? &guard_capture : NULL);
 			present[i] = (ret == 0 && nread == nblk);
 
-			if (capture_arg && ret == 0)
+			if (capture_arg && ret == 0) {
 				ctx.ctx_read_owners[i] = owner_capture;
+				ctx.ctx_read_guards[i] = guard_capture;
+			}
 		} else {
 			ret = ds_read(&ctx.ctx_conns[i], em->em_fh,
 				      em->em_fh_len, stripe_no * ds_stride,
@@ -2110,7 +2138,7 @@ retry_stripe_read:
 					(uint64_t)s * DIV_CEIL(ds_stride,
 							       rd_chunk_sz),
 					nblk, shards[i], rd_chunk_sz, &nread,
-					NULL);
+					NULL, NULL);
 				present[i] = (ret == 0 && nread == nblk);
 				ec_log("ec_read: stripe %zu shard[%d] CHUNK_READ rsz=%u nblk=%u rd_chunk_sz=%u ret=%d nread=%u present=%d\n",
 				       s, i, rsz, nblk, rd_chunk_sz, ret, nread,
@@ -2722,10 +2750,11 @@ int ec_repair_encoding(struct mds_session *ms, const char *path, int k, int m,
 				present[i] = false;
 				continue;
 			}
-			ret = ec_chunk_read(
-				&ctx, i,
-				(uint64_t)s * DIV_CEIL(ds_stride, rd_chunk_sz),
-				nblk, shards[i], rd_chunk_sz, &nread, NULL);
+			ret = ec_chunk_read(&ctx, i,
+					    (uint64_t)s * DIV_CEIL(ds_stride,
+								   rd_chunk_sz),
+					    nblk, shards[i], rd_chunk_sz,
+					    &nread, NULL, NULL);
 			present[i] = (ret == 0 && nread == nblk);
 			ret = 0;
 		}

@@ -226,7 +226,7 @@ static bool chunk_op_on_non_chunked(const struct compound *compound)
  *   2. current FH is a regular file   -> NFS4ERR_INVAL
  *   2a. file not identified non-chunked -> NFS4ERR_NOTSUPP
  *   3. chunk_size > 0, chunks_len > 0 -> NFS4ERR_INVAL
- *   4. cg_client_id not reserved      -> NFS4ERR_INVAL
+ *   4. co_client_id not reserved      -> NFS4ERR_INVAL
  *   5. nchunks > 0                    -> NFS4ERR_INVAL
  *   6. nchecksums == 0 || nchecksums == nchunks -> NFS4ERR_INVAL
  *   7. per-payload wire_algo is a known algorithm and every
@@ -246,7 +246,7 @@ static bool chunk_op_on_non_chunked(const struct compound *compound)
 static nfsstat4
 chunk_write_validate_payload(struct compound *compound, uint32_t chunk_size,
 			     const char *chunks_data, uint32_t chunks_len,
-			     uint32_t cg_client_id, const checksum4 *checksums,
+			     uint32_t co_client_id, const checksum4 *checksums,
 			     uint32_t nchecksums, const char *op_log_tag,
 			     uint32_t *out_wire_algo, uint32_t *out_nchunks)
 {
@@ -265,7 +265,7 @@ chunk_write_validate_payload(struct compound *compound, uint32_t chunk_size,
 	if (chunk_size == 0 || chunks_len == 0)
 		return NFS4ERR_INVAL;
 
-	if (chunk_cid_is_reserved(cg_client_id))
+	if (chunk_cid_is_reserved(co_client_id))
 		return NFS4ERR_INVAL;
 
 	/*
@@ -376,8 +376,7 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	uint32_t nchunks;
 	nfsstat4 vs = chunk_write_validate_payload(
 		compound, args->cwa_chunk_size, args->cwa_chunks.cwa_chunks_val,
-		args->cwa_chunks.cwa_chunks_len,
-		args->cwa_owner.co_guard.cg_client_id,
+		args->cwa_chunks.cwa_chunks_len, args->cwa_owner.co_client_id,
 		args->cwa_checksums.cwa_checksums_val,
 		args->cwa_checksums.cwa_checksums_len, "CHUNK_WRITE",
 		&wire_algo, &nchunks);
@@ -400,8 +399,7 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	 * by the DS's own permission model.
 	 */
 	nfsstat4 trust_err = chunk_check_trusted_stateid(
-		&args->cwa_stateid, args->cwa_owner.co_guard.cg_client_id,
-		false);
+		&args->cwa_stateid, args->cwa_owner.co_client_id, false);
 
 	if (trust_err != NFS4_OK) {
 		*status = trust_err;
@@ -471,11 +469,17 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	 * them on the reject path would diverge metadata between accept and
 	 * reject paths.
 	 *
-	 * Per-owner identity matches on (co_id, cg_client_id) -- the wire-
-	 * identifying tuple from chunk_owner4.co_guard plus co_id.  An
-	 * idempotent retry from the SAME writer (same tuple) is allowed
-	 * through; this is the same identity comparison
+	 * Per-owner identity matches on (co_client_id, co_id) from
+	 * chunk_owner4.  An idempotent retry from the SAME writer (same
+	 * tuple) is allowed through; this is the same identity comparison
 	 * cs_pending_displaced uses to count cross-writer displacement.
+	 *
+	 * The identity previously came from chunk_owner4.co_guard, which
+	 * nested the compare-and-swap state inside the owner.  It no
+	 * longer does: the guard is separate per-chunk state and writer
+	 * identity is co_client_id.  Once co_cohort_id is stored per
+	 * block this comparison should widen to the full triple, so two
+	 * transactions from one client cannot alias.
 	 */
 	/*
 	 * Two independent rejection axes, both bump cs_chunk_busy_delay
@@ -529,7 +533,7 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		if (!prev || prev->cb_state != CHUNK_STATE_PENDING)
 			continue;
 		if (prev->cb_owner_id == args->cwa_owner.co_id &&
-		    prev->cb_client_id == args->cwa_owner.co_guard.cg_client_id)
+		    prev->cb_client_id == args->cwa_owner.co_client_id)
 			continue;
 
 		if (cstats)
@@ -643,6 +647,14 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		uint32_t blk_csum_algo = CHECKSUM_ALG_NONE;
 		uint32_t blk_csum_len = 0;
 		uint8_t blk_csum_value[CHUNK_VALUE_MAX] = { 0 };
+		/*
+		 * The block this write supersedes, if any.  Looked up here
+		 * because this is a second pass over the same range -- the
+		 * CAS loop's own lookup is long out of scope.  Used only
+		 * for the generation counter; the CAS itself already ran.
+		 */
+		const struct chunk_block *old_blk =
+			chunk_store_lookup(cs, args->cwa_offset + i);
 
 		if (i < nchecksums) {
 			const checksum4 *cs =
@@ -658,8 +670,20 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 
 		struct chunk_block blk = {
 			.cb_state = CHUNK_STATE_PENDING,
-			.cb_gen_id = args->cwa_owner.co_guard.cg_gen_id,
-			.cb_client_id = args->cwa_owner.co_guard.cg_client_id,
+			/*
+			 * The generation counter is the data server's, not
+			 * the client's: 0 on first write, +1 on each
+			 * successful CHUNK_WRITE by any client (draft
+			 * sec-chunk_guard4).  The client's cwa_guard carries
+			 * only the value it expects to find, which the CAS
+			 * above compares against the stored one.  Copying the
+			 * client's value here -- as this did while the guard
+			 * was nested in the owner -- would let a writer choose
+			 * its own generation and defeat the CAS.
+			 */
+			.cb_gen_id = old_blk ? old_blk->cb_gen_id + 1 : 0,
+			.cb_cohort_id = args->cwa_owner.co_cohort_id,
+			.cb_client_id = args->cwa_owner.co_client_id,
 			.cb_owner_id = args->cwa_owner.co_id,
 			.cb_payload_id = args->cwa_payload_id,
 			.cb_checksum_algorithm = blk_csum_algo,
@@ -939,8 +963,16 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 			return 0;
 		}
 		rc->cr_effective_len = blk->cb_chunk_size;
-		rc->cr_owner.co_guard.cg_gen_id = blk->cb_gen_id;
-		rc->cr_owner.co_guard.cg_client_id = blk->cb_client_id;
+		/*
+		 * The owner triple identifies who wrote the chunk; the
+		 * guard is separate per-chunk compare-and-swap state and
+		 * rides its own field.  cr_guard.cg_client_id is the LAST
+		 * writer's id, which for a stored block is the same value
+		 * as the owner's -- they are distinct concepts that happen
+		 * to coincide here.
+		 */
+		rc->cr_owner.co_cohort_id = blk->cb_cohort_id;
+		rc->cr_owner.co_client_id = blk->cb_client_id;
 		rc->cr_owner.co_id = blk->cb_owner_id;
 		rc->cr_guard.cg_gen_id = blk->cb_gen_id;
 		rc->cr_guard.cg_client_id = blk->cb_client_id;
@@ -1101,8 +1133,8 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 	}
 
 	for (uint32_t i = 0; i < args->cfa_chunks.cfa_chunks_len; i++) {
-		if (chunk_cid_is_reserved(args->cfa_chunks.cfa_chunks_val[i]
-						  .co_guard.cg_client_id)) {
+		if (chunk_cid_is_reserved(
+			    args->cfa_chunks.cfa_chunks_val[i].co_client_id)) {
 			*status = NFS4ERR_INVAL;
 			return 0;
 		}
@@ -1203,8 +1235,8 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 	}
 
 	for (uint32_t i = 0; i < args->cca_chunks.cca_chunks_len; i++) {
-		if (chunk_cid_is_reserved(args->cca_chunks.cca_chunks_val[i]
-						  .co_guard.cg_client_id)) {
+		if (chunk_cid_is_reserved(
+			    args->cca_chunks.cca_chunks_val[i].co_client_id)) {
 			*status = NFS4ERR_INVAL;
 			return 0;
 		}
@@ -1300,7 +1332,7 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
  * Validation rules (.claude/design/ec-repair.md sec 4):
  *   1. current FH set                 -> NFS4ERR_NOFILEHANDLE
  *   2. current FH is a regular file   -> NFS4ERR_INVAL
- *   3. cpa_owner.cg_client_id not reserved -> NFS4ERR_INVAL
+ *   3. cpa_owner.co_client_id not reserved -> NFS4ERR_INVAL
  *   4. inode has i_layout_segments    -> NFS4ERR_INVAL
  *   5. (idempotent) no mirror is FFV2_DS_FLAGS_REPAIR-flagged ->
  *      NFS4_OK with no state change.  Covers the crash-recovery
@@ -1352,7 +1384,7 @@ uint32_t nfs4_op_chunk_repaired(struct compound *compound)
 		return 0;
 	}
 
-	if (chunk_cid_is_reserved(args->cpa_owner.co_guard.cg_client_id)) {
+	if (chunk_cid_is_reserved(args->cpa_owner.co_client_id)) {
 		*status = NFS4ERR_INVAL;
 		return 0;
 	}
@@ -1754,7 +1786,7 @@ uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 		compound, args->cwra_chunk_size,
 		args->cwra_chunks.cwra_chunks_val,
 		args->cwra_chunks.cwra_chunks_len,
-		args->cwra_owner.co_guard.cg_client_id,
+		args->cwra_owner.co_client_id,
 		args->cwra_checksums.cwra_checksums_val,
 		args->cwra_checksums.cwra_checksums_len, "CHUNK_WRITE_REPAIR",
 		&wire_algo, &nchunks);
@@ -1779,8 +1811,7 @@ uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 	}
 
 	nfsstat4 trust_err = chunk_check_trusted_stateid(
-		&args->cwra_stateid, args->cwra_owner.co_guard.cg_client_id,
-		true);
+		&args->cwra_stateid, args->cwra_owner.co_client_id, true);
 
 	if (trust_err != NFS4_OK) {
 		*status = trust_err;
@@ -1876,6 +1907,17 @@ uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 		uint32_t blk_csum_algo = CHECKSUM_ALG_NONE;
 		uint32_t blk_csum_len = 0;
 		uint8_t blk_csum_value[CHUNK_VALUE_MAX] = { 0 };
+		/*
+		 * The block this repair supersedes, if any -- needed only
+		 * to advance the generation counter.  There is no CAS on
+		 * this path: the guarded-CAS and PENDING-collision gates
+		 * are deliberately bypassed for repair (see the note above
+		 * this handler).  Bumping the generation anyway is
+		 * deliberate -- the bytes changed, so any concurrent RMW
+		 * writer's captured guard must stop being valid.
+		 */
+		const struct chunk_block *old_blk =
+			chunk_store_lookup(cs, args->cwra_offset + i);
 
 		if (i < nchecksums) {
 			const checksum4 *cs4 =
@@ -1892,8 +1934,10 @@ uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 		struct chunk_block blk = {
 			.cb_state = CHUNK_STATE_PENDING,
 			.cb_flags = CHUNK_BLOCK_REPAIR_PROVENANCE,
-			.cb_gen_id = args->cwra_owner.co_guard.cg_gen_id,
-			.cb_client_id = args->cwra_owner.co_guard.cg_client_id,
+			/* Server-owned counter; see the CHUNK_WRITE note. */
+			.cb_gen_id = old_blk ? old_blk->cb_gen_id + 1 : 0,
+			.cb_cohort_id = args->cwra_owner.co_cohort_id,
+			.cb_client_id = args->cwra_owner.co_client_id,
 			.cb_owner_id = args->cwra_owner.co_id,
 			.cb_payload_id = args->cwra_payload_id,
 			.cb_checksum_algorithm = blk_csum_algo,

@@ -459,9 +459,9 @@ START_TEST(test_dispatch_read_path_mirrors_write)
 	g_mirrors[1].em_local = false;
 
 	int ret0 = ec_chunk_read(&ctx, 0, TEST_BLOCK_OFFSET, /* nblk */ 1,
-				 shard0, TEST_CHUNK_SZ, &nread0, NULL);
+				 shard0, TEST_CHUNK_SZ, &nread0, NULL, NULL);
 	int ret1 = ec_chunk_read(&ctx, 1, TEST_BLOCK_OFFSET, 1, shard1,
-				 TEST_CHUNK_SZ, &nread1, NULL);
+				 TEST_CHUNK_SZ, &nread1, NULL, NULL);
 
 	ck_assert_int_eq(ret0, 0);
 	ck_assert_int_eq(ret1, -EIO);

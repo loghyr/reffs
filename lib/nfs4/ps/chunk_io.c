@@ -39,10 +39,13 @@
 /* Derive cg_client_id from getpid() (with the two reserved sentinels  */
 /* avoided per draft-haynes-nfsv4-flexfiles-v2 sec-chunk_guard_none /  */
 /* sec-chunk_guard_mds: 0x00000000 and 0xFFFFFFFF respectively).       */
-/* Bump cg_gen_id monotonically per CHUNK_WRITE so successive writes   */
-/* from the same process stamp distinct versions too -- catches the    */
-/* same-writer stale-read case (read at v=N, another write lands at    */
-/* v=N+1, the stale-read writer's guard {N} mismatches current {N+1}). */
+/*                                                                     */
+/* cg_gen_id is NOT minted here.  The data server owns it: it stores   */
+/* old+1 on every accepted CHUNK_WRITE and returns the current value   */
+/* in cr_guard on CHUNK_READ.  A writer only ever echoes back the      */
+/* generation it read, which is what makes the CAS a real check --     */
+/* while the client picked the generation, it supplied both sides of   */
+/* the server's comparison and the guard could not fail.               */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -87,17 +90,14 @@ static uint32_t chunk_writer_client_id(uint32_t layout_client_id)
 	return cid;
 }
 
-static uint32_t chunk_writer_next_gen_id(void)
-{
-	static _Atomic uint32_t gen = 1;
-	uint32_t n = atomic_fetch_add_explicit(&gen, 1, memory_order_relaxed);
-	/* Skip 0 on wrap -- 0 is the all-zero sentinel CHUNK_GUARD_GEN_NONE
-	 * if/when the draft assigns one; today no value is reserved for
-	 * cg_gen_id but we keep room. */
-	if (n == 0)
-		n = atomic_fetch_add_explicit(&gen, 1, memory_order_relaxed);
-	return n;
-}
+/*
+ * A client-side generation counter used to live here and was written
+ * into chunk_owner4.co_guard.cg_gen_id.  Removed: cg_gen_id is the
+ * data server's per-chunk counter (draft sec-chunk_guard4), so a
+ * writer choosing its own value made the compare-and-swap compare
+ * against something the writer controlled.  Clients state an EXPECTED
+ * generation via cwa_guard; they do not mint one.
+ */
 
 /* ------------------------------------------------------------------ */
 /* CHUNK_WRITE                                                         */
@@ -148,9 +148,19 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		memset(&cwa->cwa_stateid, 0, sizeof(cwa->cwa_stateid));
 	cwa->cwa_offset = block_offset;
 	cwa->cwa_stable = FILE_SYNC4;
-	cwa->cwa_owner.co_guard.cg_gen_id = chunk_writer_next_gen_id();
-	cwa->cwa_owner.co_guard.cg_client_id =
-		chunk_writer_client_id(layout_client_id);
+	/*
+	 * No generation here: cg_gen_id is the DATA SERVER's
+	 * per-chunk counter, not something a writer chooses
+	 * (draft sec-chunk_guard4).  The client states what it
+	 * EXPECTS via cwa_guard when it wants a compare-and-swap;
+	 * the owner carries transaction identity only.
+	 *
+	 * co_cohort_id names this write transaction.  Left 0 until
+	 * cohorts are assigned per transaction -- the server does
+	 * not compare it yet, and 0 preserves today's behaviour.
+	 */
+	cwa->cwa_owner.co_cohort_id = 0;
+	cwa->cwa_owner.co_client_id = chunk_writer_client_id(layout_client_id);
 	cwa->cwa_owner.co_id = owner_id;
 	cwa->cwa_payload_id = 0;
 	cwa->cwa_flags = 0;
@@ -349,8 +359,19 @@ int ds_chunk_write_repair(struct mds_session *ds, const uint8_t *fh,
 	memcpy(&cwra->cwra_stateid, stateid, sizeof(stateid4));
 	cwra->cwra_offset = block_offset;
 	cwra->cwra_stable = FILE_SYNC4;
-	cwra->cwra_owner.co_guard.cg_gen_id = chunk_writer_next_gen_id();
-	cwra->cwra_owner.co_guard.cg_client_id =
+	/*
+	 * No generation here: cg_gen_id is the DATA SERVER's
+	 * per-chunk counter, not something a writer chooses
+	 * (draft sec-chunk_guard4).  The client states what it
+	 * EXPECTS via cwa_guard when it wants a compare-and-swap;
+	 * the owner carries transaction identity only.
+	 *
+	 * co_cohort_id names this write transaction.  Left 0 until
+	 * cohorts are assigned per transaction -- the server does
+	 * not compare it yet, and 0 preserves today's behaviour.
+	 */
+	cwra->cwra_owner.co_cohort_id = 0;
+	cwra->cwra_owner.co_client_id =
 		chunk_writer_client_id(layout_client_id);
 	cwra->cwra_owner.co_id = owner_id;
 	cwra->cwra_payload_id = 0;
@@ -442,7 +463,7 @@ out:
 int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		  uint64_t block_offset, uint32_t count, uint8_t *out_data,
 		  uint32_t chunk_size, uint32_t *nread, const stateid4 *stateid,
-		  chunk_owner4 *out_owners)
+		  chunk_owner4 *out_owners, chunk_guard4 *out_guards)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -541,6 +562,8 @@ int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		 */
 		if (out_owners)
 			out_owners[i] = rc->cr_owner;
+		if (out_guards)
+			out_guards[i] = rc->cr_guard;
 
 		/*
 		 * Test-only fault-injection hook (experiment 14, bit-flip-
@@ -696,8 +719,16 @@ int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
 		ret = -ENOMEM;
 		goto out;
 	}
-	cfa->cfa_chunks.cfa_chunks_val[0].co_guard.cg_gen_id = 1;
-	cfa->cfa_chunks.cfa_chunks_val[0].co_guard.cg_client_id = 1;
+	/*
+	 * Only co_id is load-bearing today: the server's
+	 * chunk_store_transition() matches stored blocks on co_id
+	 * alone, which is why the other fields were previously
+	 * hardcoded to 1.  Once matching widens to the full triple
+	 * these MUST carry the same cohort and client id the write
+	 * used, or the transition will not find its chunks.
+	 */
+	cfa->cfa_chunks.cfa_chunks_val[0].co_cohort_id = 0;
+	cfa->cfa_chunks.cfa_chunks_val[0].co_client_id = 1;
 	cfa->cfa_chunks.cfa_chunks_val[0].co_id = owner_id;
 
 	ret = mds_compound_send(&mc, ds);
@@ -777,8 +808,16 @@ int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		ret = -ENOMEM;
 		goto out;
 	}
-	cca->cca_chunks.cca_chunks_val[0].co_guard.cg_gen_id = 1;
-	cca->cca_chunks.cca_chunks_val[0].co_guard.cg_client_id = 1;
+	/*
+	 * Only co_id is load-bearing today: the server's
+	 * chunk_store_transition() matches stored blocks on co_id
+	 * alone, which is why the other fields were previously
+	 * hardcoded to 1.  Once matching widens to the full triple
+	 * these MUST carry the same cohort and client id the write
+	 * used, or the transition will not find its chunks.
+	 */
+	cca->cca_chunks.cca_chunks_val[0].co_cohort_id = 0;
+	cca->cca_chunks.cca_chunks_val[0].co_client_id = 1;
 	cca->cca_chunks.cca_chunks_val[0].co_id = owner_id;
 
 	ret = mds_compound_send(&mc, ds);

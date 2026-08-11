@@ -81,6 +81,14 @@ struct ec_context {
 	 * resolved by binary layout, not C nominal typing.
 	 */
 	chunk_owner4 ctx_read_owners[EC_CTX_MAX_MIRRORS];
+	/*
+	 * The per-chunk CAS state that came back with those owners.
+	 * Separate array because the guard is a separate wire field --
+	 * the owner names the writer and its transaction, the guard is
+	 * the data server's generation counter.  This is what a
+	 * subsequent cwa_guard must present.
+	 */
+	chunk_guard4 ctx_read_guards[EC_CTX_MAX_MIRRORS];
 	bool ctx_read_owners_valid;
 };
 
@@ -104,12 +112,14 @@ int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
 /*
  * Per-mirror CHUNK_READ.  Mirrors ec_chunk_write -- same
  * dispatch hook at the top, same fall-through to ds_chunk_read
- * on the RPC path.  out_owners (optional, NULL = skip) lets
- * the caller capture each returned block's chunk_owner4 for
- * later cwa_guard CAS-checks on the matching write path.
+ * on the RPC path.  out_owners and out_guards (both optional,
+ * NULL = skip) capture each returned block's chunk_owner4 and
+ * chunk_guard4.  The guard is what a later CHUNK_WRITE presents
+ * as cwa_guard: the generation lives there, not in the owner.
  */
 int ec_chunk_read(struct ec_context *ctx, int mirror_idx, uint64_t block_offset,
 		  uint32_t nblk, uint8_t *shard, uint32_t rd_chunk_sz,
-		  uint32_t *nread, chunk_owner4 *out_owners);
+		  uint32_t *nread, chunk_owner4 *out_owners,
+		  chunk_guard4 *out_guards);
 
 #endif /* EC_PIPELINE_INTERNAL_H */

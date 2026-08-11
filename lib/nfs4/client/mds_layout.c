@@ -583,13 +583,18 @@ int mds_chunk_repaired(struct mds_session *ms, struct mds_file *mf,
 	cpa->cpa_offset = offset;
 	cpa->cpa_count = count;
 	/*
-	 * cg_gen_id is unused by the server's CHUNK_REPAIRED handler;
-	 * cg_client_id only needs to be non-reserved (chunk_cid_is_reserved
-	 * rejects NONE=0 / MDS=1).  owner_id is the caller's stable
-	 * identifier and serves both purposes.
+	 * The server's CHUNK_REPAIRED handler only checks that
+	 * co_client_id is not a reserved sentinel (chunk_cid_is_reserved
+	 * rejects NONE=0x00000000 and MDS=0xFFFFFFFF); it does not
+	 * interpret the rest of the owner.  owner_id is the caller's
+	 * stable identifier, so it serves for all three fields here.
+	 *
+	 * co_cohort_id should name the repair transaction once cohorts
+	 * are assigned at write time; using owner_id keeps this
+	 * self-consistent until then, and the server does not compare it.
 	 */
-	cpa->cpa_owner.co_guard.cg_gen_id = 0;
-	cpa->cpa_owner.co_guard.cg_client_id = owner_id;
+	cpa->cpa_owner.co_cohort_id = owner_id;
+	cpa->cpa_owner.co_client_id = owner_id;
 	cpa->cpa_owner.co_id = owner_id;
 
 	ret = mds_compound_send(&mc, ms);

@@ -240,8 +240,7 @@ static void set_write_args(struct cm_ctx *cm, char *buf, uint32_t buf_len,
 	}
 
 	args->cwa_payload_id = 0x4242;
-	args->cwa_owner.co_guard.cg_gen_id = 7;
-	args->cwa_owner.co_guard.cg_client_id = 0xBEEF;
+	args->cwa_owner.co_client_id = 0xBEEF;
 	args->cwa_owner.co_id = 99;
 }
 
@@ -652,8 +651,7 @@ static void set_write_args_raw_checksum(struct cm_ctx *cm, char *buf,
 	}
 
 	args->cwa_payload_id = 0x4242;
-	args->cwa_owner.co_guard.cg_gen_id = 7;
-	args->cwa_owner.co_guard.cg_client_id = 0xBEEF;
+	args->cwa_owner.co_client_id = 0xBEEF;
 	args->cwa_owner.co_id = 99;
 }
 
@@ -789,7 +787,7 @@ START_TEST(test_chunk_finalize_no_store)
 	 * matches the value set_write_args() uses on the writer side so
 	 * owner-id lookups across WRITE / FINALIZE / COMMIT line up.
 	 */
-	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
 	CHUNK_FINALIZE4args *args =
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_finalize;
@@ -845,7 +843,7 @@ START_TEST(test_chunk_finalize_transitions_state)
 	 * matches the value set_write_args() uses on the writer side so
 	 * owner-id lookups across WRITE / FINALIZE / COMMIT line up.
 	 */
-	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
 	CHUNK_FINALIZE4args *args =
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_finalize;
@@ -937,7 +935,7 @@ START_TEST(test_chunk_finalize_skips_empty_in_range)
 	 * matches the value set_write_args() uses on the writer side so
 	 * owner-id lookups across WRITE / FINALIZE / COMMIT line up.
 	 */
-	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
 	CHUNK_FINALIZE4args *fargs =
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_finalize;
@@ -994,7 +992,7 @@ START_TEST(test_chunk_commit_no_store)
 	 * matches the value set_write_args() uses on the writer side so
 	 * owner-id lookups across WRITE / FINALIZE / COMMIT line up.
 	 */
-	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
 	CHUNK_COMMIT4args *args =
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_commit;
@@ -1029,7 +1027,7 @@ START_TEST(test_chunk_commit_transitions_state)
 	 * matches the value set_write_args() uses on the writer side so
 	 * owner-id lookups across WRITE / FINALIZE / COMMIT line up.
 	 */
-	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
 	struct cm_ctx *cm = cm_alloc(1);
 
 	cm_set_inode(cm, g_inode);
@@ -1113,7 +1111,7 @@ START_TEST(test_chunk_commit_skips_empty_in_range)
 	 * matches the value set_write_args() uses on the writer side so
 	 * owner-id lookups across WRITE / FINALIZE / COMMIT line up.
 	 */
-	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
 	struct cm_ctx *cm = cm_alloc(1);
 
 	cm_set_inode(cm, g_inode);
@@ -1564,7 +1562,7 @@ END_TEST
 START_TEST(test_chunk_ops_allowed_when_unidentified)
 {
 	static char buf[CHUNK_SZ];
-	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
 	struct cm_ctx *cm = cm_alloc(1);
 
 	cm_set_inode(cm, g_inode);
@@ -1591,7 +1589,7 @@ END_TEST
 START_TEST(test_chunk_ops_allowed_when_chunked)
 {
 	static char buf[CHUNK_SZ];
-	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
 	struct cm_ctx *cm = cm_alloc(1);
 
 	cm_set_inode(cm, g_inode);
@@ -1613,7 +1611,7 @@ END_TEST
  */
 START_TEST(test_chunk_lifecycle_ops_rejected_on_non_chunked)
 {
-	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
 	struct cm_ctx *cm = cm_alloc(1);
 
 	cm_set_inode(cm, g_inode);
@@ -1671,7 +1669,7 @@ START_TEST(test_chunk_read_locked_flag_reported)
 {
 	static char buf[CHUNK_SZ];
 	uint32_t good_crc = (uint32_t)crc32(0L, (const Bytef *)buf, CHUNK_SZ);
-	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
 	struct cm_ctx *cm = cm_alloc(1);
 
 	cm_set_inode(cm, g_inode);
@@ -1767,17 +1765,18 @@ START_TEST(test_chunk_read_locked_flag_reported)
 END_TEST
 
 /*
- * cr_guard is dual-written from the same per-block (gen_id,
- * client_id) as cr_owner.co_guard.  While reffs keeps the older
- * single-owner chunk_owner4 shape both carry the same value; the
- * draft's M2 restructure makes cr_guard the authoritative one.
- * Assert they agree so a change to either site has to face this.
+ * cr_owner and cr_guard answer different questions and no longer
+ * share a generation.  cr_owner is the {cohort, client, chunk}
+ * triple the writer supplied; cr_guard is the server's own CAS
+ * state, whose cg_gen_id the server assigns (0 on a first write)
+ * and no client can choose.  Assert the split so a change that
+ * re-merges them has to face this test.
  */
-START_TEST(test_chunk_read_guard_matches_owner)
+START_TEST(test_chunk_read_owner_and_guard_are_distinct)
 {
 	static char buf[CHUNK_SZ];
 	uint32_t good_crc = (uint32_t)crc32(0L, (const Bytef *)buf, CHUNK_SZ);
-	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
 	struct cm_ctx *cm = cm_alloc(1);
 
 	cm_set_inode(cm, g_inode);
@@ -1821,12 +1820,168 @@ START_TEST(test_chunk_read_guard_matches_owner)
 		read_chunk4 *rc = &res->CHUNK_READ4res_u.crr_resok4.crr_chunks
 					   .crr_chunks_val[0];
 
-		ck_assert_uint_eq(rc->cr_guard.cg_gen_id,
-				  rc->cr_owner.co_guard.cg_gen_id);
-		ck_assert_uint_eq(rc->cr_guard.cg_client_id,
-				  rc->cr_owner.co_guard.cg_client_id);
+		/*
+		 * First write to a virgin offset -- the fixture is
+		 * per-test -- so the server-assigned generation is 0.
+		 */
+		ck_assert_uint_eq(rc->cr_guard.cg_gen_id, 0);
+		/* The owner triple is echoed back as the writer sent it. */
+		ck_assert_uint_eq(rc->cr_owner.co_client_id, 0xBEEF);
+		ck_assert_uint_eq(rc->cr_owner.co_id, 99);
+		/*
+		 * cg_client_id is the last writer's id, which for a
+		 * single-writer block coincides with the owner's.
+		 */
+		ck_assert_uint_eq(rc->cr_guard.cg_client_id, 0xBEEF);
 	}
 	free_read_res(cm);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * Helpers for the generation-semantics tests below.  Each drives one
+ * step of the WRITE -> FINALIZE -> READ cycle on block 0 so the tests
+ * read as the sequence of wire ops they are.
+ */
+static void gen_write(struct cm_ctx *cm, char *buf, uint32_t crc,
+		      const chunk_guard4 *guard, nfsstat4 want)
+{
+	cm_reset_slot(cm, 0);
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, &crc, 1);
+	{
+		CHUNK_WRITE4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_write;
+		if (guard) {
+			a->cwa_guard.cwg_check = TRUE;
+			a->cwa_guard.write_chunk_guard4_u.cwg_guard = *guard;
+		} else {
+			a->cwa_guard.cwg_check = FALSE;
+		}
+	}
+	nfs4_op_chunk_write(cm->compound);
+	{
+		CHUNK_WRITE4res *res =
+			&cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_write;
+		ck_assert_uint_eq(res->cwr_status, want);
+	}
+	free_write_args(cm);
+	free_write_res(cm);
+}
+
+static void gen_finalize(struct cm_ctx *cm, chunk_owner4 *owner)
+{
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_FINALIZE);
+	{
+		CHUNK_FINALIZE4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_finalize;
+		a->cfa_offset = 0;
+		a->cfa_count = 1;
+		a->cfa_chunks.cfa_chunks_val = owner;
+		a->cfa_chunks.cfa_chunks_len = 1;
+	}
+	nfs4_op_chunk_finalize(cm->compound);
+	free_finalize_res(cm);
+}
+
+/* Returns the server's current guard for block 0. */
+static chunk_guard4 gen_read_guard(struct cm_ctx *cm)
+{
+	chunk_guard4 g = { 0 };
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_READ);
+	{
+		CHUNK_READ4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_read;
+		memset(&a->cra_stateid, 0, sizeof(a->cra_stateid));
+		a->cra_offset = 0;
+		a->cra_count = 1;
+	}
+	nfs4_op_chunk_read(cm->compound);
+	{
+		CHUNK_READ4res *res =
+			&cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_read;
+		ck_assert_int_eq(res->crr_status, NFS4_OK);
+		g = res->CHUNK_READ4res_u.crr_resok4.crr_chunks
+			    .crr_chunks_val[0]
+			    .cr_guard;
+	}
+	free_read_res(cm);
+	return g;
+}
+
+/*
+ * The generation is the data server's to assign.  A first write to a
+ * never-written block starts at 0 no matter what the writer says, and
+ * each accepted write advances it by one.  This is what makes the
+ * cwa_guard CAS a real check: while the client minted the generation
+ * and the server stored it verbatim, the client supplied both sides
+ * of the server's comparison and the guard could not fail.
+ */
+START_TEST(test_chunk_write_gen_id_server_assigned_and_increments)
+{
+	static char buf[CHUNK_SZ];
+	uint32_t crc = (uint32_t)crc32(0L, (const Bytef *)buf, CHUNK_SZ);
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+
+	/* First write to a virgin block -- server assigns generation 0. */
+	gen_write(cm, buf, crc, NULL, NFS4_OK);
+	gen_finalize(cm, &owner);
+
+	chunk_guard4 g0 = gen_read_guard(cm);
+
+	ck_assert_uint_eq(g0.cg_gen_id, 0);
+
+	/* Re-present exactly what we read: the CAS passes, gen advances. */
+	gen_write(cm, buf, crc, &g0, NFS4_OK);
+	gen_finalize(cm, &owner);
+
+	chunk_guard4 g1 = gen_read_guard(cm);
+
+	ck_assert_uint_eq(g1.cg_gen_id, 1);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * A writer that acts on a generation someone else has already
+ * superseded must be told to back off.  This is the case the PENDING
+ * gate cannot catch -- the earlier writer finished its whole
+ * PENDING -> FINALIZED cycle, so the block looks clean.
+ */
+START_TEST(test_chunk_write_stale_guard_rejected)
+{
+	static char buf[CHUNK_SZ];
+	uint32_t crc = (uint32_t)crc32(0L, (const Bytef *)buf, CHUNK_SZ);
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+
+	gen_write(cm, buf, crc, NULL, NFS4_OK);
+	gen_finalize(cm, &owner);
+
+	/* Our reader captures the guard here, at generation 0. */
+	chunk_guard4 stale = gen_read_guard(cm);
+
+	/* Another writer lands and completes, advancing the block. */
+	gen_write(cm, buf, crc, &stale, NFS4_OK);
+	gen_finalize(cm, &owner);
+
+	/* Our write, still holding the generation-0 guard, is refused. */
+	gen_write(cm, buf, crc, &stale, NFS4ERR_DELAY);
 
 	cm_free(cm);
 }
@@ -1836,7 +1991,7 @@ START_TEST(test_chunk_read_bit_rot_preserves_stored_checksum)
 {
 	static char buf[CHUNK_SZ]; /* zero-filled */
 	uint32_t good_crc = (uint32_t)crc32(0L, (const Bytef *)buf, CHUNK_SZ);
-	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
 	struct cm_ctx *cm = cm_alloc(1);
 
 	cm_set_inode(cm, g_inode);
@@ -1958,7 +2113,7 @@ START_TEST(test_chunk_full_cycle)
 	 * matches the value set_write_args() uses on the writer side so
 	 * owner-id lookups across WRITE / FINALIZE / COMMIT line up.
 	 */
-	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
 
 	struct cm_ctx *cm = cm_alloc(1);
 
@@ -2108,15 +2263,17 @@ END_TEST
  * Override the owner fields on the CHUNK_WRITE in slot 0 so the
  * test can simulate two distinct writers contending on the same
  * block.  Call AFTER set_write_args.
+ *
+ * There is no generation parameter: the server assigns cg_gen_id,
+ * so a writer cannot choose one.  Tests that need to exercise the
+ * CAS set cwa_guard with a generation obtained from a CHUNK_READ.
  */
-static void set_owner(struct cm_ctx *cm, uint64_t gen_id, uint64_t client_id,
-		      uint64_t owner_id)
+static void set_owner(struct cm_ctx *cm, uint64_t client_id, uint64_t owner_id)
 {
 	CHUNK_WRITE4args *args = &cm->compound->c_args->argarray.argarray_val[0]
 					  .nfs_argop4_u.opchunk_write;
 
-	args->cwa_owner.co_guard.cg_gen_id = gen_id;
-	args->cwa_owner.co_guard.cg_client_id = client_id;
+	args->cwa_owner.co_client_id = client_id;
 	args->cwa_owner.co_id = owner_id;
 }
 
@@ -2133,7 +2290,7 @@ START_TEST(test_multi_ps_disjoint_stripes_no_collisions)
 	 * sees a PENDING block from a different owner.
 	 */
 	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL, 0);
-	set_owner(cm, /* gen_id */ 1, /* client_id */ 0xA1, /* owner_id */ 10);
+	set_owner(cm, /* client_id */ 0xA1, /* owner_id */ 10);
 	nfs4_op_chunk_write(cm->compound);
 	{
 		CHUNK_WRITE4res *res =
@@ -2146,7 +2303,7 @@ START_TEST(test_multi_ps_disjoint_stripes_no_collisions)
 
 	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* block index */ 1, NULL,
 		       0);
-	set_owner(cm, /* gen_id */ 2, /* client_id */ 0xB2, /* owner_id */ 20);
+	set_owner(cm, /* client_id */ 0xB2, /* owner_id */ 20);
 	nfs4_op_chunk_write(cm->compound);
 	{
 		CHUNK_WRITE4res *res =
@@ -2181,7 +2338,7 @@ START_TEST(test_multi_ps_overlap_stripe_increments_displaced)
 
 	/* PS-A writes to block 0 with owner A. */
 	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL, 0);
-	set_owner(cm, /* gen_id */ 1, /* client_id */ 0xA1, /* owner_id */ 10);
+	set_owner(cm, /* client_id */ 0xA1, /* owner_id */ 10);
 	nfs4_op_chunk_write(cm->compound);
 	{
 		CHUNK_WRITE4res *res =
@@ -2204,7 +2361,7 @@ START_TEST(test_multi_ps_overlap_stripe_increments_displaced)
 	 * the rejection.
 	 */
 	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL, 0);
-	set_owner(cm, /* gen_id */ 2, /* client_id */ 0xB2, /* owner_id */ 20);
+	set_owner(cm, /* client_id */ 0xB2, /* owner_id */ 20);
 	nfs4_op_chunk_write(cm->compound);
 	{
 		CHUNK_WRITE4res *res =
@@ -2357,7 +2514,7 @@ START_TEST(test_inv1_overwrite_counted)
 
 	/* PS-A first write -> EMPTY prior state, first-write. */
 	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL, 0);
-	set_owner(cm, /* gen_id */ 1, /* client_id */ 0xA1, /* owner_id */ 10);
+	set_owner(cm, /* client_id */ 0xA1, /* owner_id */ 10);
 	nfs4_op_chunk_write(cm->compound);
 	free_write_res(cm);
 	cm_reset_slot(cm, 0);
@@ -2372,7 +2529,7 @@ START_TEST(test_inv1_overwrite_counted)
 	 * rejection instead.
 	 */
 	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL, 0);
-	set_owner(cm, /* gen_id */ 2, /* client_id */ 0xB2, /* owner_id */ 20);
+	set_owner(cm, /* client_id */ 0xB2, /* owner_id */ 20);
 	nfs4_op_chunk_write(cm->compound);
 	{
 		CHUNK_WRITE4res *res =
@@ -2764,7 +2921,10 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_inv1_fragmentation_one_run);
 	tcase_add_test(tc_h, test_inv1_fragmentation_three_runs);
 	tcase_add_test(tc_h, test_chunk_read_locked_flag_reported);
-	tcase_add_test(tc_h, test_chunk_read_guard_matches_owner);
+	tcase_add_test(tc_h, test_chunk_read_owner_and_guard_are_distinct);
+	tcase_add_test(tc_h,
+		       test_chunk_write_gen_id_server_assigned_and_increments);
+	tcase_add_test(tc_h, test_chunk_write_stale_guard_rejected);
 	tcase_add_test(tc_h, test_attr90_client_setattr_rejected);
 	tcase_add_test(tc_h, test_attr90_mds_setattr_on_empty_accepted);
 	tcase_add_test(tc_h, test_attr90_mds_setattr_on_nonempty_rejected);

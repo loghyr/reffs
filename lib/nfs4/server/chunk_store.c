@@ -78,6 +78,7 @@ static void block_to_disk(const struct chunk_block *blk,
 	dsk->cbd_gen_id = blk->cb_gen_id;
 	dsk->cbd_client_id = blk->cb_client_id;
 	dsk->cbd_owner_id = blk->cb_owner_id;
+	dsk->cbd_cohort_id = blk->cb_cohort_id;
 	dsk->cbd_payload_id = blk->cb_payload_id;
 	dsk->cbd_checksum_algorithm = blk->cb_checksum_algorithm;
 	dsk->cbd_checksum_len = blk->cb_checksum_len;
@@ -96,6 +97,7 @@ static void disk_to_block(const struct chunk_block_disk *dsk,
 	blk->cb_gen_id = dsk->cbd_gen_id;
 	blk->cb_client_id = dsk->cbd_client_id;
 	blk->cb_owner_id = dsk->cbd_owner_id;
+	blk->cb_cohort_id = dsk->cbd_cohort_id;
 	blk->cb_payload_id = dsk->cbd_payload_id;
 	blk->cb_checksum_algorithm = dsk->cbd_checksum_algorithm;
 	blk->cb_checksum_len = dsk->cbd_checksum_len;
