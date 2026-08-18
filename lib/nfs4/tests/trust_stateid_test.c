@@ -1189,6 +1189,53 @@ START_TEST(test_op_revoke_stateid_no_fh)
 }
 END_TEST
 
+/* REVOKE_STATEID applies only to regular chunked data files. */
+START_TEST(test_op_revoke_stateid_directory_rejected)
+{
+	struct cm_ctx *cm = cm_alloc(1, EXCHGID4_FLAG_USE_PNFS_MDS);
+	mode_t saved_mode = g_op_inode->i_mode;
+
+	g_op_inode->i_mode = S_IFDIR | 0755;
+	cm_set_inode(cm, g_op_inode);
+	cm_set_op(cm, 0, OP_REVOKE_STATEID);
+	cm->compound->c_args->argarray.argarray_val[0]
+		.nfs_argop4_u.oprevoke_stateid.rsa_layout_stateid =
+		make_stateid(0xBD);
+
+	nfs4_op_revoke_stateid(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+			 .nfs_resop4_u.oprevoke_stateid.rsr_status,
+			 NFS4ERR_ISDIR);
+
+	g_op_inode->i_mode = saved_mode;
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_op_revoke_stateid_nonchunked_rejected)
+{
+	struct cm_ctx *cm = cm_alloc(1, EXCHGID4_FLAG_USE_PNFS_MDS);
+	uint64_t saved_flags = g_op_inode->i_attr_flags;
+
+	g_op_inode->i_mode = S_IFREG | 0640;
+	g_op_inode->i_attr_flags |= INODE_CHUNKED_ATTR_PRESENT;
+	g_op_inode->i_attr_flags &= ~INODE_IS_CHUNKED_DATA_FILE;
+	cm_set_inode(cm, g_op_inode);
+	cm_set_op(cm, 0, OP_REVOKE_STATEID);
+	cm->compound->c_args->argarray.argarray_val[0]
+		.nfs_argop4_u.oprevoke_stateid.rsa_layout_stateid =
+		make_stateid(0xBE);
+
+	nfs4_op_revoke_stateid(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+			 .nfs_resop4_u.oprevoke_stateid.rsr_status,
+			 NFS4ERR_NOTSUPP);
+
+	g_op_inode->i_attr_flags = saved_flags;
+	cm_free(cm);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* H. BULK_REVOKE_STATEID op handler                                   */
 /* ------------------------------------------------------------------ */
@@ -2272,6 +2319,8 @@ static Suite *trust_stateid_suite(void)
 	tcase_add_test(tc_g, test_op_revoke_stateid_plain_client_rejected);
 	tcase_add_test(tc_g, test_op_revoke_stateid_special_stateid);
 	tcase_add_test(tc_g, test_op_revoke_stateid_nonanonymous_special_stateid);
+	tcase_add_test(tc_g, test_op_revoke_stateid_directory_rejected);
+	tcase_add_test(tc_g, test_op_revoke_stateid_nonchunked_rejected);
 	tcase_add_test(tc_g, test_op_revoke_stateid_no_fh);
 	suite_add_tcase(s, tc_g);
 

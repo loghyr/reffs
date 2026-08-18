@@ -23,6 +23,7 @@
 #endif
 
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 
 #include "nfsv42_xdr.h"
@@ -228,6 +229,23 @@ uint32_t nfs4_op_revoke_stateid(struct compound *compound)
 
 	if (!require_mds_client(compound, status))
 		return 0;
+
+	if (S_ISDIR(compound->c_inode->i_mode)) {
+		*status = NFS4ERR_ISDIR;
+		return 0;
+	}
+	if (S_ISLNK(compound->c_inode->i_mode)) {
+		*status = NFS4ERR_SYMLINK;
+		return 0;
+	}
+	if (!S_ISREG(compound->c_inode->i_mode)) {
+		*status = NFS4ERR_WRONG_TYPE;
+		return 0;
+	}
+	if (inode_chunked_state(compound->c_inode) == INODE_CHUNKED_NO) {
+		*status = NFS4ERR_NOTSUPP;
+		return 0;
+	}
 
 	if (stateid4_is_special(&args->rsa_layout_stateid)) {
 		*status = stateid4_is_anonymous(&args->rsa_layout_stateid) ?
