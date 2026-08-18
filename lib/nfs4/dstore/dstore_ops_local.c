@@ -383,16 +383,21 @@ static int local_trust_stateid(struct dstore *ds __attribute__((unused)),
  * table.
  */
 static int local_revoke_stateid(struct dstore *ds __attribute__((unused)),
-				const uint8_t *fh __attribute__((unused)),
-				uint32_t fh_len __attribute__((unused)),
+				const uint8_t *fh, uint32_t fh_len,
 				uint32_t stid_seqid, const uint8_t *stid_other)
 {
 	stateid4 stid;
+	struct inode *inode = local_fh_to_inode(fh, fh_len);
+
+	if (!inode)
+		return -ESTALE;
 
 	stid.seqid = stid_seqid;
 	memcpy(stid.other, stid_other, NFS4_OTHER_SIZE);
 
-	trust_stateid_revoke(&stid);
+	/* The local vtable has no issuer field; scope at least to this file. */
+	trust_stateid_revoke_fh(&stid, inode->i_sb->sb_id, inode->i_ino, 0);
+	inode_active_put(inode);
 	return 0;
 }
 
