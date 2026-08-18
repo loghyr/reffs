@@ -190,9 +190,9 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 /* Register with the complete filehandle identity. */
 int trust_stateid_register_fh(const stateid4 *stateid, uint64_t sb,
 			      uint64_t ino, clientid4 issuer_clientid,
-			      clientid4 target_clientid,
-			      uint32_t client_id, layoutiomode4 iomode,
-			      uint64_t expire_mono_ns, const char *principal);
+			      clientid4 target_clientid, uint32_t client_id,
+			      layoutiomode4 iomode, uint64_t expire_mono_ns,
+			      const char *principal);
 
 /*
  * trust_stateid_revoke -- remove the entry for this stateid.other.
@@ -201,8 +201,8 @@ int trust_stateid_register_fh(const stateid4 *stateid, uint64_t sb,
 void trust_stateid_revoke(const stateid4 *stateid);
 
 /* Revoke only when issuer and complete filehandle identity match. */
-void trust_stateid_revoke_fh(const stateid4 *stateid, uint64_t sb,
-			     uint64_t ino, clientid4 issuer);
+void trust_stateid_revoke_fh(const stateid4 *stateid, uint64_t sb, uint64_t ino,
+			     clientid4 issuer);
 
 /*
  * trust_stateid_bulk_revoke_scoped -- remove entries registered by issuer

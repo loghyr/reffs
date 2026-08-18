@@ -408,9 +408,9 @@ void trust_stateid_fini(void)
 
 int trust_stateid_register_fh(const stateid4 *stateid, uint64_t sb,
 			      uint64_t ino, clientid4 issuer_clientid,
-			      clientid4 target_clientid,
-			      uint32_t client_id, layoutiomode4 iomode,
-			      uint64_t expire_mono_ns, const char *principal)
+			      clientid4 target_clientid, uint32_t client_id,
+			      layoutiomode4 iomode, uint64_t expire_mono_ns,
+			      const char *principal)
 {
 	if (!trust_ht)
 		return -EINVAL;
@@ -505,12 +505,13 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 			   const char *principal)
 {
 	return trust_stateid_register_fh(stateid, 0, ino, clientid, 0,
-					 client_id, iomode, expire_mono_ns, principal);
+					 client_id, iomode, expire_mono_ns,
+					 principal);
 }
 
 static void trust_stateid_revoke_match(const stateid4 *stateid, uint64_t sb,
-					       uint64_t ino, clientid4 issuer,
-					       bool check_issuer)
+				       uint64_t ino, clientid4 issuer,
+				       bool check_issuer)
 {
 	if (!trust_ht)
 		return;
@@ -530,7 +531,8 @@ static void trust_stateid_revoke_match(const stateid4 *stateid, uint64_t sb,
 		if (urcu_ref_get_unless_zero(&te->te_ref)) {
 			if ((sb != 0 && te->te_sb != sb) ||
 			    (ino != 0 && te->te_ino != ino) ||
-			    (check_issuer && te->te_issuer_clientid != issuer)) {
+			    (check_issuer &&
+			     te->te_issuer_clientid != issuer)) {
 				trust_entry_put(te);
 				rcu_read_unlock();
 				return;
@@ -550,8 +552,8 @@ static void trust_stateid_revoke_match(const stateid4 *stateid, uint64_t sb,
 	rcu_read_unlock();
 }
 
-void trust_stateid_revoke_fh(const stateid4 *stateid, uint64_t sb,
-			     uint64_t ino, clientid4 issuer)
+void trust_stateid_revoke_fh(const stateid4 *stateid, uint64_t sb, uint64_t ino,
+			     clientid4 issuer)
 {
 	trust_stateid_revoke_match(stateid, sb, ino, issuer, true);
 }

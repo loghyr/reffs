@@ -409,7 +409,8 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	 * bound to this file and authenticated principal.
 	 */
 	nfsstat4 trust_err = chunk_check_trusted_stateid(
-		compound, &args->cwa_stateid, args->cwa_owner.co_client_id, false);
+		compound, &args->cwa_stateid, args->cwa_owner.co_client_id,
+		false);
 
 	if (trust_err != NFS4_OK) {
 		*status = trust_err;
@@ -879,8 +880,9 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 	 * Trust table validation -- tightly-coupled DS.
 	 * Same file, principal, and stateid checks as CHUNK_WRITE.
 	 */
-	nfsstat4 trust_err = chunk_check_trusted_stateid(
-		compound, &args->cra_stateid, CHUNK_GUARD_CLIENT_ID_NONE, false);
+	nfsstat4 trust_err =
+		chunk_check_trusted_stateid(compound, &args->cra_stateid,
+					    CHUNK_GUARD_CLIENT_ID_NONE, false);
 
 	if (trust_err != NFS4_OK) {
 		*status = trust_err;
@@ -1134,8 +1136,9 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 		return 0;
 	}
 
-	nfsstat4 stid_err = chunk_check_trusted_stateid(
-		compound, &args->cfa_stateid, CHUNK_GUARD_CLIENT_ID_NONE, false);
+	nfsstat4 stid_err =
+		chunk_check_trusted_stateid(compound, &args->cfa_stateid,
+					    CHUNK_GUARD_CLIENT_ID_NONE, false);
 
 	if (stid_err != NFS4_OK) {
 		*status = stid_err;
@@ -1236,8 +1239,9 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 		return 0;
 	}
 
-	nfsstat4 stid_err = chunk_check_trusted_stateid(
-		compound, &args->cca_stateid, CHUNK_GUARD_CLIENT_ID_NONE, false);
+	nfsstat4 stid_err =
+		chunk_check_trusted_stateid(compound, &args->cca_stateid,
+					    CHUNK_GUARD_CLIENT_ID_NONE, false);
 
 	if (stid_err != NFS4_OK) {
 		*status = stid_err;
@@ -1499,8 +1503,9 @@ uint32_t nfs4_op_chunk_rollback(struct compound *compound)
 		return 0;
 	}
 
-	nfsstat4 stid_err = chunk_check_trusted_stateid(
-		compound, &args->crb_stateid, CHUNK_GUARD_CLIENT_ID_NONE, false);
+	nfsstat4 stid_err =
+		chunk_check_trusted_stateid(compound, &args->crb_stateid,
+					    CHUNK_GUARD_CLIENT_ID_NONE, false);
 
 	if (stid_err != NFS4_OK) {
 		*status = stid_err;
@@ -1819,7 +1824,8 @@ uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 	}
 
 	nfsstat4 trust_err = chunk_check_trusted_stateid(
-		compound, &args->cwra_stateid, args->cwra_owner.co_client_id, true);
+		compound, &args->cwra_stateid, args->cwra_owner.co_client_id,
+		true);
 
 	if (trust_err != NFS4_OK) {
 		*status = trust_err;

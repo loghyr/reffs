@@ -140,7 +140,8 @@ uint32_t nfs4_op_trust_stateid(struct compound *compound)
 	 */
 	if (stateid4_is_special(&args->tsa_layout_stateid)) {
 		*status = stateid4_is_anonymous(&args->tsa_layout_stateid) ?
-				  NFS4ERR_INVAL : NFS4ERR_BAD_STATEID;
+				  NFS4ERR_INVAL :
+				  NFS4ERR_BAD_STATEID;
 		return 0;
 	}
 	if (args->tsa_pnfs_clientid == 0) {
@@ -205,12 +206,10 @@ uint32_t nfs4_op_trust_stateid(struct compound *compound)
 					     ->c_id :
 				     0;
 
-	int ret = trust_stateid_register_fh(&args->tsa_layout_stateid,
-					    compound->c_curr_nfh.nfh_sb, ino,
-					    clientid, args->tsa_pnfs_clientid,
-					    args->tsa_client_id,
-					    args->tsa_iomode, expire_mono_ns,
-					    principal);
+	int ret = trust_stateid_register_fh(
+		&args->tsa_layout_stateid, compound->c_curr_nfh.nfh_sb, ino,
+		clientid, args->tsa_pnfs_clientid, args->tsa_client_id,
+		args->tsa_iomode, expire_mono_ns, principal);
 	if (ret == -EINVAL)
 		*status = NFS4ERR_INVAL;
 	else if (ret != 0)
@@ -257,7 +256,8 @@ uint32_t nfs4_op_revoke_stateid(struct compound *compound)
 
 	if (stateid4_is_special(&args->rsa_layout_stateid)) {
 		*status = stateid4_is_anonymous(&args->rsa_layout_stateid) ?
-				  NFS4ERR_INVAL : NFS4ERR_BAD_STATEID;
+				  NFS4ERR_INVAL :
+				  NFS4ERR_BAD_STATEID;
 		return 0;
 	}
 

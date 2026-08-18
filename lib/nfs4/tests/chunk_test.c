@@ -140,11 +140,12 @@ static void cm_set_inode(struct cm_ctx *cm, struct inode *inode)
 	       sizeof(cm->chunk_stateid));
 	cm->chunk_stateid.seqid = 1;
 	ck_assert_int_eq(trust_stateid_register_fh(
-		&cm->chunk_stateid, inode->i_sb->sb_id, inode->i_ino,
-		cm->nc->nc_client.c_id, cm->nc->nc_client.c_id,
-		CHUNK_GUARD_CLIENT_ID_NONE,
-		LAYOUTIOMODE4_RW, UINT64_MAX,
-		""), 0);
+				 &cm->chunk_stateid, inode->i_sb->sb_id,
+				 inode->i_ino, cm->nc->nc_client.c_id,
+				 cm->nc->nc_client.c_id,
+				 CHUNK_GUARD_CLIENT_ID_NONE, LAYOUTIOMODE4_RW,
+				 UINT64_MAX, ""),
+			 0);
 	cm->chunk_stateid_registered = true;
 }
 
@@ -167,7 +168,8 @@ static void cm_set_op(struct cm_ctx *cm, unsigned int idx, nfs_opnum4 opnum)
 			cm->chunk_stateid;
 		break;
 	case OP_CHUNK_COMMIT:
-		arg->nfs_argop4_u.opchunk_commit.cca_stateid = cm->chunk_stateid;
+		arg->nfs_argop4_u.opchunk_commit.cca_stateid =
+			cm->chunk_stateid;
 		break;
 	case OP_CHUNK_ROLLBACK:
 		arg->nfs_argop4_u.opchunk_rollback.crb_stateid =
@@ -427,12 +429,12 @@ START_TEST(test_chunk_write_special_stateid_rejected)
 	cm_set_inode(cm, g_inode);
 	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, NULL, 0);
 	memset(&cm->compound->c_args->argarray.argarray_val[0]
-			 .nfs_argop4_u.opchunk_write.cwa_stateid,
+			.nfs_argop4_u.opchunk_write.cwa_stateid,
 	       0, sizeof(stateid4));
 
 	nfs4_op_chunk_write(cm->compound);
 	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
-			 .nfs_resop4_u.opchunk_write.cwr_status,
+				 .nfs_resop4_u.opchunk_write.cwr_status,
 			 NFS4ERR_BAD_STATEID);
 	cm_free(cm);
 }
@@ -449,7 +451,7 @@ START_TEST(test_chunk_write_stateid_file_mismatch_rejected)
 
 	nfs4_op_chunk_write(cm->compound);
 	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
-			 .nfs_resop4_u.opchunk_write.cwr_status,
+				 .nfs_resop4_u.opchunk_write.cwr_status,
 			 NFS4ERR_BAD_STATEID);
 	cm_free(cm);
 }
@@ -466,10 +468,11 @@ START_TEST(test_chunk_write_stateid_principal_mismatch_rejected)
 	memset(&stid, 0xA5, sizeof(stid));
 	stid.seqid = 1;
 	ck_assert_int_eq(trust_stateid_register_fh(
-		&stid, g_inode->i_sb->sb_id, g_inode->i_ino,
-		cm->nc->nc_client.c_id, cm->nc->nc_client.c_id,
-		CHUNK_GUARD_CLIENT_ID_NONE,
-		LAYOUTIOMODE4_RW, UINT64_MAX, registered_principal), 0);
+				 &stid, g_inode->i_sb->sb_id, g_inode->i_ino,
+				 cm->nc->nc_client.c_id, cm->nc->nc_client.c_id,
+				 CHUNK_GUARD_CLIENT_ID_NONE, LAYOUTIOMODE4_RW,
+				 UINT64_MAX, registered_principal),
+			 0);
 	cm->compound->c_gss_principal = "other@example.com";
 	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, NULL, 0);
 	cm->compound->c_args->argarray.argarray_val[0]
@@ -477,7 +480,7 @@ START_TEST(test_chunk_write_stateid_principal_mismatch_rejected)
 
 	nfs4_op_chunk_write(cm->compound);
 	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
-			 .nfs_resop4_u.opchunk_write.cwr_status,
+				 .nfs_resop4_u.opchunk_write.cwr_status,
 			 NFS4ERR_ACCESS);
 	cm_free(cm);
 }
@@ -1639,7 +1642,7 @@ static nfsstat4 run_chunk_read(struct cm_ctx *cm)
 		CHUNK_READ4args *a =
 			&cm->compound->c_args->argarray.argarray_val[0]
 				 .nfs_argop4_u.opchunk_read;
-	a->cra_stateid = cm->chunk_stateid;
+		a->cra_stateid = cm->chunk_stateid;
 		a->cra_offset = 0;
 		a->cra_count = 1;
 	}
@@ -2972,7 +2975,8 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_a, test_chunk_write_no_fh);
 	tcase_add_test(tc_a, test_chunk_write_special_stateid_rejected);
 	tcase_add_test(tc_a, test_chunk_write_stateid_file_mismatch_rejected);
-	tcase_add_test(tc_a, test_chunk_write_stateid_principal_mismatch_rejected);
+	tcase_add_test(tc_a,
+		       test_chunk_write_stateid_principal_mismatch_rejected);
 	tcase_add_test(tc_a, test_chunk_write_zero_chunk_size);
 	tcase_add_test(tc_a, test_chunk_write_crc_mismatch);
 	tcase_add_test(tc_a, test_chunk_write_not_regular_file);

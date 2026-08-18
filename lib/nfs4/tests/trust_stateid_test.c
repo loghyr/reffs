@@ -464,14 +464,17 @@ START_TEST(test_bulk_revoke_scoped_issuer_and_target)
 	stateid4 other_issuer = make_stateid(0x63);
 
 	ck_assert_int_eq(trust_stateid_register_fh(
-		&same_issuer, 0, 1, 0x100, 0x200, 0x11,
-		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
+				 &same_issuer, 0, 1, 0x100, 0x200, 0x11,
+				 LAYOUTIOMODE4_RW, future_expire_ns(), ""),
+			 0);
 	ck_assert_int_eq(trust_stateid_register_fh(
-		&other_target, 0, 2, 0x100, 0x201, 0x12,
-		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
+				 &other_target, 0, 2, 0x100, 0x201, 0x12,
+				 LAYOUTIOMODE4_RW, future_expire_ns(), ""),
+			 0);
 	ck_assert_int_eq(trust_stateid_register_fh(
-		&other_issuer, 0, 3, 0x101, 0x200, 0x13,
-		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
+				 &other_issuer, 0, 3, 0x101, 0x200, 0x13,
+				 LAYOUTIOMODE4_RW, future_expire_ns(), ""),
+			 0);
 
 	trust_stateid_bulk_revoke_scoped(0x100, 0x200);
 	ck_assert_ptr_null(trust_stateid_find(&same_issuer));
@@ -491,15 +494,18 @@ START_TEST(test_bulk_revoke_scoped_zero_target)
 	stateid4 second = make_stateid(0x65);
 	stateid4 foreign = make_stateid(0x66);
 
-	ck_assert_int_eq(trust_stateid_register_fh(
-		&first, 0, 4, 0x110, 0x210, 0x14,
-		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
-	ck_assert_int_eq(trust_stateid_register_fh(
-		&second, 0, 5, 0x110, 0x211, 0x15,
-		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
-	ck_assert_int_eq(trust_stateid_register_fh(
-		&foreign, 0, 6, 0x111, 0x210, 0x16,
-		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
+	ck_assert_int_eq(trust_stateid_register_fh(&first, 0, 4, 0x110, 0x210,
+						   0x14, LAYOUTIOMODE4_RW,
+						   future_expire_ns(), ""),
+			 0);
+	ck_assert_int_eq(trust_stateid_register_fh(&second, 0, 5, 0x110, 0x211,
+						   0x15, LAYOUTIOMODE4_RW,
+						   future_expire_ns(), ""),
+			 0);
+	ck_assert_int_eq(trust_stateid_register_fh(&foreign, 0, 6, 0x111, 0x210,
+						   0x16, LAYOUTIOMODE4_RW,
+						   future_expire_ns(), ""),
+			 0);
 
 	trust_stateid_bulk_revoke_scoped(0x110, 0);
 	ck_assert_ptr_null(trust_stateid_find(&first));
@@ -1059,10 +1065,12 @@ START_TEST(test_op_revoke_stateid_ok)
 
 	cm_set_inode(cm, g_op_inode);
 	ck_assert_int_eq(trust_stateid_register_fh(
-		&stid, g_op_inode->i_sb->sb_id, g_op_inode->i_ino,
-		cm->nc->nc_client.c_id, cm->nc->nc_client.c_id,
-		CHUNK_GUARD_CLIENT_ID_NONE,
-		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
+				 &stid, g_op_inode->i_sb->sb_id,
+				 g_op_inode->i_ino, cm->nc->nc_client.c_id,
+				 cm->nc->nc_client.c_id,
+				 CHUNK_GUARD_CLIENT_ID_NONE, LAYOUTIOMODE4_RW,
+				 future_expire_ns(), ""),
+			 0);
 	cm_set_op(cm, 0, OP_REVOKE_STATEID);
 
 	REVOKE_STATEID4args *args =
@@ -1093,9 +1101,12 @@ START_TEST(test_op_revoke_stateid_wrong_issuer_is_noop)
 
 	cm_set_inode(cm, g_op_inode);
 	ck_assert_int_eq(trust_stateid_register_fh(
-		&stid, g_op_inode->i_sb->sb_id, g_op_inode->i_ino, 0xDEAD,
-		cm->nc->nc_client.c_id, CHUNK_GUARD_CLIENT_ID_NONE,
-		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
+				 &stid, g_op_inode->i_sb->sb_id,
+				 g_op_inode->i_ino, 0xDEAD,
+				 cm->nc->nc_client.c_id,
+				 CHUNK_GUARD_CLIENT_ID_NONE, LAYOUTIOMODE4_RW,
+				 future_expire_ns(), ""),
+			 0);
 	struct trust_entry *before = trust_stateid_find(&stid);
 	ck_assert_ptr_nonnull(before);
 	ck_assert_uint_ne(before->te_issuer_clientid, cm->nc->nc_client.c_id);
@@ -1106,7 +1117,7 @@ START_TEST(test_op_revoke_stateid_wrong_issuer_is_noop)
 
 	nfs4_op_revoke_stateid(cm->compound);
 	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
-			 .nfs_resop4_u.oprevoke_stateid.rsr_status,
+				 .nfs_resop4_u.oprevoke_stateid.rsr_status,
 			 NFS4_OK);
 
 	struct trust_entry *te = trust_stateid_find(&stid);
@@ -1268,7 +1279,7 @@ START_TEST(test_op_revoke_stateid_directory_rejected)
 
 	nfs4_op_revoke_stateid(cm->compound);
 	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
-			 .nfs_resop4_u.oprevoke_stateid.rsr_status,
+				 .nfs_resop4_u.oprevoke_stateid.rsr_status,
 			 NFS4ERR_ISDIR);
 
 	g_op_inode->i_mode = saved_mode;
@@ -1292,7 +1303,7 @@ START_TEST(test_op_revoke_stateid_nonchunked_rejected)
 
 	nfs4_op_revoke_stateid(cm->compound);
 	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
-			 .nfs_resop4_u.oprevoke_stateid.rsr_status,
+				 .nfs_resop4_u.oprevoke_stateid.rsr_status,
 			 NFS4ERR_NOTSUPP);
 
 	g_op_inode->i_attr_flags = saved_flags;
@@ -2002,7 +2013,7 @@ START_TEST(test_reregister_does_not_rebind_client_id)
 	ck_assert_int_eq(trust_stateid_register(&s, 5, 0xCAFE, 0x9999,
 						LAYOUTIOMODE4_RW,
 						future_expire_ns(), ""),
-				 -EINVAL);
+			 -EINVAL);
 
 	struct trust_entry *te = trust_stateid_find(&s);
 
@@ -2384,7 +2395,8 @@ static Suite *trust_stateid_suite(void)
 	tcase_add_test(tc_g, test_op_revoke_stateid_not_from_mds);
 	tcase_add_test(tc_g, test_op_revoke_stateid_plain_client_rejected);
 	tcase_add_test(tc_g, test_op_revoke_stateid_special_stateid);
-	tcase_add_test(tc_g, test_op_revoke_stateid_nonanonymous_special_stateid);
+	tcase_add_test(tc_g,
+		       test_op_revoke_stateid_nonanonymous_special_stateid);
 	tcase_add_test(tc_g, test_op_revoke_stateid_directory_rejected);
 	tcase_add_test(tc_g, test_op_revoke_stateid_nonchunked_rejected);
 	tcase_add_test(tc_g, test_op_revoke_stateid_no_fh);

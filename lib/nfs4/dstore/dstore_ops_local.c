@@ -371,10 +371,11 @@ static int local_trust_stateid(struct dstore *ds __attribute__((unused)),
 	 * clientid 0.  The layout holder remains the target clientid4 and its
 	 * 32-bit ffv2 writer identity is derived independently.
 	 */
-	ret = trust_stateid_register_fh(
-		&stid, inode->i_sb->sb_id, inode->i_ino, 0, (clientid4)clientid,
-		ffv2_writer_id((clientid4)clientid), (layoutiomode4)iomode,
-		expire_mono_ns, principal);
+	ret = trust_stateid_register_fh(&stid, inode->i_sb->sb_id, inode->i_ino,
+					0, (clientid4)clientid,
+					ffv2_writer_id((clientid4)clientid),
+					(layoutiomode4)iomode, expire_mono_ns,
+					principal);
 	inode_active_put(inode);
 	return ret;
 }
