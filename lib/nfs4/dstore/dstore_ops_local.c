@@ -319,12 +319,11 @@ static int local_probe_tight_coupling(struct dstore *ds __attribute__((unused)))
  * local_trust_stateid -- register a layout stateid in the local trust
  * table.
  *
- * Converts the wall-clock expiry to CLOCK_MONOTONIC and calls
- * trust_stateid_register() directly.
+ * Converts the wall-clock expiry to CLOCK_MONOTONIC and registers the
+ * stateid with the file identity carried by the local filehandle.
  */
 static int local_trust_stateid(struct dstore *ds __attribute__((unused)),
-			       const uint8_t *fh __attribute__((unused)),
-			       uint32_t fh_len __attribute__((unused)),
+			       const uint8_t *fh, uint32_t fh_len,
 			       uint32_t stid_seqid, const uint8_t *stid_other,
 			       uint32_t iomode, uint64_t clientid,
 			       int64_t expire_sec, uint32_t expire_nsec,
@@ -334,6 +333,12 @@ static int local_trust_stateid(struct dstore *ds __attribute__((unused)),
 	nfstime4 expire;
 	struct timespec wall, mono;
 	uint64_t wall_ns, mono_ns, expire_mono_ns;
+	struct inode *inode;
+	int ret;
+
+	inode = local_fh_to_inode(fh, fh_len);
+	if (!inode)
+		return -ESTALE;
 
 	stid.seqid = stid_seqid;
 	memcpy(stid.other, stid_other, NFS4_OTHER_SIZE);
@@ -354,8 +359,10 @@ static int local_trust_stateid(struct dstore *ds __attribute__((unused)),
 
 	expire_mono_ns =
 		trust_stateid_convert_expire(&expire, wall_ns, mono_ns);
-	if (expire_mono_ns == 0)
+	if (expire_mono_ns == 0) {
+		inode_active_put(inode);
 		return -EINVAL;
+	}
 
 	/*
 	 * Combined mode registers by direct call rather than over the
@@ -363,10 +370,12 @@ static int local_trust_stateid(struct dstore *ds __attribute__((unused)),
 	 * nfsv4_trust_stateid puts in tsa_client_id -- same function,
 	 * same clientid4, so the two modes record the same binding.
 	 */
-	return trust_stateid_register(&stid, 0, (clientid4)clientid,
-				      ffv2_writer_id((clientid4)clientid),
-				      (layoutiomode4)iomode, expire_mono_ns,
-				      principal);
+	ret = trust_stateid_register_fh(
+		&stid, inode->i_sb->sb_id, inode->i_ino, (clientid4)clientid,
+		ffv2_writer_id((clientid4)clientid), (layoutiomode4)iomode,
+		expire_mono_ns, principal);
+	inode_active_put(inode);
+	return ret;
 }
 
 /*

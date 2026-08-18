@@ -78,8 +78,8 @@ static inline bool chunk_cid_is_reserved(uint32_t cid)
  *
  * Returns NFS4_OK when the caller may proceed.  Returns a non-zero
  * nfsstat4 on rejection (caller assigns to *status and returns 0).
- * Special stateids bypass the check -- the data server's own
- * permission model handles those.
+ * Special stateids are never valid for CHUNK I/O.  They are reserved for
+ * the TRUST_STATEID capability probe, not a data-path authorization bypass.
  *
  * client_id is the writer identity the operation presents, or
  * CHUNK_GUARD_CLIENT_ID_NONE when it presents none.  CHUNK_READ is
@@ -89,12 +89,13 @@ static inline bool chunk_cid_is_reserved(uint32_t cid)
  * require_rw is for CHUNK_WRITE_REPAIR, the one caller that also
  * insists the registered layout be writable.
  */
-static nfsstat4 chunk_check_trusted_stateid(const stateid4 *stid,
+static nfsstat4 chunk_check_trusted_stateid(const struct compound *compound,
+					    const stateid4 *stid,
 					    uint32_t client_id, bool require_rw)
 {
 	if (stateid4_is_special(stid)) {
 		trust_stateid_count_validation(TRUST_VALIDATE_SPECIAL);
-		return NFS4_OK;
+		return NFS4ERR_BAD_STATEID;
 	}
 
 	struct trust_entry *te = trust_stateid_find(stid);
@@ -128,6 +129,19 @@ static nfsstat4 chunk_check_trusted_stateid(const stateid4 *stid,
 	if (require_rw && te->te_iomode != LAYOUTIOMODE4_RW) {
 		trust_entry_put(te);
 		trust_stateid_count_validation(TRUST_VALIDATE_IOMODE);
+		return NFS4ERR_ACCESS;
+	}
+	if (!compound->c_inode || te->te_ino != compound->c_curr_nfh.nfh_ino ||
+	    (te->te_sb != 0 && te->te_sb != compound->c_curr_nfh.nfh_sb)) {
+		trust_entry_put(te);
+		trust_stateid_count_validation(TRUST_VALIDATE_IDENTITY);
+		return NFS4ERR_BAD_STATEID;
+	}
+	if (te->te_principal[0] &&
+	    (!compound->c_gss_principal ||
+	     strcmp(te->te_principal, compound->c_gss_principal) != 0)) {
+		trust_entry_put(te);
+		trust_stateid_count_validation(TRUST_VALIDATE_IDENTITY);
 		return NFS4ERR_ACCESS;
 	}
 
@@ -216,10 +230,8 @@ static bool chunk_op_on_non_chunked(const struct compound *compound)
  * Both ops carry the same payload shape (the cwa_/cwra_ XDR prefix
  * differs); this helper takes already-extracted fields so it is
  * struct-agnostic.  The per-op stateid / trust-table check stays
- * inline in each handler -- CHUNK_WRITE allows special stateids,
- * CHUNK_WRITE_REPAIR rejects them and additionally requires iomode
- * RW, so the auth shape differs even though the payload contract
- * does not.
+ * inline in each handler because CHUNK_WRITE_REPAIR additionally
+ * requires a writable layout, while the payload contract is shared.
  *
  * Validation rules (in order; first failure wins):
  *   1. current FH set                 -> NFS4ERR_NOFILEHANDLE
@@ -393,13 +405,11 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	/*
 	 * Trust table validation -- tightly-coupled DS.
 	 *
-	 * If the trust table is non-empty, validate that the stateid
-	 * was registered by the MDS.  Special stateids (anonymous,
-	 * read-bypass) bypass the check -- they are handled separately
-	 * by the DS's own permission model.
+	 * Validate that the stateid was registered by the MDS and is
+	 * bound to this file and authenticated principal.
 	 */
 	nfsstat4 trust_err = chunk_check_trusted_stateid(
-		&args->cwa_stateid, args->cwa_owner.co_client_id, false);
+		compound, &args->cwa_stateid, args->cwa_owner.co_client_id, false);
 
 	if (trust_err != NFS4_OK) {
 		*status = trust_err;
@@ -867,10 +877,10 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 
 	/*
 	 * Trust table validation -- tightly-coupled DS.
-	 * Same logic as CHUNK_WRITE: special stateids bypass the check.
+	 * Same file, principal, and stateid checks as CHUNK_WRITE.
 	 */
 	nfsstat4 trust_err = chunk_check_trusted_stateid(
-		&args->cra_stateid, CHUNK_GUARD_CLIENT_ID_NONE, false);
+		compound, &args->cra_stateid, CHUNK_GUARD_CLIENT_ID_NONE, false);
 
 	if (trust_err != NFS4_OK) {
 		*status = trust_err;
@@ -1125,7 +1135,7 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 	}
 
 	nfsstat4 stid_err = chunk_check_trusted_stateid(
-		&args->cfa_stateid, CHUNK_GUARD_CLIENT_ID_NONE, false);
+		compound, &args->cfa_stateid, CHUNK_GUARD_CLIENT_ID_NONE, false);
 
 	if (stid_err != NFS4_OK) {
 		*status = stid_err;
@@ -1227,7 +1237,7 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 	}
 
 	nfsstat4 stid_err = chunk_check_trusted_stateid(
-		&args->cca_stateid, CHUNK_GUARD_CLIENT_ID_NONE, false);
+		compound, &args->cca_stateid, CHUNK_GUARD_CLIENT_ID_NONE, false);
 
 	if (stid_err != NFS4_OK) {
 		*status = stid_err;
@@ -1490,7 +1500,7 @@ uint32_t nfs4_op_chunk_rollback(struct compound *compound)
 	}
 
 	nfsstat4 stid_err = chunk_check_trusted_stateid(
-		&args->crb_stateid, CHUNK_GUARD_CLIENT_ID_NONE, false);
+		compound, &args->crb_stateid, CHUNK_GUARD_CLIENT_ID_NONE, false);
 
 	if (stid_err != NFS4_OK) {
 		*status = stid_err;
@@ -1735,12 +1745,10 @@ uint32_t chunk_rollback_for_client(uint64_t writer_clientid,
  * the validation rules are identical -- see chunk_write_validate_
  * payload) and diverges from CHUNK_WRITE on two axes:
  *
- *   1. Stateid requirement.  CHUNK_WRITE accepts special stateids
- *      (anonymous, read-bypass) and bypasses the trust-table check
- *      for them.  CHUNK_WRITE_REPAIR rejects special stateids
- *      (NFS4ERR_BAD_STATEID) and additionally requires the trust
- *      entry's iomode to be LAYOUTIOMODE4_RW (NFS4ERR_ACCESS for
- *      a READ-only entry).  See .claude/design/ec-repair.md sec 4.
+ *   1. Stateid requirement.  All CHUNK operations reject special
+ *      stateids (NFS4ERR_BAD_STATEID).  CHUNK_WRITE_REPAIR additionally
+ *      requires the trust entry's iomode to be LAYOUTIOMODE4_RW
+	 *      (NFS4ERR_ACCESS for a READ-only entry).
  *
  *   2. Concurrency control.  CHUNK_WRITE has the Track 1b chunk-
  *      collision gate (Option C, lines 393-424 above) that rejects
@@ -1811,7 +1819,7 @@ uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 	}
 
 	nfsstat4 trust_err = chunk_check_trusted_stateid(
-		&args->cwra_stateid, args->cwra_owner.co_client_id, true);
+		compound, &args->cwra_stateid, args->cwra_owner.co_client_id, true);
 
 	if (trust_err != NFS4_OK) {
 		*status = trust_err;

@@ -406,10 +406,10 @@ void trust_stateid_fini(void)
 	trust_ht = NULL;
 }
 
-int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
-			   clientid4 clientid, uint32_t client_id,
-			   layoutiomode4 iomode, uint64_t expire_mono_ns,
-			   const char *principal)
+int trust_stateid_register_fh(const stateid4 *stateid, uint64_t sb,
+			      uint64_t ino, clientid4 clientid,
+			      uint32_t client_id, layoutiomode4 iomode,
+			      uint64_t expire_mono_ns, const char *principal)
 {
 	if (!trust_ht)
 		return -EINVAL;
@@ -432,6 +432,15 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 			caa_container_of(found, struct trust_entry, te_ht_node);
 
 		if (urcu_ref_get_unless_zero(&te->te_ref)) {
+			if (te->te_ino != ino ||
+			    (te->te_sb != 0 && te->te_sb != sb)) {
+				/* A stateid cannot be rebound to another file. */
+				trust_entry_put(te);
+				rcu_read_unlock();
+				return -EINVAL;
+			}
+			if (te->te_sb == 0 && sb != 0)
+				te->te_sb = sb;
 			atomic_store_explicit(&te->te_expire_ns, expire_mono_ns,
 					      memory_order_relaxed);
 			atomic_store_explicit(&te->te_flags, TRUST_ACTIVE,
@@ -460,6 +469,7 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 		return -ENOMEM;
 
 	memcpy(te->te_other, stateid->other, NFS4_OTHER_SIZE);
+	te->te_sb = sb;
 	te->te_ino = ino;
 	te->te_clientid = clientid;
 	te->te_client_id = client_id;
@@ -482,6 +492,15 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 
 	ts_bump(&ts_registers);
 	return 0;
+}
+
+int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
+			   clientid4 clientid, uint32_t client_id,
+			   layoutiomode4 iomode, uint64_t expire_mono_ns,
+			   const char *principal)
+{
+	return trust_stateid_register_fh(stateid, 0, ino, clientid, client_id,
+					 iomode, expire_mono_ns, principal);
 }
 
 void trust_stateid_revoke(const stateid4 *stateid)

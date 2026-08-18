@@ -9,8 +9,9 @@
  * CHUNK_COMMIT, and CHUNK_READ.
  *
  * Trust table validation (stateid auth) is covered by Group I in
- * trust_stateid_test.c.  These tests focus on the chunk store state
- * machine using anonymous (special) stateids to bypass trust checks.
+ * trust_stateid_test.c.  Successful operations here use a registered
+ * per-test stateid so the chunk-store tests exercise the same authorization
+ * boundary as the wire path.
  *
  * Groups:
  *   A. Input validation -- missing FH, zero chunk_size, CRC mismatch.
@@ -48,6 +49,7 @@
 #include "nfs4/client.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
+#include "nfs4/trust_stateid.h"
 
 #include "nfs4_test_harness.h"
 
@@ -60,7 +62,11 @@ struct cm_ctx {
 	struct task task;
 	struct compound *compound;
 	struct nfs4_client *nc;
+	stateid4 chunk_stateid;
+	bool chunk_stateid_registered;
 };
+
+static uint8_t next_chunk_stateid = 1;
 
 static struct cm_ctx *cm_alloc(unsigned int nops)
 {
@@ -128,14 +134,47 @@ static void cm_set_inode(struct cm_ctx *cm, struct inode *inode)
 
 	c->c_curr_nfh.nfh_sb = inode->i_sb->sb_id;
 	c->c_curr_nfh.nfh_ino = inode->i_ino;
+
+	/* CHUNK tests use a real registered layout stateid, not a probe id. */
+	memset(&cm->chunk_stateid, next_chunk_stateid++,
+	       sizeof(cm->chunk_stateid));
+	cm->chunk_stateid.seqid = 1;
+	ck_assert_int_eq(trust_stateid_register_fh(
+		&cm->chunk_stateid, inode->i_sb->sb_id, inode->i_ino,
+		cm->nc->nc_client.c_id, CHUNK_GUARD_CLIENT_ID_NONE,
+		LAYOUTIOMODE4_RW, UINT64_MAX,
+		""), 0);
+	cm->chunk_stateid_registered = true;
 }
 
 static void cm_set_op(struct cm_ctx *cm, unsigned int idx, nfs_opnum4 opnum)
 {
+	nfs_argop4 *arg;
+
 	ck_assert_uint_lt(idx, cm->compound->c_args->argarray.argarray_len);
-	cm->compound->c_args->argarray.argarray_val[idx].argop = opnum;
+	arg = &cm->compound->c_args->argarray.argarray_val[idx];
+	arg->argop = opnum;
 	cm->compound->c_res->resarray.resarray_val[idx].resop = opnum;
 	cm->compound->c_curr_op = (int)idx;
+
+	if (!cm->chunk_stateid_registered)
+		return;
+
+	switch (opnum) {
+	case OP_CHUNK_FINALIZE:
+		arg->nfs_argop4_u.opchunk_finalize.cfa_stateid =
+			cm->chunk_stateid;
+		break;
+	case OP_CHUNK_COMMIT:
+		arg->nfs_argop4_u.opchunk_commit.cca_stateid = cm->chunk_stateid;
+		break;
+	case OP_CHUNK_ROLLBACK:
+		arg->nfs_argop4_u.opchunk_rollback.crb_stateid =
+			cm->chunk_stateid;
+		break;
+	default:
+		break;
+	}
 }
 
 static void cm_free(struct cm_ctx *cm)
@@ -202,8 +241,8 @@ static void chunk_teardown(void)
 #define CHUNK_SZ 512
 
 /*
- * Build CHUNK_WRITE args in slot 0.  Uses an anonymous stateid so trust
- * table validation is bypassed.  Caller provides the data buffer and a
+ * Build CHUNK_WRITE args in slot 0.  Uses the per-test registered stateid
+ * when a current filehandle is present.  Caller provides the data buffer and a
  * uint32_t CRC array (pass NULL/0 for no checksum validation).  The
  * function wraps each CRC into a checksum4 (CHECKSUM_ALG_CRC32, 4 bytes
  * big-endian) -- the cs_value buffers and the checksum4 array are heap-
@@ -217,8 +256,10 @@ static void set_write_args(struct cm_ctx *cm, char *buf, uint32_t buf_len,
 	CHUNK_WRITE4args *args = &cm->compound->c_args->argarray.argarray_val[0]
 					  .nfs_argop4_u.opchunk_write;
 
-	/* Anonymous stateid: all zeros (seqid=0, other={0}) */
-	memset(&args->cwa_stateid, 0, sizeof(args->cwa_stateid));
+	if (cm->chunk_stateid_registered)
+		args->cwa_stateid = cm->chunk_stateid;
+	else
+		memset(&args->cwa_stateid, 0, sizeof(args->cwa_stateid));
 	args->cwa_offset = offset;
 	args->cwa_stable = UNSTABLE4;
 	args->cwa_chunk_size = chunk_size;
@@ -373,6 +414,69 @@ START_TEST(test_chunk_write_no_fh)
 					.nfs_resop4_u.opchunk_write;
 	ck_assert_int_eq(res->cwr_status, NFS4ERR_NOFILEHANDLE);
 
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_chunk_write_special_stateid_rejected)
+{
+	static char buf[CHUNK_SZ];
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, NULL, 0);
+	memset(&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.opchunk_write.cwa_stateid,
+	       0, sizeof(stateid4));
+
+	nfs4_op_chunk_write(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+			 .nfs_resop4_u.opchunk_write.cwr_status,
+			 NFS4ERR_BAD_STATEID);
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_chunk_write_stateid_file_mismatch_rejected)
+{
+	static char buf[CHUNK_SZ];
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, NULL, 0);
+	cm->compound->c_curr_nfh.nfh_ino++;
+
+	nfs4_op_chunk_write(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+			 .nfs_resop4_u.opchunk_write.cwr_status,
+			 NFS4ERR_BAD_STATEID);
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_chunk_write_stateid_principal_mismatch_rejected)
+{
+	static char buf[CHUNK_SZ];
+	static const char registered_principal[] = "client@example.com";
+	stateid4 stid;
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	memset(&stid, 0xA5, sizeof(stid));
+	stid.seqid = 1;
+	ck_assert_int_eq(trust_stateid_register_fh(
+		&stid, g_inode->i_sb->sb_id, g_inode->i_ino,
+		cm->nc->nc_client.c_id, CHUNK_GUARD_CLIENT_ID_NONE,
+		LAYOUTIOMODE4_RW, UINT64_MAX, registered_principal), 0);
+	cm->compound->c_gss_principal = "other@example.com";
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, NULL, 0);
+	cm->compound->c_args->argarray.argarray_val[0]
+		.nfs_argop4_u.opchunk_write.cwa_stateid = stid;
+
+	nfs4_op_chunk_write(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+			 .nfs_resop4_u.opchunk_write.cwr_status,
+			 NFS4ERR_ACCESS);
 	cm_free(cm);
 }
 END_TEST
@@ -629,7 +733,10 @@ static void set_write_args_raw_checksum(struct cm_ctx *cm, char *buf,
 	CHUNK_WRITE4args *args = &cm->compound->c_args->argarray.argarray_val[0]
 					  .nfs_argop4_u.opchunk_write;
 
-	memset(&args->cwa_stateid, 0, sizeof(args->cwa_stateid));
+	if (cm->chunk_stateid_registered)
+		args->cwa_stateid = cm->chunk_stateid;
+	else
+		memset(&args->cwa_stateid, 0, sizeof(args->cwa_stateid));
 	args->cwa_offset = offset;
 	args->cwa_stable = UNSTABLE4;
 	args->cwa_chunk_size = chunk_size;
@@ -1201,7 +1308,7 @@ START_TEST(test_chunk_read_no_store)
 
 	CHUNK_READ4args *args = &cm->compound->c_args->argarray.argarray_val[0]
 					 .nfs_argop4_u.opchunk_read;
-	memset(&args->cra_stateid, 0, sizeof(args->cra_stateid));
+	args->cra_stateid = cm->chunk_stateid;
 	args->cra_offset = 0;
 	args->cra_count = 1;
 
@@ -1228,7 +1335,7 @@ START_TEST(test_chunk_read_count_zero)
 
 	CHUNK_READ4args *args = &cm->compound->c_args->argarray.argarray_val[0]
 					 .nfs_argop4_u.opchunk_read;
-	memset(&args->cra_stateid, 0, sizeof(args->cra_stateid));
+	args->cra_stateid = cm->chunk_stateid;
 	args->cra_offset = 0;
 	args->cra_count = 0;
 
@@ -1282,7 +1389,7 @@ START_TEST(test_chunk_read_pending_returns_delay)
 
 	CHUNK_READ4args *args = &cm->compound->c_args->argarray.argarray_val[0]
 					 .nfs_argop4_u.opchunk_read;
-	memset(&args->cra_stateid, 0, sizeof(args->cra_stateid));
+	args->cra_stateid = cm->chunk_stateid;
 	args->cra_offset = 0;
 	args->cra_count = 1;
 
@@ -1530,7 +1637,7 @@ static nfsstat4 run_chunk_read(struct cm_ctx *cm)
 		CHUNK_READ4args *a =
 			&cm->compound->c_args->argarray.argarray_val[0]
 				 .nfs_argop4_u.opchunk_read;
-		memset(&a->cra_stateid, 0, sizeof(a->cra_stateid));
+	a->cra_stateid = cm->chunk_stateid;
 		a->cra_offset = 0;
 		a->cra_count = 1;
 	}
@@ -1700,7 +1807,7 @@ START_TEST(test_chunk_read_locked_flag_reported)
 		CHUNK_READ4args *a =
 			&cm->compound->c_args->argarray.argarray_val[0]
 				 .nfs_argop4_u.opchunk_read;
-		memset(&a->cra_stateid, 0, sizeof(a->cra_stateid));
+		a->cra_stateid = cm->chunk_stateid;
 		a->cra_offset = 0;
 		a->cra_count = 1;
 	}
@@ -1738,7 +1845,7 @@ START_TEST(test_chunk_read_locked_flag_reported)
 		CHUNK_READ4args *a =
 			&cm->compound->c_args->argarray.argarray_val[0]
 				 .nfs_argop4_u.opchunk_read;
-		memset(&a->cra_stateid, 0, sizeof(a->cra_stateid));
+		a->cra_stateid = cm->chunk_stateid;
 		a->cra_offset = 0;
 		a->cra_count = 1;
 	}
@@ -1806,7 +1913,7 @@ START_TEST(test_chunk_read_owner_and_guard_are_distinct)
 		CHUNK_READ4args *a =
 			&cm->compound->c_args->argarray.argarray_val[0]
 				 .nfs_argop4_u.opchunk_read;
-		memset(&a->cra_stateid, 0, sizeof(a->cra_stateid));
+		a->cra_stateid = cm->chunk_stateid;
 		a->cra_offset = 0;
 		a->cra_count = 1;
 	}
@@ -1900,7 +2007,7 @@ static chunk_guard4 gen_read_guard(struct cm_ctx *cm)
 		CHUNK_READ4args *a =
 			&cm->compound->c_args->argarray.argarray_val[0]
 				 .nfs_argop4_u.opchunk_read;
-		memset(&a->cra_stateid, 0, sizeof(a->cra_stateid));
+		a->cra_stateid = cm->chunk_stateid;
 		a->cra_offset = 0;
 		a->cra_count = 1;
 	}
@@ -2048,7 +2155,7 @@ START_TEST(test_chunk_read_bit_rot_preserves_stored_checksum)
 		CHUNK_READ4args *a =
 			&cm->compound->c_args->argarray.argarray_val[0]
 				 .nfs_argop4_u.opchunk_read;
-		memset(&a->cra_stateid, 0, sizeof(a->cra_stateid));
+		a->cra_stateid = cm->chunk_stateid;
 		a->cra_offset = 0;
 		a->cra_count = 1;
 	}
@@ -2160,7 +2267,7 @@ START_TEST(test_chunk_full_cycle)
 		CHUNK_READ4args *a =
 			&cm->compound->c_args->argarray.argarray_val[0]
 				 .nfs_argop4_u.opchunk_read;
-		memset(&a->cra_stateid, 0, sizeof(a->cra_stateid));
+		a->cra_stateid = cm->chunk_stateid;
 		a->cra_offset = 0;
 		a->cra_count = 1;
 	}
@@ -2218,7 +2325,7 @@ START_TEST(test_chunk_full_cycle)
 		CHUNK_READ4args *a =
 			&cm->compound->c_args->argarray.argarray_val[0]
 				 .nfs_argop4_u.opchunk_read;
-		memset(&a->cra_stateid, 0, sizeof(a->cra_stateid));
+		a->cra_stateid = cm->chunk_stateid;
 		a->cra_offset = 0;
 		a->cra_count = 1;
 	}
@@ -2861,6 +2968,9 @@ static Suite *chunk_suite(void)
 	TCase *tc_a = tcase_create("validation");
 	tcase_add_checked_fixture(tc_a, chunk_setup, chunk_teardown);
 	tcase_add_test(tc_a, test_chunk_write_no_fh);
+	tcase_add_test(tc_a, test_chunk_write_special_stateid_rejected);
+	tcase_add_test(tc_a, test_chunk_write_stateid_file_mismatch_rejected);
+	tcase_add_test(tc_a, test_chunk_write_stateid_principal_mismatch_rejected);
 	tcase_add_test(tc_a, test_chunk_write_zero_chunk_size);
 	tcase_add_test(tc_a, test_chunk_write_crc_mismatch);
 	tcase_add_test(tc_a, test_chunk_write_not_regular_file);

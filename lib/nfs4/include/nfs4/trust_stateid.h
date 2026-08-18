@@ -46,6 +46,7 @@ struct trust_entry {
 	struct urcu_ref te_ref;
 
 	uint8_t te_other[NFS4_OTHER_SIZE]; /* stateid.other -- hash key */
+	uint64_t te_sb; /* superblock from the registering filehandle */
 	uint64_t te_ino; /* inode (from current FH) */
 	clientid4 te_clientid; /* client that holds layout */
 	layoutiomode4 te_iomode; /* LAYOUTIOMODE4_READ or _RW */
@@ -180,6 +181,12 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 			   clientid4 clientid, uint32_t client_id,
 			   layoutiomode4 iomode, uint64_t expire_mono_ns,
 			   const char *principal);
+
+/* Register with the complete filehandle identity. */
+int trust_stateid_register_fh(const stateid4 *stateid, uint64_t sb,
+			      uint64_t ino, clientid4 clientid,
+			      uint32_t client_id, layoutiomode4 iomode,
+			      uint64_t expire_mono_ns, const char *principal);
 
 /*
  * trust_stateid_revoke -- remove the entry for this stateid.other.

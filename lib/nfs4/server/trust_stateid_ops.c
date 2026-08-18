@@ -198,10 +198,11 @@ uint32_t nfs4_op_trust_stateid(struct compound *compound)
 					     ->c_id :
 				     0;
 
-	int ret = trust_stateid_register(&args->tsa_layout_stateid, ino,
-					 clientid, args->tsa_client_id,
-					 args->tsa_iomode, expire_mono_ns,
-					 principal);
+	int ret = trust_stateid_register_fh(&args->tsa_layout_stateid,
+					    compound->c_curr_nfh.nfh_sb, ino,
+					    clientid, args->tsa_client_id,
+					    args->tsa_iomode, expire_mono_ns,
+					    principal);
 	if (ret != 0)
 		*status = NFS4ERR_SERVERFAULT;
 
