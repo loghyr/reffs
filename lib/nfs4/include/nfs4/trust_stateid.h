@@ -194,6 +194,10 @@ int trust_stateid_register_fh(const stateid4 *stateid, uint64_t sb,
  */
 void trust_stateid_revoke(const stateid4 *stateid);
 
+/* Revoke only when issuer and complete filehandle identity match. */
+void trust_stateid_revoke_fh(const stateid4 *stateid, uint64_t sb,
+			     uint64_t ino, clientid4 issuer);
+
 /*
  * trust_stateid_bulk_revoke -- remove all entries for clientid.
  * If clientid is all-zeros, clears the entire table.

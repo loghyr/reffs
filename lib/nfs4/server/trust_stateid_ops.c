@@ -233,7 +233,10 @@ uint32_t nfs4_op_revoke_stateid(struct compound *compound)
 		return 0;
 	}
 
-	trust_stateid_revoke(&args->rsa_layout_stateid);
+	trust_stateid_revoke_fh(
+		&args->rsa_layout_stateid, compound->c_curr_nfh.nfh_sb,
+		compound->c_curr_nfh.nfh_ino,
+		(clientid4)nfs4_client_to_client(compound->c_nfs4_client)->c_id);
 
 	/* Returns NFS4_OK (default, 0) whether or not the entry existed. */
 	return 0;

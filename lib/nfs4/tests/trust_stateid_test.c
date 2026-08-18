@@ -991,16 +991,14 @@ START_TEST(test_op_revoke_stateid_ok)
 {
 	/* Pre-register an entry directly. */
 	stateid4 stid = make_stateid(0xAA);
-	clientid4 cid = 0x1234;
-
-	ck_assert_int_eq(trust_stateid_register(
-				 &stid, 999, cid, CHUNK_GUARD_CLIENT_ID_NONE,
-				 LAYOUTIOMODE4_RW, future_expire_ns(), ""),
-			 0);
 
 	struct cm_ctx *cm = cm_alloc(1, EXCHGID4_FLAG_USE_PNFS_MDS);
 
 	cm_set_inode(cm, g_op_inode);
+	ck_assert_int_eq(trust_stateid_register_fh(
+		&stid, g_op_inode->i_sb->sb_id, g_op_inode->i_ino,
+		cm->nc->nc_client.c_id, CHUNK_GUARD_CLIENT_ID_NONE,
+		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
 	cm_set_op(cm, 0, OP_REVOKE_STATEID);
 
 	REVOKE_STATEID4args *args =
@@ -1019,6 +1017,37 @@ START_TEST(test_op_revoke_stateid_ok)
 
 	ck_assert_ptr_null(te);
 
+	cm_free(cm);
+}
+END_TEST
+
+/* A control session from another MDS must not revoke this entry. */
+START_TEST(test_op_revoke_stateid_wrong_issuer_is_noop)
+{
+	stateid4 stid = make_stateid(0xAD);
+	struct cm_ctx *cm = cm_alloc(1, EXCHGID4_FLAG_USE_PNFS_MDS);
+
+	cm_set_inode(cm, g_op_inode);
+	ck_assert_int_eq(trust_stateid_register_fh(
+		&stid, g_op_inode->i_sb->sb_id, g_op_inode->i_ino, 0xDEAD,
+		CHUNK_GUARD_CLIENT_ID_NONE, LAYOUTIOMODE4_RW, future_expire_ns(),
+		""), 0);
+	struct trust_entry *before = trust_stateid_find(&stid);
+	ck_assert_ptr_nonnull(before);
+	ck_assert_uint_ne(before->te_clientid, cm->nc->nc_client.c_id);
+	trust_entry_put(before);
+	cm_set_op(cm, 0, OP_REVOKE_STATEID);
+	cm->compound->c_args->argarray.argarray_val[0]
+		.nfs_argop4_u.oprevoke_stateid.rsa_layout_stateid = stid;
+
+	nfs4_op_revoke_stateid(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+			 .nfs_resop4_u.oprevoke_stateid.rsr_status,
+			 NFS4_OK);
+
+	struct trust_entry *te = trust_stateid_find(&stid);
+	ck_assert_ptr_nonnull(te);
+	trust_entry_put(te);
 	cm_free(cm);
 }
 END_TEST
@@ -2216,6 +2245,7 @@ static Suite *trust_stateid_suite(void)
 	TCase *tc_g = tcase_create("op_revoke_stateid");
 	tcase_add_checked_fixture(tc_g, op_setup, op_teardown);
 	tcase_add_test(tc_g, test_op_revoke_stateid_ok);
+	tcase_add_test(tc_g, test_op_revoke_stateid_wrong_issuer_is_noop);
 	tcase_add_test(tc_g, test_op_revoke_stateid_not_from_mds);
 	tcase_add_test(tc_g, test_op_revoke_stateid_plain_client_rejected);
 	tcase_add_test(tc_g, test_op_revoke_stateid_special_stateid);

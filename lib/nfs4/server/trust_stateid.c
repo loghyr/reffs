@@ -503,7 +503,8 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 					 iomode, expire_mono_ns, principal);
 }
 
-void trust_stateid_revoke(const stateid4 *stateid)
+void trust_stateid_revoke_fh(const stateid4 *stateid, uint64_t sb,
+			     uint64_t ino, clientid4 issuer)
 {
 	if (!trust_ht)
 		return;
@@ -521,6 +522,13 @@ void trust_stateid_revoke(const stateid4 *stateid)
 			caa_container_of(node, struct trust_entry, te_ht_node);
 
 		if (urcu_ref_get_unless_zero(&te->te_ref)) {
+			if ((sb != 0 && te->te_sb != sb) ||
+			    (ino != 0 && te->te_ino != ino) ||
+			    (issuer != 0 && te->te_clientid != issuer)) {
+				trust_entry_put(te);
+				rcu_read_unlock();
+				return;
+			}
 			/*
 			 * Explicit removal: unhash now so it is no longer
 			 * findable; drop find ref + creation ref.
@@ -534,6 +542,11 @@ void trust_stateid_revoke(const stateid4 *stateid)
 		}
 	}
 	rcu_read_unlock();
+}
+
+void trust_stateid_revoke(const stateid4 *stateid)
+{
+	trust_stateid_revoke_fh(stateid, 0, 0, 0);
 }
 
 void trust_stateid_bulk_revoke(clientid4 clientid)
