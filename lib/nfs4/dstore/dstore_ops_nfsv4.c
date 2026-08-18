@@ -905,6 +905,7 @@ static int nfsv4_probe_tight_coupling(struct dstore *ds)
 
 	/* Anonymous stateid: seqid=0, other=all-zeros. */
 	memset(&ta->tsa_layout_stateid, 0, sizeof(ta->tsa_layout_stateid));
+	ta->tsa_pnfs_clientid = 0;
 	ta->tsa_client_id = CHUNK_GUARD_CLIENT_ID_NONE;
 	ta->tsa_iomode = LAYOUTIOMODE4_READ;
 	ta->tsa_expire.seconds = 0;
@@ -986,6 +987,7 @@ static int nfsv4_trust_stateid(struct dstore *ds, const uint8_t *fh,
 
 	ta->tsa_layout_stateid.seqid = stid_seqid;
 	memcpy(ta->tsa_layout_stateid.other, stid_other, NFS4_OTHER_SIZE);
+	ta->tsa_pnfs_clientid = (clientid4)clientid;
 
 	/*
 	 * The writer identity the data server will compare against the

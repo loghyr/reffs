@@ -367,11 +367,12 @@ static int local_trust_stateid(struct dstore *ds __attribute__((unused)),
 	/*
 	 * Combined mode registers by direct call rather than over the
 	 * wire, so it has to derive the writer identity here that
-	 * nfsv4_trust_stateid puts in tsa_client_id -- same function,
-	 * same clientid4, so the two modes record the same binding.
+	 * Combined mode has one local MDS/DS authority, represented by issuer
+	 * clientid 0.  The layout holder remains the target clientid4 and its
+	 * 32-bit ffv2 writer identity is derived independently.
 	 */
 	ret = trust_stateid_register_fh(
-		&stid, inode->i_sb->sb_id, inode->i_ino, (clientid4)clientid,
+		&stid, inode->i_sb->sb_id, inode->i_ino, 0, (clientid4)clientid,
 		ffv2_writer_id((clientid4)clientid), (layoutiomode4)iomode,
 		expire_mono_ns, principal);
 	inode_active_put(inode);
@@ -395,7 +396,7 @@ static int local_revoke_stateid(struct dstore *ds __attribute__((unused)),
 	stid.seqid = stid_seqid;
 	memcpy(stid.other, stid_other, NFS4_OTHER_SIZE);
 
-	/* The local vtable has no issuer field; scope at least to this file. */
+	/* Combined mode uses the single local MDS issuer identity. */
 	trust_stateid_revoke_fh(&stid, inode->i_sb->sb_id, inode->i_ino, 0);
 	inode_active_put(inode);
 	return 0;
@@ -407,7 +408,7 @@ static int local_revoke_stateid(struct dstore *ds __attribute__((unused)),
 static int local_bulk_revoke_stateid(struct dstore *ds __attribute__((unused)),
 				     uint64_t clientid)
 {
-	trust_stateid_bulk_revoke((clientid4)clientid);
+	trust_stateid_bulk_revoke_scoped(0, (clientid4)clientid);
 	return 0;
 }
 

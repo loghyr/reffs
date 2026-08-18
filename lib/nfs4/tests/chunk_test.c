@@ -141,7 +141,8 @@ static void cm_set_inode(struct cm_ctx *cm, struct inode *inode)
 	cm->chunk_stateid.seqid = 1;
 	ck_assert_int_eq(trust_stateid_register_fh(
 		&cm->chunk_stateid, inode->i_sb->sb_id, inode->i_ino,
-		cm->nc->nc_client.c_id, CHUNK_GUARD_CLIENT_ID_NONE,
+		cm->nc->nc_client.c_id, cm->nc->nc_client.c_id,
+		CHUNK_GUARD_CLIENT_ID_NONE,
 		LAYOUTIOMODE4_RW, UINT64_MAX,
 		""), 0);
 	cm->chunk_stateid_registered = true;
@@ -466,7 +467,8 @@ START_TEST(test_chunk_write_stateid_principal_mismatch_rejected)
 	stid.seqid = 1;
 	ck_assert_int_eq(trust_stateid_register_fh(
 		&stid, g_inode->i_sb->sb_id, g_inode->i_ino,
-		cm->nc->nc_client.c_id, CHUNK_GUARD_CLIENT_ID_NONE,
+		cm->nc->nc_client.c_id, cm->nc->nc_client.c_id,
+		CHUNK_GUARD_CLIENT_ID_NONE,
 		LAYOUTIOMODE4_RW, UINT64_MAX, registered_principal), 0);
 	cm->compound->c_gss_principal = "other@example.com";
 	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, NULL, 0);

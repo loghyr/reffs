@@ -109,8 +109,8 @@ struct dstore_ops {
 	 *
 	 * revoke_stateid -- revoke a previously-registered stateid.
 	 *
-	 * bulk_revoke_stateid -- revoke all stateids for a client.
-	 * clientid 0 means "revoke all" (MDS restart cleanup).
+	 * bulk_revoke_stateid -- revoke all stateids for a target client.
+	 * clientid 0 means "revoke all targets owned by this MDS".
 	 */
 	int (*probe_tight_coupling)(struct dstore *ds);
 

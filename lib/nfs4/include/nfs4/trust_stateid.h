@@ -48,7 +48,8 @@ struct trust_entry {
 	uint8_t te_other[NFS4_OTHER_SIZE]; /* stateid.other -- hash key */
 	uint64_t te_sb; /* superblock from the registering filehandle */
 	uint64_t te_ino; /* inode (from current FH) */
-	clientid4 te_clientid; /* client that holds layout */
+	clientid4 te_issuer_clientid; /* metadata server control session */
+	clientid4 te_target_clientid; /* pNFS client whose layout is trusted */
 	layoutiomode4 te_iomode; /* LAYOUTIOMODE4_READ or _RW */
 
 	/*
@@ -165,11 +166,15 @@ void trust_stateid_fini(void);
 /* Mutation                                                            */
 
 /*
- * trust_stateid_register -- insert or update a trust entry.
+ * trust_stateid_register -- legacy insert/update helper for tests.
  *
  * If an entry for the same stateid.other already exists, updates its
  * expiry, iomode, and flags (idempotent for MDS retries).  Otherwise
  * allocates a new entry.
+ *
+ * The helper records target clientid4 zero; protocol paths must use
+ * trust_stateid_register_fh() so issuer and target identities are both
+ * persisted.
  *
  * ino: inode number from compound->c_inode at TRUST_STATEID time.
  * expire_mono_ns: absolute CLOCK_MONOTONIC expiry in nanoseconds.
@@ -184,7 +189,8 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 
 /* Register with the complete filehandle identity. */
 int trust_stateid_register_fh(const stateid4 *stateid, uint64_t sb,
-			      uint64_t ino, clientid4 clientid,
+			      uint64_t ino, clientid4 issuer_clientid,
+			      clientid4 target_clientid,
 			      uint32_t client_id, layoutiomode4 iomode,
 			      uint64_t expire_mono_ns, const char *principal);
 
@@ -199,10 +205,10 @@ void trust_stateid_revoke_fh(const stateid4 *stateid, uint64_t sb,
 			     uint64_t ino, clientid4 issuer);
 
 /*
- * trust_stateid_bulk_revoke -- remove all entries for clientid.
- * If clientid is all-zeros, clears the entire table.
+ * trust_stateid_bulk_revoke_scoped -- remove entries registered by issuer
+ * for target.  A zero target means all targets owned by issuer.
  */
-void trust_stateid_bulk_revoke(clientid4 clientid);
+void trust_stateid_bulk_revoke_scoped(clientid4 issuer, clientid4 target);
 
 /* ------------------------------------------------------------------ */
 /* Lookup                                                              */

@@ -407,7 +407,8 @@ void trust_stateid_fini(void)
 }
 
 int trust_stateid_register_fh(const stateid4 *stateid, uint64_t sb,
-			      uint64_t ino, clientid4 clientid,
+			      uint64_t ino, clientid4 issuer_clientid,
+			      clientid4 target_clientid,
 			      uint32_t client_id, layoutiomode4 iomode,
 			      uint64_t expire_mono_ns, const char *principal)
 {
@@ -433,7 +434,10 @@ int trust_stateid_register_fh(const stateid4 *stateid, uint64_t sb,
 
 		if (urcu_ref_get_unless_zero(&te->te_ref)) {
 			if (te->te_ino != ino ||
-			    (te->te_sb != 0 && te->te_sb != sb)) {
+			    (te->te_sb != 0 && te->te_sb != sb) ||
+			    te->te_issuer_clientid != issuer_clientid ||
+			    te->te_target_clientid != target_clientid ||
+			    te->te_client_id != client_id) {
 				/* A stateid cannot be rebound to another file. */
 				trust_entry_put(te);
 				rcu_read_unlock();
@@ -471,7 +475,8 @@ int trust_stateid_register_fh(const stateid4 *stateid, uint64_t sb,
 	memcpy(te->te_other, stateid->other, NFS4_OTHER_SIZE);
 	te->te_sb = sb;
 	te->te_ino = ino;
-	te->te_clientid = clientid;
+	te->te_issuer_clientid = issuer_clientid;
+	te->te_target_clientid = target_clientid;
 	te->te_client_id = client_id;
 	te->te_iomode = iomode;
 	atomic_store_explicit(&te->te_expire_ns, expire_mono_ns,
@@ -499,12 +504,13 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 			   layoutiomode4 iomode, uint64_t expire_mono_ns,
 			   const char *principal)
 {
-	return trust_stateid_register_fh(stateid, 0, ino, clientid, client_id,
-					 iomode, expire_mono_ns, principal);
+	return trust_stateid_register_fh(stateid, 0, ino, clientid, 0,
+					 client_id, iomode, expire_mono_ns, principal);
 }
 
-void trust_stateid_revoke_fh(const stateid4 *stateid, uint64_t sb,
-			     uint64_t ino, clientid4 issuer)
+static void trust_stateid_revoke_match(const stateid4 *stateid, uint64_t sb,
+					       uint64_t ino, clientid4 issuer,
+					       bool check_issuer)
 {
 	if (!trust_ht)
 		return;
@@ -524,7 +530,7 @@ void trust_stateid_revoke_fh(const stateid4 *stateid, uint64_t sb,
 		if (urcu_ref_get_unless_zero(&te->te_ref)) {
 			if ((sb != 0 && te->te_sb != sb) ||
 			    (ino != 0 && te->te_ino != ino) ||
-			    (issuer != 0 && te->te_clientid != issuer)) {
+			    (check_issuer && te->te_issuer_clientid != issuer)) {
 				trust_entry_put(te);
 				rcu_read_unlock();
 				return;
@@ -544,19 +550,25 @@ void trust_stateid_revoke_fh(const stateid4 *stateid, uint64_t sb,
 	rcu_read_unlock();
 }
 
-void trust_stateid_revoke(const stateid4 *stateid)
+void trust_stateid_revoke_fh(const stateid4 *stateid, uint64_t sb,
+			     uint64_t ino, clientid4 issuer)
 {
-	trust_stateid_revoke_fh(stateid, 0, 0, 0);
+	trust_stateid_revoke_match(stateid, sb, ino, issuer, true);
 }
 
-void trust_stateid_bulk_revoke(clientid4 clientid)
+void trust_stateid_revoke(const stateid4 *stateid)
+{
+	trust_stateid_revoke_match(stateid, 0, 0, 0, false);
+}
+
+void trust_stateid_bulk_revoke_scoped(clientid4 issuer, clientid4 target)
 {
 	if (!trust_ht)
 		return;
 
 	ts_bump(&ts_bulk_revokes);
 
-	bool clear_all = (clientid == 0);
+	bool clear_all = (target == 0);
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
 
@@ -589,7 +601,8 @@ restart:
 
 		cds_lfht_next(trust_ht, &iter);
 
-		if (!clear_all && te->te_clientid != clientid)
+		if (te->te_issuer_clientid != issuer ||
+		    (!clear_all && te->te_target_clientid != target))
 			continue;
 
 		if (!urcu_ref_get_unless_zero(&te->te_ref))

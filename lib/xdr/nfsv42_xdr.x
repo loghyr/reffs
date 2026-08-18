@@ -3913,13 +3913,14 @@ struct CHUNK_ESCROW_TAKEOVER4res {
  *   Sent as: SEQUENCE + PUTFH(ds_fh) + REVOKE_STATEID(...)
  *
  * BULK_REVOKE_STATEID: MDS removes all stateids for a clientid.
- *   brsa_clientid all-zeros means clear the entire trust table.
+ *   brsa_clientid all-zeros means clear the issuing MDS's entries.
  *   No PUTFH required.
  */
 const TRUST_PRINCIPAL_MAX = 256;
 
 struct TRUST_STATEID4args {
     stateid4      tsa_layout_stateid;
+    clientid4     tsa_pnfs_clientid;
     uint32_t      tsa_client_id;
     layoutiomode4 tsa_iomode;
     nfstime4      tsa_expire;

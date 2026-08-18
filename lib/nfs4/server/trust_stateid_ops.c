@@ -22,6 +22,7 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <errno.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -142,6 +143,10 @@ uint32_t nfs4_op_trust_stateid(struct compound *compound)
 				  NFS4ERR_INVAL : NFS4ERR_BAD_STATEID;
 		return 0;
 	}
+	if (args->tsa_pnfs_clientid == 0) {
+		*status = NFS4ERR_INVAL;
+		return 0;
+	}
 
 	/* Validate iomode. */
 	if (args->tsa_iomode != LAYOUTIOMODE4_READ &&
@@ -202,10 +207,13 @@ uint32_t nfs4_op_trust_stateid(struct compound *compound)
 
 	int ret = trust_stateid_register_fh(&args->tsa_layout_stateid,
 					    compound->c_curr_nfh.nfh_sb, ino,
-					    clientid, args->tsa_client_id,
+					    clientid, args->tsa_pnfs_clientid,
+					    args->tsa_client_id,
 					    args->tsa_iomode, expire_mono_ns,
 					    principal);
-	if (ret != 0)
+	if (ret == -EINVAL)
+		*status = NFS4ERR_INVAL;
+	else if (ret != 0)
 		*status = NFS4ERR_SERVERFAULT;
 
 	return 0;
@@ -278,13 +286,17 @@ uint32_t nfs4_op_bulk_revoke_stateid(struct compound *compound)
 		return 0;
 
 	/*
-	 * No PUTFH required -- BULK_REVOKE_STATEID operates on the
-	 * entire trust table (or all entries for a clientid), not on
-	 * a specific file.  The current filehandle is ignored.
+	 * No PUTFH required -- BULK_REVOKE_STATEID scans entries registered
+	 * by this control-session issuer.  A non-zero target selects one
+	 * pNFS client; zero selects all targets belonging to this issuer.
+	 * The current filehandle is ignored.
 	 *
-	 * brsa_clientid == 0 means "clear everything" (MDS reboot cleanup).
+	 * brsa_clientid == 0 means "clear this issuer's entries" (MDS
+	 * reboot cleanup), never a process-global table clear.
 	 */
-	trust_stateid_bulk_revoke(args->brsa_clientid);
+	trust_stateid_bulk_revoke_scoped(
+		(clientid4)nfs4_client_to_client(compound->c_nfs4_client)->c_id,
+		args->brsa_clientid);
 
 	return 0;
 }

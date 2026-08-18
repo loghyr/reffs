@@ -160,7 +160,7 @@ START_TEST(test_register_basic)
 	ck_assert_ptr_nonnull(te);
 	ck_assert_int_eq(memcmp(te->te_other, s.other, NFS4_OTHER_SIZE), 0);
 	ck_assert_uint_eq(te->te_ino, 42);
-	ck_assert_uint_eq(te->te_clientid, 0xCAFE);
+	ck_assert_uint_eq(te->te_issuer_clientid, 0xCAFE);
 	ck_assert_int_eq(te->te_iomode, LAYOUTIOMODE4_RW);
 	ck_assert_uint_ne(atomic_load_explicit(&te->te_expire_ns,
 					       memory_order_relaxed),
@@ -407,7 +407,7 @@ START_TEST(test_bulk_revoke_by_clientid)
 	trust_stateid_register(&s3, 3, cid_b, CHUNK_GUARD_CLIENT_ID_NONE,
 			       LAYOUTIOMODE4_RW, future_expire_ns(), "");
 
-	trust_stateid_bulk_revoke(cid_a);
+	trust_stateid_bulk_revoke_scoped(cid_a, 0);
 
 	struct trust_entry *te1 = trust_stateid_find(&s1);
 	struct trust_entry *te2 = trust_stateid_find(&s2);
@@ -436,7 +436,9 @@ START_TEST(test_bulk_revoke_all)
 	trust_stateid_register(&s3, 3, 0xCCCC, CHUNK_GUARD_CLIENT_ID_NONE,
 			       LAYOUTIOMODE4_RW, future_expire_ns(), "");
 
-	trust_stateid_bulk_revoke(0); /* 0 = clear all */
+	trust_stateid_bulk_revoke_scoped(0xAAAA, 0);
+	trust_stateid_bulk_revoke_scoped(0xBBBB, 0);
+	trust_stateid_bulk_revoke_scoped(0xCCCC, 0);
 
 	ck_assert_ptr_null(trust_stateid_find(&s1));
 	ck_assert_ptr_null(trust_stateid_find(&s2));
@@ -449,8 +451,62 @@ END_TEST
  */
 START_TEST(test_bulk_revoke_empty)
 {
-	trust_stateid_bulk_revoke(0);
-	trust_stateid_bulk_revoke(0xDEAD);
+	trust_stateid_bulk_revoke_scoped(0, 0);
+	trust_stateid_bulk_revoke_scoped(0xDEAD, 0);
+}
+END_TEST
+
+/* Bulk revoke matches both the issuing MDS and the target client. */
+START_TEST(test_bulk_revoke_scoped_issuer_and_target)
+{
+	stateid4 same_issuer = make_stateid(0x61);
+	stateid4 other_target = make_stateid(0x62);
+	stateid4 other_issuer = make_stateid(0x63);
+
+	ck_assert_int_eq(trust_stateid_register_fh(
+		&same_issuer, 0, 1, 0x100, 0x200, 0x11,
+		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
+	ck_assert_int_eq(trust_stateid_register_fh(
+		&other_target, 0, 2, 0x100, 0x201, 0x12,
+		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
+	ck_assert_int_eq(trust_stateid_register_fh(
+		&other_issuer, 0, 3, 0x101, 0x200, 0x13,
+		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
+
+	trust_stateid_bulk_revoke_scoped(0x100, 0x200);
+	ck_assert_ptr_null(trust_stateid_find(&same_issuer));
+	struct trust_entry *te = trust_stateid_find(&other_target);
+	ck_assert_ptr_nonnull(te);
+	trust_entry_put(te);
+	te = trust_stateid_find(&other_issuer);
+	ck_assert_ptr_nonnull(te);
+	trust_entry_put(te);
+}
+END_TEST
+
+/* A zero target clears only the issuing MDS's entries. */
+START_TEST(test_bulk_revoke_scoped_zero_target)
+{
+	stateid4 first = make_stateid(0x64);
+	stateid4 second = make_stateid(0x65);
+	stateid4 foreign = make_stateid(0x66);
+
+	ck_assert_int_eq(trust_stateid_register_fh(
+		&first, 0, 4, 0x110, 0x210, 0x14,
+		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
+	ck_assert_int_eq(trust_stateid_register_fh(
+		&second, 0, 5, 0x110, 0x211, 0x15,
+		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
+	ck_assert_int_eq(trust_stateid_register_fh(
+		&foreign, 0, 6, 0x111, 0x210, 0x16,
+		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
+
+	trust_stateid_bulk_revoke_scoped(0x110, 0);
+	ck_assert_ptr_null(trust_stateid_find(&first));
+	ck_assert_ptr_null(trust_stateid_find(&second));
+	struct trust_entry *te = trust_stateid_find(&foreign);
+	ck_assert_ptr_nonnull(te);
+	trust_entry_put(te);
 }
 END_TEST
 
@@ -751,6 +807,8 @@ START_TEST(test_op_trust_stateid_ok)
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.optrust_stateid;
 	args->tsa_layout_stateid = make_stateid(0x11);
+	args->tsa_pnfs_clientid = 0x123456789ULL;
+	args->tsa_client_id = 0x4321;
 	args->tsa_iomode = LAYOUTIOMODE4_RW;
 	/* expire 30 seconds from now (wall clock) */
 	struct timespec now;
@@ -769,6 +827,9 @@ START_TEST(test_op_trust_stateid_ok)
 	/* Entry must be findable in the trust table. */
 	struct trust_entry *te = trust_stateid_find(&args->tsa_layout_stateid);
 	ck_assert_ptr_nonnull(te);
+	ck_assert_uint_eq(te->te_issuer_clientid, cm->nc->nc_client.c_id);
+	ck_assert_uint_eq(te->te_target_clientid, args->tsa_pnfs_clientid);
+	ck_assert_uint_eq(te->te_client_id, args->tsa_client_id);
 	trust_entry_put(te);
 
 	cm_free(cm);
@@ -931,6 +992,7 @@ START_TEST(test_op_trust_stateid_past_expire)
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.optrust_stateid;
 	args->tsa_layout_stateid = make_stateid(0x44);
+	args->tsa_pnfs_clientid = 0x44;
 	args->tsa_iomode = LAYOUTIOMODE4_RW;
 	/* expire at epoch = far in the past */
 	args->tsa_expire.seconds = 1;
@@ -962,6 +1024,7 @@ START_TEST(test_op_trust_stateid_principal_on_auth_sys)
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.optrust_stateid;
 	args->tsa_layout_stateid = make_stateid(0x55);
+	args->tsa_pnfs_clientid = 0x55;
 	args->tsa_iomode = LAYOUTIOMODE4_RW;
 	struct timespec now;
 	clock_gettime(CLOCK_REALTIME, &now);
@@ -997,7 +1060,8 @@ START_TEST(test_op_revoke_stateid_ok)
 	cm_set_inode(cm, g_op_inode);
 	ck_assert_int_eq(trust_stateid_register_fh(
 		&stid, g_op_inode->i_sb->sb_id, g_op_inode->i_ino,
-		cm->nc->nc_client.c_id, CHUNK_GUARD_CLIENT_ID_NONE,
+		cm->nc->nc_client.c_id, cm->nc->nc_client.c_id,
+		CHUNK_GUARD_CLIENT_ID_NONE,
 		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
 	cm_set_op(cm, 0, OP_REVOKE_STATEID);
 
@@ -1030,11 +1094,11 @@ START_TEST(test_op_revoke_stateid_wrong_issuer_is_noop)
 	cm_set_inode(cm, g_op_inode);
 	ck_assert_int_eq(trust_stateid_register_fh(
 		&stid, g_op_inode->i_sb->sb_id, g_op_inode->i_ino, 0xDEAD,
-		CHUNK_GUARD_CLIENT_ID_NONE, LAYOUTIOMODE4_RW, future_expire_ns(),
-		""), 0);
+		cm->nc->nc_client.c_id, CHUNK_GUARD_CLIENT_ID_NONE,
+		LAYOUTIOMODE4_RW, future_expire_ns(), ""), 0);
 	struct trust_entry *before = trust_stateid_find(&stid);
 	ck_assert_ptr_nonnull(before);
-	ck_assert_uint_ne(before->te_clientid, cm->nc->nc_client.c_id);
+	ck_assert_uint_ne(before->te_issuer_clientid, cm->nc->nc_client.c_id);
 	trust_entry_put(before);
 	cm_set_op(cm, 0, OP_REVOKE_STATEID);
 	cm->compound->c_args->argarray.argarray_val[0]
@@ -1248,17 +1312,18 @@ START_TEST(test_op_bulk_revoke_stateid_ok)
 	clientid4 cid = 0xDEAD;
 	stateid4 s1 = make_stateid(0xD1);
 	stateid4 s2 = make_stateid(0xD2);
-
-	ck_assert_int_eq(trust_stateid_register(
-				 &s1, 111, cid, CHUNK_GUARD_CLIENT_ID_NONE,
-				 LAYOUTIOMODE4_RW, future_expire_ns(), ""),
-			 0);
-	ck_assert_int_eq(trust_stateid_register(
-				 &s2, 222, cid, CHUNK_GUARD_CLIENT_ID_NONE,
-				 LAYOUTIOMODE4_RW, future_expire_ns(), ""),
-			 0);
-
 	struct cm_ctx *cm = cm_alloc(1, EXCHGID4_FLAG_USE_PNFS_MDS);
+
+	ck_assert_int_eq(trust_stateid_register_fh(
+				 &s1, 0, 111, cm->nc->nc_client.c_id, cid,
+				 CHUNK_GUARD_CLIENT_ID_NONE, LAYOUTIOMODE4_RW,
+				 future_expire_ns(), ""),
+			 0);
+	ck_assert_int_eq(trust_stateid_register_fh(
+				 &s2, 0, 222, cm->nc->nc_client.c_id, cid,
+				 CHUNK_GUARD_CLIENT_ID_NONE, LAYOUTIOMODE4_RW,
+				 future_expire_ns(), ""),
+			 0);
 
 	cm_set_op(cm, 0, OP_BULK_REVOKE_STATEID);
 
@@ -1923,9 +1988,8 @@ END_TEST
 
 /*
  * A layout stateid belongs to one client, so a re-registration cannot
- * legitimately rebind it to a different writer.  The field is
- * write-once, which is also what lets CHUNK operations read it without
- * atomics while the entry is live.
+ * legitimately rebind it to a different writer.  The data server rejects
+ * the attempted rebind rather than silently retaining the old identity.
  */
 START_TEST(test_reregister_does_not_rebind_client_id)
 {
@@ -1938,7 +2002,7 @@ START_TEST(test_reregister_does_not_rebind_client_id)
 	ck_assert_int_eq(trust_stateid_register(&s, 5, 0xCAFE, 0x9999,
 						LAYOUTIOMODE4_RW,
 						future_expire_ns(), ""),
-			 0);
+				 -EINVAL);
 
 	struct trust_entry *te = trust_stateid_find(&s);
 
@@ -2077,7 +2141,7 @@ START_TEST(test_stats_bulk_revoke_counts_operations)
 
 	struct trust_stateid_stats a = stats_snapshot();
 
-	trust_stateid_bulk_revoke(7);
+	trust_stateid_bulk_revoke_scoped(7, 0);
 
 	struct trust_stateid_stats b = stats_snapshot();
 
@@ -2291,6 +2355,8 @@ static Suite *trust_stateid_suite(void)
 	tcase_add_test(tc_revoke, test_bulk_revoke_by_clientid);
 	tcase_add_test(tc_revoke, test_bulk_revoke_all);
 	tcase_add_test(tc_revoke, test_bulk_revoke_empty);
+	tcase_add_test(tc_revoke, test_bulk_revoke_scoped_issuer_and_target);
+	tcase_add_test(tc_revoke, test_bulk_revoke_scoped_zero_target);
 	suite_add_tcase(s, tc_revoke);
 
 	TCase *tc_expire = tcase_create("convert_expire");
