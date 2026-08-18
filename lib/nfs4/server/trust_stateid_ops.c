@@ -137,7 +137,8 @@ uint32_t nfs4_op_trust_stateid(struct compound *compound)
 	 * way" signal that lets the MDS fall back to loose coupling.
 	 */
 	if (stateid4_is_special(&args->tsa_layout_stateid)) {
-		*status = NFS4ERR_INVAL;
+		*status = stateid4_is_anonymous(&args->tsa_layout_stateid) ?
+				  NFS4ERR_INVAL : NFS4ERR_BAD_STATEID;
 		return 0;
 	}
 
@@ -229,7 +230,8 @@ uint32_t nfs4_op_revoke_stateid(struct compound *compound)
 		return 0;
 
 	if (stateid4_is_special(&args->rsa_layout_stateid)) {
-		*status = NFS4ERR_BAD_STATEID;
+		*status = stateid4_is_anonymous(&args->rsa_layout_stateid) ?
+				  NFS4ERR_INVAL : NFS4ERR_BAD_STATEID;
 		return 0;
 	}
 

@@ -1118,9 +1118,7 @@ START_TEST(test_op_revoke_stateid_plain_client_rejected)
 }
 END_TEST
 
-/*
- * A special stateid (anonymous) must return NFS4ERR_BAD_STATEID.
- */
+/* The anonymous capability-probe stateid is invalid for revocation. */
 START_TEST(test_op_revoke_stateid_special_stateid)
 {
 	struct cm_ctx *cm = cm_alloc(1, EXCHGID4_FLAG_USE_PNFS_MDS);
@@ -1132,6 +1130,30 @@ START_TEST(test_op_revoke_stateid_special_stateid)
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.oprevoke_stateid;
 	memset(&args->rsa_layout_stateid, 0, sizeof(args->rsa_layout_stateid));
+
+	nfs4_op_revoke_stateid(cm->compound);
+
+	REVOKE_STATEID4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					   .nfs_resop4_u.oprevoke_stateid;
+	ck_assert_int_eq(res->rsr_status, NFS4ERR_INVAL);
+
+	cm_free(cm);
+}
+END_TEST
+
+/* Other special stateids are malformed revoke targets. */
+START_TEST(test_op_revoke_stateid_nonanonymous_special_stateid)
+{
+	struct cm_ctx *cm = cm_alloc(1, EXCHGID4_FLAG_USE_PNFS_MDS);
+
+	cm_set_inode(cm, g_op_inode);
+	cm_set_op(cm, 0, OP_REVOKE_STATEID);
+
+	REVOKE_STATEID4args *args =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.oprevoke_stateid;
+	args->rsa_layout_stateid.seqid = UINT32_MAX;
+	memset(args->rsa_layout_stateid.other, 0xff, NFS4_OTHER_SIZE);
 
 	nfs4_op_revoke_stateid(cm->compound);
 
@@ -2249,6 +2271,7 @@ static Suite *trust_stateid_suite(void)
 	tcase_add_test(tc_g, test_op_revoke_stateid_not_from_mds);
 	tcase_add_test(tc_g, test_op_revoke_stateid_plain_client_rejected);
 	tcase_add_test(tc_g, test_op_revoke_stateid_special_stateid);
+	tcase_add_test(tc_g, test_op_revoke_stateid_nonanonymous_special_stateid);
 	tcase_add_test(tc_g, test_op_revoke_stateid_no_fh);
 	suite_add_tcase(s, tc_g);
 
