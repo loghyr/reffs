@@ -893,6 +893,13 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 
 	struct chunk_store *cs = compound->c_inode->i_chunk_store;
 
+	if (!cs && compound->c_server_state->ss_state_dir) {
+		cs = chunk_store_load(compound->c_server_state->ss_state_dir,
+				      compound->c_inode->i_ino);
+		if (cs)
+			compound->c_inode->i_chunk_store = cs;
+	}
+
 	if (!cs) {
 		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 		*status = NFS4ERR_NOENT;
