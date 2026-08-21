@@ -127,6 +127,14 @@ START_TEST(test_defaults_grace_period)
 }
 END_TEST
 
+START_TEST(test_defaults_chunk_write_delay_count)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+	ck_assert_uint_eq(cfg.test_chunk_write_delay_count, 0);
+}
+END_TEST
+
 START_TEST(test_defaults_tls_off)
 {
 	struct reffs_config cfg;
@@ -213,6 +221,22 @@ START_TEST(test_load_server_port)
 
 	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
 	ck_assert_int_eq(cfg.port, 2050);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_server_chunk_write_delay_count)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[server]\ntest_chunk_write_delay_count = 3\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.test_chunk_write_delay_count, 3);
 
 	unlink(path);
 	free(path);
@@ -1378,6 +1402,7 @@ Suite *config_suite(void)
 	tcase_add_test(tc_defaults, test_defaults_role);
 	tcase_add_test(tc_defaults, test_defaults_minor_versions);
 	tcase_add_test(tc_defaults, test_defaults_grace_period);
+	tcase_add_test(tc_defaults, test_defaults_chunk_write_delay_count);
 	tcase_add_test(tc_defaults, test_defaults_tls_off);
 	tcase_add_test(tc_defaults, test_defaults_backend_ram);
 	tcase_add_test(tc_defaults, test_defaults_log_level_info);
@@ -1389,6 +1414,7 @@ Suite *config_suite(void)
 	TCase *tc_load = tcase_create("load");
 	tcase_add_test(tc_load, test_load_empty_file);
 	tcase_add_test(tc_load, test_load_server_port);
+	tcase_add_test(tc_load, test_load_server_chunk_write_delay_count);
 	tcase_add_test(tc_load, test_load_server_probe_port);
 	tcase_add_test(tc_load, test_load_server_role_mds);
 	tcase_add_test(tc_load, test_load_server_role_ds_erasure);
