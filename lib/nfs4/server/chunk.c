@@ -98,7 +98,9 @@ static nfsstat4 chunk_check_trusted_stateid(const struct compound *compound,
 		return NFS4ERR_BAD_STATEID;
 	}
 
-	struct trust_entry *te = trust_stateid_find(stid);
+	struct trust_entry *te =
+		trust_stateid_find_fh(stid, compound->c_curr_nfh.nfh_sb,
+				      compound->c_curr_nfh.nfh_ino);
 
 	if (!te) {
 		trust_stateid_count_validation(TRUST_VALIDATE_NO_ENTRY);

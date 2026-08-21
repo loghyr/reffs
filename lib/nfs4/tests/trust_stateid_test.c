@@ -266,6 +266,36 @@ START_TEST(test_register_two_entries)
 }
 END_TEST
 
+/* One layout stateid may be registered for several shard filehandles. */
+START_TEST(test_register_same_stateid_for_multiple_shards)
+{
+	stateid4 s = make_stateid(0x67);
+
+	ck_assert_int_eq(trust_stateid_register_fh(&s, 7, 41, 0x110, 0x210,
+						   0x14, LAYOUTIOMODE4_RW,
+						   future_expire_ns(), ""),
+			 0);
+	ck_assert_int_eq(trust_stateid_register_fh(&s, 7, 42, 0x110, 0x210,
+						   0x14, LAYOUTIOMODE4_RW,
+						   future_expire_ns(), ""),
+			 0);
+
+	struct trust_entry *te = trust_stateid_find_fh(&s, 7, 41);
+	ck_assert_ptr_nonnull(te);
+	trust_entry_put(te);
+	te = trust_stateid_find_fh(&s, 7, 42);
+	ck_assert_ptr_nonnull(te);
+	trust_entry_put(te);
+	ck_assert_ptr_null(trust_stateid_find_fh(&s, 7, 43));
+
+	trust_stateid_revoke_fh(&s, 7, 41, 0x110);
+	ck_assert_ptr_null(trust_stateid_find_fh(&s, 7, 41));
+	te = trust_stateid_find_fh(&s, 7, 42);
+	ck_assert_ptr_nonnull(te);
+	trust_entry_put(te);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* C. Find and reference counting                                      */
 /* ------------------------------------------------------------------ */
@@ -2341,6 +2371,8 @@ static Suite *trust_stateid_suite(void)
 	tcase_add_test(tc_register, test_register_with_principal);
 	tcase_add_test(tc_register, test_register_principal_truncated);
 	tcase_add_test(tc_register, test_register_two_entries);
+	tcase_add_test(tc_register,
+		       test_register_same_stateid_for_multiple_shards);
 	suite_add_tcase(s, tc_register);
 
 	TCase *tc_bind = tcase_create("client_id_binding");

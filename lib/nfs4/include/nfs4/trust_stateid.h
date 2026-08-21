@@ -10,8 +10,11 @@
  * CHUNK_WRITE and CHUNK_READ validate the client's stateid against the
  * table before allowing I/O.
  *
- * The table is a global cds_lfht keyed by the 12-byte stateid.other
- * field.  Rule 6 (ref-counting.md) governs the entry lifecycle.
+ * The table is a global cds_lfht hashed by the 12-byte stateid.other
+ * field.  A layout stateid may cover several shard filehandles on one
+ * data server, so protocol lookups also match the registering
+ * superblock/inode pair.  Rule 6 (ref-counting.md) governs the entry
+ * lifecycle.
  *
  * Flags (te_flags):
  *   TRUST_ACTIVE   -- stateid is fully registered, I/O allowed
@@ -221,6 +224,10 @@ void trust_stateid_bulk_revoke_scoped(clientid4 issuer, clientid4 target);
  * Expired entries ARE returned; the caller must check te_expire_ns.
  */
 struct trust_entry *trust_stateid_find(const stateid4 *stateid);
+
+/* Find the registration for a stateid and current shard filehandle. */
+struct trust_entry *trust_stateid_find_fh(const stateid4 *stateid, uint64_t sb,
+					  uint64_t ino);
 
 /*
  * trust_entry_put -- drop a reference to a trust entry.

@@ -142,6 +142,32 @@ static int trust_match(struct cds_lfht_node *node, const void *key)
 	return memcmp(te->te_other, key, NFS4_OTHER_SIZE) == 0;
 }
 
+struct trust_fh_key {
+	uint8_t other[NFS4_OTHER_SIZE];
+	uint64_t sb;
+	uint64_t ino;
+};
+
+static int trust_match_fh(struct cds_lfht_node *node, const void *key)
+{
+	const struct trust_entry *te =
+		caa_container_of(node, struct trust_entry, te_ht_node);
+	const struct trust_fh_key *fk = key;
+
+	return memcmp(te->te_other, fk->other, NFS4_OTHER_SIZE) == 0 &&
+	       te->te_sb == fk->sb && te->te_ino == fk->ino;
+}
+
+static int trust_match_fh_legacy(struct cds_lfht_node *node, const void *key)
+{
+	const struct trust_entry *te =
+		caa_container_of(node, struct trust_entry, te_ht_node);
+	const struct trust_fh_key *fk = key;
+
+	return memcmp(te->te_other, fk->other, NFS4_OTHER_SIZE) == 0 &&
+	       te->te_sb == 0 && te->te_ino == fk->ino;
+}
+
 /* ------------------------------------------------------------------ */
 /* Lifecycle callbacks                                                 */
 
@@ -423,9 +449,14 @@ int trust_stateid_register_fh(const stateid4 *stateid, uint64_t sb,
 	 */
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *found;
+	struct trust_fh_key key = {
+		.sb = sb,
+		.ino = ino,
+	};
+	memcpy(key.other, stateid->other, NFS4_OTHER_SIZE);
 
 	rcu_read_lock();
-	cds_lfht_lookup(trust_ht, hash, trust_match, stateid->other, &iter);
+	cds_lfht_lookup(trust_ht, hash, trust_match_fh, &key, &iter);
 	found = cds_lfht_iter_get_node(&iter);
 
 	if (found) {
@@ -519,10 +550,25 @@ static void trust_stateid_revoke_match(const stateid4 *stateid, uint64_t sb,
 	unsigned long hash = trust_hash((const uint8_t *)stateid->other);
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
+	struct trust_fh_key key = {
+		.sb = sb,
+		.ino = ino,
+	};
+	memcpy(key.other, stateid->other, NFS4_OTHER_SIZE);
 
 	rcu_read_lock();
-	cds_lfht_lookup(trust_ht, hash, trust_match, stateid->other, &iter);
+	cds_lfht_lookup(trust_ht, hash,
+			(sb != 0 || ino != 0) ? trust_match_fh : trust_match,
+			(sb != 0 || ino != 0) ? (const void *)&key :
+						(const void *)stateid->other,
+			&iter);
 	node = cds_lfht_iter_get_node(&iter);
+	if (!node && sb != 0) {
+		key.sb = 0;
+		cds_lfht_lookup(trust_ht, hash, trust_match_fh_legacy, &key,
+				&iter);
+		node = cds_lfht_iter_get_node(&iter);
+	}
 
 	if (node) {
 		struct trust_entry *te =
@@ -655,6 +701,49 @@ struct trust_entry *trust_stateid_find(const stateid4 *stateid)
 	rcu_read_lock();
 	cds_lfht_lookup(trust_ht, hash, trust_match, stateid->other, &iter);
 	node = cds_lfht_iter_get_node(&iter);
+
+	if (node) {
+		struct trust_entry *tmp =
+			caa_container_of(node, struct trust_entry, te_ht_node);
+
+		if (urcu_ref_get_unless_zero(&tmp->te_ref))
+			te = tmp;
+	}
+	rcu_read_unlock();
+
+	if (!te)
+		ts_bump(&ts_lookup_misses);
+
+	return te;
+}
+
+struct trust_entry *trust_stateid_find_fh(const stateid4 *stateid, uint64_t sb,
+					  uint64_t ino)
+{
+	unsigned long hash = trust_hash((const uint8_t *)stateid->other);
+	struct trust_fh_key key = {
+		.sb = sb,
+		.ino = ino,
+	};
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	struct trust_entry *te = NULL;
+
+	if (!trust_ht)
+		return NULL;
+
+	memcpy(key.other, stateid->other, NFS4_OTHER_SIZE);
+	ts_bump(&ts_lookups);
+
+	rcu_read_lock();
+	cds_lfht_lookup(trust_ht, hash, trust_match_fh, &key, &iter);
+	node = cds_lfht_iter_get_node(&iter);
+	if (!node && sb != 0) {
+		key.sb = 0;
+		cds_lfht_lookup(trust_ht, hash, trust_match_fh_legacy, &key,
+				&iter);
+		node = cds_lfht_iter_get_node(&iter);
+	}
 
 	if (node) {
 		struct trust_entry *tmp =
