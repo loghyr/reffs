@@ -736,7 +736,9 @@ int ds_read(struct ds_conn *dc, const uint8_t *fh, uint32_t fh_len,
  * block_offset: block number (not byte offset).
  * chunk_size: size of each chunk in bytes.
  * data/data_len: chunk data (one or more chunks of chunk_size bytes).
- * owner_id: chunk owner identifier.
+ * cohort_id: transaction identifier shared by all payload chunks.
+ * owner_id: first per-chunk co_id; successive payload chunks use
+ * owner_id + index.
  * stateid: layout stateid for tight coupling (NULL = anonymous stateid).
  * guard: when non-NULL, sets cwa_guard.cwg_check=TRUE and CAS-checks
  *   the existing block's {cg_gen_id, cg_client_id} against this guard
@@ -750,9 +752,9 @@ int ds_read(struct ds_conn *dc, const uint8_t *fh, uint32_t fh_len,
  */
 int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		   uint64_t block_offset, uint32_t chunk_size,
-		   const uint8_t *data, uint32_t data_len, uint32_t owner_id,
-		   uint32_t layout_client_id, const stateid4 *stateid,
-		   const chunk_guard4 *guard);
+		   const uint8_t *data, uint32_t data_len, uint64_t cohort_id,
+		   uint32_t owner_id, uint32_t layout_client_id,
+		   const stateid4 *stateid, const chunk_guard4 *guard);
 
 /*
  * ds_chunk_write_repair -- OP_CHUNK_WRITE_REPAIR to a data server.
@@ -763,8 +765,9 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 int ds_chunk_write_repair(struct mds_session *ds, const uint8_t *fh,
 			  uint32_t fh_len, uint64_t block_offset,
 			  uint32_t chunk_size, const uint8_t *data,
-			  uint32_t data_len, uint32_t owner_id,
-			  uint32_t layout_client_id, const stateid4 *stateid);
+			  uint32_t data_len, uint64_t cohort_id,
+			  uint32_t owner_id, uint32_t layout_client_id,
+			  const stateid4 *stateid);
 
 /*
  * mds_chunk_repaired -- OP_CHUNK_REPAIRED to the MDS.

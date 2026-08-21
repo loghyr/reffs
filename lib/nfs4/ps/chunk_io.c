@@ -105,9 +105,9 @@ static uint32_t chunk_writer_client_id(uint32_t layout_client_id)
 
 int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		   uint64_t block_offset, uint32_t chunk_size,
-		   const uint8_t *data, uint32_t data_len, uint32_t owner_id,
-		   uint32_t layout_client_id, const stateid4 *stateid,
-		   const chunk_guard4 *guard)
+		   const uint8_t *data, uint32_t data_len, uint64_t cohort_id,
+		   uint32_t owner_id, uint32_t layout_client_id,
+		   const stateid4 *stateid, const chunk_guard4 *guard)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -155,13 +155,12 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	 * EXPECTS via cwa_guard when it wants a compare-and-swap;
 	 * the owner carries transaction identity only.
 	 *
-	 * co_cohort_id names this write transaction.  Left 0 until
-	 * cohorts are assigned per transaction -- the server does
-	 * not compare it yet, and 0 preserves today's behaviour.
+	 * co_cohort_id names this write transaction and owner_id is the
+	 * first co_id in the payload.  The compact carrier below emits one
+	 * co_id per payload chunk.
 	 */
-	cwa->cwa_owner.co_cohort_id = 0;
-	cwa->cwa_owner.co_client_id = chunk_writer_client_id(layout_client_id);
-	cwa->cwa_owner.co_id = owner_id;
+	cwa->cwa_cohort_id = cohort_id;
+	cwa->cwa_client_id = chunk_writer_client_id(layout_client_id);
 	cwa->cwa_payload_id = 0;
 	cwa->cwa_flags = 0;
 	if (guard) {
@@ -186,6 +185,14 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	 * sized shards).
 	 */
 	uint32_t nchunks = (data_len + chunk_size - 1) / chunk_size;
+	cwa->cwa_co_ids.cwa_co_ids_len = nchunks;
+	cwa->cwa_co_ids.cwa_co_ids_val = calloc(nchunks, sizeof(uint32_t));
+	if (!cwa->cwa_co_ids.cwa_co_ids_val) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	for (uint32_t i = 0; i < nchunks; i++)
+		cwa->cwa_co_ids.cwa_co_ids_val[i] = owner_id + i;
 
 	cwa->cwa_checksums.cwa_checksums_len = nchunks;
 	cwa->cwa_checksums.cwa_checksums_val =
@@ -264,6 +271,9 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	}
 
 out_crc:
+	free(cwa->cwa_co_ids.cwa_co_ids_val);
+	cwa->cwa_co_ids.cwa_co_ids_val = NULL;
+	cwa->cwa_co_ids.cwa_co_ids_len = 0;
 	/* Don't let mds_compound_fini free our caller's data buffer. */
 	cwa->cwa_chunks.cwa_chunks_val = NULL;
 	cwa->cwa_chunks.cwa_chunks_len = 0;
@@ -320,8 +330,9 @@ out:
 int ds_chunk_write_repair(struct mds_session *ds, const uint8_t *fh,
 			  uint32_t fh_len, uint64_t block_offset,
 			  uint32_t chunk_size, const uint8_t *data,
-			  uint32_t data_len, uint32_t owner_id,
-			  uint32_t layout_client_id, const stateid4 *stateid)
+			  uint32_t data_len, uint64_t cohort_id,
+			  uint32_t owner_id, uint32_t layout_client_id,
+			  const stateid4 *stateid)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -366,18 +377,24 @@ int ds_chunk_write_repair(struct mds_session *ds, const uint8_t *fh,
 	 * EXPECTS via cwa_guard when it wants a compare-and-swap;
 	 * the owner carries transaction identity only.
 	 *
-	 * co_cohort_id names this write transaction.  Left 0 until
-	 * cohorts are assigned per transaction -- the server does
-	 * not compare it yet, and 0 preserves today's behaviour.
+	 * co_cohort_id names this repair transaction and owner_id is the
+	 * first co_id in the payload.  The compact carrier emits one co_id
+	 * per reconstructed chunk.
 	 */
-	cwra->cwra_owner.co_cohort_id = 0;
-	cwra->cwra_owner.co_client_id =
-		chunk_writer_client_id(layout_client_id);
-	cwra->cwra_owner.co_id = owner_id;
+	cwra->cwra_cohort_id = cohort_id;
+	cwra->cwra_client_id = chunk_writer_client_id(layout_client_id);
 	cwra->cwra_payload_id = 0;
 	cwra->cwra_chunk_size = chunk_size;
 
 	uint32_t nchunks = (data_len + chunk_size - 1) / chunk_size;
+	cwra->cwra_co_ids.cwra_co_ids_len = nchunks;
+	cwra->cwra_co_ids.cwra_co_ids_val = calloc(nchunks, sizeof(uint32_t));
+	if (!cwra->cwra_co_ids.cwra_co_ids_val) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	for (uint32_t i = 0; i < nchunks; i++)
+		cwra->cwra_co_ids.cwra_co_ids_val[i] = owner_id + i;
 
 	cwra->cwra_checksums.cwra_checksums_len = nchunks;
 	cwra->cwra_checksums.cwra_checksums_val =
@@ -435,6 +452,9 @@ int ds_chunk_write_repair(struct mds_session *ds, const uint8_t *fh,
 	}
 
 out_crc:
+	free(cwra->cwra_co_ids.cwra_co_ids_val);
+	cwra->cwra_co_ids.cwra_co_ids_val = NULL;
+	cwra->cwra_co_ids.cwra_co_ids_len = 0;
 	cwra->cwra_chunks.cwra_chunks_val = NULL;
 	cwra->cwra_chunks.cwra_chunks_len = 0;
 	if (cwra->cwra_checksums.cwra_checksums_val) {
@@ -714,8 +734,8 @@ int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
 	 */
 	cfa->cfa_offset = block_offset;
 	cfa->cfa_count = count;
-	cfa->cfa_chunks.cfa_chunks_len = 1;
-	cfa->cfa_chunks.cfa_chunks_val = calloc(1, sizeof(chunk_owner4));
+	cfa->cfa_chunks.cfa_chunks_len = count;
+	cfa->cfa_chunks.cfa_chunks_val = calloc(count, sizeof(chunk_owner4));
 	if (!cfa->cfa_chunks.cfa_chunks_val) {
 		ret = -ENOMEM;
 		goto out;
@@ -727,10 +747,12 @@ int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
 	 * identity is derived here in the same way as CHUNK_WRITE so an
 	 * unassigned layout identity remains interoperable.
 	 */
-	cfa->cfa_chunks.cfa_chunks_val[0].co_cohort_id = cohort_id;
-	cfa->cfa_chunks.cfa_chunks_val[0].co_client_id =
-		chunk_writer_client_id(layout_client_id);
-	cfa->cfa_chunks.cfa_chunks_val[0].co_id = owner_id;
+	for (uint32_t i = 0; i < count; i++) {
+		cfa->cfa_chunks.cfa_chunks_val[i].co_cohort_id = cohort_id;
+		cfa->cfa_chunks.cfa_chunks_val[i].co_client_id =
+			chunk_writer_client_id(layout_client_id);
+		cfa->cfa_chunks.cfa_chunks_val[i].co_id = owner_id + i;
+	}
 
 	ret = mds_compound_send(&mc, ds);
 	if (ret)
@@ -804,8 +826,8 @@ int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	 */
 	cca->cca_offset = block_offset;
 	cca->cca_count = count;
-	cca->cca_chunks.cca_chunks_len = 1;
-	cca->cca_chunks.cca_chunks_val = calloc(1, sizeof(chunk_owner4));
+	cca->cca_chunks.cca_chunks_len = count;
+	cca->cca_chunks.cca_chunks_val = calloc(count, sizeof(chunk_owner4));
 	if (!cca->cca_chunks.cca_chunks_val) {
 		ret = -ENOMEM;
 		goto out;
@@ -817,10 +839,12 @@ int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	 * identity is derived here in the same way as CHUNK_WRITE so an
 	 * unassigned layout identity remains interoperable.
 	 */
-	cca->cca_chunks.cca_chunks_val[0].co_cohort_id = cohort_id;
-	cca->cca_chunks.cca_chunks_val[0].co_client_id =
-		chunk_writer_client_id(layout_client_id);
-	cca->cca_chunks.cca_chunks_val[0].co_id = owner_id;
+	for (uint32_t i = 0; i < count; i++) {
+		cca->cca_chunks.cca_chunks_val[i].co_cohort_id = cohort_id;
+		cca->cca_chunks.cca_chunks_val[i].co_client_id =
+			chunk_writer_client_id(layout_client_id);
+		cca->cca_chunks.cca_chunks_val[i].co_id = owner_id + i;
+	}
 
 	ret = mds_compound_send(&mc, ds);
 	if (ret)

@@ -374,6 +374,21 @@ chunk_write_validate_payload(struct compound *compound, uint32_t chunk_size,
 	return NFS4_OK;
 }
 
+static nfsstat4 chunk_validate_co_ids(const uint32_t *co_ids, uint32_t nco_ids,
+				      uint32_t nchunks)
+{
+	if (nco_ids != nchunks || !co_ids)
+		return NFS4ERR_INVAL;
+
+	for (uint32_t i = 0; i < nco_ids; i++) {
+		for (uint32_t j = i + 1; j < nco_ids; j++) {
+			if (co_ids[i] == co_ids[j])
+				return NFS4ERR_INVAL;
+		}
+	}
+	return NFS4_OK;
+}
+
 /* ------------------------------------------------------------------ */
 /* CHUNK_WRITE                                                         */
 /* ------------------------------------------------------------------ */
@@ -434,11 +449,18 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	uint32_t nchunks;
 	nfsstat4 vs = chunk_write_validate_payload(
 		compound, args->cwa_chunk_size, args->cwa_chunks.cwa_chunks_val,
-		args->cwa_chunks.cwa_chunks_len, args->cwa_owner.co_client_id,
+		args->cwa_chunks.cwa_chunks_len, args->cwa_client_id,
 		args->cwa_checksums.cwa_checksums_val,
 		args->cwa_checksums.cwa_checksums_len, "CHUNK_WRITE",
 		&wire_algo, &nchunks);
 
+	if (vs != NFS4_OK) {
+		*status = vs;
+		return 0;
+	}
+
+	vs = chunk_validate_co_ids(args->cwa_co_ids.cwa_co_ids_val,
+				   args->cwa_co_ids.cwa_co_ids_len, nchunks);
 	if (vs != NFS4_OK) {
 		*status = vs;
 		return 0;
@@ -455,8 +477,7 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	 * bound to this file and authenticated principal.
 	 */
 	nfsstat4 trust_err = chunk_check_trusted_stateid(
-		compound, &args->cwa_stateid, args->cwa_owner.co_client_id,
-		false);
+		compound, &args->cwa_stateid, args->cwa_client_id, false);
 
 	if (trust_err != NFS4_OK) {
 		*status = trust_err;
@@ -599,9 +620,9 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		/* Axis (i): PENDING from a different writer. */
 		if (!prev || prev->cb_state != CHUNK_STATE_PENDING)
 			continue;
-		if (prev->cb_cohort_id == args->cwa_owner.co_cohort_id &&
-		    prev->cb_owner_id == args->cwa_owner.co_id &&
-		    prev->cb_client_id == args->cwa_owner.co_client_id)
+		if (prev->cb_cohort_id == args->cwa_cohort_id &&
+		    prev->cb_owner_id == args->cwa_co_ids.cwa_co_ids_val[i] &&
+		    prev->cb_client_id == args->cwa_client_id)
 			continue;
 
 		if (cstats)
@@ -750,9 +771,9 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 			 * its own generation and defeat the CAS.
 			 */
 			.cb_gen_id = old_blk ? old_blk->cb_gen_id + 1 : 0,
-			.cb_cohort_id = args->cwa_owner.co_cohort_id,
-			.cb_client_id = args->cwa_owner.co_client_id,
-			.cb_owner_id = args->cwa_owner.co_id,
+			.cb_cohort_id = args->cwa_cohort_id,
+			.cb_client_id = args->cwa_client_id,
+			.cb_owner_id = args->cwa_co_ids.cwa_co_ids_val[i],
 			.cb_payload_id = args->cwa_payload_id,
 			.cb_checksum_algorithm = blk_csum_algo,
 			.cb_checksum_len = blk_csum_len,
@@ -800,7 +821,11 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		 * pointer-bearing fields, xdr-parser generates a POD
 		 * layout for chunk_guard4 + uint32_t co_id).
 		 */
-		resok->cwr_owners.cwr_owners_val[i] = args->cwa_owner;
+		resok->cwr_owners.cwr_owners_val[i] = (chunk_owner4){
+			.co_cohort_id = args->cwa_cohort_id,
+			.co_client_id = args->cwa_client_id,
+			.co_id = args->cwa_co_ids.cwa_co_ids_val[i],
+		};
 
 		/*
 		 * INV-1 / chunk-collision instrumentation.  cs_pending_
@@ -1884,12 +1909,18 @@ uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 	nfsstat4 vs = chunk_write_validate_payload(
 		compound, args->cwra_chunk_size,
 		args->cwra_chunks.cwra_chunks_val,
-		args->cwra_chunks.cwra_chunks_len,
-		args->cwra_owner.co_client_id,
+		args->cwra_chunks.cwra_chunks_len, args->cwra_client_id,
 		args->cwra_checksums.cwra_checksums_val,
 		args->cwra_checksums.cwra_checksums_len, "CHUNK_WRITE_REPAIR",
 		&wire_algo, &nchunks);
 
+	if (vs != NFS4_OK) {
+		*status = vs;
+		return 0;
+	}
+
+	vs = chunk_validate_co_ids(args->cwra_co_ids.cwra_co_ids_val,
+				   args->cwra_co_ids.cwra_co_ids_len, nchunks);
 	if (vs != NFS4_OK) {
 		*status = vs;
 		return 0;
@@ -1910,8 +1941,7 @@ uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 	}
 
 	nfsstat4 trust_err = chunk_check_trusted_stateid(
-		compound, &args->cwra_stateid, args->cwra_owner.co_client_id,
-		true);
+		compound, &args->cwra_stateid, args->cwra_client_id, true);
 
 	if (trust_err != NFS4_OK) {
 		*status = trust_err;
@@ -2036,9 +2066,9 @@ uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 			.cb_flags = CHUNK_BLOCK_REPAIR_PROVENANCE,
 			/* Server-owned counter; see the CHUNK_WRITE note. */
 			.cb_gen_id = old_blk ? old_blk->cb_gen_id + 1 : 0,
-			.cb_cohort_id = args->cwra_owner.co_cohort_id,
-			.cb_client_id = args->cwra_owner.co_client_id,
-			.cb_owner_id = args->cwra_owner.co_id,
+			.cb_cohort_id = args->cwra_cohort_id,
+			.cb_client_id = args->cwra_client_id,
+			.cb_owner_id = args->cwra_co_ids.cwra_co_ids_val[i],
 			.cb_payload_id = args->cwra_payload_id,
 			.cb_checksum_algorithm = blk_csum_algo,
 			.cb_checksum_len = blk_csum_len,

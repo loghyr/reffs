@@ -255,6 +255,7 @@ static void set_write_args(struct cm_ctx *cm, char *buf, uint32_t buf_len,
 			   uint32_t chunk_size, uint64_t offset, uint32_t *crcs,
 			   uint32_t ncrc)
 {
+	static uint32_t co_ids[64];
 	cm_set_op(cm, 0, OP_CHUNK_WRITE);
 	CHUNK_WRITE4args *args = &cm->compound->c_args->argarray.argarray_val[0]
 					  .nfs_argop4_u.opchunk_write;
@@ -284,8 +285,15 @@ static void set_write_args(struct cm_ctx *cm, char *buf, uint32_t buf_len,
 	}
 
 	args->cwa_payload_id = 0x4242;
-	args->cwa_owner.co_client_id = 0xBEEF;
-	args->cwa_owner.co_id = 99;
+	args->cwa_cohort_id = 0;
+	args->cwa_client_id = 0xBEEF;
+	uint32_t nchunks =
+		chunk_size ? (buf_len + chunk_size - 1) / chunk_size : 0;
+	ck_assert_uint_le(nchunks, sizeof(co_ids) / sizeof(co_ids[0]));
+	args->cwa_co_ids.cwa_co_ids_len = nchunks;
+	args->cwa_co_ids.cwa_co_ids_val = co_ids;
+	for (uint32_t i = 0; i < nchunks; i++)
+		args->cwa_co_ids.cwa_co_ids_val[i] = 99 + (uint32_t)offset + i;
 }
 
 /*
@@ -307,6 +315,7 @@ static void free_write_args(struct cm_ctx *cm)
 		args->cwa_checksums.cwa_checksums_val = NULL;
 		args->cwa_checksums.cwa_checksums_len = 0;
 	}
+	args->cwa_co_ids.cwa_co_ids_len = 0;
 }
 
 /* Free the three per-chunk arrays from a successful CHUNK_WRITE result:
@@ -593,7 +602,7 @@ START_TEST(test_chunk_write_single_block)
 	 * for every element because reffs never invokes the
 	 * CHUNK_WRITE_FLAGS_ACTIVATE_IF_EMPTY activation shortcut
 	 * (:9163-9173); cwr_owners echoes the caller-supplied
-	 * cwa_owner.
+	 * the compact cohort/client/co-id carrier.
 	 */
 	ck_assert_uint_eq(ok->cwr_block_status.cwr_block_status_len, 1);
 	ck_assert_uint_eq(ok->cwr_block_activated.cwr_block_activated_len, 1);
@@ -734,6 +743,7 @@ static void set_write_args_raw_checksum(struct cm_ctx *cm, char *buf,
 					const uint8_t *value,
 					uint32_t value_len)
 {
+	static uint32_t co_ids[64];
 	cm_set_op(cm, 0, OP_CHUNK_WRITE);
 	CHUNK_WRITE4args *args = &cm->compound->c_args->argarray.argarray_val[0]
 					  .nfs_argop4_u.opchunk_write;
@@ -763,8 +773,15 @@ static void set_write_args_raw_checksum(struct cm_ctx *cm, char *buf,
 	}
 
 	args->cwa_payload_id = 0x4242;
-	args->cwa_owner.co_client_id = 0xBEEF;
-	args->cwa_owner.co_id = 99;
+	args->cwa_cohort_id = 0;
+	args->cwa_client_id = 0xBEEF;
+	uint32_t nchunks =
+		chunk_size ? (buf_len + chunk_size - 1) / chunk_size : 0;
+	ck_assert_uint_le(nchunks, sizeof(co_ids) / sizeof(co_ids[0]));
+	args->cwa_co_ids.cwa_co_ids_len = nchunks;
+	args->cwa_co_ids.cwa_co_ids_val = co_ids;
+	for (uint32_t i = 0; i < nchunks; i++)
+		args->cwa_co_ids.cwa_co_ids_val[i] = 99 + (uint32_t)offset + i;
 }
 
 /*
@@ -998,7 +1015,7 @@ START_TEST(test_chunk_finalize_requires_full_owner_triple)
 	CHUNK_WRITE4args *wargs =
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_write;
-	wargs->cwa_owner.co_cohort_id = 0x1111;
+	wargs->cwa_cohort_id = 0x1111;
 	nfs4_op_chunk_write(cm->compound);
 	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
 				 .nfs_resop4_u.opchunk_write.cwr_status,
@@ -1051,6 +1068,9 @@ START_TEST(test_chunk_finalize_requires_full_owner_triple)
 	ck_assert_int_eq(fres->cfr_status, NFS4_OK);
 	ck_assert_int_eq(fres->CHUNK_FINALIZE4res_u.cfr_resok4.cfr_status
 				 .cfr_status_val[0],
+			 NFS4_OK);
+	ck_assert_int_eq(fres->CHUNK_FINALIZE4res_u.cfr_resok4.cfr_status
+				 .cfr_status_val[1],
 			 NFS4_OK);
 	ck_assert_int_eq(blk->cb_state, CHUNK_STATE_FINALIZED);
 	free_finalize_res(cm);
@@ -1124,14 +1144,17 @@ START_TEST(test_chunk_finalize_skips_empty_in_range)
 	 * matches the value set_write_args() uses on the writer side so
 	 * owner-id lookups across WRITE / FINALIZE / COMMIT line up.
 	 */
-	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
+	chunk_owner4 owners[2] = {
+		{ .co_client_id = 0xBEEF, .co_id = 99 },
+		{ .co_client_id = 0xBEEF, .co_id = 103 },
+	};
 	CHUNK_FINALIZE4args *fargs =
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_finalize;
 	fargs->cfa_offset = 0;
 	fargs->cfa_count = 5;
-	fargs->cfa_chunks.cfa_chunks_val = &owner;
-	fargs->cfa_chunks.cfa_chunks_len = 1;
+	fargs->cfa_chunks.cfa_chunks_val = owners;
+	fargs->cfa_chunks.cfa_chunks_len = 2;
 
 	nfs4_op_chunk_finalize(cm->compound);
 
@@ -1141,6 +1164,9 @@ START_TEST(test_chunk_finalize_skips_empty_in_range)
 	ck_assert_int_eq(fres->cfr_status, NFS4_OK);
 	ck_assert_int_eq(fres->CHUNK_FINALIZE4res_u.cfr_resok4.cfr_status
 				 .cfr_status_val[0],
+			 NFS4_OK);
+	ck_assert_int_eq(fres->CHUNK_FINALIZE4res_u.cfr_resok4.cfr_status
+				 .cfr_status_val[1],
 			 NFS4_OK);
 
 	/* Written blocks transitioned; holes still EMPTY (masked by
@@ -1403,7 +1429,10 @@ START_TEST(test_chunk_commit_skips_empty_in_range)
 	 * matches the value set_write_args() uses on the writer side so
 	 * owner-id lookups across WRITE / FINALIZE / COMMIT line up.
 	 */
-	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
+	chunk_owner4 owners[2] = {
+		{ .co_client_id = 0xBEEF, .co_id = 99 },
+		{ .co_client_id = 0xBEEF, .co_id = 103 },
+	};
 	struct cm_ctx *cm = cm_alloc(1);
 
 	cm_set_inode(cm, g_inode);
@@ -1434,8 +1463,8 @@ START_TEST(test_chunk_commit_skips_empty_in_range)
 				 .nfs_argop4_u.opchunk_finalize;
 		fargs->cfa_offset = 0;
 		fargs->cfa_count = 5;
-		fargs->cfa_chunks.cfa_chunks_val = &owner;
-		fargs->cfa_chunks.cfa_chunks_len = 1;
+		fargs->cfa_chunks.cfa_chunks_val = owners;
+		fargs->cfa_chunks.cfa_chunks_len = 2;
 	}
 	nfs4_op_chunk_finalize(cm->compound);
 	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
@@ -1452,14 +1481,20 @@ START_TEST(test_chunk_commit_skips_empty_in_range)
 				 .nfs_argop4_u.opchunk_commit;
 		cargs->cca_offset = 0;
 		cargs->cca_count = 5;
-		cargs->cca_chunks.cca_chunks_val = &owner;
-		cargs->cca_chunks.cca_chunks_len = 1;
+		cargs->cca_chunks.cca_chunks_val = owners;
+		cargs->cca_chunks.cca_chunks_len = 2;
 	}
 	nfs4_op_chunk_commit(cm->compound);
 
 	CHUNK_COMMIT4res *cres = &cm->compound->c_res->resarray.resarray_val[0]
 					  .nfs_resop4_u.opchunk_commit;
 	ck_assert_int_eq(cres->ccr_status, NFS4_OK);
+	ck_assert_int_eq(
+		cres->CHUNK_COMMIT4res_u.ccr_resok4.ccr_status.ccr_status_val[0],
+		NFS4_OK);
+	ck_assert_int_eq(
+		cres->CHUNK_COMMIT4res_u.ccr_resok4.ccr_status.ccr_status_val[1],
+		NFS4_OK);
 
 	struct chunk_store *cs = g_inode->i_chunk_store;
 
@@ -2565,8 +2600,9 @@ static void set_owner(struct cm_ctx *cm, uint64_t client_id, uint64_t owner_id)
 	CHUNK_WRITE4args *args = &cm->compound->c_args->argarray.argarray_val[0]
 					  .nfs_argop4_u.opchunk_write;
 
-	args->cwa_owner.co_client_id = client_id;
-	args->cwa_owner.co_id = owner_id;
+	args->cwa_client_id = client_id;
+	if (args->cwa_co_ids.cwa_co_ids_len > 0)
+		args->cwa_co_ids.cwa_co_ids_val[0] = owner_id;
 }
 
 START_TEST(test_multi_ps_disjoint_stripes_no_collisions)

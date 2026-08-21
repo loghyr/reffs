@@ -24,6 +24,7 @@
  */
 
 #include <errno.h>
+#include <stdatomic.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -78,6 +79,18 @@ __attribute__((format(printf, 1, 2))) static void ec_log(const char *fmt, ...)
  * keeps the cap honest. */
 #define EC_CTX_MAX_MIRRORS 16
 
+static _Atomic uint64_t ec_next_cohort_id = 1;
+
+static uint64_t ec_alloc_cohort_id(void)
+{
+	uint64_t cohort = atomic_fetch_add_explicit(&ec_next_cohort_id, 1,
+						    memory_order_relaxed);
+
+	return cohort ? cohort :
+			atomic_fetch_add_explicit(&ec_next_cohort_id, 1,
+						  memory_order_relaxed);
+}
+
 struct ec_context {
 	struct mds_session *ctx_ms;
 	struct mds_file ctx_file;
@@ -93,6 +106,7 @@ struct ec_context {
 	struct ec_encoding *ctx_encoding;
 	uint32_t ctx_k;
 	uint32_t ctx_m;
+	uint64_t ctx_cohort_id;
 	/*
 	 * Phase 5 short-circuit: caller-provided PS listener state.
 	 * NULL for ec_demo and standalone callers; non-NULL only on
@@ -349,7 +363,8 @@ static void ec_report_ds_error(struct ec_context *ctx, int mirror_idx,
  */
 int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
 		   uint64_t block_offset, uint32_t chunk_sz, const uint8_t *src,
-		   uint32_t wsz, uint32_t owner_id, const chunk_guard4 *guard)
+		   uint32_t wsz, uint64_t cohort_id, uint32_t owner_id,
+		   const chunk_guard4 *guard)
 {
 	struct ec_mirror *em = &ctx->ctx_layout.el_mirrors[mirror_idx];
 	const stateid4 *stid =
@@ -385,8 +400,8 @@ int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
 
 		ret = ds_chunk_write(ctx->ctx_ds_sess[mirror_idx], em->em_fh,
 				     em->em_fh_len, block_offset, chunk_sz, src,
-				     wsz, owner_id, em->em_client_id, stid,
-				     guard);
+				     wsz, cohort_id, owner_id, em->em_client_id,
+				     stid, guard);
 		if (ret != -ESTALE)
 			return ret;
 
@@ -948,6 +963,7 @@ int ec_write_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
 	ctx.ctx_ms = ms;
 	ctx.ctx_k = k;
 	ctx.ctx_m = m;
+	ctx.ctx_cohort_id = ec_alloc_cohort_id();
 	ctx.ctx_pls = pls;
 	ctx.ctx_file = *mf; /* caller owns the underlying mf; we shallow-copy */
 
@@ -1146,7 +1162,10 @@ retry_stripe:
 					&ctx, i,
 					(uint64_t)s *
 						DIV_CEIL(ds_stride, chunk_sz),
-					chunk_sz, src, wsz, 1, NULL);
+					chunk_sz, src, wsz, ctx.ctx_cohort_id,
+					(uint32_t)(s * DIV_CEIL(ds_stride,
+								chunk_sz)),
+					NULL);
 			} else {
 				ret = ds_write(&ctx.ctx_conns[i], em->em_fh,
 					       em->em_fh_len, s * ds_stride,
@@ -1215,12 +1234,15 @@ retry_stripe:
 			       s, i, em->em_fh_len, wsz);
 			if (ctx.ctx_ds_sess) {
 				/* Whole-file path: no RMW, no guard. */
-				ret = ec_chunk_write(&ctx, k + i,
-						     (uint64_t)s *
-							     DIV_CEIL(ds_stride,
-								      chunk_sz),
-						     chunk_sz, parity_shards[i],
-						     wsz, 1, NULL);
+				ret = ec_chunk_write(
+					&ctx, k + i,
+					(uint64_t)s *
+						DIV_CEIL(ds_stride, chunk_sz),
+					chunk_sz, parity_shards[i], wsz,
+					ctx.ctx_cohort_id,
+					(uint32_t)(s * DIV_CEIL(ds_stride,
+								chunk_sz)),
+					NULL);
 			} else {
 				ret = ds_write(&ctx.ctx_conns[k + i], em->em_fh,
 					       em->em_fh_len, s * ds_stride,
@@ -1292,14 +1314,16 @@ retry_stripe:
 
 			ret = ds_chunk_finalize(ctx.ctx_ds_sess[i], em->em_fh,
 						em->em_fh_len, 0, total_blocks,
-						0, em->em_client_id, 1);
+						ctx.ctx_cohort_id,
+						em->em_client_id, 0);
 		}
 		for (int i = 0; i < k + m && ret == 0; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 
 			ret = ds_chunk_commit(ctx.ctx_ds_sess[i], em->em_fh,
-					      em->em_fh_len, 0, total_blocks, 0,
-					      em->em_client_id, 1, NULL);
+					      em->em_fh_len, 0, total_blocks,
+					      ctx.ctx_cohort_id,
+					      em->em_client_id, 0, NULL);
 		}
 	}
 
@@ -1442,6 +1466,7 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			goto out_layout;
 		}
 	}
+	ctx.ctx_cohort_id = ec_alloc_cohort_id();
 
 	data_shards = calloc(k, sizeof(uint8_t *));
 	parity_shards = calloc(m, sizeof(uint8_t *));
@@ -1534,10 +1559,13 @@ retry_stripe:
 			guard = &ctx.ctx_read_guards[i];
 
 		if (ctx.ctx_ds_sess) {
-			ret = ec_chunk_write(&ctx, i,
-					     stripe_no * DIV_CEIL(ds_stride,
-								  chunk_sz),
-					     chunk_sz, src, wsz, 1, guard);
+			ret = ec_chunk_write(
+				&ctx, i,
+				stripe_no * DIV_CEIL(ds_stride, chunk_sz),
+				chunk_sz, src, wsz, ctx.ctx_cohort_id,
+				(uint32_t)(stripe_no *
+					   DIV_CEIL(ds_stride, chunk_sz)),
+				guard);
 		} else {
 			ret = ds_write(&ctx.ctx_conns[i], em->em_fh,
 				       em->em_fh_len, stripe_no * ds_stride,
@@ -1585,7 +1613,11 @@ retry_stripe:
 			ret = ec_chunk_write(
 				&ctx, k + i,
 				stripe_no * DIV_CEIL(ds_stride, chunk_sz),
-				chunk_sz, parity_shards[i], wsz, 1, NULL);
+				chunk_sz, parity_shards[i], wsz,
+				ctx.ctx_cohort_id,
+				(uint32_t)(stripe_no *
+					   DIV_CEIL(ds_stride, chunk_sz)),
+				NULL);
 		} else {
 			ret = ds_write(&ctx.ctx_conns[k + i], em->em_fh,
 				       em->em_fh_len, stripe_no * ds_stride,
@@ -1635,8 +1667,10 @@ retry_stripe:
 
 			ret = ds_chunk_finalize(ctx.ctx_ds_sess[i], em->em_fh,
 						em->em_fh_len, base_block,
-						blocks_per_stripe, 0,
-						em->em_client_id, 1);
+						blocks_per_stripe,
+						ctx.ctx_cohort_id,
+						em->em_client_id,
+						(uint32_t)base_block);
 		}
 		for (int i = 0; i < k + m && ret == 0; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
@@ -1656,8 +1690,9 @@ retry_stripe:
 			 */
 			ret = ds_chunk_commit(
 				ctx.ctx_ds_sess[i], em->em_fh, em->em_fh_len,
-				base_block, blocks_per_stripe, 0,
-				em->em_client_id, 1,
+				base_block, blocks_per_stripe,
+				ctx.ctx_cohort_id, em->em_client_id,
+				(uint32_t)base_block,
 				captured_verf ? NULL : first_verf);
 			if (ret == 0 && !captured_verf)
 				captured_verf = true;
@@ -2339,6 +2374,7 @@ int ec_write_encoding_range(struct mds_session *ms, const char *path,
 	ctx.ctx_ms = ms;
 	ctx.ctx_k = k;
 	ctx.ctx_m = m;
+	ctx.ctx_cohort_id = ec_alloc_cohort_id();
 	ctx.ctx_file = mf;
 
 	ctx.ctx_encoding = ec_create_encoding(k, m, encoding_type);
@@ -2783,7 +2819,8 @@ int ec_repair_encoding(struct mds_session *ms, const char *path, int k, int m,
 
 			ret = ds_chunk_write_repair(
 				ctx.ctx_ds_sess[i], em->em_fh, em->em_fh_len,
-				blk_off, rd_chunk_sz, shards[i], rsz, 1,
+				blk_off, rd_chunk_sz, shards[i], rsz,
+				ctx.ctx_cohort_id, (uint32_t)blk_off,
 				em->em_client_id, &ctx.ctx_layout.el_stateid);
 			if (ret)
 				break;
@@ -2812,8 +2849,8 @@ int ec_repair_encoding(struct mds_session *ms, const char *path, int k, int m,
 		struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 
 		ret = ds_chunk_finalize(ctx.ctx_ds_sess[i], em->em_fh,
-					em->em_fh_len, 0, total_blocks, 0,
-					em->em_client_id, 1);
+					em->em_fh_len, 0, total_blocks,
+					ctx.ctx_cohort_id, em->em_client_id, 0);
 	}
 	stats.total_finalize_ns += repair_now_ns() - t_fin;
 	if (ret)
@@ -2827,8 +2864,9 @@ int ec_repair_encoding(struct mds_session *ms, const char *path, int k, int m,
 		struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 
 		ret = ds_chunk_commit(ctx.ctx_ds_sess[i], em->em_fh,
-				      em->em_fh_len, 0, total_blocks, 0,
-				      em->em_client_id, 1, NULL);
+				      em->em_fh_len, 0, total_blocks,
+				      ctx.ctx_cohort_id, em->em_client_id, 0,
+				      NULL);
 	}
 	stats.total_commit_ns += repair_now_ns() - t_cmt;
 	if (ret)

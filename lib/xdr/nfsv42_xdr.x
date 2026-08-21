@@ -3742,7 +3742,9 @@ struct CHUNK_WRITE4args {
     stateid4           cwa_stateid;
     offset4            cwa_offset;
     stable_how4        cwa_stable;
-    chunk_owner4       cwa_owner;
+    chunk_cohort_id4   cwa_cohort_id;
+    uint32_t           cwa_client_id;
+    uint32_t           cwa_co_ids<>;
     uint32_t           cwa_payload_id;
     uint32_t           cwa_flags;
     write_chunk_guard4 cwa_guard;
@@ -3772,7 +3774,9 @@ struct CHUNK_WRITE_REPAIR4args {
     stateid4           cwra_stateid;
     offset4            cwra_offset;
     stable_how4        cwra_stable;
-    chunk_owner4       cwra_owner;
+    chunk_cohort_id4   cwra_cohort_id;
+    uint32_t           cwra_client_id;
+    uint32_t           cwra_co_ids<>;
     uint32_t           cwra_payload_id;
     uint32_t           cwra_chunk_size;
     checksum4          cwra_checksums<>;

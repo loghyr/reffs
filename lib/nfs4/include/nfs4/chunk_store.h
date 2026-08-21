@@ -222,7 +222,8 @@ int chunk_store_write(struct chunk_store *cs, uint64_t offset,
  * chunk_store_transition -- move blocks from one state to another.
  * Transitions blocks matching the owner triple at offsets
  * [offset, offset+count).
- * Returns 0 on success, -EINVAL if a block is not in from_state.
+ * Returns 0 after transitioning the matching owner block, or -EINVAL if
+ * no matching block exists or it is not in from_state.
  */
 int chunk_store_transition(struct chunk_store *cs, uint64_t offset,
 			   uint32_t count, uint64_t cohort_id,
@@ -242,8 +243,8 @@ int chunk_store_transition(struct chunk_store *cs, uint64_t offset,
  *                          not implemented in this slice)
  *   EMPTY     -> skip    (no-op; sparse-rollback semantics)
  *
- * Returns 0 on success, -EINVAL if a block has wrong owner_id,
- * -ENOTSUP if a matching block is COMMITTED.
+ * Returns 0 after removing the matching owner block, -EINVAL if no matching
+ * block exists, or -ENOTSUP if a matching block is COMMITTED.
  */
 int chunk_store_rollback(struct chunk_store *cs, uint64_t offset,
 			 uint32_t count, uint64_t cohort_id, uint32_t client_id,

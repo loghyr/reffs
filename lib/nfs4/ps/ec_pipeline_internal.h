@@ -71,6 +71,7 @@ struct ec_context {
 	struct ec_encoding *ctx_encoding;
 	uint32_t ctx_k;
 	uint32_t ctx_m;
+	uint64_t ctx_cohort_id;
 	struct ps_listener_state *ctx_pls;
 	/*
 	 * Track 1b Option C cwa_guard CAS plumbing -- see
@@ -107,7 +108,8 @@ struct ec_context {
  */
 int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
 		   uint64_t block_offset, uint32_t chunk_sz, const uint8_t *src,
-		   uint32_t wsz, uint32_t owner_id, const chunk_guard4 *guard);
+		   uint32_t wsz, uint64_t cohort_id, uint32_t owner_id,
+		   const chunk_guard4 *guard);
 
 /*
  * Per-mirror CHUNK_READ.  Mirrors ec_chunk_write -- same

@@ -209,8 +209,6 @@ int chunk_store_transition(struct chunk_store *cs, uint64_t offset,
 			   enum chunk_state from_state,
 			   enum chunk_state to_state)
 {
-	uint32_t ntransitioned = 0;
-
 	for (uint32_t i = 0; i < count; i++) {
 		uint64_t off = offset + i;
 
@@ -219,50 +217,28 @@ int chunk_store_transition(struct chunk_store *cs, uint64_t offset,
 
 		struct chunk_block *blk = &cs->cs_blocks[off];
 
-		/*
-		 * Skip EMPTY blocks in the requested range.  Encodings with
-		 * variable-size shards (Mojette systematic; any future
-		 * projection encoding) write sparsely: a data shard may
-		 * write 1 block per stripe while the largest parity
-		 * shard writes 4, leaving 3 holes per stripe in the data
-		 * shard's file.  FINALIZE / COMMIT span the full nominal
-		 * range and must tolerate the holes -- there is nothing
-		 * to transition for an EMPTY block.  Other state
-		 * mismatches (e.g. COMMIT on PENDING without an
-		 * intervening FINALIZE) remain hard errors so the state
-		 * machine stays monotonic.
-		 */
 		if (blk->cb_state == CHUNK_STATE_EMPTY)
 			continue;
-		if (blk->cb_state != from_state)
-			return -EINVAL;
 		if (blk->cb_cohort_id != cohort_id ||
 		    blk->cb_client_id != client_id ||
 		    blk->cb_owner_id != owner_id)
+			continue;
+		if (blk->cb_state != from_state)
 			return -EINVAL;
 
 		blk->cb_state = to_state;
-		ntransitioned++;
+		cs->cs_dirty = true;
+		return 0;
 	}
 
-	/*
-	 * Only mark the store dirty if we actually moved at least one
-	 * block.  An all-EMPTY range (e.g. a sparse-writing shard whose
-	 * stride is 1 block per stripe, finalised at a stage where no
-	 * blocks have yet been written) is a legitimate no-op and must
-	 * not trigger a chunk_store_persist meta-file rewrite.
-	 */
-	if (ntransitioned > 0)
-		cs->cs_dirty = true;
-	return 0;
+	/* Lifecycle owners name a specific persisted chunk, not a range. */
+	return -EINVAL;
 }
 
 int chunk_store_rollback(struct chunk_store *cs, uint64_t offset,
 			 uint32_t count, uint64_t cohort_id, uint32_t client_id,
 			 uint32_t owner_id)
 {
-	uint32_t ntransitioned = 0;
-
 	for (uint32_t i = 0; i < count; i++) {
 		uint64_t off = offset + i;
 
@@ -271,21 +247,20 @@ int chunk_store_rollback(struct chunk_store *cs, uint64_t offset,
 
 		struct chunk_block *blk = &cs->cs_blocks[off];
 
-		/* Sparse-rollback: EMPTY blocks within the range are no-ops. */
 		if (blk->cb_state == CHUNK_STATE_EMPTY)
 			continue;
 
 		if (blk->cb_cohort_id != cohort_id ||
 		    blk->cb_client_id != client_id ||
 		    blk->cb_owner_id != owner_id)
-			return -EINVAL;
+			continue;
 
 		switch (blk->cb_state) {
 		case CHUNK_STATE_PENDING:
 		case CHUNK_STATE_FINALIZED:
 			blk->cb_state = CHUNK_STATE_EMPTY;
-			ntransitioned++;
-			break;
+			cs->cs_dirty = true;
+			return 0;
 		case CHUNK_STATE_COMMITTED:
 			/*
 			 * Repair-path: COMMITTED rollback requires cg_gen_id
@@ -299,9 +274,7 @@ int chunk_store_rollback(struct chunk_store *cs, uint64_t offset,
 		}
 	}
 
-	if (ntransitioned > 0)
-		cs->cs_dirty = true;
-	return 0;
+	return -EINVAL;
 }
 
 uint32_t chunk_store_rollback_for_client(struct chunk_store *cs,

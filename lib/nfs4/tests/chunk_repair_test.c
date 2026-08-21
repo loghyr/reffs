@@ -290,12 +290,15 @@ static void set_repair_args(struct cm_ctx *cm, const stateid4 *stid, char *buf,
 	args->cwra_chunks.cwra_chunks_val = buf;
 	args->cwra_chunks.cwra_chunks_len = buf_len;
 
-	/* cwra_owner.co_client_id is the wire-level repair
-	 * owner; use a real client id (not the reserved NONE/MDS
-	 * values).  cg_seq is the per-owner monotonic counter; the
-	 * handler does not interpret it.
-	 */
-	args->cwra_owner.co_client_id = 0xDEAD0001;
+	/* Use a real client id (not the reserved NONE/MDS values). */
+	args->cwra_cohort_id = 0;
+	args->cwra_client_id = 0xDEAD0001;
+	uint32_t nchunks =
+		chunk_size ? (buf_len + chunk_size - 1) / chunk_size : 0;
+	args->cwra_co_ids.cwra_co_ids_len = nchunks;
+	args->cwra_co_ids.cwra_co_ids_val = calloc(nchunks, sizeof(uint32_t));
+	for (uint32_t i = 0; i < nchunks; i++)
+		args->cwra_co_ids.cwra_co_ids_val[i] = 99 + i;
 
 	if (ncrc > 0 && crcs != NULL) {
 		args->cwra_checksums.cwra_checksums_val =
@@ -328,6 +331,9 @@ static void free_repair_args(struct cm_ctx *cm)
 		args->cwra_checksums.cwra_checksums_val = NULL;
 		args->cwra_checksums.cwra_checksums_len = 0;
 	}
+	free(args->cwra_co_ids.cwra_co_ids_val);
+	args->cwra_co_ids.cwra_co_ids_val = NULL;
+	args->cwra_co_ids.cwra_co_ids_len = 0;
 }
 
 static void free_repair_res(struct cm_ctx *cm)
@@ -478,7 +484,7 @@ START_TEST(test_repair_reserved_client_id_none)
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_write_repair;
 
-	args->cwra_owner.co_client_id = CHUNK_GUARD_CLIENT_ID_NONE;
+	args->cwra_client_id = CHUNK_GUARD_CLIENT_ID_NONE;
 
 	nfs4_op_chunk_write_repair(cm->compound);
 
@@ -506,7 +512,7 @@ START_TEST(test_repair_reserved_client_id_mds)
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_write_repair;
 
-	args->cwra_owner.co_client_id = CHUNK_GUARD_CLIENT_ID_MDS;
+	args->cwra_client_id = CHUNK_GUARD_CLIENT_ID_MDS;
 
 	nfs4_op_chunk_write_repair(cm->compound);
 
@@ -859,7 +865,11 @@ START_TEST(test_repair_bypasses_pending_collision_gate)
 	wargs->cwa_chunk_size = CHUNK_SZ;
 	wargs->cwa_chunks.cwa_chunks_val = buf;
 	wargs->cwa_chunks.cwa_chunks_len = CHUNK_SZ;
-	wargs->cwa_owner.co_client_id = 0x0BAD0001;
+	wargs->cwa_cohort_id = 0;
+	wargs->cwa_client_id = 0x0BAD0001;
+	wargs->cwa_co_ids.cwa_co_ids_len = 1;
+	wargs->cwa_co_ids.cwa_co_ids_val = calloc(1, sizeof(uint32_t));
+	wargs->cwa_co_ids.cwa_co_ids_val[0] = 99;
 	wargs->cwa_checksums.cwa_checksums_val = calloc(1, sizeof(checksum4));
 	wargs->cwa_checksums.cwa_checksums_len = 1;
 	(void)chunk_checksum_pack_crc32(
@@ -879,6 +889,9 @@ START_TEST(test_repair_bypasses_pending_collision_gate)
 	 */
 	free(wargs->cwa_checksums.cwa_checksums_val[0].cs_value.cs_value_val);
 	free(wargs->cwa_checksums.cwa_checksums_val);
+	free(wargs->cwa_co_ids.cwa_co_ids_val);
+	wargs->cwa_co_ids.cwa_co_ids_val = NULL;
+	wargs->cwa_co_ids.cwa_co_ids_len = 0;
 	/*
 	 * CHUNK_WRITE's resok has three co-indexed calloc'd arrays
 	 * (cwr_block_status, cwr_block_activated, cwr_owners) that

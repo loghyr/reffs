@@ -1472,6 +1472,7 @@ END_TEST
 static void chunk_set_write_args(struct cm_ctx *cm, const stateid4 *stid)
 {
 	static char buf[CHUNK_TEST_SIZE];
+	static uint32_t co_ids[1];
 
 	cm_set_op(cm, 0, OP_CHUNK_WRITE);
 
@@ -1487,16 +1488,12 @@ static void chunk_set_write_args(struct cm_ctx *cm, const stateid4 *stid)
 	args->cwa_chunk_size = CHUNK_TEST_SIZE;
 	args->cwa_chunks.cwa_chunks_val = buf;
 	args->cwa_chunks.cwa_chunks_len = CHUNK_TEST_SIZE;
-	/*
-	 * cg_client_id must not be a reserved sentinel
-	 * (CHUNK_GUARD_CLIENT_ID_NONE = 0 or CHUNK_GUARD_CLIENT_ID_MDS
-	 * = 0xFFFFFFFF) -- the DS rejects either with NFS4ERR_INVAL
-	 * per draft-haynes-nfsv4-flexfiles-v2 sec-chunk_guard_none.
-	 * Without setting this the wire validation rejects the
-	 * compound before the trust-hook check we are exercising.
-	 */
-	args->cwa_owner.co_client_id = 0xBEEF;
-	args->cwa_owner.co_id = 99;
+	/* Avoid reserved client-id sentinels rejected by the DS. */
+	args->cwa_cohort_id = 0;
+	args->cwa_client_id = 0xBEEF;
+	co_ids[0] = 99;
+	args->cwa_co_ids.cwa_co_ids_len = 1;
+	args->cwa_co_ids.cwa_co_ids_val = co_ids;
 	/* no checksum array */
 }
 
