@@ -48,6 +48,7 @@
 #include "nfs4/errors.h"
 #include "nfs4/stateid.h"
 #include "nfs4/cb.h"
+#include "nfs4/chunk_store.h"
 
 /* Proxy-server SB forwarding (see .claude/design/proxy-server.md). */
 #include "ps_inode.h"
@@ -2938,6 +2939,44 @@ out:
 	return status;
 }
 
+/*
+ * A size-zero SETATTR starts a new chunk-file incarnation.  The DS fanout
+ * has already truncated the payload file, so retaining old CHUNK metadata
+ * would make CHUNK_READ pair zero-filled bytes with stale checksums/guards.
+ * Keep this prototype path deliberately narrow: non-zero truncation needs a
+ * range-aware metadata update and is left unchanged until that model lands.
+ */
+static nfsstat4
+nfs4_clear_chunk_store_on_truncate(struct compound *compound,
+				   const struct nfsv42_attr *nattr,
+				   const bitmap4 *attrmask)
+{
+	struct inode *inode = compound->c_inode;
+	const char *state_dir = compound->c_server_state->ss_state_dir;
+	struct chunk_store *cs;
+	int ret;
+
+	if (!bitmap4_attribute_is_set(attrmask, FATTR4_SIZE) ||
+	    nattr->size != 0)
+		return NFS4_OK;
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	cs = inode->i_chunk_store;
+	if (!cs && state_dir)
+		cs = chunk_store_load(state_dir, inode->i_ino);
+	if (!cs) {
+		pthread_mutex_unlock(&inode->i_attr_mutex);
+		return NFS4_OK;
+	}
+	if (!inode->i_chunk_store)
+		inode->i_chunk_store = cs;
+	chunk_store_clear(cs);
+	ret = state_dir ? chunk_store_persist(cs, state_dir, inode->i_ino) : 0;
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+
+	return ret ? NFS4ERR_IO : NFS4_OK;
+}
+
 static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 			       struct nfsv42_attr *nattr)
 {
@@ -4441,6 +4480,9 @@ static uint32_t nfs4_op_setattr_resume(struct rpc_trans *rt)
 		*status = nattr_to_inode(&nattr, &fattr->attrmask,
 					 &res->attrsset, compound->c_inode,
 					 &compound->c_ap, false);
+	if (*status == NFS4_OK)
+		*status = nfs4_clear_chunk_store_on_truncate(compound, &nattr,
+							     &fattr->attrmask);
 
 	nattr_release(&nattr);
 	return 0;
@@ -4640,6 +4682,9 @@ uint32_t nfs4_op_setattr(struct compound *compound)
 	*status = nattr_to_inode(&nattr, &fattr->attrmask, &res->attrsset,
 				 compound->c_inode, &compound->c_ap,
 				 has_write_stateid);
+	if (*status == NFS4_OK)
+		*status = nfs4_clear_chunk_store_on_truncate(compound, &nattr,
+							     &fattr->attrmask);
 
 out:
 	if (nattr_valid)

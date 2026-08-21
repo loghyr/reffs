@@ -488,6 +488,18 @@ struct chunk_store *chunk_store_load(const char *state_dir, uint64_t inode_ino)
 	return cs;
 }
 
+void chunk_store_clear(struct chunk_store *cs)
+{
+	if (!cs)
+		return;
+
+	memset(cs->cs_blocks, 0, cs->cs_nblocks * sizeof(*cs->cs_blocks));
+	cs->cs_high_water = 0;
+	cs->cs_chunk_size = 0;
+	cs->cs_checksum_algorithm = 0;
+	cs->cs_dirty = true;
+}
+
 void chunk_store_destroy(struct chunk_store *cs)
 {
 	if (!cs)

@@ -288,6 +288,13 @@ int chunk_store_persist(struct chunk_store *cs, const char *state_dir,
 struct chunk_store *chunk_store_load(const char *state_dir, uint64_t inode_ino);
 
 /*
+ * chunk_store_clear -- discard all per-chunk metadata for a fresh file
+ * incarnation (for example, SETATTR size=0/O_TRUNC).  The caller owns
+ * the store and must hold the inode's i_attr_mutex.
+ */
+void chunk_store_clear(struct chunk_store *cs);
+
+/*
  * chunk_store_destroy -- free the chunk store.
  */
 void chunk_store_destroy(struct chunk_store *cs);
