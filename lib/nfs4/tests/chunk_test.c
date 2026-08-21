@@ -1081,6 +1081,109 @@ START_TEST(test_chunk_finalize_skips_empty_in_range)
 }
 END_TEST
 
+/*
+ * NFS4ERR_DELAY from either lifecycle operation must leave the block in
+ * its prior state so a retry can complete the same transition.
+ */
+START_TEST(test_chunk_lifecycle_delay_preserves_state)
+{
+	static char buf[CHUNK_SZ];
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
+	struct cm_ctx *cm = cm_alloc(1);
+	struct chunk_block *blk;
+
+	cm_set_inode(cm, g_inode);
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, NULL, 0);
+	nfs4_op_chunk_write(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_write.cwr_status,
+			 NFS4_OK);
+	free_write_res(cm);
+
+	blk = chunk_store_lookup(g_inode->i_chunk_store, 0);
+	ck_assert_ptr_nonnull(blk);
+	ck_assert_int_eq(blk->cb_state, CHUNK_STATE_PENDING);
+
+	atomic_store_explicit(&cm->compound->c_server_state
+				       ->ss_test_chunk_finalize_delay_count,
+			      1, memory_order_relaxed);
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_FINALIZE);
+	{
+		CHUNK_FINALIZE4args *args =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_finalize;
+		args->cfa_offset = 0;
+		args->cfa_count = 1;
+		args->cfa_chunks.cfa_chunks_val = &owner;
+		args->cfa_chunks.cfa_chunks_len = 1;
+	}
+	nfs4_op_chunk_finalize(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_finalize.cfr_status,
+			 NFS4ERR_DELAY);
+	ck_assert_int_eq(blk->cb_state, CHUNK_STATE_PENDING);
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_FINALIZE);
+	{
+		CHUNK_FINALIZE4args *args =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_finalize;
+		args->cfa_offset = 0;
+		args->cfa_count = 1;
+		args->cfa_chunks.cfa_chunks_val = &owner;
+		args->cfa_chunks.cfa_chunks_len = 1;
+	}
+	nfs4_op_chunk_finalize(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_finalize.cfr_status,
+			 NFS4_OK);
+	free_finalize_res(cm);
+	ck_assert_int_eq(blk->cb_state, CHUNK_STATE_FINALIZED);
+
+	atomic_store_explicit(
+		&cm->compound->c_server_state->ss_test_chunk_commit_delay_count,
+		1, memory_order_relaxed);
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_COMMIT);
+	{
+		CHUNK_COMMIT4args *args =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_commit;
+		args->cca_offset = 0;
+		args->cca_count = 1;
+		args->cca_chunks.cca_chunks_val = &owner;
+		args->cca_chunks.cca_chunks_len = 1;
+	}
+	nfs4_op_chunk_commit(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_commit.ccr_status,
+			 NFS4ERR_DELAY);
+	ck_assert_int_eq(blk->cb_state, CHUNK_STATE_FINALIZED);
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_COMMIT);
+	{
+		CHUNK_COMMIT4args *args =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_commit;
+		args->cca_offset = 0;
+		args->cca_count = 1;
+		args->cca_chunks.cca_chunks_val = &owner;
+		args->cca_chunks.cca_chunks_len = 1;
+	}
+	nfs4_op_chunk_commit(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_commit.ccr_status,
+			 NFS4_OK);
+	free_commit_res(cm);
+	ck_assert_int_eq(blk->cb_state, CHUNK_STATE_COMMITTED);
+
+	cm_free(cm);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Group D: CHUNK_COMMIT                                               */
 /* ------------------------------------------------------------------ */
@@ -2997,6 +3100,7 @@ static Suite *chunk_suite(void)
 	tcase_add_checked_fixture(tc_c, chunk_setup, chunk_teardown);
 	tcase_add_test(tc_c, test_chunk_finalize_no_store);
 	tcase_add_test(tc_c, test_chunk_finalize_transitions_state);
+	tcase_add_test(tc_c, test_chunk_lifecycle_delay_preserves_state);
 	tcase_add_test(tc_c, test_chunk_finalize_skips_empty_in_range);
 	suite_add_tcase(s, tc_c);
 
