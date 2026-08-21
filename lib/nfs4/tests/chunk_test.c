@@ -644,8 +644,25 @@ START_TEST(test_chunk_write_multi_block)
 
 	CHUNK_WRITE4res *res = &cm->compound->c_res->resarray.resarray_val[0]
 					.nfs_resop4_u.opchunk_write;
+	CHUNK_WRITE4resok *ok = &res->CHUNK_WRITE4res_u.cwr_resok4;
 	ck_assert_int_eq(res->cwr_status, NFS4_OK);
-	ck_assert_uint_eq(res->CHUNK_WRITE4res_u.cwr_resok4.cwr_count, 3);
+	ck_assert_uint_eq(ok->cwr_count, 3);
+	ck_assert_uint_eq(ok->cwr_block_status.cwr_block_status_len, 3);
+	ck_assert_uint_eq(ok->cwr_block_activated.cwr_block_activated_len, 3);
+	ck_assert_uint_eq(ok->cwr_owners.cwr_owners_len, 3);
+	for (uint32_t i = 0; i < 3; i++) {
+		ck_assert_int_eq(ok->cwr_block_status.cwr_block_status_val[i],
+				 NFS4_OK);
+		ck_assert_int_eq(
+			ok->cwr_block_activated.cwr_block_activated_val[i],
+			false);
+		ck_assert_uint_eq(ok->cwr_owners.cwr_owners_val[i].co_cohort_id,
+				  0);
+		ck_assert_uint_eq(ok->cwr_owners.cwr_owners_val[i].co_client_id,
+				  0xBEEF);
+		ck_assert_uint_eq(ok->cwr_owners.cwr_owners_val[i].co_id,
+				  99 + i);
+	}
 
 	struct chunk_store *cs = g_inode->i_chunk_store;
 
