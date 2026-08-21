@@ -450,6 +450,12 @@ int main(int argc, char *argv[])
 	atomic_store_explicit(&ss->ss_test_chunk_write_delay_count,
 			      cfg.test_chunk_write_delay_count,
 			      memory_order_relaxed);
+	atomic_store_explicit(&ss->ss_test_chunk_finalize_delay_count,
+			      cfg.test_chunk_finalize_delay_count,
+			      memory_order_relaxed);
+	atomic_store_explicit(&ss->ss_test_chunk_commit_delay_count,
+			      cfg.test_chunk_commit_delay_count,
+			      memory_order_relaxed);
 	strncpy(ss->ss_nfs4_domain, cfg.nfs4_domain,
 		sizeof(ss->ss_nfs4_domain) - 1);
 

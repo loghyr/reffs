@@ -259,6 +259,9 @@ struct reffs_config {
 	unsigned int grace_period; /* seconds */
 	/* Test-only: guarded CHUNK_WRITE calls to reject with NFS4ERR_DELAY. */
 	unsigned int test_chunk_write_delay_count;
+	/* Test-only: lifecycle calls to reject with NFS4ERR_DELAY. */
+	unsigned int test_chunk_finalize_delay_count;
+	unsigned int test_chunk_commit_delay_count;
 	bool tls;
 	char tls_cert[REFFS_CONFIG_MAX_PATH];
 	char tls_key[REFFS_CONFIG_MAX_PATH];

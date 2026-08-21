@@ -408,6 +408,20 @@ static bool chunk_write_test_delay(struct server_state *ss,
 	return false;
 }
 
+static bool chunk_lifecycle_test_delay(atomic_uint *budget)
+{
+	unsigned int remaining;
+
+	remaining = atomic_load_explicit(budget, memory_order_relaxed);
+	while (remaining != 0) {
+		if (atomic_compare_exchange_weak_explicit(
+			    budget, &remaining, remaining - 1,
+			    memory_order_relaxed, memory_order_relaxed))
+			return true;
+	}
+	return false;
+}
+
 uint32_t nfs4_op_chunk_write(struct compound *compound)
 {
 	CHUNK_WRITE4args *args = NFS4_OP_ARG_SETUP(compound, opchunk_write);
@@ -1212,6 +1226,15 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 		return 0;
 	}
 
+	if (chunk_lifecycle_test_delay(
+		    &compound->c_server_state
+			     ->ss_test_chunk_finalize_delay_count)) {
+		TRACE("CHUNK_FINALIZE: test delay injection");
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_DELAY;
+		return 0;
+	}
+
 	/*
 	 * Transition each owner's blocks from PENDING --> FINALIZED.
 	 * The cfa_chunks array lists the chunk_owner4 entries to finalize.
@@ -1312,6 +1335,15 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 	if (!cs) {
 		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 		*status = NFS4ERR_NOENT;
+		return 0;
+	}
+
+	if (chunk_lifecycle_test_delay(
+		    &compound->c_server_state
+			     ->ss_test_chunk_commit_delay_count)) {
+		TRACE("CHUNK_COMMIT: test delay injection");
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_DELAY;
 		return 0;
 	}
 
