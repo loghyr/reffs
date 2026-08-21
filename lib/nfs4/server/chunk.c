@@ -599,7 +599,8 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		/* Axis (i): PENDING from a different writer. */
 		if (!prev || prev->cb_state != CHUNK_STATE_PENDING)
 			continue;
-		if (prev->cb_owner_id == args->cwa_owner.co_id &&
+		if (prev->cb_cohort_id == args->cwa_owner.co_cohort_id &&
+		    prev->cb_owner_id == args->cwa_owner.co_id &&
 		    prev->cb_client_id == args->cwa_owner.co_client_id)
 			continue;
 
@@ -1252,7 +1253,9 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 	for (uint32_t i = 0; i < nowners; i++) {
 		chunk_owner4 *co = &args->cfa_chunks.cfa_chunks_val[i];
 		int ret = chunk_store_transition(cs, args->cfa_offset, count,
-						 co->co_id, CHUNK_STATE_PENDING,
+						 co->co_cohort_id,
+						 co->co_client_id, co->co_id,
+						 CHUNK_STATE_PENDING,
 						 CHUNK_STATE_FINALIZED);
 		resok->cfr_status.cfr_status_val[i] =
 			(ret == 0) ? NFS4_OK : NFS4ERR_INVAL;
@@ -1360,7 +1363,8 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 	for (uint32_t i = 0; i < nowners; i++) {
 		chunk_owner4 *co = &args->cca_chunks.cca_chunks_val[i];
 		int ret = chunk_store_transition(cs, args->cca_offset, count,
-						 co->co_id,
+						 co->co_cohort_id,
+						 co->co_client_id, co->co_id,
 						 CHUNK_STATE_FINALIZED,
 						 CHUNK_STATE_COMMITTED);
 		resok->ccr_status.ccr_status_val[i] =
@@ -1621,7 +1625,8 @@ uint32_t nfs4_op_chunk_rollback(struct compound *compound)
 	for (uint32_t i = 0; i < nowners; i++) {
 		chunk_owner4 *co = &args->crb_chunks.crb_chunks_val[i];
 		int ret = chunk_store_rollback(cs, args->crb_offset, count,
-					       co->co_id);
+					       co->co_cohort_id,
+					       co->co_client_id, co->co_id);
 
 		if (ret == -ENOTSUP) {
 			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);

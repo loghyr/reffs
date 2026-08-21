@@ -1292,14 +1292,14 @@ retry_stripe:
 
 			ret = ds_chunk_finalize(ctx.ctx_ds_sess[i], em->em_fh,
 						em->em_fh_len, 0, total_blocks,
-						1);
+						0, em->em_client_id, 1);
 		}
 		for (int i = 0; i < k + m && ret == 0; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 
 			ret = ds_chunk_commit(ctx.ctx_ds_sess[i], em->em_fh,
-					      em->em_fh_len, 0, total_blocks, 1,
-					      NULL);
+					      em->em_fh_len, 0, total_blocks, 0,
+					      em->em_client_id, 1, NULL);
 		}
 	}
 
@@ -1635,7 +1635,8 @@ retry_stripe:
 
 			ret = ds_chunk_finalize(ctx.ctx_ds_sess[i], em->em_fh,
 						em->em_fh_len, base_block,
-						blocks_per_stripe, 1);
+						blocks_per_stripe, 0,
+						em->em_client_id, 1);
 		}
 		for (int i = 0; i < k + m && ret == 0; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
@@ -1655,7 +1656,8 @@ retry_stripe:
 			 */
 			ret = ds_chunk_commit(
 				ctx.ctx_ds_sess[i], em->em_fh, em->em_fh_len,
-				base_block, blocks_per_stripe, 1,
+				base_block, blocks_per_stripe, 0,
+				em->em_client_id, 1,
 				captured_verf ? NULL : first_verf);
 			if (ret == 0 && !captured_verf)
 				captured_verf = true;
@@ -2810,7 +2812,8 @@ int ec_repair_encoding(struct mds_session *ms, const char *path, int k, int m,
 		struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 
 		ret = ds_chunk_finalize(ctx.ctx_ds_sess[i], em->em_fh,
-					em->em_fh_len, 0, total_blocks, 1);
+					em->em_fh_len, 0, total_blocks, 0,
+					em->em_client_id, 1);
 	}
 	stats.total_finalize_ns += repair_now_ns() - t_fin;
 	if (ret)
@@ -2824,7 +2827,8 @@ int ec_repair_encoding(struct mds_session *ms, const char *path, int k, int m,
 		struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 
 		ret = ds_chunk_commit(ctx.ctx_ds_sess[i], em->em_fh,
-				      em->em_fh_len, 0, total_blocks, 1, NULL);
+				      em->em_fh_len, 0, total_blocks, 0,
+				      em->em_client_id, 1, NULL);
 	}
 	stats.total_commit_ns += repair_now_ns() - t_cmt;
 	if (ret)

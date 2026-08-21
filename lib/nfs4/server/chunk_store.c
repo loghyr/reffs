@@ -204,7 +204,8 @@ int chunk_store_write(struct chunk_store *cs, uint64_t offset,
 }
 
 int chunk_store_transition(struct chunk_store *cs, uint64_t offset,
-			   uint32_t count, uint32_t owner_id,
+			   uint32_t count, uint64_t cohort_id,
+			   uint32_t client_id, uint32_t owner_id,
 			   enum chunk_state from_state,
 			   enum chunk_state to_state)
 {
@@ -235,7 +236,9 @@ int chunk_store_transition(struct chunk_store *cs, uint64_t offset,
 			continue;
 		if (blk->cb_state != from_state)
 			return -EINVAL;
-		if (blk->cb_owner_id != owner_id)
+		if (blk->cb_cohort_id != cohort_id ||
+		    blk->cb_client_id != client_id ||
+		    blk->cb_owner_id != owner_id)
 			return -EINVAL;
 
 		blk->cb_state = to_state;
@@ -255,7 +258,8 @@ int chunk_store_transition(struct chunk_store *cs, uint64_t offset,
 }
 
 int chunk_store_rollback(struct chunk_store *cs, uint64_t offset,
-			 uint32_t count, uint32_t owner_id)
+			 uint32_t count, uint64_t cohort_id, uint32_t client_id,
+			 uint32_t owner_id)
 {
 	uint32_t ntransitioned = 0;
 
@@ -271,7 +275,9 @@ int chunk_store_rollback(struct chunk_store *cs, uint64_t offset,
 		if (blk->cb_state == CHUNK_STATE_EMPTY)
 			continue;
 
-		if (blk->cb_owner_id != owner_id)
+		if (blk->cb_cohort_id != cohort_id ||
+		    blk->cb_client_id != client_id ||
+		    blk->cb_owner_id != owner_id)
 			return -EINVAL;
 
 		switch (blk->cb_state) {

@@ -220,17 +220,19 @@ int chunk_store_write(struct chunk_store *cs, uint64_t offset,
 
 /*
  * chunk_store_transition -- move blocks from one state to another.
- * Transitions blocks matching owner at offsets [offset, offset+count).
+ * Transitions blocks matching the owner triple at offsets
+ * [offset, offset+count).
  * Returns 0 on success, -EINVAL if a block is not in from_state.
  */
 int chunk_store_transition(struct chunk_store *cs, uint64_t offset,
-			   uint32_t count, uint32_t owner_id,
+			   uint32_t count, uint64_t cohort_id,
+			   uint32_t client_id, uint32_t owner_id,
 			   enum chunk_state from_state,
 			   enum chunk_state to_state);
 
 /*
  * chunk_store_rollback -- transition PENDING and/or FINALIZED blocks
- * matching owner_id to EMPTY at offsets [offset, offset+count).
+ * matching the owner triple to EMPTY at offsets [offset, offset+count).
  *
  * Implements the CHUNK_ROLLBACK protocol-op semantics from
  * draft-haynes-nfsv4-flexfiles-v2 fig-chunk-state-machine:
@@ -244,7 +246,8 @@ int chunk_store_transition(struct chunk_store *cs, uint64_t offset,
  * -ENOTSUP if a matching block is COMMITTED.
  */
 int chunk_store_rollback(struct chunk_store *cs, uint64_t offset,
-			 uint32_t count, uint32_t owner_id);
+			 uint32_t count, uint64_t cohort_id, uint32_t client_id,
+			 uint32_t owner_id);
 
 /*
  * chunk_store_rollback_for_client -- sweep ALL blocks in PENDING or

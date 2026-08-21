@@ -983,6 +983,83 @@ START_TEST(test_chunk_finalize_transitions_state)
 END_TEST
 
 /*
+ * Lifecycle identity includes the cohort and client fields, not just
+ * co_id.  A mismatched triple must not be able to finalize another
+ * writer's pending block.
+ */
+START_TEST(test_chunk_finalize_requires_full_owner_triple)
+{
+	static char buf[CHUNK_SZ];
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, NULL, 0);
+	CHUNK_WRITE4args *wargs =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.opchunk_write;
+	wargs->cwa_owner.co_cohort_id = 0x1111;
+	nfs4_op_chunk_write(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_write.cwr_status,
+			 NFS4_OK);
+	free_write_res(cm);
+
+	struct chunk_block *blk = chunk_store_lookup(g_inode->i_chunk_store, 0);
+	ck_assert_ptr_nonnull(blk);
+	ck_assert_int_eq(blk->cb_state, CHUNK_STATE_PENDING);
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_FINALIZE);
+	chunk_owner4 owner = {
+		.co_cohort_id = 0x2222,
+		.co_client_id = 0xBEEF,
+		.co_id = 99,
+	};
+	CHUNK_FINALIZE4args *fargs =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.opchunk_finalize;
+	fargs->cfa_offset = 0;
+	fargs->cfa_count = 1;
+	fargs->cfa_chunks.cfa_chunks_val = &owner;
+	fargs->cfa_chunks.cfa_chunks_len = 1;
+
+	nfs4_op_chunk_finalize(cm->compound);
+	CHUNK_FINALIZE4res *fres =
+		&cm->compound->c_res->resarray.resarray_val[0]
+			 .nfs_resop4_u.opchunk_finalize;
+	ck_assert_int_eq(fres->cfr_status, NFS4_OK);
+	ck_assert_int_eq(fres->CHUNK_FINALIZE4res_u.cfr_resok4.cfr_status
+				 .cfr_status_val[0],
+			 NFS4ERR_INVAL);
+	ck_assert_int_eq(blk->cb_state, CHUNK_STATE_PENDING);
+	free_finalize_res(cm);
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_FINALIZE);
+	owner.co_cohort_id = 0x1111;
+	fargs = &cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.opchunk_finalize;
+	fargs->cfa_offset = 0;
+	fargs->cfa_count = 1;
+	fargs->cfa_chunks.cfa_chunks_val = &owner;
+	fargs->cfa_chunks.cfa_chunks_len = 1;
+
+	nfs4_op_chunk_finalize(cm->compound);
+	fres = &cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opchunk_finalize;
+	ck_assert_int_eq(fres->cfr_status, NFS4_OK);
+	ck_assert_int_eq(fres->CHUNK_FINALIZE4res_u.cfr_resok4.cfr_status
+				 .cfr_status_val[0],
+			 NFS4_OK);
+	ck_assert_int_eq(blk->cb_state, CHUNK_STATE_FINALIZED);
+	free_finalize_res(cm);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
  * Sparse FINALIZE: encodings with variable-size shards (Mojette
  * systematic; any future projection encoding) write blocks at a
  * stride wider than they actually fill -- a data shard may write
@@ -3100,6 +3177,7 @@ static Suite *chunk_suite(void)
 	tcase_add_checked_fixture(tc_c, chunk_setup, chunk_teardown);
 	tcase_add_test(tc_c, test_chunk_finalize_no_store);
 	tcase_add_test(tc_c, test_chunk_finalize_transitions_state);
+	tcase_add_test(tc_c, test_chunk_finalize_requires_full_owner_triple);
 	tcase_add_test(tc_c, test_chunk_lifecycle_delay_preserves_state);
 	tcase_add_test(tc_c, test_chunk_finalize_skips_empty_in_range);
 	suite_add_tcase(s, tc_c);

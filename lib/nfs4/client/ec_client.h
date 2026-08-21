@@ -836,6 +836,7 @@ int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
  */
 int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
 		      uint32_t fh_len, uint64_t block_offset, uint32_t count,
+		      uint64_t cohort_id, uint32_t layout_client_id,
 		      uint32_t owner_id);
 
 /*
@@ -850,7 +851,8 @@ int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
  * pass-through the buffer is left untouched.
  */
 int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
-		    uint64_t block_offset, uint32_t count, uint32_t owner_id,
+		    uint64_t block_offset, uint32_t count, uint64_t cohort_id,
+		    uint32_t layout_client_id, uint32_t owner_id,
 		    uint8_t writeverf_out[8]);
 
 /* ------------------------------------------------------------------ */

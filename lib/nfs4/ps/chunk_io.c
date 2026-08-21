@@ -671,6 +671,7 @@ out:
 
 int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
 		      uint32_t fh_len, uint64_t block_offset, uint32_t count,
+		      uint64_t cohort_id, uint32_t layout_client_id,
 		      uint32_t owner_id)
 {
 	struct mds_compound mc;
@@ -720,15 +721,15 @@ int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
 		goto out;
 	}
 	/*
-	 * Only co_id is load-bearing today: the server's
-	 * chunk_store_transition() matches stored blocks on co_id
-	 * alone, which is why the other fields were previously
-	 * hardcoded to 1.  Once matching widens to the full triple
-	 * these MUST carry the same cohort and client id the write
-	 * used, or the transition will not find its chunks.
+	 * Lifecycle operations identify the stored block by the full owner
+	 * triple.  Keep the cohort and client identity identical to the
+	 * corresponding write; co_id alone is not sufficient.  The client
+	 * identity is derived here in the same way as CHUNK_WRITE so an
+	 * unassigned layout identity remains interoperable.
 	 */
-	cfa->cfa_chunks.cfa_chunks_val[0].co_cohort_id = 0;
-	cfa->cfa_chunks.cfa_chunks_val[0].co_client_id = 1;
+	cfa->cfa_chunks.cfa_chunks_val[0].co_cohort_id = cohort_id;
+	cfa->cfa_chunks.cfa_chunks_val[0].co_client_id =
+		chunk_writer_client_id(layout_client_id);
 	cfa->cfa_chunks.cfa_chunks_val[0].co_id = owner_id;
 
 	ret = mds_compound_send(&mc, ds);
@@ -764,7 +765,8 @@ out:
 /* ------------------------------------------------------------------ */
 
 int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
-		    uint64_t block_offset, uint32_t count, uint32_t owner_id,
+		    uint64_t block_offset, uint32_t count, uint64_t cohort_id,
+		    uint32_t layout_client_id, uint32_t owner_id,
 		    uint8_t writeverf_out[8])
 {
 	struct mds_compound mc;
@@ -809,15 +811,15 @@ int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		goto out;
 	}
 	/*
-	 * Only co_id is load-bearing today: the server's
-	 * chunk_store_transition() matches stored blocks on co_id
-	 * alone, which is why the other fields were previously
-	 * hardcoded to 1.  Once matching widens to the full triple
-	 * these MUST carry the same cohort and client id the write
-	 * used, or the transition will not find its chunks.
+	 * Lifecycle operations identify the stored block by the full owner
+	 * triple.  Keep the cohort and client identity identical to the
+	 * corresponding write; co_id alone is not sufficient.  The client
+	 * identity is derived here in the same way as CHUNK_WRITE so an
+	 * unassigned layout identity remains interoperable.
 	 */
-	cca->cca_chunks.cca_chunks_val[0].co_cohort_id = 0;
-	cca->cca_chunks.cca_chunks_val[0].co_client_id = 1;
+	cca->cca_chunks.cca_chunks_val[0].co_cohort_id = cohort_id;
+	cca->cca_chunks.cca_chunks_val[0].co_client_id =
+		chunk_writer_client_id(layout_client_id);
 	cca->cca_chunks.cca_chunks_val[0].co_id = owner_id;
 
 	ret = mds_compound_send(&mc, ds);
