@@ -116,6 +116,7 @@ void reffs_config_defaults(struct reffs_config *cfg)
 	cfg->minor_versions[1] = 2;
 	cfg->n_minor_versions = 2;
 	cfg->grace_period = 45;
+	cfg->test_chunk_write_delay_count = 0;
 	cfg->tls = false;
 	/*
 	 * Register with rpcbind by default to preserve NFSv3 MOUNT
@@ -206,6 +207,10 @@ static void parse_server(struct reffs_config *cfg, toml_table_t *srv)
 	d = toml_int_in(srv, "grace_period");
 	if (d.ok)
 		cfg->grace_period = (unsigned int)d.u.i;
+
+	d = toml_int_in(srv, "test_chunk_write_delay_count");
+	if (d.ok && d.u.i >= 0)
+		cfg->test_chunk_write_delay_count = (unsigned int)d.u.i;
 
 	d = toml_bool_in(srv, "tls");
 	if (d.ok)

@@ -378,6 +378,36 @@ chunk_write_validate_payload(struct compound *compound, uint32_t chunk_size,
 /* CHUNK_WRITE                                                         */
 /* ------------------------------------------------------------------ */
 
+static bool chunk_write_test_delay(struct server_state *ss,
+				   struct chunk_store *cs, bool guarded,
+				   uint64_t offset, uint32_t nchunks)
+{
+	unsigned int remaining;
+	uint32_t i;
+
+	if (!guarded || !cs)
+		return false;
+
+	/* Leave first writes available; target overwrite retry handling. */
+	for (i = 0; i < nchunks; i++) {
+		if (chunk_store_lookup(cs, offset + i))
+			break;
+	}
+	if (i == nchunks)
+		return false;
+
+	remaining = atomic_load_explicit(&ss->ss_test_chunk_write_delay_count,
+					 memory_order_relaxed);
+	while (remaining != 0) {
+		if (atomic_compare_exchange_weak_explicit(
+			    &ss->ss_test_chunk_write_delay_count, &remaining,
+			    remaining - 1, memory_order_relaxed,
+			    memory_order_relaxed))
+			return true;
+	}
+	return false;
+}
+
 uint32_t nfs4_op_chunk_write(struct compound *compound)
 {
 	CHUNK_WRITE4args *args = NFS4_OP_ARG_SETUP(compound, opchunk_write);
@@ -425,6 +455,16 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		compound->c_inode, compound->c_server_state->ss_state_dir);
 
 	if (!cs) {
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_DELAY;
+		return 0;
+	}
+
+	/* Disabled by default; used only to exercise client retry handling. */
+	if (chunk_write_test_delay(compound->c_server_state, cs,
+				   args->cwa_guard.cwg_check == TRUE,
+				   args->cwa_offset, nchunks)) {
+		TRACE("CHUNK_WRITE: test delay injection");
 		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 		*status = NFS4ERR_DELAY;
 		return 0;

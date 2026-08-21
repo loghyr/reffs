@@ -257,6 +257,8 @@ struct reffs_config {
 	int minor_versions[2]; /* NFSv4 minor versions to advertise */
 	unsigned int n_minor_versions;
 	unsigned int grace_period; /* seconds */
+	/* Test-only: guarded CHUNK_WRITE calls to reject with NFS4ERR_DELAY. */
+	unsigned int test_chunk_write_delay_count;
 	bool tls;
 	char tls_cert[REFFS_CONFIG_MAX_PATH];
 	char tls_key[REFFS_CONFIG_MAX_PATH];
