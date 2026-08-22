@@ -4073,10 +4073,21 @@ END_TEST
 
 START_TEST(test_chunk_escrow_takeover_remains_disabled)
 {
+	struct server_state *ss = server_state_find();
+	struct chunk_mds_epoch before = {
+		.epoch = 7,
+		.expires_at_ns = reffs_now_ns() + 60000000000ULL,
+		.issuer_clientid = 0x1234,
+	};
+	struct chunk_mds_epoch after;
 	struct cm_ctx *cm = cm_alloc(1);
 	CHUNK_ESCROW_TAKEOVER4args *args;
 	CHUNK_ESCROW_TAKEOVER4res *res;
 	struct chunk_store *cs;
+
+	ck_assert_ptr_nonnull(ss);
+	ck_assert_int_eq(chunk_mds_epoch_persist(ss->ss_state_dir, &before), 0);
+	server_state_put(ss);
 
 	cm_set_inode(cm, g_inode);
 	mark_chunked(g_inode, INODE_CHUNKED_YES);
@@ -4094,6 +4105,11 @@ START_TEST(test_chunk_escrow_takeover_remains_disabled)
 	ck_assert_int_eq(res->cetar_status, NFS4ERR_NOTSUPP);
 	cs = g_inode->i_chunk_store;
 	ck_assert_ptr_null(cs);
+	ck_assert_int_eq(
+		chunk_mds_epoch_load(cm->compound->c_server_state->ss_state_dir,
+				     &after),
+		0);
+	ck_assert_mem_eq(&after, &before, sizeof(after));
 
 	cm_free(cm);
 }
