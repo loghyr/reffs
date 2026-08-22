@@ -476,6 +476,21 @@ static void set_chunk_escrow_release_args(struct cm_ctx *cm, uint64_t epoch,
 	memcpy(args->cera_escrow_id, id, sizeof(args->cera_escrow_id));
 }
 
+static void set_chunk_escrow_enumerate_args(struct cm_ctx *cm, uint64_t epoch,
+					    uint64_t offset, uint32_t count,
+					    uint32_t maxcount)
+{
+	cm_set_op(cm, 0, OP_CHUNK_ESCROW_ENUMERATE);
+	CHUNK_ESCROW_ENUMERATE4args *args =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.opchunk_escrow_enumerate;
+
+	args->ceea_mds_epoch = epoch;
+	args->ceea_offset = offset;
+	args->ceea_count = count;
+	args->ceea_maxcount = maxcount;
+}
+
 /* ------------------------------------------------------------------ */
 /* Group A: Input validation                                           */
 /* ------------------------------------------------------------------ */
@@ -3709,6 +3724,45 @@ START_TEST(test_chunk_escrow_requires_mds_session)
 }
 END_TEST
 
+START_TEST(test_chunk_escrow_enumerate_probe)
+{
+	struct server_state *ss = server_state_find();
+	struct chunk_mds_epoch epoch = {
+		.epoch = 80,
+		.expires_at_ns = reffs_now_ns() + 60000000000ULL,
+	};
+	struct cm_ctx *cm = cm_alloc(1);
+	CHUNK_ESCROW_ENUMERATE4res *res;
+
+	ck_assert_ptr_nonnull(ss);
+	ck_assert_int_eq(chunk_mds_epoch_persist(ss->ss_state_dir, &epoch), 0);
+	server_state_put(ss);
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+	cm->compound->c_nfs4_client->nc_exchgid_flags =
+		EXCHGID4_FLAG_USE_PNFS_MDS;
+	set_chunk_escrow_enumerate_args(cm, epoch.epoch, 0, 1, 0);
+	nfs4_op_chunk_escrow_enumerate(cm->compound);
+	res = &cm->compound->c_res->resarray.resarray_val[0]
+		       .nfs_resop4_u.opchunk_escrow_enumerate;
+	ck_assert_int_eq(res->ceer_status, NFS4_OK);
+	ck_assert(res->CHUNK_ESCROW_ENUMERATE4res_u.ceer_resok4.ceer_eof);
+	ck_assert_uint_eq(res->CHUNK_ESCROW_ENUMERATE4res_u.ceer_resok4
+				  .ceer_entries.ceer_entries_len,
+			  0);
+
+	cm_reset_slot(cm, 0);
+	set_chunk_escrow_enumerate_args(cm, epoch.epoch, 0, 1, 1);
+	nfs4_op_chunk_escrow_enumerate(cm->compound);
+	ck_assert_int_eq(
+		cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opchunk_escrow_enumerate.ceer_status,
+		NFS4ERR_NOTSUPP);
+
+	cm_free(cm);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
@@ -3814,6 +3868,7 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_chunk_escrow_install_and_release);
 	tcase_add_test(tc_h, test_chunk_escrow_release_rejects_stale_id);
 	tcase_add_test(tc_h, test_chunk_escrow_requires_mds_session);
+	tcase_add_test(tc_h, test_chunk_escrow_enumerate_probe);
 	suite_add_tcase(s, tc_h);
 
 	return s;

@@ -2980,11 +2980,51 @@ uint32_t nfs4_op_chunk_escrow_release(struct compound *compound)
 
 uint32_t nfs4_op_chunk_escrow_enumerate(struct compound *compound)
 {
+	CHUNK_ESCROW_ENUMERATE4args *args =
+		NFS4_OP_ARG_SETUP(compound, opchunk_escrow_enumerate);
 	CHUNK_ESCROW_ENUMERATE4res *res =
 		NFS4_OP_RES_SETUP(compound, opchunk_escrow_enumerate);
 	nfsstat4 *status = &res->ceer_status;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		return 0;
+	}
+	if (!compound->c_inode || !S_ISREG(compound->c_inode->i_mode)) {
+		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+	if (chunk_op_on_non_chunked(compound)) {
+		*status = NFS4ERR_NOTSUPP;
+		return 0;
+	}
+	if (!chunk_mds_control_session(compound)) {
+		*status = NFS4ERR_PERM;
+		return 0;
+	}
+	if (chunk_lifecycle_check_range(args->ceea_offset, args->ceea_count) !=
+		    NFS4_OK ||
+	    args->ceea_cookie.ceea_cookie_len != 0) {
+		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+	*status = chunk_mds_epoch_check(compound, args->ceea_mds_epoch);
+	if (*status != NFS4_OK)
+		return 0;
+
+	if (args->ceea_maxcount != 0) {
+		*status = NFS4ERR_NOTSUPP;
+		return 0;
+	}
+
+	CHUNK_ESCROW_ENUMERATE4resok *resok =
+		&res->CHUNK_ESCROW_ENUMERATE4res_u.ceer_resok4;
+	resok->ceer_eof = true;
+	resok->ceer_cookie.ceer_cookie_len = 0;
+	resok->ceer_cookie.ceer_cookie_val = NULL;
+	resok->ceer_entries.ceer_entries_len = 0;
+	resok->ceer_entries.ceer_entries_val = NULL;
+	*status = NFS4_OK;
 
 	return 0;
 }
