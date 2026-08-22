@@ -12,8 +12,8 @@
  * upstream FH; ps_proxy_pipeline_commit (4a.2b) flushes the buffer
  * through ec_write_encoding_with_file when the client COMMITs.
  *
- * See .claude/design/proxy-server-phase4a.md for the full quiesce +
- * Rule 6 lifecycle design.  This file ships the table machinery and
+ * The table follows the proxy write-buffer quiesce and Rule 6 lifecycle
+ * design.  This file ships the table machinery and
  * the quiesce primitives; the actual flush-on-COMMIT shim lives in
  * ps_proxy_ops.c (Phase 4a step 5, slice 4a.2b).
  */

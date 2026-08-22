@@ -7,8 +7,7 @@
 
 /*
  * Pure-math tests for the partial-range stripe walk used by
- * ec_write_encoding_range / ec_read_encoding_range (Track 1b, see
- * .claude/design/chunk-collision-t1b.md).  The per-stripe
+ * ec_write_encoding_range / ec_read_encoding_range.  The per-stripe
  * primitives ec_write_stripe_with_file / ec_read_stripe_with_file
  * are exercised against a live MDS by the existing PS pipeline
  * tests; what's new here is the byte-range -> stripe-list

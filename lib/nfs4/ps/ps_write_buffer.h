@@ -8,8 +8,7 @@
 
 /*
  * Per-(stateid, upstream FH) write-buffer state used by the PS Phase
- * 4a whole-file COMMIT-deferred WRITE path.  See
- * .claude/design/proxy-server-phase4a.md.
+ * 4a whole-file COMMIT-deferred WRITE path.
  *
  * This header is the public PS-internal surface (ps_state.c, the
  * pipeline shim in ps_proxy_ops.c, op handlers).  The opaque

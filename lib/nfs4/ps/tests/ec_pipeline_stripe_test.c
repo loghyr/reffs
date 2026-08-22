@@ -241,7 +241,7 @@ START_TEST(test_finalize_total_blocks_mojette_24k)
 	/*
 	 * 24 KiB Mojette systematic, k=4 m=2.  Production geometry
 	 * after lifting EC_SHARD_SIZE_DEFAULT off the 4 KiB cap.
-	 * Per .claude/design/mojette-24k-shards.md:
+	 * The Mojette geometry used by this test:
 	 *
 	 *   shard_size = 24576 (P=3072 columns)
 	 *   parity[0] (p=2):  6146 elem * 8 = 49168 bytes
