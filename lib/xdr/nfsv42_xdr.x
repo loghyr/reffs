@@ -1513,10 +1513,11 @@ enum nfs_opnum4 {
 % * across metadata-server incarnations (TAKEOVER).  Op numbers
 % * 92-95 are TBD pending IANA assignment.
 % *
-% * INSTALL and RELEASE are implemented by the prototype server, and
-% * ENUMERATE supports its maxcount-zero capability probe.  Full
-% * ENUMERATE paging and TAKEOVER proof processing remain follow-up
-% * work; unsupported forms return NFS4ERR_NOTSUPP.
+% * INSTALL and RELEASE are implemented by the prototype server.  ENUMERATE
+% * supports bounded paging over the server's current escrow index, using a
+% * process-bound verifier and opaque position cursor; the cursor is not a
+% * durable snapshot across restart.  TAKEOVER proof processing remains
+% * follow-up work and returns NFS4ERR_NOTSUPP.
 % */
  OP_CHUNK_ESCROW_INSTALL    = 92,
  OP_CHUNK_ESCROW_RELEASE    = 93,
@@ -3814,8 +3815,9 @@ union CHUNK_WRITE_REPAIR4res switch (nfsstat4 cwrr_status) {
  * sec-chunk-escrow) -- metadata-server-to-data-server control plane
  * for per-file escrow-lock handoff.  INSTALL, RELEASE, and the
  * CHUNK_LOCK ADOPT transfer are implemented by the prototype server;
- * ENUMERATE is limited to its capability probe and TAKEOVER remains
- * disabled until its paging and proof semantics are implemented.
+ * ENUMERATE supports bounded paging over the current escrow index with
+ * a process-bound opaque cursor.  TAKEOVER remains disabled pending its
+ * proof semantics.
  */
 
 /*
