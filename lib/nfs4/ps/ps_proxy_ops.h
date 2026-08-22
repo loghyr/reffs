@@ -24,8 +24,7 @@ struct authunix_parms; /* <rpc/auth_unix.h> */
  * op handlers stay readable and the XDR types do not leak into
  * the dispatch code.
  *
- * See .claude/design/proxy-server.md phase 2 "Client GETATTR on a
- * proxied file".
+ * These helpers implement GETATTR forwarding for proxied files.
  */
 
 /*
@@ -251,8 +250,7 @@ int ps_proxy_forward_read(struct mds_session *ms, const uint8_t *upstream_fh,
  * end-client open stateid -- no PUTROOTFH+LOOKUP+OPEN dance.
  *
  * Same shape as ps_proxy_forward_read so the call site in
- * nfs4_op_read can swap them out 1:1.  PS Phase 3 -- see
- * .claude/design/proxy-server-phase3.md.
+ * nfs4_op_read can swap them out 1:1.
  *
  * Encoding parameters for this slice are pinned to RS 4+2, layout
  * type LAYOUT4_FLEX_FILES_V2, shard size 4096.  An incoming layout
@@ -495,8 +493,7 @@ int ps_proxy_forward_write(struct mds_session *ms, const uint8_t *upstream_fh,
 /*
  * PS Phase 4a: pipeline-driven WRITE through the per-listener
  * write-buffer table.  The bytes are buffered in PS RAM; the
- * COMMIT-time flush through ec_write_encoding_with_file is slice
- * 4a.2c.  See .claude/design/proxy-server-phase4a.md.
+ * COMMIT-time flush uses ec_write_encoding_with_file.
  *
  * Mirror of ps_proxy_pipeline_read for the write path.  Looks up
  * (or allocates) the per-(stateid, fh) buffer on the listener

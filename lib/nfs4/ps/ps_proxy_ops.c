@@ -2253,7 +2253,6 @@ out:
  * copies the requested byte range out of the decoded payload.
  *
  * Encoding is hard-coded to RS 4+2 / FFV2 / 4 KiB shards for this slice.
- * See .claude/design/proxy-server-phase3.md Risk #1.
  */
 int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
 			   uint32_t upstream_fh_len, uint32_t stateid_seqid,

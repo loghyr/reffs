@@ -586,8 +586,7 @@ END_TEST
 
 /*
  * ec_write_encoding_with_file is the WRITE-side counterpart of
- * ec_read_encoding_with_file -- introduced in PS Phase 4a step 1
- * (.claude/design/proxy-server-phase4a.md).  Same shape as
+ * ec_read_encoding_with_file.  Same shape as
  * test_pipeline_read_propagates_creds: the mock fails LAYOUTGET
  * at the first mds_compound_send_with_auth call, so the encoding
  * bails to its out_encoding label before allocating any DS state.

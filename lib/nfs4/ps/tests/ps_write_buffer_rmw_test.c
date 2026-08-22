@@ -11,11 +11,10 @@
  * Per-stripe dirty-bitmap state for PS Phase 4b (slice 4b.1).  4b.1
  * adds the data structures + WRITE-time dirty-marking that the
  * later slices (4b.2 per-stripe full-stripe flush, 4b.3 partial-
- * stripe RMW) build on.  This file covers Group A from the design's
- * "Tests first" section: pure dirty-bitmap mechanics, no flush or
+ * stripe RMW) build on.  This file covers pure dirty-bitmap
+ * mechanics, no flush or
  * RMW exercise yet.
  *
- * See .claude/design/proxy-server-phase4b.md.
  */
 
 #include <check.h>

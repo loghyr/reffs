@@ -8,8 +8,7 @@
 #endif
 
 /*
- * PS_LISTENER_LIST observability extension -- per
- * .claude/design/ps-listener-list-observability.md.
+ * PS_LISTENER_LIST observability extension.
  *
  * The probe handler `probe1_op_ps_listener_list` (lib/probe1/
  * probe1_server.c:1461) populates `probe_ps_listener_info1`
@@ -43,12 +42,9 @@
  * If the test asserts pass, the handler diff is faithful by
  * inspection -- the four-line fill block is too small to drift.
  *
- * The reviewer guidance in .claude/CLAUDE.md ("Skip the reviewer
- * agent ... test-only additions where the production code did not
- * move") classifies the production diff (handler + XDR + CLI rows)
- * as inline-reviewable: no XDR review burden (probe1 internal),
- * no RCU / on-disk format / lock-ordering changes, and the source-
- * field reads are documented above.
+ * The production diff is mechanical: the handler and XDR record read
+ * the same four source fields documented above.  No RCU, on-disk
+ * format, or lock-ordering changes are involved.
  */
 
 #include <check.h>

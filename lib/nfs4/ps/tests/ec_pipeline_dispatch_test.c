@@ -8,10 +8,9 @@
 #endif
 
 /*
- * PS Phase 5 dispatch-hook coverage -- the
- * `test_shortcircuit_partial_2_mirrors` slice listed in
- * .claude/design/proxy-server.md / proxy-server-phase5.md and
- * deferred from slice 5.5's test_shortcircuit_counter_increments.
+ * PS Phase 5 dispatch-hook coverage for
+ * `test_shortcircuit_partial_2_mirrors`, complementary to the
+ * short-circuit counter test.
  *
  * Slice 5.5 pins the counter primitive
  * (ps_listener_record_shortcircuit) in isolation.  This file pins

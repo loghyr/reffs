@@ -18,8 +18,7 @@
  *
  * These tests pin: both halves contribute, the MDS half toggles
  * the composed value, and the no-MDS-verf-yet path falls back to
- * listener-only.  See .claude/design/proxy-server-phase4b.md
- * "Tests first" Group C and "Composed verifier".
+ * listener-only.
  *
  * The actual capture from CHUNK_COMMIT into the buffer is
  * exercised end-to-end by scripts/ci_ps_phase4b_test.sh against

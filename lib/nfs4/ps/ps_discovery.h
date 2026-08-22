@@ -27,7 +27,7 @@ struct mds_session; /* lib/nfs4/client/ec_client.h */
  *   -errno   RPC / compound failure (mds_compound_send or non-OK
  *            status on PUTROOTFH or GETFH)
  *
- * See `.claude/design/proxy-server.md` phase 2, "Discovery".
+ * This is the proxy discovery anchor used by subsequent LOOKUP walks.
  */
 int ps_discovery_fetch_root_fh(struct mds_session *ms, uint8_t *fh_buf,
 			       uint32_t buf_size, uint32_t *fh_len_out);

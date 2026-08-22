@@ -41,8 +41,7 @@
  *   8s, 16s, 32s, 60s, 60s, ...) per listener; success resets the
  *   backoff to 0.  Cached upstream FHs on proxy SBs survive the
  *   reconnect -- they identify upstream inodes which are stable
- *   across the upstream session's lifetime.  See
- *   .claude/design/ps-reconnect.md.
+ *   across the upstream session's lifetime.
  *
  *   Worker forwarders that observe a session-killer in their own
  *   compound return NFS4ERR_DELAY (or NFS4ERR_IO) to the end client.

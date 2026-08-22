@@ -162,8 +162,7 @@ struct ps_write_buffer {
  * concurrent assignment-vs-read; production reads happen on the
  * hot path so we keep the relaxed-load cost minimal.
  *
- * See "Test-hook injection" in
- * .claude/design/proxy-server-phase4a.md.
+ * These hooks are intentionally test-only and remain NULL in production.
  */
 extern _Atomic(void (*)(void)) ps_test_hook_pre_state_load;
 extern _Atomic(void (*)(void)) ps_test_hook_in_encoding_flush;

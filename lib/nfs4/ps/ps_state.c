@@ -611,9 +611,8 @@ int ps_listener_session_replace(uint32_t listener_id,
  * thin wrappers around the canonical lib/nfs4/client/mds_session
  * implementations (mds_session_is_dead etc.), promoted there so the
  * MDS-to-DS keep-alive thread (lib/nfs4/dstore/ds_renewal.c) shares
- * the same classifier and backoff schedule.  See
- * .claude/design/mds-ds-session-keepalive.md.  PS source untouched;
- * future cleanup may inline the call sites and delete these wrappers.
+ * the same classifier and backoff schedule.  These wrappers keep the PS
+ * call sites stable while sharing that implementation.
  */
 bool ps_session_is_dead(int err, nfsstat4 sr_status)
 {

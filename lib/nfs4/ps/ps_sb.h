@@ -37,7 +37,7 @@
  * will call it from super_block_release().  Non-proxy SBs carry a
  * NULL sb_proxy_binding and never invoke the free path.
  *
- * See .claude/design/proxy-server.md phase 2 "Proxy SB".
+ * This is the proxy superblock binding used by the forwarding path.
  */
 struct ps_sb_binding {
 	uint32_t psb_listener_id;

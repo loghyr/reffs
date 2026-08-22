@@ -31,7 +31,7 @@ struct cds_lfht; /* forward: liburcu lock-free hash table */
  *             every running listener through DRAINING -> STOPPED before
  *             destroying mutexes and rwlocks.
  *
- * See `.claude/design/proxy-server-phase4a.md` "Quiesce protocol".
+ * The lifecycle states implement the proxy quiesce protocol.
  */
 enum ps_listener_state_kind {
 	PS_LISTENER_RUNNING = 0, /* zero so ps_state_register init clears to */
@@ -123,9 +123,7 @@ struct ps_export {
  * treat (session open && root FH empty) as an explicit error rather
  * than blindly dereferencing an empty FH.  A `ps_state_discovery_complete()`
  * helper will live here once the first consumer lands.
- * NOT_NOW_BROWN_COW: discovery-complete helper.
- *
- * See `.claude/design/proxy-server.md` phase 2.
+ * A discovery-complete helper can be added when the first consumer needs it.
  */
 struct ps_listener_state {
 	uint32_t pls_listener_id; /* matches compound->c_listener_id */
@@ -164,7 +162,7 @@ struct ps_listener_state {
 	 * takes a write lock when swapping in a freshly built session
 	 * after the previous one died (NFS4ERR_BADSESSION /
 	 * NFS4ERR_DEADSESSION / NFS4ERR_STALE_CLIENTID / connection drop).
-	 * See .claude/design/ps-reconnect.md.
+	 * The lock order is part of the reconnect lifetime contract.
 	 *
 	 * Lock order rule (verified by TSAN soak):
 	 *   pls_session_rwlock (read or write)
@@ -219,7 +217,7 @@ struct ps_listener_state {
 	uint32_t pls_registration_id_len;
 
 	/*
-	 * Phase 4a quiesce protocol (.claude/design/proxy-server-phase4a.md).
+	 * Proxy quiesce protocol.
 	 *
 	 * pls_state           lifecycle gate; release-store on transition,
 	 *                     acquire-load by op handlers after the
