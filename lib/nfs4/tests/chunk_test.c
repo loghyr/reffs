@@ -2636,6 +2636,86 @@ START_TEST(test_chunk_read_loads_persisted_store_after_restart)
 }
 END_TEST
 
+START_TEST(test_chunk_error_quarantines_committed_chunk)
+{
+	static char wbuf[CHUNK_SZ];
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
+	struct cm_ctx *cm = cm_alloc(1);
+
+	memset(wbuf, 0xC3, sizeof(wbuf));
+	cm_set_inode(cm, g_inode);
+	ck_assert_int_eq(run_chunk_write(cm, wbuf), NFS4_OK);
+	ck_assert_int_eq(run_chunk_finalize(cm, &owner), NFS4_OK);
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_COMMIT);
+	{
+		CHUNK_COMMIT4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_commit;
+		a->cca_stateid = cm->chunk_stateid;
+		a->cca_offset = 0;
+		a->cca_count = 1;
+		a->cca_chunks.cca_chunks_val = &owner;
+		a->cca_chunks.cca_chunks_len = 1;
+	}
+	nfs4_op_chunk_commit(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_commit.ccr_status,
+			 NFS4_OK);
+	free_commit_res(cm);
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_ERROR);
+	{
+		CHUNK_ERROR4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_error;
+		a->cea_stateid = cm->chunk_stateid;
+		a->cea_offset = 0;
+		a->cea_count = 1;
+		a->cea_error = NFS4ERR_PAYLOAD_NOT_ATOMIC;
+		a->cea_owner = owner;
+	}
+	nfs4_op_chunk_error(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_error.cer_status,
+			 NFS4_OK);
+	ck_assert_uint_eq(
+		chunk_store_lookup(g_inode->i_chunk_store, 0)->cb_flags &
+			CHUNK_BLOCK_ERROR,
+		CHUNK_BLOCK_ERROR);
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_READ);
+	{
+		CHUNK_READ4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_read;
+		a->cra_stateid = cm->chunk_stateid;
+		a->cra_offset = 0;
+		a->cra_count = 1;
+	}
+	nfs4_op_chunk_read(cm->compound);
+	{
+		CHUNK_READ4res *res =
+			&cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_read;
+		CHUNK_READ4resok *ok = &res->CHUNK_READ4res_u.crr_resok4;
+
+		ck_assert_int_eq(res->crr_status, NFS4_OK);
+		ck_assert_uint_eq(ok->crr_chunks.crr_chunks_len, 1);
+		ck_assert_int_eq(ok->crr_chunks.crr_chunks_val[0].cr_status,
+				 NFS4ERR_PAYLOAD_NOT_ATOMIC);
+		ck_assert_uint_eq(
+			ok->crr_chunks.crr_chunks_val[0].cr_chunk.cr_chunk_len,
+			0);
+	}
+	free_read_res(cm);
+	cm_free(cm);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Group G: chunk-collision counter observability (Phase 4b.7)         */
 /*                                                                     */
@@ -3302,6 +3382,7 @@ static Suite *chunk_suite(void)
 	TCase *tc_f = tcase_create("full_cycle");
 	tcase_add_checked_fixture(tc_f, chunk_setup, chunk_teardown);
 	tcase_add_test(tc_f, test_chunk_full_cycle);
+	tcase_add_test(tc_f, test_chunk_error_quarantines_committed_chunk);
 	tcase_add_test(tc_f,
 		       test_chunk_read_loads_persisted_store_after_restart);
 	suite_add_tcase(s, tc_f);

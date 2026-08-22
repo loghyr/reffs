@@ -51,6 +51,8 @@ enum chunk_state {
  * choice).
  */
 #define CHUNK_BLOCK_REPAIR_PROVENANCE 0x2
+/* Set by CHUNK_ERROR until a repair is confirmed. */
+#define CHUNK_BLOCK_ERROR 0x4
 
 /*
  * CHUNK_VALUE_MAX is sized for the largest supported checksum (SHA512,

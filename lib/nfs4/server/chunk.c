@@ -1088,6 +1088,10 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 		rc->cr_locked = (blk->cb_flags & CHUNK_BLOCK_LOCKED) ?
 					CHUNK_STATE_FLAGS_LOCKED :
 					0;
+		if (blk->cb_flags & CHUNK_BLOCK_ERROR) {
+			rc->cr_status = NFS4ERR_PAYLOAD_NOT_ATOMIC;
+			continue;
+		}
 		/*
 		 * Reaching here means the per-chunk read succeeded; the
 		 * loop bails out before this point on any failure.  Leave
@@ -1412,15 +1416,87 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 }
 
 /* ------------------------------------------------------------------ */
-/* Stub ops -- not needed for happy-path demo                           */
+/* Repair and inspection operations                                    */
 /* ------------------------------------------------------------------ */
 
 uint32_t nfs4_op_chunk_error(struct compound *compound)
 {
+	CHUNK_ERROR4args *args = NFS4_OP_ARG_SETUP(compound, opchunk_error);
 	CHUNK_ERROR4res *res = NFS4_OP_RES_SETUP(compound, opchunk_error);
 	nfsstat4 *status = &res->cer_status;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		return 0;
+	}
+
+	if (!compound->c_inode || !S_ISREG(compound->c_inode->i_mode)) {
+		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	if (chunk_op_on_non_chunked(compound)) {
+		*status = NFS4ERR_NOTSUPP;
+		return 0;
+	}
+
+	if (args->cea_count == 0 ||
+	    args->cea_offset > UINT64_MAX - args->cea_count ||
+	    chunk_cid_is_reserved(args->cea_owner.co_client_id)) {
+		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	switch (args->cea_error) {
+	case NFS4ERR_PAYLOAD_NOT_ATOMIC:
+	case NFS4ERR_IO:
+	case NFS4ERR_INVAL:
+		break;
+	default:
+		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	nfsstat4 stid_err = chunk_check_trusted_stateid(
+		compound, &args->cea_stateid, args->cea_owner.co_client_id,
+		false);
+
+	if (stid_err != NFS4_OK) {
+		*status = stid_err;
+		return 0;
+	}
+
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	struct chunk_store *cs = compound->c_inode->i_chunk_store;
+
+	if (!cs) {
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_NOENT;
+		return 0;
+	}
+
+	for (uint32_t i = 0; i < args->cea_count; i++) {
+		struct chunk_block *blk =
+			chunk_store_lookup(cs, args->cea_offset + i);
+
+		if (!blk || blk->cb_state != CHUNK_STATE_COMMITTED) {
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_INVAL;
+			return 0;
+		}
+	}
+
+	for (uint32_t i = 0; i < args->cea_count; i++) {
+		struct chunk_block *blk =
+			chunk_store_lookup(cs, args->cea_offset + i);
+
+		blk->cb_flags |= CHUNK_BLOCK_ERROR;
+		cs->cs_dirty = true;
+	}
+
+	chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
+			    compound->c_inode->i_ino);
+	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
 	return 0;
 }
