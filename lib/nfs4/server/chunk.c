@@ -1679,6 +1679,11 @@ static bool chunk_lock_stateid_equal(const struct chunk_block *blk,
 
 static void chunk_lock_clear(struct chunk_block *blk)
 {
+	static const uint8_t zero_escrow[CHUNK_LOCK_ESCROW_ID_SIZE];
+	bool preserve_escrow = !(blk->cb_flags & CHUNK_BLOCK_ESCROW) &&
+			       memcmp(blk->cb_lock_escrow_id, zero_escrow,
+				      sizeof(zero_escrow)) != 0;
+
 	blk->cb_flags &= ~CHUNK_BLOCK_LOCKED;
 	blk->cb_lock_cohort_id = 0;
 	blk->cb_lock_client_id = 0;
@@ -1687,7 +1692,9 @@ static void chunk_lock_clear(struct chunk_block *blk)
 	blk->cb_lock_count = 0;
 	blk->cb_lock_flags = 0;
 	memset(blk->cb_lock_stateid, 0, sizeof(blk->cb_lock_stateid));
-	memset(blk->cb_lock_escrow_id, 0, sizeof(blk->cb_lock_escrow_id));
+	if (!preserve_escrow)
+		memset(blk->cb_lock_escrow_id, 0,
+		       sizeof(blk->cb_lock_escrow_id));
 }
 
 static bool chunk_escrow_id_is_zero(const escrow_id4 id)
@@ -1772,9 +1779,16 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
 		return 0;
 	}
 	if (flags != 0) {
-		/* Escrow and live-client transfer are a later slice. */
-		*status = NFS4ERR_NOTSUPP;
-		return 0;
+		if (flags & CHUNK_LOCK_FLAGS_TAKEOVER) {
+			/* Live-client designation is not implemented yet. */
+			*status = NFS4ERR_NOTSUPP;
+			return 0;
+		}
+		if (chunk_escrow_id_is_zero(
+			    args->cla_adopt.chunk_lock_adopt4_u.cla_escrow_id)) {
+			*status = NFS4ERR_INVAL;
+			return 0;
+		}
 	}
 
 	*status = chunk_check_trusted_stateid(compound, &args->cla_stateid,
@@ -1807,6 +1821,20 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
 		struct chunk_block *blk =
 			chunk_store_lookup_any(cs, args->cla_offset + i);
 
+		if (flags & CHUNK_LOCK_FLAGS_ADOPT) {
+			if (!chunk_escrow_matches(
+				    blk, args->cla_offset, args->cla_count,
+				    args->cla_adopt.chunk_lock_adopt4_u
+					    .cla_escrow_id)) {
+				pthread_mutex_unlock(
+					&compound->c_inode->i_attr_mutex);
+				free(saved);
+				free(created);
+				*status = NFS4ERR_NO_ADOPTABLE_LOCK;
+				return 0;
+			}
+			continue;
+		}
 		if (!blk)
 			continue;
 		if (!(blk->cb_flags & CHUNK_BLOCK_LOCKED))
@@ -1849,6 +1877,19 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
 			created[i] = 1;
 		}
 		saved[i] = *blk;
+		if (flags & CHUNK_LOCK_FLAGS_ADOPT) {
+			blk->cb_flags &= ~CHUNK_BLOCK_ESCROW;
+			blk->cb_lock_cohort_id = args->cla_owner.co_cohort_id;
+			blk->cb_lock_client_id = args->cla_owner.co_client_id;
+			blk->cb_lock_owner_id = args->cla_owner.co_id;
+			blk->cb_lock_offset = args->cla_offset;
+			blk->cb_lock_count = args->cla_count;
+			blk->cb_lock_flags = 0;
+			chunk_lock_pack_stateid(blk->cb_lock_stateid,
+						&args->cla_stateid);
+			cs->cs_dirty = true;
+			continue;
+		}
 		if (blk->cb_flags & CHUNK_BLOCK_LOCKED)
 			continue;
 		blk->cb_flags |= CHUNK_BLOCK_LOCKED;
@@ -1859,6 +1900,8 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
 		blk->cb_lock_count = args->cla_count;
 		blk->cb_lock_flags = flags;
 		memcpy(blk->cb_lock_stateid, stateid, sizeof(stateid));
+		memset(blk->cb_lock_escrow_id, 0,
+		       sizeof(blk->cb_lock_escrow_id));
 		cs->cs_dirty = true;
 	}
 

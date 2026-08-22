@@ -3812,10 +3812,10 @@ union CHUNK_WRITE_REPAIR4res switch (nfsstat4 cwrr_status) {
 /*
  * CHUNK_ESCROW ops (draft-haynes-nfsv4-flexfiles-v2
  * sec-chunk-escrow) -- metadata-server-to-data-server control plane
- * for per-file escrow-lock handoff.  INSTALL and RELEASE are
- * implemented by the prototype server; ENUMERATE and TAKEOVER remain
- * capability-probe operations until their paging and proof semantics
- * are implemented.
+ * for per-file escrow-lock handoff.  INSTALL, RELEASE, and the
+ * CHUNK_LOCK ADOPT transfer are implemented by the prototype server;
+ * ENUMERATE is limited to its capability probe and TAKEOVER remains
+ * disabled until its paging and proof semantics are implemented.
  */
 
 /*

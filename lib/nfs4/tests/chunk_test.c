@@ -3557,14 +3557,14 @@ START_TEST(test_chunk_lock_conflict_reports_holder)
 }
 END_TEST
 
-START_TEST(test_chunk_lock_transfer_flags_are_not_supported)
+START_TEST(test_chunk_lock_takeover_is_not_supported)
 {
 	struct cm_ctx *cm = cm_alloc(1);
 
 	cm_set_inode(cm, g_inode);
 	mark_chunked(g_inode, INODE_CHUNKED_YES);
-	set_chunk_lock_args(cm, 0, 1, 0x100, 0xBEEF, 1, CHUNK_LOCK_FLAGS_ADOPT,
-			    true);
+	set_chunk_lock_args(cm, 0, 1, 0x100, 0xBEEF, 1,
+			    CHUNK_LOCK_FLAGS_TAKEOVER, false);
 	nfs4_op_chunk_lock(cm->compound);
 	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
 				 .nfs_resop4_u.opchunk_lock.clr_status,
@@ -3692,6 +3692,67 @@ START_TEST(test_chunk_escrow_release_rejects_stale_id)
 	ck_assert_ptr_nonnull(blk);
 	ck_assert_msg(blk->cb_flags & CHUNK_BLOCK_ESCROW,
 		      "stale release leaves escrow installed");
+	ck_assert_mem_eq(blk->cb_lock_escrow_id, escrow, sizeof(escrow));
+
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_chunk_lock_adopts_escrow)
+{
+	static const escrow_id4 escrow = {
+		0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+		0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50,
+	};
+	struct server_state *ss = server_state_find();
+	struct chunk_mds_epoch epoch = {
+		.epoch = 81,
+		.expires_at_ns = reffs_now_ns() + 60000000000ULL,
+	};
+	struct cm_ctx *cm = cm_alloc(1);
+	struct chunk_block *blk;
+	CHUNK_LOCK4args *lock_args;
+
+	ck_assert_ptr_nonnull(ss);
+	ck_assert_int_eq(chunk_mds_epoch_persist(ss->ss_state_dir, &epoch), 0);
+	server_state_put(ss);
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+	cm->compound->c_nfs4_client->nc_exchgid_flags =
+		EXCHGID4_FLAG_USE_PNFS_MDS;
+	set_chunk_escrow_install_args(cm, epoch.epoch, 10, 1, escrow);
+	nfs4_op_chunk_escrow_install(cm->compound);
+	ck_assert_int_eq(
+		cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opchunk_escrow_install.ceir_status,
+		NFS4_OK);
+
+	cm_reset_slot(cm, 0);
+	set_chunk_lock_args(cm, 10, 1, 0x200, 0xBEEF, 9, CHUNK_LOCK_FLAGS_ADOPT,
+			    true);
+	lock_args = &cm->compound->c_args->argarray.argarray_val[0]
+			     .nfs_argop4_u.opchunk_lock;
+	memcpy(lock_args->cla_adopt.chunk_lock_adopt4_u.cla_escrow_id, escrow,
+	       sizeof(escrow));
+	nfs4_op_chunk_lock(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_lock.clr_status,
+			 NFS4_OK);
+	blk = chunk_store_lookup_any(g_inode->i_chunk_store, 10);
+	ck_assert_ptr_nonnull(blk);
+	ck_assert_int_eq(blk->cb_lock_client_id, 0xBEEF);
+	ck_assert_int_eq(blk->cb_lock_owner_id, 9);
+	ck_assert_int_eq(blk->cb_flags & CHUNK_BLOCK_ESCROW, 0);
+	ck_assert_mem_eq(blk->cb_lock_escrow_id, escrow, sizeof(escrow));
+
+	cm_reset_slot(cm, 0);
+	set_chunk_unlock_args(cm, 10, 1, 0x200, 0xBEEF, 9);
+	nfs4_op_chunk_unlock(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_unlock.cur_status,
+			 NFS4_OK);
+	blk = chunk_store_lookup_any(g_inode->i_chunk_store, 10);
+	ck_assert_int_eq(blk->cb_flags & CHUNK_BLOCK_LOCKED, 0);
 	ck_assert_mem_eq(blk->cb_lock_escrow_id, escrow, sizeof(escrow));
 
 	cm_free(cm);
@@ -3863,10 +3924,11 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_chunk_write_still_works_through_dispatch);
 	tcase_add_test(tc_h, test_chunk_lock_and_unlock_empty_range);
 	tcase_add_test(tc_h, test_chunk_lock_conflict_reports_holder);
-	tcase_add_test(tc_h, test_chunk_lock_transfer_flags_are_not_supported);
+	tcase_add_test(tc_h, test_chunk_lock_takeover_is_not_supported);
 	tcase_add_test(tc_h, test_chunk_mds_epoch_persistence_roundtrip);
 	tcase_add_test(tc_h, test_chunk_escrow_install_and_release);
 	tcase_add_test(tc_h, test_chunk_escrow_release_rejects_stale_id);
+	tcase_add_test(tc_h, test_chunk_lock_adopts_escrow);
 	tcase_add_test(tc_h, test_chunk_escrow_requires_mds_session);
 	tcase_add_test(tc_h, test_chunk_escrow_enumerate_probe);
 	suite_add_tcase(s, tc_h);
