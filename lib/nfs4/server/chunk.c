@@ -457,6 +457,21 @@ static bool chunk_write_test_delay(struct server_state *ss,
 	return false;
 }
 
+static bool chunk_test_persist_failure(struct server_state *ss)
+{
+	unsigned int remaining = atomic_load_explicit(
+		&ss->ss_test_chunk_persist_fail_count, memory_order_relaxed);
+
+	while (remaining != 0) {
+		if (atomic_compare_exchange_weak_explicit(
+			    &ss->ss_test_chunk_persist_fail_count, &remaining,
+			    remaining - 1, memory_order_relaxed,
+			    memory_order_relaxed))
+			return true;
+	}
+	return false;
+}
+
 static bool chunk_lifecycle_test_delay(atomic_uint *budget)
 {
 	unsigned int remaining;
@@ -1950,7 +1965,8 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
 		cs->cs_dirty = true;
 	}
 
-	if (chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
+	if (chunk_test_persist_failure(compound->c_server_state) ||
+	    chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
 				compound->c_inode->i_ino) != 0) {
 		for (uint32_t i = 0; i < args->cla_count; i++) {
 			struct chunk_block *blk = chunk_store_lookup_any(
@@ -2956,7 +2972,8 @@ uint32_t nfs4_op_chunk_escrow_install(struct compound *compound)
 		cs->cs_dirty = true;
 	}
 
-	if (chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
+	if (chunk_test_persist_failure(compound->c_server_state) ||
+	    chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
 				compound->c_inode->i_ino) != 0) {
 		chunk_escrow_restore_install(cs, args->ceia_offset,
 					     args->ceia_count, saved, created);
@@ -3059,7 +3076,8 @@ uint32_t nfs4_op_chunk_escrow_release(struct compound *compound)
 		chunk_lock_clear(blk);
 		cs->cs_dirty = true;
 	}
-	if (chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
+	if (chunk_test_persist_failure(compound->c_server_state) ||
+	    chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
 				compound->c_inode->i_ino) != 0) {
 		for (uint32_t i = 0; i < args->cera_count; i++) {
 			struct chunk_block *blk = chunk_store_lookup_any(

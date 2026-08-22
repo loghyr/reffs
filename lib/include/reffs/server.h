@@ -82,6 +82,8 @@ struct server_state {
 	/* Test-only lifecycle delay budgets; zero in normal operation. */
 	atomic_uint ss_test_chunk_finalize_delay_count;
 	atomic_uint ss_test_chunk_commit_delay_count;
+	/* Test-only escrow persistence failure budget; zero in normal operation. */
+	atomic_uint ss_test_chunk_persist_fail_count;
 	_Atomic uint32_t
 		ss_unreclaimed; /* previous-boot clients not yet RECLAIM_COMPLETE'd */
 	pthread_t ss_grace_thread; /* timer thread; 0 if not running */
