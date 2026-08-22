@@ -3483,6 +3483,20 @@ START_TEST(test_chunk_lock_conflict_reports_holder)
 				 .nfs_resop4_u.opchunk_lock.clr_status,
 			 NFS4_OK);
 
+	{
+		char buf[CHUNK_SZ];
+
+		memset(buf, 'L', sizeof(buf));
+		cm_reset_slot(cm, 0);
+		set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 2, NULL, 0);
+		nfs4_op_chunk_write(cm->compound);
+		ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+					 .nfs_resop4_u.opchunk_write.cwr_status,
+				 NFS4ERR_CHUNK_LOCKED);
+		free_write_args(cm);
+		free_write_res(cm);
+	}
+
 	cm_reset_slot(cm, 0);
 	set_chunk_lock_args(cm, 2, 1, 0x200, 0xBEEF, 2, 0, false);
 	nfs4_op_chunk_lock(cm->compound);

@@ -72,6 +72,31 @@ static inline bool chunk_cid_is_reserved(uint32_t cid)
 	       cid == CHUNK_GUARD_CLIENT_ID_MDS;
 }
 
+static bool chunk_lock_owner_values_equal(const struct chunk_block *blk,
+					  uint64_t cohort_id,
+					  uint32_t client_id, uint32_t owner_id)
+{
+	return blk->cb_lock_cohort_id == cohort_id &&
+	       blk->cb_lock_client_id == client_id &&
+	       blk->cb_lock_owner_id == owner_id;
+}
+
+static struct chunk_block *
+chunk_lock_conflict(struct chunk_store *cs, uint64_t offset, uint32_t count,
+		    uint64_t cohort_id, uint32_t client_id, uint32_t owner_id)
+{
+	for (uint32_t i = 0; i < count; i++) {
+		struct chunk_block *blk =
+			chunk_store_lookup_any(cs, offset + i);
+
+		if (blk && (blk->cb_flags & CHUNK_BLOCK_LOCKED) &&
+		    !chunk_lock_owner_values_equal(blk, cohort_id, client_id,
+						   owner_id))
+			return blk;
+	}
+	return NULL;
+}
+
 /*
  * chunk_check_trusted_stateid -- trust-table validation shared by
  * every CHUNK op that presents a layout stateid.
@@ -609,8 +634,19 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 			  NULL;
 
 	for (uint32_t i = 0; i < nchunks; i++) {
+		struct chunk_block *lockblk =
+			chunk_store_lookup_any(cs, args->cwa_offset + i);
 		struct chunk_block *prev =
 			chunk_store_lookup(cs, args->cwa_offset + i);
+
+		if (lockblk && (lockblk->cb_flags & CHUNK_BLOCK_LOCKED) &&
+		    !chunk_lock_owner_values_equal(
+			    lockblk, args->cwa_cohort_id, args->cwa_client_id,
+			    args->cwa_co_ids.cwa_co_ids_val[i])) {
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_CHUNK_LOCKED;
+			return 0;
+		}
 
 		/* Axis (ii): CAS via cwa_guard. */
 		if (guarded && prev &&
@@ -752,6 +788,8 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		 */
 		const struct chunk_block *old_blk =
 			chunk_store_lookup(cs, args->cwa_offset + i);
+		const struct chunk_block *lock_blk =
+			chunk_store_lookup_any(cs, args->cwa_offset + i);
 
 		if (i < nchecksums) {
 			const checksum4 *cs =
@@ -807,6 +845,20 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 
 		memcpy(blk.cb_checksum_value, blk_csum_value,
 		       sizeof(blk.cb_checksum_value));
+		if (lock_blk && (lock_blk->cb_flags & CHUNK_BLOCK_LOCKED)) {
+			blk.cb_flags |= CHUNK_BLOCK_LOCKED;
+			blk.cb_lock_cohort_id = lock_blk->cb_lock_cohort_id;
+			blk.cb_lock_client_id = lock_blk->cb_lock_client_id;
+			blk.cb_lock_owner_id = lock_blk->cb_lock_owner_id;
+			blk.cb_lock_offset = lock_blk->cb_lock_offset;
+			blk.cb_lock_count = lock_blk->cb_lock_count;
+			blk.cb_lock_flags = lock_blk->cb_lock_flags;
+			memcpy(blk.cb_lock_stateid, lock_blk->cb_lock_stateid,
+			       sizeof(blk.cb_lock_stateid));
+			memcpy(blk.cb_lock_escrow_id,
+			       lock_blk->cb_lock_escrow_id,
+			       sizeof(blk.cb_lock_escrow_id));
+		}
 
 		/*
 		 * cwr_block_activated[i] per draft sec-CHUNK_WRITE
@@ -1277,6 +1329,18 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 		return 0;
 	}
 
+	for (uint32_t i = 0; i < args->cfa_chunks.cfa_chunks_len; i++) {
+		chunk_owner4 *co = &args->cfa_chunks.cfa_chunks_val[i];
+
+		if (chunk_lock_conflict(cs, args->cfa_offset, count,
+					co->co_cohort_id, co->co_client_id,
+					co->co_id)) {
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_CHUNK_LOCKED;
+			return 0;
+		}
+	}
+
 	/*
 	 * Transition each owner's blocks from PENDING --> FINALIZED.
 	 * The cfa_chunks array lists the chunk_owner4 entries to finalize.
@@ -1412,6 +1476,18 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 		*status = NFS4ERR_DELAY;
 		return 0;
+	}
+
+	for (uint32_t i = 0; i < args->cca_chunks.cca_chunks_len; i++) {
+		chunk_owner4 *co = &args->cca_chunks.cca_chunks_val[i];
+
+		if (chunk_lock_conflict(cs, args->cca_offset, count,
+					co->co_cohort_id, co->co_client_id,
+					co->co_id)) {
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_CHUNK_LOCKED;
+			return 0;
+		}
 	}
 
 	uint32_t nowners = args->cca_chunks.cca_chunks_len;
@@ -1573,9 +1649,8 @@ uint32_t nfs4_op_chunk_header_read(struct compound *compound)
 static bool chunk_lock_owner_equal(const struct chunk_block *blk,
 				   const chunk_owner4 *owner)
 {
-	return blk->cb_lock_cohort_id == owner->co_cohort_id &&
-	       blk->cb_lock_client_id == owner->co_client_id &&
-	       blk->cb_lock_owner_id == owner->co_id;
+	return chunk_lock_owner_values_equal(blk, owner->co_cohort_id,
+					     owner->co_client_id, owner->co_id);
 }
 
 static bool chunk_lock_range_equal(const struct chunk_block *blk,
@@ -2034,6 +2109,18 @@ uint32_t nfs4_op_chunk_rollback(struct compound *compound)
 
 	for (uint32_t i = 0; i < nowners; i++) {
 		chunk_owner4 *co = &args->crb_chunks.crb_chunks_val[i];
+
+		if (chunk_lock_conflict(cs, args->crb_offset, count,
+					co->co_cohort_id, co->co_client_id,
+					co->co_id)) {
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_CHUNK_LOCKED;
+			return 0;
+		}
+	}
+
+	for (uint32_t i = 0; i < nowners; i++) {
+		chunk_owner4 *co = &args->crb_chunks.crb_chunks_val[i];
 		int ret = chunk_store_rollback(cs, args->crb_offset, count,
 					       co->co_cohort_id,
 					       co->co_client_id, co->co_id);
@@ -2442,6 +2529,19 @@ uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 		return 0;
 	}
 
+	for (uint32_t i = 0; i < nchunks; i++) {
+		struct chunk_block *conflict = chunk_lock_conflict(
+			cs, args->cwra_offset + i, 1, args->cwra_cohort_id,
+			args->cwra_client_id,
+			args->cwra_co_ids.cwra_co_ids_val[i]);
+
+		if (conflict) {
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_CHUNK_LOCKED;
+			return 0;
+		}
+	}
+
 	/*
 	 * Per-file algorithm consistency -- same rule as CHUNK_WRITE:
 	 * the first write on a file establishes the checksum algorithm;
@@ -2526,6 +2626,8 @@ uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 		 */
 		const struct chunk_block *old_blk =
 			chunk_store_lookup(cs, args->cwra_offset + i);
+		const struct chunk_block *lock_blk =
+			chunk_store_lookup_any(cs, args->cwra_offset + i);
 
 		if (i < nchecksums) {
 			const checksum4 *cs4 =
@@ -2561,6 +2663,20 @@ uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 
 		memcpy(blk.cb_checksum_value, blk_csum_value,
 		       sizeof(blk.cb_checksum_value));
+		if (lock_blk && (lock_blk->cb_flags & CHUNK_BLOCK_LOCKED)) {
+			blk.cb_flags |= CHUNK_BLOCK_LOCKED;
+			blk.cb_lock_cohort_id = lock_blk->cb_lock_cohort_id;
+			blk.cb_lock_client_id = lock_blk->cb_lock_client_id;
+			blk.cb_lock_owner_id = lock_blk->cb_lock_owner_id;
+			blk.cb_lock_offset = lock_blk->cb_lock_offset;
+			blk.cb_lock_count = lock_blk->cb_lock_count;
+			blk.cb_lock_flags = lock_blk->cb_lock_flags;
+			memcpy(blk.cb_lock_stateid, lock_blk->cb_lock_stateid,
+			       sizeof(blk.cb_lock_stateid));
+			memcpy(blk.cb_lock_escrow_id,
+			       lock_blk->cb_lock_escrow_id,
+			       sizeof(blk.cb_lock_escrow_id));
+		}
 
 		if (chunk_store_write(cs, args->cwra_offset + i, &blk) < 0) {
 			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
