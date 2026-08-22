@@ -3621,12 +3621,24 @@ union CHUNK_HEADER_READ4res switch (nfsstat4 chrr_status) {
         void;
 };
 
+const CHUNK_LOCK_FLAGS_ADOPT    = 0x00000001;
+const CHUNK_LOCK_FLAGS_TAKEOVER = 0x00000002;
+
+union chunk_lock_adopt4 switch (bool cla_adopt) {
+case TRUE:
+        escrow_id4      cla_escrow_id;
+case FALSE:
+        void;
+};
+
 struct CHUNK_LOCK4args {
     /* CURRENT_FH: file */
-    stateid4        cla_stateid;
-    offset4         cla_offset;
-    count4          cla_count;
-    chunk_owner4    cla_owner;
+    stateid4            cla_stateid;
+    offset4             cla_offset;
+    count4              cla_count;
+    uint32_t            cla_flags;
+    chunk_owner4        cla_owner;
+    chunk_lock_adopt4   cla_adopt;
 };
 
 union CHUNK_LOCK4res switch (nfsstat4 clr_status) {
