@@ -1738,6 +1738,25 @@ static bool chunk_escrow_matches(const struct chunk_block *blk, uint64_t offset,
 		      sizeof(blk->cb_lock_escrow_id)) == 0;
 }
 
+static void chunk_escrow_restore_install(struct chunk_store *cs,
+					 uint64_t offset, uint32_t count,
+					 const struct chunk_block *saved,
+					 const uint8_t *created)
+{
+	for (uint32_t i = 0; i < count; i++) {
+		struct chunk_block *blk =
+			chunk_store_lookup_any(cs, offset + i);
+
+		if (blk)
+			*blk = created[i] ?
+				       (struct chunk_block){
+					       .cb_state = CHUNK_STATE_EMPTY,
+				       } :
+				       saved[i];
+	}
+	cs->cs_dirty = true;
+}
+
 uint32_t nfs4_op_chunk_lock(struct compound *compound)
 {
 	CHUNK_LOCK4args *args = NFS4_OP_ARG_SETUP(compound, opchunk_lock);
@@ -2877,6 +2896,9 @@ uint32_t nfs4_op_chunk_escrow_install(struct compound *compound)
 			};
 
 			if (chunk_store_write(cs, off, &empty) != 0) {
+				chunk_escrow_restore_install(cs,
+							     args->ceia_offset,
+							     i, saved, created);
 				pthread_mutex_unlock(
 					&compound->c_inode->i_attr_mutex);
 				free(saved);
@@ -2907,18 +2929,8 @@ uint32_t nfs4_op_chunk_escrow_install(struct compound *compound)
 
 	if (chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
 				compound->c_inode->i_ino) != 0) {
-		for (uint32_t i = 0; i < args->ceia_count; i++) {
-			struct chunk_block *blk = chunk_store_lookup_any(
-				cs, args->ceia_offset + i);
-			if (blk)
-				*blk = created[i] ?
-					       (struct chunk_block){
-						       .cb_state =
-							       CHUNK_STATE_EMPTY,
-					       } :
-					       saved[i];
-		}
-		cs->cs_dirty = true;
+		chunk_escrow_restore_install(cs, args->ceia_offset,
+					     args->ceia_count, saved, created);
 		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 		free(saved);
 		free(created);
