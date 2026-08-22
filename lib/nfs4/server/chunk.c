@@ -1494,8 +1494,12 @@ uint32_t nfs4_op_chunk_error(struct compound *compound)
 		cs->cs_dirty = true;
 	}
 
-	chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
-			    compound->c_inode->i_ino);
+	if (chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
+				compound->c_inode->i_ino) != 0) {
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_SERVERFAULT;
+		return 0;
+	}
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
 	return 0;
@@ -1792,8 +1796,12 @@ uint32_t nfs4_op_chunk_rollback(struct compound *compound)
 	}
 
 	/* Persist the EMPTY state -- rollback must survive DS restart. */
-	chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
-			    compound->c_inode->i_ino);
+	if (chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
+				compound->c_inode->i_ino) != 0) {
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_SERVERFAULT;
+		return 0;
+	}
 
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
