@@ -1291,8 +1291,27 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 	}
 
 	/* Persist metadata -- FINALIZED state must survive DS restart. */
-	chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
-			    compound->c_inode->i_ino);
+	if (chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
+				compound->c_inode->i_ino) != 0) {
+		for (uint32_t i = 0; i < nowners; i++) {
+			if (resok->cfr_status.cfr_status_val[i] == NFS4_OK) {
+				chunk_owner4 *co =
+					&args->cfa_chunks.cfa_chunks_val[i];
+				chunk_store_transition(cs, args->cfa_offset,
+						       count, co->co_cohort_id,
+						       co->co_client_id,
+						       co->co_id,
+						       CHUNK_STATE_FINALIZED,
+						       CHUNK_STATE_PENDING);
+			}
+		}
+		free(resok->cfr_status.cfr_status_val);
+		resok->cfr_status.cfr_status_val = NULL;
+		resok->cfr_status.cfr_status_len = 0;
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_SERVERFAULT;
+		return 0;
+	}
 
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
@@ -1401,8 +1420,27 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 	}
 
 	/* Persist metadata -- COMMITTED state is the durability guarantee. */
-	chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
-			    compound->c_inode->i_ino);
+	if (chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
+				compound->c_inode->i_ino) != 0) {
+		for (uint32_t i = 0; i < nowners; i++) {
+			if (resok->ccr_status.ccr_status_val[i] == NFS4_OK) {
+				chunk_owner4 *co =
+					&args->cca_chunks.cca_chunks_val[i];
+				chunk_store_transition(cs, args->cca_offset,
+						       count, co->co_cohort_id,
+						       co->co_client_id,
+						       co->co_id,
+						       CHUNK_STATE_COMMITTED,
+						       CHUNK_STATE_FINALIZED);
+			}
+		}
+		free(resok->ccr_status.ccr_status_val);
+		resok->ccr_status.ccr_status_val = NULL;
+		resok->ccr_status.ccr_status_len = 0;
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_SERVERFAULT;
+		return 0;
+	}
 
 	/* Sync data to disk for FILE_SYNC4 semantics.  Done under the
 	 * mutex to prevent interleaving with concurrent writes. */
