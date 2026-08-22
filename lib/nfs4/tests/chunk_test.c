@@ -3816,6 +3816,25 @@ START_TEST(test_chunk_lock_adopts_escrow)
 	ck_assert_int_eq(blk->cb_flags & CHUNK_BLOCK_ESCROW, 0);
 	ck_assert_mem_eq(blk->cb_lock_escrow_id, escrow, sizeof(escrow));
 
+	/* Reload after ADOPT: client custody survives, MDS escrow does not. */
+	pthread_mutex_lock(&g_inode->i_attr_mutex);
+	struct chunk_store *old_store = g_inode->i_chunk_store;
+	g_inode->i_chunk_store = NULL;
+	chunk_store_destroy(old_store);
+	ss = server_state_find();
+	ck_assert_ptr_nonnull(ss);
+	struct chunk_store *reloaded =
+		chunk_store_load(ss->ss_state_dir, g_inode->i_ino);
+	server_state_put(ss);
+	ck_assert_ptr_nonnull(reloaded);
+	g_inode->i_chunk_store = reloaded;
+	pthread_mutex_unlock(&g_inode->i_attr_mutex);
+	blk = chunk_store_lookup_any(g_inode->i_chunk_store, 10);
+	ck_assert_int_eq(blk->cb_lock_client_id, 0xBEEF);
+	ck_assert_int_eq(blk->cb_lock_owner_id, 9);
+	ck_assert_int_eq(blk->cb_flags & CHUNK_BLOCK_ESCROW, 0);
+	ck_assert_uint_eq(g_inode->i_chunk_store->cs_nescrows, 0);
+
 	cm_reset_slot(cm, 0);
 	set_chunk_escrow_release_args(cm, epoch.epoch, 10, 1, escrow);
 	nfs4_op_chunk_escrow_release(cm->compound);
