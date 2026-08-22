@@ -3863,6 +3863,8 @@ END_TEST
 
 START_TEST(test_chunk_escrow_enumerate_probe)
 {
+	static const escrow_id4 escrow_a = { 0x81 };
+	static const escrow_id4 escrow_b = { 0x82 };
 	struct server_state *ss = server_state_find();
 	struct chunk_mds_epoch epoch = {
 		.epoch = 80,
@@ -3888,13 +3890,73 @@ START_TEST(test_chunk_escrow_enumerate_probe)
 				  .ceer_entries.ceer_entries_len,
 			  0);
 
+	/* The probe is followed by two real ranges to exercise paging. */
 	cm_reset_slot(cm, 0);
-	set_chunk_escrow_enumerate_args(cm, epoch.epoch, 0, 1, 1);
-	nfs4_op_chunk_escrow_enumerate(cm->compound);
+	set_chunk_escrow_install_args(cm, epoch.epoch, 0, 1, escrow_a);
+	nfs4_op_chunk_escrow_install(cm->compound);
 	ck_assert_int_eq(
 		cm->compound->c_res->resarray.resarray_val[0]
-			.nfs_resop4_u.opchunk_escrow_enumerate.ceer_status,
-		NFS4ERR_NOTSUPP);
+			.nfs_resop4_u.opchunk_escrow_install.ceir_status,
+		NFS4_OK);
+	cm_reset_slot(cm, 0);
+	set_chunk_escrow_install_args(cm, epoch.epoch, 4, 1, escrow_b);
+	nfs4_op_chunk_escrow_install(cm->compound);
+	ck_assert_int_eq(
+		cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opchunk_escrow_install.ceir_status,
+		NFS4_OK);
+
+	cm_reset_slot(cm, 0);
+	set_chunk_escrow_enumerate_args(cm, epoch.epoch, 0, 5, 1);
+	nfs4_op_chunk_escrow_enumerate(cm->compound);
+	res = &cm->compound->c_res->resarray.resarray_val[0]
+		       .nfs_resop4_u.opchunk_escrow_enumerate;
+	ck_assert_int_eq(res->ceer_status, NFS4_OK);
+	CHUNK_ESCROW_ENUMERATE4resok *resok =
+		&res->CHUNK_ESCROW_ENUMERATE4res_u.ceer_resok4;
+	ck_assert_uint_eq(resok->ceer_entries.ceer_entries_len, 1);
+	ck_assert_uint_eq(resok->ceer_entries.ceer_entries_val[0].eee_offset,
+			  0);
+	ck_assert_mem_eq(resok->ceer_entries.ceer_entries_val[0].eee_escrow_id,
+			 escrow_a, sizeof(escrow_a));
+	ck_assert(!resok->ceer_eof);
+	ck_assert_uint_eq(resok->ceer_cookie.ceer_cookie_len, 16);
+	char cookie[CHUNK_ESCROW_ENUMERATE_COOKIE_MAX4];
+	memcpy(cookie, resok->ceer_cookie.ceer_cookie_val,
+	       resok->ceer_cookie.ceer_cookie_len);
+	free(resok->ceer_entries.ceer_entries_val);
+	free(resok->ceer_cookie.ceer_cookie_val);
+
+	cm_reset_slot(cm, 0);
+	set_chunk_escrow_enumerate_args(cm, epoch.epoch, 0, 5, 1);
+	CHUNK_ESCROW_ENUMERATE4args *enum_args =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.opchunk_escrow_enumerate;
+	enum_args->ceea_cookie.ceea_cookie_len = 16;
+	enum_args->ceea_cookie.ceea_cookie_val = cookie;
+	nfs4_op_chunk_escrow_enumerate(cm->compound);
+	res = &cm->compound->c_res->resarray.resarray_val[0]
+		       .nfs_resop4_u.opchunk_escrow_enumerate;
+	ck_assert_int_eq(res->ceer_status, NFS4_OK);
+	resok = &res->CHUNK_ESCROW_ENUMERATE4res_u.ceer_resok4;
+	ck_assert_uint_eq(resok->ceer_entries.ceer_entries_len, 1);
+	ck_assert_uint_eq(resok->ceer_entries.ceer_entries_val[0].eee_offset,
+			  4);
+	ck_assert_mem_eq(resok->ceer_entries.ceer_entries_val[0].eee_escrow_id,
+			 escrow_b, sizeof(escrow_b));
+	ck_assert(resok->ceer_eof);
+	free(resok->ceer_entries.ceer_entries_val);
+
+	cm_reset_slot(cm, 0);
+	set_chunk_escrow_enumerate_args(cm, epoch.epoch, 0, 5, 1);
+	enum_args = &cm->compound->c_args->argarray.argarray_val[0]
+			     .nfs_argop4_u.opchunk_escrow_enumerate;
+	enum_args->ceea_cookie.ceea_cookie_len = 1;
+	enum_args->ceea_cookie.ceea_cookie_val = cookie;
+	nfs4_op_chunk_escrow_enumerate(cm->compound);
+	res = &cm->compound->c_res->resarray.resarray_val[0]
+		       .nfs_resop4_u.opchunk_escrow_enumerate;
+	ck_assert_int_eq(res->ceer_status, NFS4ERR_BAD_COOKIE);
 
 	cm_free(cm);
 }

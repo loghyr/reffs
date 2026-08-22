@@ -3075,8 +3075,7 @@ uint32_t nfs4_op_chunk_escrow_enumerate(struct compound *compound)
 		return 0;
 	}
 	if (chunk_lifecycle_check_range(args->ceea_offset, args->ceea_count) !=
-		    NFS4_OK ||
-	    args->ceea_cookie.ceea_cookie_len != 0) {
+	    NFS4_OK) {
 		*status = NFS4ERR_INVAL;
 		return 0;
 	}
@@ -3084,20 +3083,162 @@ uint32_t nfs4_op_chunk_escrow_enumerate(struct compound *compound)
 	if (*status != NFS4_OK)
 		return 0;
 
-	if (args->ceea_maxcount != 0) {
-		*status = NFS4ERR_NOTSUPP;
+	if (args->ceea_maxcount == 0) {
+		CHUNK_ESCROW_ENUMERATE4resok *resok =
+			&res->CHUNK_ESCROW_ENUMERATE4res_u.ceer_resok4;
+
+		resok->ceer_eof = true;
+		resok->ceer_cookie.ceer_cookie_len = 0;
+		resok->ceer_cookie.ceer_cookie_val = NULL;
+		resok->ceer_entries.ceer_entries_len = 0;
+		resok->ceer_entries.ceer_entries_val = NULL;
+		*status = NFS4_OK;
 		return 0;
+	}
+	if (args->ceea_maxcount > CHUNK_ESCROW_ENUMERATE_MAX4) {
+		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	/*
+	 * The cookie is deliberately process-bound.  Its verifier includes
+	 * server_boot_seq() and the current escrow-range set, so a restart or
+	 * any change to the enumerated range set invalidates an in-flight walk.
+	 */
+	struct {
+		uint64_t verifier;
+		uint64_t position;
+	} cookie = { 0 };
+	bool has_cookie = args->ceea_cookie.ceea_cookie_len != 0;
+	if (args->ceea_cookie.ceea_cookie_len != 0 &&
+	    args->ceea_cookie.ceea_cookie_len != sizeof(cookie)) {
+		*status = NFS4ERR_BAD_COOKIE;
+		return 0;
+	}
+	if (args->ceea_cookie.ceea_cookie_len == sizeof(cookie))
+		memcpy(&cookie, args->ceea_cookie.ceea_cookie_val,
+		       sizeof(cookie));
+
+	uint64_t scope_end = args->ceea_offset + args->ceea_count;
+	if (scope_end < args->ceea_offset) {
+		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	struct chunk_store *cs = chunk_store_get(
+		compound->c_inode, compound->c_server_state->ss_state_dir);
+	if (!cs || chunk_store_refresh_escrows(cs) != 0) {
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_SERVERFAULT;
+		return 0;
+	}
+
+	uint64_t verifier = 1469598103934665603ULL ^
+			    (uint64_t)server_boot_seq(compound->c_server_state);
+	verifier ^= args->ceea_offset;
+	verifier *= 1099511628211ULL;
+	verifier ^= args->ceea_count;
+	verifier *= 1099511628211ULL;
+	for (uint32_t i = 0; i < cs->cs_nescrows; i++) {
+		const struct chunk_escrow_range *range = &cs->cs_escrows[i];
+
+		verifier ^= range->cer_offset;
+		verifier *= 1099511628211ULL;
+		verifier ^= range->cer_count;
+		verifier *= 1099511628211ULL;
+		for (size_t j = 0; j < sizeof(range->cer_id); j++) {
+			verifier ^= range->cer_id[j];
+			verifier *= 1099511628211ULL;
+		}
+	}
+	if (has_cookie && cookie.verifier != verifier) {
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_BAD_COOKIE;
+		return 0;
+	}
+	if (cookie.position > cs->cs_nescrows) {
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_BAD_COOKIE;
+		return 0;
+	}
+
+	uint32_t nentries = 0;
+	for (uint32_t i = (uint32_t)cookie.position; i < cs->cs_nescrows; i++) {
+		const struct chunk_escrow_range *range = &cs->cs_escrows[i];
+
+		if (range->cer_offset >= args->ceea_offset &&
+		    range->cer_offset + range->cer_count <= scope_end)
+			nentries++;
+		if (nentries == args->ceea_maxcount)
+			break;
 	}
 
 	CHUNK_ESCROW_ENUMERATE4resok *resok =
 		&res->CHUNK_ESCROW_ENUMERATE4res_u.ceer_resok4;
-	resok->ceer_eof = true;
-	resok->ceer_cookie.ceer_cookie_len = 0;
-	resok->ceer_cookie.ceer_cookie_val = NULL;
-	resok->ceer_entries.ceer_entries_len = 0;
 	resok->ceer_entries.ceer_entries_val = NULL;
-	*status = NFS4_OK;
+	resok->ceer_entries.ceer_entries_len = 0;
+	if (nentries) {
+		resok->ceer_entries.ceer_entries_val =
+			calloc(nentries,
+			       sizeof(*resok->ceer_entries.ceer_entries_val));
+		if (!resok->ceer_entries.ceer_entries_val) {
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_SERVERFAULT;
+			return 0;
+		}
+	}
 
+	uint32_t out = 0;
+	uint32_t next = (uint32_t)cookie.position;
+	for (; next < cs->cs_nescrows && out < nentries; next++) {
+		const struct chunk_escrow_range *range = &cs->cs_escrows[next];
+
+		if (range->cer_offset < args->ceea_offset ||
+		    range->cer_offset + range->cer_count > scope_end)
+			continue;
+		resok->ceer_entries.ceer_entries_val[out].eee_offset =
+			range->cer_offset;
+		resok->ceer_entries.ceer_entries_val[out].eee_count =
+			range->cer_count;
+		memcpy(resok->ceer_entries.ceer_entries_val[out].eee_escrow_id,
+		       range->cer_id, sizeof(range->cer_id));
+		out++;
+	}
+	resok->ceer_entries.ceer_entries_len = out;
+	bool more = false;
+	for (uint32_t i = next; i < cs->cs_nescrows; i++) {
+		const struct chunk_escrow_range *range = &cs->cs_escrows[i];
+
+		if (range->cer_offset >= args->ceea_offset &&
+		    range->cer_offset + range->cer_count <= scope_end) {
+			more = true;
+			break;
+		}
+	}
+	resok->ceer_eof = !more;
+	if (more) {
+		cookie.verifier = verifier;
+		cookie.position = next;
+		resok->ceer_cookie.ceer_cookie_val = malloc(sizeof(cookie));
+		if (!resok->ceer_cookie.ceer_cookie_val) {
+			free(resok->ceer_entries.ceer_entries_val);
+			resok->ceer_entries.ceer_entries_val = NULL;
+			resok->ceer_entries.ceer_entries_len = 0;
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_SERVERFAULT;
+			return 0;
+		}
+		memcpy(resok->ceer_cookie.ceer_cookie_val, &cookie,
+		       sizeof(cookie));
+		resok->ceer_cookie.ceer_cookie_len = sizeof(cookie);
+	} else {
+		resok->ceer_cookie.ceer_cookie_val = NULL;
+		resok->ceer_cookie.ceer_cookie_len = 0;
+	}
+
+	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+	*status = NFS4_OK;
 	return 0;
 }
 

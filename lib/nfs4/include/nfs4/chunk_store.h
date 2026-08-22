@@ -274,6 +274,9 @@ int chunk_store_write(struct chunk_store *cs, uint64_t offset,
  */
 int chunk_store_touch(struct chunk_store *cs, uint64_t offset);
 
+/* Refresh the deduplicated escrow index from authoritative block state. */
+int chunk_store_refresh_escrows(struct chunk_store *cs);
+
 /*
  * chunk_store_transition -- move blocks from one state to another.
  * Transitions blocks matching the owner triple at offsets

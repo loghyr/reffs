@@ -88,7 +88,7 @@ static bool escrow_range_equal(const struct chunk_escrow_range *a,
 }
 
 /* Rebuild the deduplicated range index from the authoritative block flags. */
-static int chunk_store_rebuild_escrows(struct chunk_store *cs)
+int chunk_store_refresh_escrows(struct chunk_store *cs)
 {
 	struct chunk_escrow_range *ranges = NULL;
 	uint32_t nranges = 0;
@@ -583,7 +583,7 @@ int chunk_store_persist(struct chunk_store *cs, const char *state_dir,
 	if (!cs || !cs->cs_dirty)
 		return 0;
 
-	ret = chunk_store_rebuild_escrows(cs);
+	ret = chunk_store_refresh_escrows(cs);
 	if (ret)
 		return ret;
 
