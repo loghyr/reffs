@@ -2707,6 +2707,19 @@ START_TEST(test_chunk_error_quarantines_committed_chunk)
 			CHUNK_BLOCK_ERROR,
 		CHUNK_BLOCK_ERROR);
 
+	/* CHUNK_ERROR must persist across a server restart. */
+	pthread_mutex_lock(&g_inode->i_attr_mutex);
+	struct chunk_store *old = g_inode->i_chunk_store;
+	g_inode->i_chunk_store = NULL;
+	chunk_store_destroy(old);
+	struct chunk_store *reloaded = chunk_store_get(
+		g_inode, cm->compound->c_server_state->ss_state_dir);
+	ck_assert_ptr_nonnull(reloaded);
+	ck_assert_uint_eq(chunk_store_lookup(reloaded, 0)->cb_flags &
+				  CHUNK_BLOCK_ERROR,
+			  CHUNK_BLOCK_ERROR);
+	pthread_mutex_unlock(&g_inode->i_attr_mutex);
+
 	cm_reset_slot(cm, 0);
 	cm_set_op(cm, 0, OP_CHUNK_READ);
 	{
