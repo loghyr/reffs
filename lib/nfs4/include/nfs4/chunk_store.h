@@ -53,6 +53,8 @@ enum chunk_state {
 #define CHUNK_BLOCK_REPAIR_PROVENANCE 0x2
 /* Set by CHUNK_ERROR until a repair is confirmed. */
 #define CHUNK_BLOCK_ERROR 0x4
+/* Set on a block held by the metadata-server escrow owner. */
+#define CHUNK_BLOCK_ESCROW 0x8
 
 /* Persistent lock identity fields reserved for the CHUNK_LOCK seam. */
 #define CHUNK_LOCK_STATEID_SIZE 16
@@ -112,7 +114,7 @@ struct chunk_block {
 	 * draft-haynes-nfsv4-flexfiles-v2 sec-system-model-consistency).
 	 */
 	uint64_t cb_writer_clientid;
-	/* CHUNK_LOCK state; behavior lands in a later slice. */
+	/* CHUNK_LOCK and metadata-server escrow state. */
 	uint64_t cb_lock_cohort_id;
 	uint32_t cb_lock_client_id;
 	uint32_t cb_lock_owner_id;

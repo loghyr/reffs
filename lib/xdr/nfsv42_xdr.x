@@ -3812,11 +3812,10 @@ union CHUNK_WRITE_REPAIR4res switch (nfsstat4 cwrr_status) {
 /*
  * CHUNK_ESCROW ops (draft-haynes-nfsv4-flexfiles-v2
  * sec-chunk-escrow) -- metadata-server-to-data-server control plane
- * for per-file escrow-lock handoff.  The R5b handlers stub the four
- * ops with NFS4ERR_NOTSUPP; only the wire skeleton is live so a
- * capability probe from a compliant metadata server sees a known
- * op returning NOTSUPP rather than a decode error.  Full semantics
- * arrive with follow-up implementation slices.
+ * for per-file escrow-lock handoff.  INSTALL and RELEASE are
+ * implemented by the prototype server; ENUMERATE and TAKEOVER remain
+ * capability-probe operations until their paging and proof semantics
+ * are implemented.
  */
 
 /*

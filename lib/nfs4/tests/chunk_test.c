@@ -43,6 +43,7 @@
 #include "reffs/inode.h"
 #include "reffs/server.h"
 #include "reffs/super_block.h"
+#include "reffs/time.h"
 #include "nfs4/attr.h"
 #include "nfs4/chunk_checksum.h"
 #include "nfs4/chunk_epoch.h"
@@ -443,6 +444,36 @@ static void set_chunk_unlock_args(struct cm_ctx *cm, uint64_t offset,
 		.co_client_id = client,
 		.co_id = owner,
 	};
+}
+
+static void set_chunk_escrow_install_args(struct cm_ctx *cm, uint64_t epoch,
+					  uint64_t offset, uint32_t count,
+					  const escrow_id4 id)
+{
+	cm_set_op(cm, 0, OP_CHUNK_ESCROW_INSTALL);
+	CHUNK_ESCROW_INSTALL4args *args =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.opchunk_escrow_install;
+
+	args->ceia_mds_epoch = epoch;
+	args->ceia_offset = offset;
+	args->ceia_count = count;
+	memcpy(args->ceia_escrow_id, id, sizeof(args->ceia_escrow_id));
+}
+
+static void set_chunk_escrow_release_args(struct cm_ctx *cm, uint64_t epoch,
+					  uint64_t offset, uint32_t count,
+					  const escrow_id4 id)
+{
+	cm_set_op(cm, 0, OP_CHUNK_ESCROW_RELEASE);
+	CHUNK_ESCROW_RELEASE4args *args =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.opchunk_escrow_release;
+
+	args->cera_mds_epoch = epoch;
+	args->cera_offset = offset;
+	args->cera_count = count;
+	memcpy(args->cera_escrow_id, id, sizeof(args->cera_escrow_id));
 }
 
 /* ------------------------------------------------------------------ */
@@ -3550,6 +3581,134 @@ START_TEST(test_chunk_mds_epoch_persistence_roundtrip)
 }
 END_TEST
 
+START_TEST(test_chunk_escrow_install_and_release)
+{
+	static const escrow_id4 escrow = {
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+	};
+	struct server_state *ss = server_state_find();
+	struct chunk_mds_epoch epoch = {
+		.epoch = 77,
+		.expires_at_ns = reffs_now_ns() + 60000000000ULL,
+	};
+	struct cm_ctx *cm = cm_alloc(1);
+	struct chunk_block *blk;
+
+	ck_assert_ptr_nonnull(ss);
+	ck_assert_int_eq(chunk_mds_epoch_persist(ss->ss_state_dir, &epoch), 0);
+	server_state_put(ss);
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+	cm->compound->c_nfs4_client->nc_exchgid_flags =
+		EXCHGID4_FLAG_USE_PNFS_MDS;
+	set_chunk_escrow_install_args(cm, epoch.epoch, 6, 2, escrow);
+	nfs4_op_chunk_escrow_install(cm->compound);
+	ck_assert_int_eq(
+		cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opchunk_escrow_install.ceir_status,
+		NFS4_OK);
+	blk = chunk_store_lookup_any(g_inode->i_chunk_store, 6);
+	ck_assert_ptr_nonnull(blk);
+	ck_assert_msg((blk->cb_flags &
+		       (CHUNK_BLOCK_LOCKED | CHUNK_BLOCK_ESCROW)) ==
+			      (CHUNK_BLOCK_LOCKED | CHUNK_BLOCK_ESCROW),
+		      "install records an MDS escrow lock");
+	ck_assert_int_eq(blk->cb_lock_client_id, CHUNK_GUARD_CLIENT_ID_MDS);
+	ck_assert_mem_eq(blk->cb_lock_escrow_id, escrow, sizeof(escrow));
+
+	cm_reset_slot(cm, 0);
+	set_chunk_escrow_release_args(cm, epoch.epoch, 6, 2, escrow);
+	nfs4_op_chunk_escrow_release(cm->compound);
+	ck_assert_int_eq(
+		cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opchunk_escrow_release.cerr_status,
+		NFS4_OK);
+	ck_assert_int_eq(
+		chunk_store_lookup_any(g_inode->i_chunk_store, 6)->cb_flags &
+			CHUNK_BLOCK_LOCKED,
+		0);
+
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_chunk_escrow_release_rejects_stale_id)
+{
+	static const escrow_id4 escrow = {
+		0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+		0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30,
+	};
+	static const escrow_id4 wrong = {
+		0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
+		0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40,
+	};
+	struct server_state *ss = server_state_find();
+	struct chunk_mds_epoch epoch = {
+		.epoch = 78,
+		.expires_at_ns = reffs_now_ns() + 60000000000ULL,
+	};
+	struct cm_ctx *cm = cm_alloc(1);
+	struct chunk_block *blk;
+
+	ck_assert_ptr_nonnull(ss);
+	ck_assert_int_eq(chunk_mds_epoch_persist(ss->ss_state_dir, &epoch), 0);
+	server_state_put(ss);
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+	cm->compound->c_nfs4_client->nc_exchgid_flags =
+		EXCHGID4_FLAG_USE_PNFS_MDS;
+	set_chunk_escrow_install_args(cm, epoch.epoch, 8, 1, escrow);
+	nfs4_op_chunk_escrow_install(cm->compound);
+	ck_assert_int_eq(
+		cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opchunk_escrow_install.ceir_status,
+		NFS4_OK);
+
+	cm_reset_slot(cm, 0);
+	set_chunk_escrow_release_args(cm, epoch.epoch, 8, 1, wrong);
+	nfs4_op_chunk_escrow_release(cm->compound);
+	ck_assert_int_eq(
+		cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opchunk_escrow_release.cerr_status,
+		NFS4ERR_STALE_ESCROW);
+	blk = chunk_store_lookup_any(g_inode->i_chunk_store, 8);
+	ck_assert_ptr_nonnull(blk);
+	ck_assert_msg(blk->cb_flags & CHUNK_BLOCK_ESCROW,
+		      "stale release leaves escrow installed");
+	ck_assert_mem_eq(blk->cb_lock_escrow_id, escrow, sizeof(escrow));
+
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_chunk_escrow_requires_mds_session)
+{
+	static const escrow_id4 escrow = { 1 };
+	struct server_state *ss = server_state_find();
+	struct chunk_mds_epoch epoch = {
+		.epoch = 79,
+		.expires_at_ns = reffs_now_ns() + 60000000000ULL,
+	};
+	struct cm_ctx *cm = cm_alloc(1);
+
+	ck_assert_ptr_nonnull(ss);
+	ck_assert_int_eq(chunk_mds_epoch_persist(ss->ss_state_dir, &epoch), 0);
+	server_state_put(ss);
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+	set_chunk_escrow_install_args(cm, epoch.epoch, 0, 1, escrow);
+	nfs4_op_chunk_escrow_install(cm->compound);
+	ck_assert_int_eq(
+		cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opchunk_escrow_install.ceir_status,
+		NFS4ERR_PERM);
+
+	cm_free(cm);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
@@ -3652,6 +3811,9 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_chunk_lock_conflict_reports_holder);
 	tcase_add_test(tc_h, test_chunk_lock_transfer_flags_are_not_supported);
 	tcase_add_test(tc_h, test_chunk_mds_epoch_persistence_roundtrip);
+	tcase_add_test(tc_h, test_chunk_escrow_install_and_release);
+	tcase_add_test(tc_h, test_chunk_escrow_release_rejects_stale_id);
+	tcase_add_test(tc_h, test_chunk_escrow_requires_mds_session);
 	suite_add_tcase(s, tc_h);
 
 	return s;
