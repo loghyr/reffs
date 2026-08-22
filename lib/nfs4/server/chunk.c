@@ -195,6 +195,14 @@ static nfsstat4 chunk_lifecycle_check_bounds(uint32_t chunks_len)
 	return NFS4_OK;
 }
 
+static nfsstat4 chunk_lifecycle_check_range(uint64_t offset, uint32_t count)
+{
+	if (count == 0 || count > CHUNK_MAX_CHUNKS_PER_OP ||
+	    offset > UINT64_MAX - (uint64_t)(count - 1))
+		return NFS4ERR_INVAL;
+	return NFS4_OK;
+}
+
 /*
  * chunk_op_on_non_chunked -- S1.5(B) enforcement gate.
  *
@@ -1216,10 +1224,14 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 
 	uint32_t count = (uint32_t)args->cfa_count;
 
-	if (count == 0 || args->cfa_chunks.cfa_chunks_len == 0) {
+	if (args->cfa_chunks.cfa_chunks_len == 0) {
 		*status = NFS4ERR_INVAL;
 		return 0;
 	}
+	*status = chunk_lifecycle_check_range(args->cfa_offset, count);
+	if (*status != NFS4_OK)
+		return 0;
+	*status = NFS4_OK;
 
 	nfsstat4 bounds_err =
 		chunk_lifecycle_check_bounds(args->cfa_chunks.cfa_chunks_len);
@@ -1349,10 +1361,14 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 
 	uint32_t count = (uint32_t)args->cca_count;
 
-	if (count == 0 || args->cca_chunks.cca_chunks_len == 0) {
+	if (args->cca_chunks.cca_chunks_len == 0) {
 		*status = NFS4ERR_INVAL;
 		return 0;
 	}
+	*status = chunk_lifecycle_check_range(args->cca_offset, count);
+	if (*status != NFS4_OK)
+		return 0;
+	*status = NFS4_OK;
 
 	nfsstat4 bounds_err =
 		chunk_lifecycle_check_bounds(args->cca_chunks.cca_chunks_len);
@@ -1478,8 +1494,8 @@ uint32_t nfs4_op_chunk_error(struct compound *compound)
 		return 0;
 	}
 
-	if (args->cea_count == 0 ||
-	    args->cea_offset > UINT64_MAX - args->cea_count ||
+	if (chunk_lifecycle_check_range(args->cea_offset, args->cea_count) !=
+		    NFS4_OK ||
 	    chunk_cid_is_reserved(args->cea_owner.co_client_id)) {
 		*status = NFS4ERR_INVAL;
 		return 0;
@@ -1644,7 +1660,9 @@ uint32_t nfs4_op_chunk_repaired(struct compound *compound)
 	uint32_t cleared_chunks = 0;
 
 	if (args->cpa_count > 0) {
-		if (args->cpa_offset > UINT64_MAX - args->cpa_count || !cs) {
+		if (chunk_lifecycle_check_range(args->cpa_offset,
+						args->cpa_count) != NFS4_OK ||
+		    !cs) {
 			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 			*status = NFS4ERR_INVAL;
 			return 0;
@@ -1768,10 +1786,14 @@ uint32_t nfs4_op_chunk_rollback(struct compound *compound)
 
 	uint32_t count = (uint32_t)args->crb_count;
 
-	if (count == 0 || args->crb_chunks.crb_chunks_len == 0) {
+	if (args->crb_chunks.crb_chunks_len == 0) {
 		*status = NFS4ERR_INVAL;
 		return 0;
 	}
+	*status = chunk_lifecycle_check_range(args->crb_offset, count);
+	if (*status != NFS4_OK)
+		return 0;
+	*status = NFS4_OK;
 
 	nfsstat4 bounds_err =
 		chunk_lifecycle_check_bounds(args->crb_chunks.crb_chunks_len);

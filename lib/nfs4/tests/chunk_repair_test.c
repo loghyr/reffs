@@ -1435,6 +1435,34 @@ START_TEST(test_repaired_rejects_non_quarantined_chunk)
 }
 END_TEST
 
+START_TEST(test_repaired_rejects_oversized_range)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	stateid4 stid = make_stateid(0xFD);
+
+	cm_set_inode(cm, g_inode);
+	mark_inode_chunked(g_inode);
+	register_trust(&stid, g_inode->i_ino, 0xDEAD0001, LAYOUTIOMODE4_RW,
+		       future_expire_ns());
+	attach_layout_segments(2, FFV2_DS_FLAGS_REPAIR);
+	set_repaired_args(cm, &stid, 0, CHUNK_MAX_CHUNKS_PER_OP + 1);
+
+	nfs4_op_chunk_repaired(cm->compound);
+	CHUNK_REPAIRED4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					   .nfs_resop4_u.opchunk_repair;
+
+	ck_assert_int_eq(res->cpr_status, NFS4ERR_INVAL);
+	ck_assert_uint_eq(
+		g_inode->i_layout_segments->lss_segs[0].ls_files[0].ldf_flags &
+			FFV2_DS_FLAGS_REPAIR,
+		FFV2_DS_FLAGS_REPAIR);
+
+	detach_layout_segments();
+	trust_stateid_revoke(&stid);
+	cm_free(cm);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
@@ -1483,6 +1511,7 @@ static Suite *chunk_repair_suite(void)
 	tcase_add_test(tc_f, test_repaired_idempotent_second_call);
 	tcase_add_test(tc_f, test_repaired_clears_quarantined_committed_chunk);
 	tcase_add_test(tc_f, test_repaired_rejects_non_quarantined_chunk);
+	tcase_add_test(tc_f, test_repaired_rejects_oversized_range);
 	suite_add_tcase(s, tc_f);
 
 	return s;
