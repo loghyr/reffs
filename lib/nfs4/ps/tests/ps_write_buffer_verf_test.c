@@ -299,7 +299,7 @@ START_TEST(test_write_then_commit_verifier_equal_no_restart)
 	 *     stripe verifier capture only happens INSIDE the flush
 	 *     loop -- AFTER the WRITE replies were already sent.
 	 *     Folding the captured verifier on the COMMIT side would
-	 *     trigger the unnecessary rewrite the reviewer flagged.
+	 *     trigger an unnecessary rewrite.
 	 *
 	 * We pin the equality via the composer directly: both paths
 	 * with the same listener and mds_verf_set = false produce the

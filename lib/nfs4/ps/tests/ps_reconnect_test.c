@@ -503,7 +503,7 @@ END_TEST
  * ps_listener_reconnect after TLS handshake -- if shutdown arrives
  * between alloc and handshake completion, the new session is
  * destroyed and freed before publish.  The bench soak covers this
- * dynamically; an in-process reproducer is NOT_NOW_BROWN_COW.
+ * dynamically; an in-process reproducer is not yet available.
  */
 /*
  * ps_renewal_start refuses interval=0.  The renewal thread loop
@@ -682,8 +682,8 @@ END_TEST
 /*
  * ps_listener_kick_reconnect on an unknown listener id is a safe
  * no-op.  Workers that learn a listener id from a forwarded RPC may
- * race with admin-driven listener removal (NOT_NOW_BROWN_COW today
- * but the API contract has to hold for that future).
+ * race with admin-driven listener removal; the API contract must also
+ * hold when that lifecycle is enabled.
  */
 START_TEST(test_kick_unknown_listener_noop)
 {

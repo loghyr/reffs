@@ -75,7 +75,7 @@ struct ps_proxy_attrs_min {
  * RPCSEC_GSSv3 forwarding remains deferred (the PS's MDS-facing
  * session is AUTH_SYS today).
  *
- * NOT_NOW_BROWN_COW:
+ * Deferred capabilities:
  *
  *   1. RPCSEC_GSSv3 credential forwarding.  Required to proxy
  *      Kerberos-authenticated end clients; out of scope for the
@@ -141,8 +141,8 @@ void ps_proxy_getattr_reply_free(struct ps_proxy_getattr_reply *reply);
  * having to re-parse a generic -EREMOTEIO.  Other NFS4ERR_*
  * statuses collapse to -EREMOTEIO.
  *
- * NOT_NOW_BROWN_COW: credential forwarding + FSID remap are slice
- * 2e-iv-c concerns and apply identically to LOOKUP-forwarding.
+ * Credential forwarding and FSID remapping remain deferred and apply
+ * identically to LOOKUP forwarding.
  *
  * Returns:
  *   0        success -- child FH copied, length in *child_fh_len_out;
@@ -225,7 +225,7 @@ struct ps_proxy_read_reply {
  * On any failure `reply` fields are left zero-initialised and no
  * buffer is allocated.
  *
- * NOT_NOW_BROWN_COW (slice 2e-iv-c): credential forwarding.  Today
+ * Credential forwarding remains deferred.  Today
  * the compound rides on the PS session's credentials, not the end
  * client's -- same caveat as the GETATTR / LOOKUP forwarders.
  *
@@ -256,7 +256,7 @@ int ps_proxy_forward_read(struct mds_session *ms, const uint8_t *upstream_fh,
  * type LAYOUT4_FLEX_FILES_V2, shard size 4096.  An incoming layout
  * whose shape differs would surface as a decode failure inside
  * ec_pipeline (logged, returns -EINVAL).  Parameter discovery
- * (read encoding/k/m from the layout) is its own NOT_NOW_BROWN_COW.
+ * (read encoding/k/m from the layout) is also deferred.
  *
  * The `creds` parameter is currently unused (Phase 3.5 wires
  * end-client cred forwarding through the pipeline).  Accepted in
@@ -416,7 +416,7 @@ struct ps_proxy_open_reply {
  * On any failure `reply` is left zero-initialised and nothing
  * durable ran on the upstream.
  *
- * NOT_NOW_BROWN_COW: credential forwarding (2e-iv-c) and the OPEN
+ * Credential forwarding and the OPEN
  * shapes listed above.
  *
  * Returns:
@@ -922,7 +922,7 @@ struct ps_proxy_close_reply {
  * On any failure `reply` is left zero-initialised and no durable
  * state ran on the upstream.
  *
- * NOT_NOW_BROWN_COW (slice 2e-iv-c): credential forwarding.
+ * Credential forwarding remains deferred.
  *
  * Returns:
  *   0        success; reply populated
@@ -948,8 +948,8 @@ int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
  * if the flush fails, the bytes are lost but the upstream stateid
  * is still released so the client doesn't leak it.
  *
- * NOT_NOW_BROWN_COW: the design's watchdog-thread close-on-deadline
- * mechanism (REFFS_PS_FLUSH_TIMEOUT_NS) is deferred.  Today the
+ * A watchdog-thread close-on-deadline mechanism
+ * (REFFS_PS_FLUSH_TIMEOUT_NS) is deferred.  Today the
  * flush blocks for as long as ec_write_encoding_with_file takes.  A
  * future slice will add the per-RPC budget + xprt-fd-close
  * watchdog (design's "Flush timeout interrupt mechanism" subsection).
@@ -1008,7 +1008,7 @@ struct ps_proxy_readdir_reply {
  * On any failure `reply` is left zero-initialised and no heap
  * allocations leak.
  *
- * NOT_NOW_BROWN_COW (slice 2e-iv-c): credential forwarding.
+ * Credential forwarding remains deferred.
  *
  * Returns:
  *   0        success; reply populated (entries may be NULL)

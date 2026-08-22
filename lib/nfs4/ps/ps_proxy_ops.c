@@ -2283,8 +2283,7 @@ int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
 	 * intrinsic offset support today).  Allocate a buffer covering
 	 * [0, offset+count) and copy out the [offset, offset+count) slice
 	 * for the client.  Wasteful for large offsets but correct; real
-	 * partial-range support is a follow-on optimisation, see plan
-	 * "Deferred / NOT_NOW_BROWN_COW".
+	 * partial-range support is a follow-on optimisation.
 	 */
 	whole_len = (size_t)offset + (size_t)count;
 
@@ -2311,7 +2310,7 @@ int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
 	mf.mf_fh.nfs_fh4_len = upstream_fh_len;
 
 	/*
-	 * NOT_NOW_BROWN_COW (Phase 5 follow-up): wire listener_id into
+	 * Follow-up work: wire listener_id into
 	 * ps_proxy_pipeline_read so the per-mirror short-circuit can
 	 * also fire on the READ path.  Slice 5.2 ships the write-path
 	 * dispatch; reads still take the RPC path on every mirror
