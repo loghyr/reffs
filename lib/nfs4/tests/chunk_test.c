@@ -3909,6 +3909,48 @@ START_TEST(test_chunk_escrow_rejects_stale_epoch)
 }
 END_TEST
 
+START_TEST(test_chunk_escrow_install_conflict_is_all_or_nothing)
+{
+	static const escrow_id4 escrow = { 0x71 };
+	struct server_state *ss = server_state_find();
+	struct chunk_mds_epoch epoch = {
+		.epoch = 91,
+		.expires_at_ns = reffs_now_ns() + 60000000000ULL,
+	};
+	struct cm_ctx *cm = cm_alloc(1);
+	struct chunk_block *blk;
+
+	ck_assert_ptr_nonnull(ss);
+	ck_assert_int_eq(chunk_mds_epoch_persist(ss->ss_state_dir, &epoch), 0);
+	server_state_put(ss);
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+	set_chunk_lock_args(cm, 20, 1, 0x300, 0xBEEF, 21, 0, false);
+	nfs4_op_chunk_lock(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_lock.clr_status,
+			 NFS4_OK);
+
+	cm->compound->c_nfs4_client->nc_exchgid_flags =
+		EXCHGID4_FLAG_USE_PNFS_MDS;
+	cm_reset_slot(cm, 0);
+	set_chunk_escrow_install_args(cm, epoch.epoch, 20, 2, escrow);
+	nfs4_op_chunk_escrow_install(cm->compound);
+	ck_assert_int_eq(
+		cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opchunk_escrow_install.ceir_status,
+		NFS4ERR_CHUNK_LOCKED);
+	blk = chunk_store_lookup_any(g_inode->i_chunk_store, 20);
+	ck_assert_ptr_nonnull(blk);
+	ck_assert_int_eq(blk->cb_flags & CHUNK_BLOCK_ESCROW, 0);
+	blk = chunk_store_lookup_any(g_inode->i_chunk_store, 21);
+	ck_assert_msg(!blk || !(blk->cb_flags & CHUNK_BLOCK_ESCROW),
+		      "conflicting install must not mark later chunks");
+
+	cm_free(cm);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
@@ -4018,6 +4060,8 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_chunk_escrow_requires_mds_session);
 	tcase_add_test(tc_h, test_chunk_escrow_enumerate_probe);
 	tcase_add_test(tc_h, test_chunk_escrow_rejects_stale_epoch);
+	tcase_add_test(tc_h,
+		       test_chunk_escrow_install_conflict_is_all_or_nothing);
 	suite_add_tcase(s, tc_h);
 
 	return s;
