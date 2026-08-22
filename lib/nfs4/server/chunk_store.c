@@ -87,6 +87,16 @@ static void block_to_disk(const struct chunk_block *blk,
 	dsk->cbd_chunk_size = blk->cb_chunk_size;
 	dsk->cbd_pad = 0;
 	dsk->cbd_writer_clientid = blk->cb_writer_clientid;
+	dsk->cbd_lock_cohort_id = blk->cb_lock_cohort_id;
+	dsk->cbd_lock_client_id = blk->cb_lock_client_id;
+	dsk->cbd_lock_owner_id = blk->cb_lock_owner_id;
+	dsk->cbd_lock_offset = blk->cb_lock_offset;
+	dsk->cbd_lock_count = blk->cb_lock_count;
+	dsk->cbd_lock_flags = blk->cb_lock_flags;
+	memcpy(dsk->cbd_lock_stateid, blk->cb_lock_stateid,
+	       sizeof(dsk->cbd_lock_stateid));
+	memcpy(dsk->cbd_lock_escrow_id, blk->cb_lock_escrow_id,
+	       sizeof(dsk->cbd_lock_escrow_id));
 }
 
 static void disk_to_block(const struct chunk_block_disk *dsk,
@@ -107,6 +117,16 @@ static void disk_to_block(const struct chunk_block_disk *dsk,
 	       sizeof(blk->cb_checksum_value));
 	blk->cb_chunk_size = dsk->cbd_chunk_size;
 	blk->cb_writer_clientid = dsk->cbd_writer_clientid;
+	blk->cb_lock_cohort_id = dsk->cbd_lock_cohort_id;
+	blk->cb_lock_client_id = dsk->cbd_lock_client_id;
+	blk->cb_lock_owner_id = dsk->cbd_lock_owner_id;
+	blk->cb_lock_offset = dsk->cbd_lock_offset;
+	blk->cb_lock_count = dsk->cbd_lock_count;
+	blk->cb_lock_flags = dsk->cbd_lock_flags;
+	memcpy(blk->cb_lock_stateid, dsk->cbd_lock_stateid,
+	       sizeof(blk->cb_lock_stateid));
+	memcpy(blk->cb_lock_escrow_id, dsk->cbd_lock_escrow_id,
+	       sizeof(blk->cb_lock_escrow_id));
 }
 
 /* ------------------------------------------------------------------ */

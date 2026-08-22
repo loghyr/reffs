@@ -54,6 +54,10 @@ enum chunk_state {
 /* Set by CHUNK_ERROR until a repair is confirmed. */
 #define CHUNK_BLOCK_ERROR 0x4
 
+/* Persistent lock identity fields reserved for the CHUNK_LOCK seam. */
+#define CHUNK_LOCK_STATEID_SIZE 16
+#define CHUNK_LOCK_ESCROW_ID_SIZE 16
+
 /*
  * CHUNK_VALUE_MAX is sized for the largest supported checksum (SHA512,
  * 64 bytes).  CRC32 / CRC32C / FLETCHER4 use 4-8 of the 64 bytes; the
@@ -108,6 +112,15 @@ struct chunk_block {
 	 * draft-haynes-nfsv4-flexfiles-v2 sec-system-model-consistency).
 	 */
 	uint64_t cb_writer_clientid;
+	/* CHUNK_LOCK state; behavior lands in a later slice. */
+	uint64_t cb_lock_cohort_id;
+	uint32_t cb_lock_client_id;
+	uint32_t cb_lock_owner_id;
+	uint64_t cb_lock_offset;
+	uint32_t cb_lock_count;
+	uint32_t cb_lock_flags;
+	uint8_t cb_lock_stateid[CHUNK_LOCK_STATEID_SIZE];
+	uint8_t cb_lock_escrow_id[CHUNK_LOCK_ESCROW_ID_SIZE];
 };
 
 /*
@@ -117,7 +130,7 @@ struct chunk_block {
  */
 
 #define CHUNK_STORE_MAGIC 0x434B5354 /* "CKST" */
-#define CHUNK_STORE_VERSION 1
+#define CHUNK_STORE_VERSION 2
 
 struct chunk_store_header {
 	uint32_t csh_magic;
@@ -157,6 +170,14 @@ struct chunk_block_disk {
 	 * here need a version bump plus migration.
 	 */
 	uint64_t cbd_cohort_id;
+	uint64_t cbd_lock_cohort_id;
+	uint32_t cbd_lock_client_id;
+	uint32_t cbd_lock_owner_id;
+	uint64_t cbd_lock_offset;
+	uint32_t cbd_lock_count;
+	uint32_t cbd_lock_flags;
+	uint8_t cbd_lock_stateid[CHUNK_LOCK_STATEID_SIZE];
+	uint8_t cbd_lock_escrow_id[CHUNK_LOCK_ESCROW_ID_SIZE];
 };
 
 /*
@@ -169,7 +190,7 @@ struct chunk_block_disk {
  * every existing per-inode file under <state_dir>/chunks must be
  * cleared.
  */
-static_assert(sizeof(struct chunk_block_disk) == 120,
+static_assert(sizeof(struct chunk_block_disk) == 184,
 	      "chunk_block_disk size changed -- on-disk chunk metadata "
 	      "written by an older build will misparse; clear "
 	      "<state_dir>/chunks before running, then update this size");
