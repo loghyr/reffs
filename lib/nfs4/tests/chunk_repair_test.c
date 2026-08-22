@@ -6,12 +6,8 @@
  * (MDS-side), the wire-level EC repair operations defined in
  * draft-haynes-nfsv4-flexfiles-v2.
  *
- * Slice 1 (this file's initial cut) covers OP_CHUNK_WRITE_REPAIR only.
- * Group F tests for OP_CHUNK_REPAIRED land in Slice 2.
- *
- * The handler is currently a NFS4ERR_NOTSUPP stub at chunk.c:1293; the
- * tests below define the contract the slice-1 implementation must
- * satisfy.  Until then these tests fail by design (TDD red baseline).
+ * Groups A-E cover OP_CHUNK_WRITE_REPAIR.  Group F covers
+ * OP_CHUNK_REPAIRED, including the quarantine-clear path.
  *
  * Groups:
  *   A. Input validation -- missing FH, wrong type, zero sizes, reserved
@@ -1019,6 +1015,12 @@ static void detach_layout_segments(void)
 	}
 }
 
+static void mark_inode_chunked(struct inode *inode)
+{
+	inode->i_attr_flags |= INODE_CHUNKED_ATTR_PRESENT |
+			       INODE_IS_CHUNKED_DATA_FILE;
+}
+
 /* No current filehandle -> NFS4ERR_NOFILEHANDLE. */
 START_TEST(test_repaired_no_fh)
 {
@@ -1332,6 +1334,95 @@ START_TEST(test_repaired_idempotent_second_call)
 }
 END_TEST
 
+START_TEST(test_repaired_clears_quarantined_committed_chunk)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	stateid4 stid = make_stateid(0xFB);
+	struct chunk_block blk = {
+		.cb_state = CHUNK_STATE_COMMITTED,
+		.cb_flags = CHUNK_BLOCK_ERROR,
+		.cb_chunk_size = CHUNK_SZ,
+		.cb_client_id = 0xBEEF,
+		.cb_owner_id = 99,
+	};
+
+	cm_set_inode(cm, g_inode);
+	mark_inode_chunked(g_inode);
+	register_trust(&stid, g_inode->i_ino, 0xDEAD0001, LAYOUTIOMODE4_RW,
+		       future_expire_ns());
+	attach_layout_segments(2, FFV2_DS_FLAGS_REPAIR);
+
+	pthread_mutex_lock(&g_inode->i_attr_mutex);
+	struct chunk_store *cs = chunk_store_get(
+		g_inode, cm->compound->c_server_state->ss_state_dir);
+	ck_assert_ptr_nonnull(cs);
+	ck_assert_int_eq(chunk_store_write(cs, 0, &blk), 0);
+	pthread_mutex_unlock(&g_inode->i_attr_mutex);
+
+	set_repaired_args(cm, &stid, 0, 1);
+	nfs4_op_chunk_repaired(cm->compound);
+	CHUNK_REPAIRED4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					   .nfs_resop4_u.opchunk_repair;
+
+	ck_assert_int_eq(res->cpr_status, NFS4_OK);
+	ck_assert_uint_eq(
+		chunk_store_lookup(g_inode->i_chunk_store, 0)->cb_flags &
+			CHUNK_BLOCK_ERROR,
+		0);
+	ck_assert_uint_eq(
+		g_inode->i_layout_segments->lss_segs[0].ls_files[0].ldf_flags &
+			FFV2_DS_FLAGS_REPAIR,
+		0);
+
+	detach_layout_segments();
+	trust_stateid_revoke(&stid);
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_repaired_rejects_non_quarantined_chunk)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	stateid4 stid = make_stateid(0xFC);
+	struct chunk_block blk = {
+		.cb_state = CHUNK_STATE_COMMITTED,
+		.cb_chunk_size = CHUNK_SZ,
+	};
+
+	cm_set_inode(cm, g_inode);
+	mark_inode_chunked(g_inode);
+	register_trust(&stid, g_inode->i_ino, 0xDEAD0001, LAYOUTIOMODE4_RW,
+		       future_expire_ns());
+	attach_layout_segments(2, FFV2_DS_FLAGS_REPAIR);
+
+	pthread_mutex_lock(&g_inode->i_attr_mutex);
+	struct chunk_store *cs = chunk_store_get(
+		g_inode, cm->compound->c_server_state->ss_state_dir);
+	ck_assert_ptr_nonnull(cs);
+	ck_assert_int_eq(chunk_store_write(cs, 0, &blk), 0);
+	pthread_mutex_unlock(&g_inode->i_attr_mutex);
+
+	set_repaired_args(cm, &stid, 0, 1);
+	nfs4_op_chunk_repaired(cm->compound);
+	CHUNK_REPAIRED4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					   .nfs_resop4_u.opchunk_repair;
+
+	ck_assert_int_eq(res->cpr_status, NFS4ERR_INVAL);
+	ck_assert_uint_eq(
+		chunk_store_lookup(g_inode->i_chunk_store, 0)->cb_flags &
+			CHUNK_BLOCK_ERROR,
+		0);
+	ck_assert_uint_eq(
+		g_inode->i_layout_segments->lss_segs[0].ls_files[0].ldf_flags &
+			FFV2_DS_FLAGS_REPAIR,
+		FFV2_DS_FLAGS_REPAIR);
+
+	detach_layout_segments();
+	trust_stateid_revoke(&stid);
+	cm_free(cm);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
@@ -1378,6 +1469,8 @@ static Suite *chunk_repair_suite(void)
 	tcase_add_test(tc_f, test_repaired_clears_single_mirror);
 	tcase_add_test(tc_f, test_repaired_clears_multiple_mirrors);
 	tcase_add_test(tc_f, test_repaired_idempotent_second_call);
+	tcase_add_test(tc_f, test_repaired_clears_quarantined_committed_chunk);
+	tcase_add_test(tc_f, test_repaired_rejects_non_quarantined_chunk);
 	suite_add_tcase(s, tc_f);
 
 	return s;

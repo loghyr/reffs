@@ -1548,16 +1548,10 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
  * owner client identity before any layout flags are changed.  This
  * keeps a stale or unrelated repair actor from clearing repair state.
  *
- * NOT_NOW_BROWN_COW: cpa_offset / cpa_count range matching against
- * the layout segments' byte ranges.  Single-segment whole-file
- * layouts (the demo cell shape) trivially satisfy any range; once
- * striped repair lands, this needs the per-segment chunk_size
- * plumbing flagged in Open Question 3.
- *
- * Range matching against the CHUNK_ERROR episode and validation that
- * every affected chunk reached COMMITTED remain follow-up work for
- * the striped repair implementation.  The prototype's layout model
- * clears the repair flag at the mirror-set level.
+ * For a non-empty range, every block must be a committed block
+ * quarantined by CHUNK_ERROR.  The handler clears those quarantine
+ * flags before clearing the layout repair markers.  A zero-count call
+ * retains the prototype's idempotent whole-layout behavior.
  */
 uint32_t nfs4_op_chunk_repaired(struct compound *compound)
 {
@@ -1604,6 +1598,54 @@ uint32_t nfs4_op_chunk_repaired(struct compound *compound)
 		return 0;
 	}
 
+	struct chunk_store *cs = compound->c_inode->i_chunk_store;
+	uint32_t cleared_chunks = 0;
+
+	if (args->cpa_count > 0) {
+		if (args->cpa_offset > UINT64_MAX - args->cpa_count || !cs) {
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_INVAL;
+			return 0;
+		}
+
+		for (uint32_t i = 0; i < args->cpa_count; i++) {
+			struct chunk_block *blk =
+				chunk_store_lookup(cs, args->cpa_offset + i);
+
+			if (!blk || blk->cb_state != CHUNK_STATE_COMMITTED ||
+			    !(blk->cb_flags & CHUNK_BLOCK_ERROR)) {
+				pthread_mutex_unlock(
+					&compound->c_inode->i_attr_mutex);
+				*status = NFS4ERR_INVAL;
+				return 0;
+			}
+		}
+
+		for (uint32_t i = 0; i < args->cpa_count; i++) {
+			struct chunk_block *blk =
+				chunk_store_lookup(cs, args->cpa_offset + i);
+
+			blk->cb_flags &= ~CHUNK_BLOCK_ERROR;
+			cs->cs_dirty = true;
+		}
+
+		if (chunk_store_persist(cs,
+					compound->c_server_state->ss_state_dir,
+					compound->c_inode->i_ino) != 0) {
+			for (uint32_t i = 0; i < args->cpa_count; i++) {
+				struct chunk_block *blk = chunk_store_lookup(
+					cs, args->cpa_offset + i);
+				blk->cb_flags |= CHUNK_BLOCK_ERROR;
+			}
+			cs->cs_dirty = true;
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_SERVERFAULT;
+			return 0;
+		}
+
+		cleared_chunks = args->cpa_count;
+	}
+
 	/*
 	 * Demo cell shape is single-segment whole-file -- iterate every
 	 * mirror in every segment and clear FFV2_DS_FLAGS_REPAIR.  The
@@ -1628,12 +1670,10 @@ uint32_t nfs4_op_chunk_repaired(struct compound *compound)
 
 	if (cleared > 0) {
 		/*
-		 * Persist the cleared flag bits BEFORE returning NFS4_OK
-		 * so the client can rely on the MDS-side state surviving
-		 * a power-fail-after-reply.  Crash-recovery story:
-		 * .claude/design/ec-repair.md sec 3 covers each failure
-		 * point; idempotent rule 5 above handles client retries
-		 * that win the race against MDS persistence.
+		 * Persist the cleared flag bits before returning NFS4_OK so
+		 * the client can rely on the MDS-side state surviving a
+		 * power loss after the reply.  A retry is idempotent because
+		 * only flags that are still set contribute to the count.
 		 */
 		inode_sync_to_disk(compound->c_inode);
 
@@ -1643,6 +1683,11 @@ uint32_t nfs4_op_chunk_repaired(struct compound *compound)
 					 .cs_repair_completed,
 				cleared, memory_order_relaxed);
 	}
+
+	if (cleared_chunks > 0 && compound->c_curr_sb)
+		atomic_fetch_add_explicit(
+			&compound->c_curr_sb->sb_chunk_stats.cs_repair_completed,
+			cleared_chunks, memory_order_relaxed);
 
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
