@@ -48,6 +48,107 @@ static bool chunk_block_has_escrow_custody(const struct chunk_block *blk)
 #define CHUNK_STORE_INIT_BLOCKS 64
 #define CHUNK_STORE_MAX_BLOCKS (1024 * 1024)
 
+static void escrow_range_to_disk(const struct chunk_escrow_range *range,
+				 struct chunk_escrow_range_disk *dsk)
+{
+	dsk->cerd_offset = range->cer_offset;
+	dsk->cerd_count = range->cer_count;
+	dsk->cerd_pad = 0;
+	memcpy(dsk->cerd_id, range->cer_id, sizeof(dsk->cerd_id));
+}
+
+static void escrow_range_from_disk(const struct chunk_escrow_range_disk *dsk,
+				   struct chunk_escrow_range *range)
+{
+	range->cer_offset = dsk->cerd_offset;
+	range->cer_count = dsk->cerd_count;
+	memcpy(range->cer_id, dsk->cerd_id, sizeof(range->cer_id));
+}
+
+static bool escrow_id_is_zero(const uint8_t id[CHUNK_LOCK_ESCROW_ID_SIZE])
+{
+	static const uint8_t zero[CHUNK_LOCK_ESCROW_ID_SIZE];
+
+	return memcmp(id, zero, sizeof(zero)) == 0;
+}
+
+static bool escrow_range_valid(uint64_t offset, uint32_t count,
+			       const uint8_t id[CHUNK_LOCK_ESCROW_ID_SIZE])
+{
+	return count != 0 && offset <= UINT64_MAX - count &&
+	       !escrow_id_is_zero(id);
+}
+
+static bool escrow_range_equal(const struct chunk_escrow_range *a,
+			       uint64_t offset, uint32_t count,
+			       const uint8_t id[CHUNK_LOCK_ESCROW_ID_SIZE])
+{
+	return a->cer_offset == offset && a->cer_count == count &&
+	       memcmp(a->cer_id, id, CHUNK_LOCK_ESCROW_ID_SIZE) == 0;
+}
+
+/* Rebuild the deduplicated range index from the authoritative block flags. */
+static int chunk_store_rebuild_escrows(struct chunk_store *cs)
+{
+	struct chunk_escrow_range *ranges = NULL;
+	uint32_t nranges = 0;
+	uint32_t cap = 0;
+
+	for (uint64_t off = 0; off < cs->cs_high_water; off++) {
+		const struct chunk_block *blk = &cs->cs_blocks[off];
+
+		if (!(blk->cb_flags & CHUNK_BLOCK_ESCROW))
+			continue;
+		if (!escrow_range_valid(blk->cb_lock_offset, blk->cb_lock_count,
+					blk->cb_lock_escrow_id)) {
+			free(ranges);
+			return -EINVAL;
+		}
+
+		bool found = false;
+		for (uint32_t i = 0; i < nranges; i++) {
+			if (escrow_range_equal(&ranges[i], blk->cb_lock_offset,
+					       blk->cb_lock_count,
+					       blk->cb_lock_escrow_id)) {
+				found = true;
+				break;
+			}
+		}
+		if (found)
+			continue;
+		if (nranges == CHUNK_STORE_MAX_ESCROWS) {
+			free(ranges);
+			return -E2BIG;
+		}
+		if (nranges == cap) {
+			uint32_t new_cap = cap ? cap * 2 : 16;
+			struct chunk_escrow_range *new_ranges;
+
+			if (new_cap > CHUNK_STORE_MAX_ESCROWS)
+				new_cap = CHUNK_STORE_MAX_ESCROWS;
+			new_ranges = realloc(
+				ranges, (size_t)new_cap * sizeof(*new_ranges));
+			if (!new_ranges) {
+				free(ranges);
+				return -ENOMEM;
+			}
+			ranges = new_ranges;
+			cap = new_cap;
+		}
+		ranges[nranges].cer_offset = blk->cb_lock_offset;
+		ranges[nranges].cer_count = blk->cb_lock_count;
+		memcpy(ranges[nranges].cer_id, blk->cb_lock_escrow_id,
+		       sizeof(ranges[nranges].cer_id));
+		nranges++;
+	}
+
+	free(cs->cs_escrows);
+	cs->cs_escrows = ranges;
+	cs->cs_nescrows = nranges;
+	cs->cs_escrow_cap = cap;
+	return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Path helpers                                                        */
 /* ------------------------------------------------------------------ */
@@ -332,6 +433,20 @@ int chunk_store_write(struct chunk_store *cs, uint64_t offset,
 	return 0;
 }
 
+int chunk_store_touch(struct chunk_store *cs, uint64_t offset)
+{
+	if (offset >= cs->cs_nblocks) {
+		int ret = chunk_store_grow(cs, offset);
+
+		if (ret)
+			return ret;
+	}
+	if (offset + 1 > cs->cs_high_water)
+		cs->cs_high_water = offset + 1;
+	cs->cs_dirty = true;
+	return 0;
+}
+
 int chunk_store_transition(struct chunk_store *cs, uint64_t offset,
 			   uint32_t count, uint64_t cohort_id,
 			   uint32_t client_id, uint32_t owner_id,
@@ -468,6 +583,10 @@ int chunk_store_persist(struct chunk_store *cs, const char *state_dir,
 	if (!cs || !cs->cs_dirty)
 		return 0;
 
+	ret = chunk_store_rebuild_escrows(cs);
+	if (ret)
+		return ret;
+
 	ret = ensure_chunks_dir(state_dir);
 	if (ret)
 		return ret;
@@ -494,6 +613,9 @@ int chunk_store_persist(struct chunk_store *cs, const char *state_dir,
 		.csh_inode_ino = inode_ino,
 		.csh_chunk_size = cs->cs_chunk_size,
 		.csh_checksum_algorithm = cs->cs_checksum_algorithm,
+		.csh_escrow_count = cs->cs_nescrows,
+		.csh_escrow_record_size =
+			sizeof(struct chunk_escrow_range_disk),
 	};
 	ssize_t n = write(fd, &hdr, sizeof(hdr));
 
@@ -511,6 +633,19 @@ int chunk_store_persist(struct chunk_store *cs, const char *state_dir,
 		n = write(fd, &dsk, sizeof(dsk));
 		if (n != (ssize_t)sizeof(dsk)) {
 			LOG("chunk_store_persist: block %" PRIu64 " write: %m",
+			    i);
+			ret = n < 0 ? -errno : -EIO;
+			goto err_close;
+		}
+	}
+
+	for (uint32_t i = 0; i < cs->cs_nescrows; i++) {
+		struct chunk_escrow_range_disk dsk;
+
+		escrow_range_to_disk(&cs->cs_escrows[i], &dsk);
+		n = write(fd, &dsk, sizeof(dsk));
+		if (n != (ssize_t)sizeof(dsk)) {
+			LOG("chunk_store_persist: escrow range %u write: %m",
 			    i);
 			ret = n < 0 ? -errno : -EIO;
 			goto err_close;
@@ -560,7 +695,10 @@ struct chunk_store *chunk_store_load(const char *state_dir, uint64_t inode_ino)
 	if (n != (ssize_t)sizeof(hdr) || hdr.csh_magic != CHUNK_STORE_MAGIC ||
 	    hdr.csh_version != CHUNK_STORE_VERSION ||
 	    hdr.csh_inode_ino != inode_ino ||
-	    hdr.csh_nblocks > CHUNK_STORE_MAX_BLOCKS) {
+	    hdr.csh_nblocks > CHUNK_STORE_MAX_BLOCKS ||
+	    hdr.csh_escrow_count > CHUNK_STORE_MAX_ESCROWS ||
+	    hdr.csh_escrow_record_size !=
+		    sizeof(struct chunk_escrow_range_disk)) {
 		TRACE("chunk_store_load: bad header for ino %" PRIu64,
 		      inode_ino);
 		close(fd);
@@ -592,6 +730,17 @@ struct chunk_store *chunk_store_load(const char *state_dir, uint64_t inode_ino)
 	cs->cs_high_water = nblocks;
 	cs->cs_chunk_size = hdr.csh_chunk_size;
 	cs->cs_checksum_algorithm = hdr.csh_checksum_algorithm;
+	cs->cs_nescrows = hdr.csh_escrow_count;
+	cs->cs_escrow_cap = hdr.csh_escrow_count;
+	if (cs->cs_escrow_cap) {
+		cs->cs_escrows =
+			calloc(cs->cs_escrow_cap, sizeof(*cs->cs_escrows));
+		if (!cs->cs_escrows) {
+			chunk_store_destroy(cs);
+			close(fd);
+			return NULL;
+		}
+	}
 
 	for (uint64_t i = 0; i < nblocks; i++) {
 		struct chunk_block_disk dsk;
@@ -607,6 +756,30 @@ struct chunk_store *chunk_store_load(const char *state_dir, uint64_t inode_ino)
 		disk_to_block(&dsk, &cs->cs_blocks[i]);
 	}
 
+	for (uint32_t i = 0; i < cs->cs_nescrows; i++) {
+		struct chunk_escrow_range_disk dsk;
+		struct chunk_escrow_range *range = &cs->cs_escrows[i];
+
+		n = read(fd, &dsk, sizeof(dsk));
+		if (n != (ssize_t)sizeof(dsk)) {
+			TRACE("chunk_store_load: short read at escrow range %u",
+			      i);
+			chunk_store_destroy(cs);
+			close(fd);
+			return NULL;
+		}
+		escrow_range_from_disk(&dsk, range);
+		if (!escrow_range_valid(range->cer_offset, range->cer_count,
+					range->cer_id) ||
+		    range->cer_offset > nblocks ||
+		    range->cer_count > nblocks - range->cer_offset) {
+			TRACE("chunk_store_load: invalid escrow range %u", i);
+			chunk_store_destroy(cs);
+			close(fd);
+			return NULL;
+		}
+	}
+
 	close(fd);
 	cs->cs_dirty = false;
 	return cs;
@@ -618,6 +791,10 @@ void chunk_store_clear(struct chunk_store *cs)
 		return;
 
 	memset(cs->cs_blocks, 0, cs->cs_nblocks * sizeof(*cs->cs_blocks));
+	free(cs->cs_escrows);
+	cs->cs_escrows = NULL;
+	cs->cs_nescrows = 0;
+	cs->cs_escrow_cap = 0;
 	cs->cs_high_water = 0;
 	cs->cs_chunk_size = 0;
 	cs->cs_checksum_algorithm = 0;
@@ -629,6 +806,7 @@ void chunk_store_destroy(struct chunk_store *cs)
 	if (!cs)
 		return;
 	free(cs->cs_blocks);
+	free(cs->cs_escrows);
 	free(cs);
 }
 

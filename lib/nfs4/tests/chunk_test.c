@@ -2750,6 +2750,13 @@ START_TEST(test_chunk_read_loads_persisted_store_after_restart)
 	ck_assert_uint_eq(lockblk->cb_lock_count, 1);
 	ck_assert_uint_eq(lockblk->cb_flags & CHUNK_BLOCK_ESCROW,
 			  CHUNK_BLOCK_ESCROW);
+	ck_assert_uint_eq(g_inode->i_chunk_store->cs_nescrows, 1);
+	ck_assert_uint_eq(g_inode->i_chunk_store->cs_escrows[0].cer_offset, 0);
+	ck_assert_uint_eq(g_inode->i_chunk_store->cs_escrows[0].cer_count, 1);
+	uint8_t expected_escrow[CHUNK_LOCK_ESCROW_ID_SIZE];
+	memset(expected_escrow, 0x5A, sizeof(expected_escrow));
+	ck_assert_mem_eq(g_inode->i_chunk_store->cs_escrows[0].cer_id,
+			 expected_escrow, sizeof(expected_escrow));
 	uint8_t expected_stateid[CHUNK_LOCK_STATEID_SIZE];
 	memset(expected_stateid, 0xA5, sizeof(expected_stateid));
 	ck_assert_mem_eq(lockblk->cb_lock_stateid, expected_stateid,
@@ -3634,6 +3641,19 @@ START_TEST(test_chunk_escrow_install_and_release)
 		      "install records an MDS escrow lock");
 	ck_assert_int_eq(blk->cb_lock_client_id, CHUNK_GUARD_CLIENT_ID_MDS);
 	ck_assert_mem_eq(blk->cb_lock_escrow_id, escrow, sizeof(escrow));
+	ck_assert_uint_eq(g_inode->i_chunk_store->cs_nescrows, 1);
+	ck_assert_uint_eq(g_inode->i_chunk_store->cs_escrows[0].cer_offset, 6);
+	ck_assert_uint_eq(g_inode->i_chunk_store->cs_escrows[0].cer_count, 2);
+	ck_assert_mem_eq(g_inode->i_chunk_store->cs_escrows[0].cer_id, escrow,
+			 sizeof(escrow));
+	blk = chunk_store_lookup_any(g_inode->i_chunk_store, 7);
+	ck_assert_ptr_nonnull(blk);
+	ck_assert_uint_eq(blk->cb_flags,
+			  CHUNK_BLOCK_LOCKED | CHUNK_BLOCK_ESCROW);
+	ck_assert_uint_eq(blk->cb_lock_offset, 6);
+	ck_assert_uint_eq(blk->cb_lock_count, 2);
+	ck_assert_uint_eq(blk->cb_lock_client_id, CHUNK_GUARD_CLIENT_ID_MDS);
+	ck_assert_mem_eq(blk->cb_lock_escrow_id, escrow, sizeof(escrow));
 
 	cm_reset_slot(cm, 0);
 	set_chunk_escrow_release_args(cm, epoch.epoch, 6, 2, escrow);
@@ -3646,6 +3666,7 @@ START_TEST(test_chunk_escrow_install_and_release)
 		chunk_store_lookup_any(g_inode->i_chunk_store, 6)->cb_flags &
 			CHUNK_BLOCK_LOCKED,
 		0);
+	ck_assert_uint_eq(g_inode->i_chunk_store->cs_nescrows, 0);
 
 	cm_free(cm);
 }

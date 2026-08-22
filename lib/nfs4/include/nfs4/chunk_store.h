@@ -15,8 +15,10 @@
  * on FINALIZE and COMMIT transitions (PENDING is transient).
  *
  * On-disk format: fixed-size header + array of chunk_block_disk
- * entries indexed by block offset.  Maps naturally to a RocksDB
- * key-value store (key = inode_ino:block_offset, value = block).
+ * entries indexed by block offset, followed by a deduplicated escrow
+ * range index.  The range index is retained separately from per-block
+ * state so a future paged CHUNK_ESCROW_ENUMERATE implementation can
+ * resume from a stable, restart-safe set of records.
  */
 
 #ifndef NFS4_CHUNK_STORE_H
@@ -132,7 +134,14 @@ struct chunk_block {
  */
 
 #define CHUNK_STORE_MAGIC 0x434B5354 /* "CKST" */
-#define CHUNK_STORE_VERSION 2
+#define CHUNK_STORE_VERSION 3
+#define CHUNK_STORE_MAX_ESCROWS 4096
+
+struct chunk_escrow_range {
+	uint64_t cer_offset;
+	uint32_t cer_count;
+	uint8_t cer_id[CHUNK_LOCK_ESCROW_ID_SIZE];
+};
 
 struct chunk_store_header {
 	uint32_t csh_magic;
@@ -140,13 +149,17 @@ struct chunk_store_header {
 	uint64_t csh_nblocks; /* number of block entries that follow */
 	uint64_t csh_inode_ino; /* owning inode number */
 	uint32_t csh_chunk_size; /* nominal chunk size (disk stride) */
-	/*
-	 * Pending Change 6 step 8: per-file checksum algorithm (see
-	 * struct chunk_store.cs_checksum_algorithm).  Reused csh_pad
-	 * slot -- no version bump per CLAUDE.md "Deployment Status:
-	 * No persistent storage has been deployed".
-	 */
+	/* Per-file checksum algorithm (see struct chunk_store). */
 	uint32_t csh_checksum_algorithm;
+	uint32_t csh_escrow_count;
+	uint32_t csh_escrow_record_size;
+};
+
+struct chunk_escrow_range_disk {
+	uint64_t cerd_offset;
+	uint32_t cerd_count;
+	uint32_t cerd_pad;
+	uint8_t cerd_id[CHUNK_LOCK_ESCROW_ID_SIZE];
 };
 
 struct chunk_block_disk {
@@ -164,12 +177,8 @@ struct chunk_block_disk {
 	uint64_t cbd_writer_clientid; /* see chunk_block.cb_writer_clientid */
 	/*
 	 * chunk_owner4.co_cohort_id.  Appended rather than reusing
-	 * cbd_pad because it is 64-bit.  No CHUNK_STORE_VERSION bump and
-	 * no migration code: per CLAUDE.md "Deployment Status", no
-	 * persistent storage has been deployed and all on-disk formats
-	 * are version 1.  Re-read that section before assuming this still
-	 * holds -- once a deployment with persistent data ships, changes
-	 * here need a version bump plus migration.
+	 * cbd_pad because it is 64-bit.  The versioned metadata file is a
+	 * prototype format; incompatible changes require a version bump.
 	 */
 	uint64_t cbd_cohort_id;
 	uint64_t cbd_lock_cohort_id;
@@ -196,6 +205,9 @@ static_assert(sizeof(struct chunk_block_disk) == 184,
 	      "chunk_block_disk size changed -- on-disk chunk metadata "
 	      "written by an older build will misparse; clear "
 	      "<state_dir>/chunks before running, then update this size");
+static_assert(sizeof(struct chunk_escrow_range_disk) == 32,
+	      "chunk_escrow_range_disk size changed -- update the store "
+	      "version before changing the persisted range index");
 
 /*
  * In-memory chunk store for an inode.  Grows on demand as blocks
@@ -217,6 +229,9 @@ struct chunk_store {
 	 * policy.
 	 */
 	uint32_t cs_checksum_algorithm;
+	struct chunk_escrow_range *cs_escrows;
+	uint32_t cs_nescrows;
+	uint32_t cs_escrow_cap;
 	bool cs_dirty; /* needs persistence */
 };
 
@@ -251,6 +266,13 @@ struct chunk_block *chunk_store_lookup_any(struct chunk_store *cs,
  */
 int chunk_store_write(struct chunk_store *cs, uint64_t offset,
 		      const struct chunk_block *blk);
+
+/*
+ * chunk_store_touch -- make an allocated block part of the persisted
+ * high-water range without changing its metadata.  Lock and escrow
+ * operations use this for preallocated EMPTY entries.
+ */
+int chunk_store_touch(struct chunk_store *cs, uint64_t offset);
 
 /*
  * chunk_store_transition -- move blocks from one state to another.

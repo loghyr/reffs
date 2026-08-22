@@ -1692,9 +1692,11 @@ static void chunk_lock_clear(struct chunk_block *blk)
 	blk->cb_lock_count = 0;
 	blk->cb_lock_flags = 0;
 	memset(blk->cb_lock_stateid, 0, sizeof(blk->cb_lock_stateid));
-	if (!preserve_escrow)
+	if (!preserve_escrow) {
+		blk->cb_flags &= ~CHUNK_BLOCK_ESCROW;
 		memset(blk->cb_lock_escrow_id, 0,
 		       sizeof(blk->cb_lock_escrow_id));
+	}
 }
 
 static bool chunk_escrow_id_is_zero(const escrow_id4 id)
@@ -2908,6 +2910,15 @@ uint32_t nfs4_op_chunk_escrow_install(struct compound *compound)
 			}
 			blk = chunk_store_lookup_any(cs, off);
 			created[i] = 1;
+		}
+		if (chunk_store_touch(cs, off) != 0) {
+			chunk_escrow_restore_install(cs, args->ceia_offset, i,
+						     saved, created);
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			free(saved);
+			free(created);
+			*status = NFS4ERR_SERVERFAULT;
+			return 0;
 		}
 		saved[i] = *blk;
 		if (chunk_escrow_matches(blk, args->ceia_offset,
