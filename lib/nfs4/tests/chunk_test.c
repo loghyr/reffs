@@ -3759,6 +3759,34 @@ START_TEST(test_chunk_lock_adopts_escrow)
 }
 END_TEST
 
+START_TEST(test_chunk_escrow_survives_writer_expiry_cleanup)
+{
+	struct server_state *ss = server_state_find();
+	struct chunk_block escrowed = {
+		.cb_state = CHUNK_STATE_FINALIZED,
+		.cb_flags = CHUNK_BLOCK_LOCKED | CHUNK_BLOCK_ESCROW,
+		.cb_writer_clientid = 0xfeed,
+	};
+	struct chunk_store *cs;
+	struct cm_ctx *cm = cm_alloc(1);
+
+	ck_assert_ptr_nonnull(ss);
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+	cs = chunk_store_get(g_inode, ss->ss_state_dir);
+	ck_assert_ptr_nonnull(cs);
+	ck_assert_int_eq(chunk_store_write(cs, 12, &escrowed), 0);
+	ck_assert_uint_eq(chunk_store_rollback_for_client(cs, 0xfeed), 0);
+	ck_assert_int_eq(chunk_store_lookup_any(cs, 12)->cb_state,
+			 CHUNK_STATE_FINALIZED);
+	ck_assert_msg(chunk_store_lookup_any(cs, 12)->cb_flags &
+			      CHUNK_BLOCK_ESCROW,
+		      "expiry cleanup must not release an escrowed payload");
+	cm_free(cm);
+	server_state_put(ss);
+}
+END_TEST
+
 START_TEST(test_chunk_escrow_requires_mds_session)
 {
 	static const escrow_id4 escrow = { 1 };
@@ -3929,6 +3957,7 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_chunk_escrow_install_and_release);
 	tcase_add_test(tc_h, test_chunk_escrow_release_rejects_stale_id);
 	tcase_add_test(tc_h, test_chunk_lock_adopts_escrow);
+	tcase_add_test(tc_h, test_chunk_escrow_survives_writer_expiry_cleanup);
 	tcase_add_test(tc_h, test_chunk_escrow_requires_mds_session);
 	tcase_add_test(tc_h, test_chunk_escrow_enumerate_probe);
 	suite_add_tcase(s, tc_h);

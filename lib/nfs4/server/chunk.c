@@ -1885,6 +1885,12 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
 			blk->cb_lock_offset = args->cla_offset;
 			blk->cb_lock_count = args->cla_count;
 			blk->cb_lock_flags = 0;
+			blk->cb_writer_clientid =
+				compound->c_nfs4_client ?
+					nfs4_client_to_client(
+						compound->c_nfs4_client)
+						->c_id :
+					0;
 			chunk_lock_pack_stateid(blk->cb_lock_stateid,
 						&args->cla_stateid);
 			cs->cs_dirty = true;

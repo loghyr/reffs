@@ -411,6 +411,9 @@ uint32_t chunk_store_rollback_for_client(struct chunk_store *cs,
 
 		if (blk->cb_writer_clientid != writer_clientid)
 			continue;
+		/* An MDS escrow pins the payload and owner association. */
+		if (blk->cb_flags & CHUNK_BLOCK_ESCROW)
+			continue;
 
 		/*
 		 * Lease-driven cleanup: in-flight (PENDING) and
