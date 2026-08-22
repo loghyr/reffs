@@ -31,11 +31,10 @@
 
 /*
  * Mirror of the static struct ec_context in ec_pipeline.c.  Kept
- * in sync by code review -- if a field is added to ec_pipeline.c's
- * private definition without updating this header, the test
- * compilation will not catch the divergence (the test includes
- * this header, ec_pipeline.c does not).  The reviewer must check
- * both.
+ * in sync with ec_pipeline.c -- if a field is added to its
+ * private definition without updating this header, compilation will
+ * not catch the divergence because the two translation units declare
+ * independent types.
  *
  * The compiler does NOT verify struct identity across TUs -- C
  * does not have nominal struct typing.  ec_pipeline.c's local
@@ -74,8 +73,8 @@ struct ec_context {
 	uint64_t ctx_cohort_id;
 	struct ps_listener_state *ctx_pls;
 	/*
-	 * Track 1b Option C cwa_guard CAS plumbing -- see
-	 * ec_pipeline.c's matching declaration.  Tests don't drive
+	 * cwa_guard CAS plumbing; this must match ec_pipeline.c's
+	 * matching declaration.  Tests don't drive
 	 * this surface today (the dispatch test passes NULL guards),
 	 * but the layout must match exactly because pointer-to-struct
 	 * references across this whitebox/internal boundary are

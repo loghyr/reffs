@@ -141,8 +141,7 @@ struct ps_write_buffer {
 /*
  * Single-WRITE / total-buffered cap (default 1 GiB).
  *
- * NOT_NOW_BROWN_COW: the design's [[ps]] write_buffer_max_bytes
- * TOML field (Phase 4a step 9) is a follow-on slice.  Today this
+ * A configurable write_buffer_max_bytes TOML field is deferred.  Today this
  * is a compile-time constant; the pipeline shim is structured so
  * a later slice can swap a per-listener `pls_write_buffer_max`
  * field in without surface changes.

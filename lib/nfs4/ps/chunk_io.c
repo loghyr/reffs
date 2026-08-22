@@ -27,7 +27,7 @@
 #include "nfs4/chunk_checksum.h"
 
 /* ------------------------------------------------------------------ */
-/* Per-process chunk-write identity (Track 1b Option C full)           */
+/* Per-process chunk-write identity                                    */
 /*                                                                     */
 /* Each writer process needs a UNIQUE cg_client_id so the server's     */
 /* CAS-guard check (cwa_guard.cwg_check=TRUE) can distinguish writers. */
@@ -526,9 +526,9 @@ int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	cra->cra_count = count;
 
 	ret = mds_compound_send(&mc, ds);
-	/* See ds_chunk_write: surface CHUNK_READ BAD_STATEID as -ESTALE
+	/* Surface CHUNK_READ BAD_STATEID as -ESTALE
 	 * so the slice 1.6 retry path can recognise it.  NFS4ERR_DELAY
-	 * is the Option C "in-flight write, retry shortly" signal --
+	 * is the "in-flight write, retry shortly" signal --
 	 * map to -EAGAIN so the RMW retry can distinguish it from
 	 * fatal -EIO.
 	 */
@@ -723,14 +723,9 @@ int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
 	CHUNK_FINALIZE4args *cfa = &slot->nfs_argop4_u.opchunk_finalize;
 
 	/*
-	 * NOT_NOW_BROWN_COW: pass the caller's layout stateid here so
-	 * the DS trust-stateid check (draft M3) authorises this
-	 * FINALIZE.  Slot is zero-initialised by mds_compound_add_op,
-	 * so cfa_stateid defaults to the anonymous stateid; the DS
-	 * bypasses the trust-table check on anonymous stateids, which
-	 * preserves the current PS demo behaviour.  Plumb the real
-	 * layout stateid through when the PS-DS trust path lands
-	 * end-to-end.
+	 * The slot is zero-initialised here, so the current PS path sends
+	 * the anonymous stateid.  The caller's layout stateid must be
+	 * threaded through before enabling DS trust enforcement.
 	 */
 	cfa->cfa_offset = block_offset;
 	cfa->cfa_count = count;
@@ -820,9 +815,9 @@ int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	CHUNK_COMMIT4args *cca = &slot->nfs_argop4_u.opchunk_commit;
 
 	/*
-	 * NOT_NOW_BROWN_COW: pass the caller's layout stateid here so
-	 * the DS trust-stateid check (draft M3) authorises this
-	 * COMMIT.  Same defaulting behaviour as CHUNK_FINALIZE above.
+	 * As with CHUNK_FINALIZE, the current PS path sends the
+	 * zero-initialized stateid until DS trust-stateid plumbing is
+	 * connected end to end.
 	 */
 	cca->cca_offset = block_offset;
 	cca->cca_count = count;

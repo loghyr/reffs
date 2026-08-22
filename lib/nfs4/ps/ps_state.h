@@ -225,7 +225,7 @@ struct ps_listener_state {
 	 *                     TOCTOU window.
 	 * pls_boot_gen        monotonic per-listener generation; bumped on
 	 *                     each ps_state_register (today only at boot;
-	 *                     re-register is NOT_NOW_BROWN_COW).  Each
+	 *                     re-register is not yet supported.  Each
 	 *                     buffer carries the gen seen at alloc time
 	 *                     so a listener restart invalidates buffers
 	 *                     from the prior generation without scanning.

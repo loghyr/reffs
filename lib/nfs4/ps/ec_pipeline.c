@@ -116,8 +116,7 @@ struct ec_context {
 	 */
 	struct ps_listener_state *ctx_pls;
 	/*
-	 * Track 1b RMW-prefix-read guard capture (Option C full,
-	 * design/chunk-collision-validation.md).  When the RMW prefix
+	 * RMW-prefix-read guard capture.  When the RMW prefix
 	 * read in ec_write_encoding_range captures per-shard chunk_owner4
 	 * values via ec_read_stripe_with_file, they land here.  The
 	 * matching ec_write_stripe_with_file picks up the paired
@@ -462,7 +461,7 @@ int ec_chunk_read(struct ec_context *ctx, int mirror_idx, uint64_t block_offset,
 
 	/*
 	 * Three attempts on -ESTALE (BAD_STATEID -- trust entry expired
-	 * or revoked) AND on -EAGAIN (Option C "PENDING from another
+	 * or revoked) AND on -EAGAIN (PENDING from another
 	 * writer, wait for it to commit").  The two failure modes share
 	 * a retry budget because both are transient -- the writer just
 	 * needs to back off and re-try the same op.  -ESTALE reports to
@@ -845,7 +844,7 @@ out_close:
 
 /*
  * Bound on per-stripe NFS4ERR_DELAY retries in the full-stripe write path
- * (ec_write_encoding_with_file).  The MDS Track 1b chunk-collision gate
+ * (ec_write_encoding_with_file).  The MDS chunk-collision gate
  * (chunk.c axis-i PENDING-from-other-writer, axis-ii CAS) returns
  * NFS4ERR_DELAY when concurrent writers race on the same chunk; the
  * client must back off and retry rather than treating it as fatal.
@@ -876,9 +875,9 @@ static int ec_layout_refresh(struct ec_context *ctx, struct mds_session *ms,
 	 * creds are not plumbed down into the per-shard recovery loop
 	 * yet.  Acceptable for now: the recovery path runs against the
 	 * same MDS the original LAYOUTGET hit, so a different cred
-	 * would not unblock anything we care about.  Threading the
-	 * caller's creds through is NOT_NOW_BROWN_COW for the same
-	 * follow-on slice that does DS-side cred forwarding.
+	 * would not unblock the current recovery path.  Threading the
+	 * caller's credentials through remains a follow-up task for
+	 * end-to-end DS credential forwarding.
 	 */
 	ret = mds_layout_get(ms, &ctx->ctx_file, iomode, layout_type, NULL,
 			     &ctx->ctx_layout);
@@ -1379,7 +1378,7 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			      uint8_t mds_verf_out[8], bool *mds_verf_set_out,
 			      struct ps_listener_state *pls, void *ctx_in_out)
 {
-	/* Shared-ctx fast path (Track 1b second-mechanism fix): if the
+	/* Shared-context fast path: if the
 	 * caller passes a populated ctx, skip the per-call encoding /
 	 * LAYOUTGET / ec_resolve_mirrors and the matching
 	 * ec_disconnect_all + LAYOUTRETURN.  Re-uses DS sessions across
@@ -1870,8 +1869,8 @@ retry_stripe_read: {
 			 * That captured version becomes the cwa_guard the
 			 * matching ec_write_stripe_with_file presents on
 			 * the corresponding data-shard CHUNK_WRITE.  nblk>1
-			 * (variable-size shards) only captures block 0 --
-			 * the multi-block guard story is NOT_NOW_BROWN_COW.
+				 * (variable-size shards) only captures block 0; the
+				 * multi-block guard case remains unsupported.
 			 */
 			chunk_owner4 owner_capture = { 0 };
 			chunk_guard4 guard_capture = { 0 };
@@ -2288,7 +2287,7 @@ int ec_read_encoding(struct mds_session *ms, const char *path, uint8_t *buf,
 }
 
 /* ------------------------------------------------------------------ */
-/* Partial-range I/O -- chunk-collision Track 1b                       */
+/* Partial-range I/O with chunk-collision protection                   */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -2361,14 +2360,13 @@ int ec_write_encoding_range(struct mds_session *ms, const char *path,
 	}
 
 	/*
-	 * Track 1b second-mechanism fix: build a single shared ctx
+	 * Build a single shared context
 	 * (encoding + RW layout + ec_resolve_mirrors) ONCE at the top and
 	 * thread it through every per-stripe call.  Without this, each
 	 * ec_read_stripe_with_file / ec_write_stripe_with_file call
 	 * built its own ctx and called ec_disconnect_all on the way out
-	 * -- which sent DESTROY_SESSION to every DS between stripes,
-	 * causing the BADSESSION cascade documented in
-	 * chunk-collision-validation.md "What we found".
+	 * -- otherwise each stripe could tear down the DS sessions before
+	 * the next stripe and invalidate the compound sequence.
 	 */
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.ctx_ms = ms;
@@ -2405,7 +2403,7 @@ int ec_write_encoding_range(struct mds_session *ms, const char *path,
 	ctx_built = true;
 
 	/*
-	 * Per-stripe RMW with CAS-guard retry (Track 1b Option C full).
+	 * Per-stripe RMW with CAS-guard retry.
 	 * EC_RMW_RETRY_MAX bounds the retry budget; backoff is
 	 * 50ms * 2^attempt with per-attempt jitter (0..63ms) so that
 	 * two simultaneously-rejected writers don't sync up on the same
@@ -2447,7 +2445,7 @@ rmw_retry:
 			 * Partial stripe -- read the existing stripe,
 			 * overwrite the dirty range in place, write the
 			 * merged result.  Sparse RMW (file shorter than
-			 * the stripe end) is NOT_NOW_BROWN_COW per
+	 * the stripe end) is currently unsupported by
 			 * ec_read_stripe_with_file's contract -- the
 			 * harness pre-fills the file with a full-file
 			 * write before any range writers start.
@@ -2552,7 +2550,7 @@ int ec_read_encoding_range(struct mds_session *ms, const char *path,
 	int ret;
 
 	/*
-	 * skip_ds_mask is intentionally absent.  Track 1b's harness only
+	 * skip_ds_mask is intentionally absent.  This path only
 	 * uses healthy reads to assert the post-write state of each
 	 * writer's range; degraded-read tolerance is the
 	 * full-file ec_read_encoding's concern.
@@ -2590,14 +2588,13 @@ int ec_read_encoding_range(struct mds_session *ms, const char *path,
 	}
 
 	/*
-	 * Same shared-ctx pattern ec_write_encoding_range uses (Track 1b
-	 * second-mechanism fix, commit efaff665437b).  Without this,
+	 * Use the same shared-context pattern as ec_write_encoding_range.
+	 * Without this,
 	 * each ec_read_stripe_with_file call did its own
 	 * ec_resolve_mirrors + ec_disconnect_all, sending DESTROY_SESSION
 	 * to every DS between stripes.  In overlap mode (4 verify
 	 * workers each reading a multi-stripe range) the per-stripe
-	 * session churn manifested as the BADSESSION cascade we'd
-	 * already debugged out of the WRITE path.
+	 * session churn can invalidate the per-stripe sequence state.
 	 */
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.ctx_ms = ms;
