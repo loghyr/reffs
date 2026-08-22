@@ -2709,7 +2709,7 @@ START_TEST(test_chunk_read_loads_persisted_store_after_restart)
 	pthread_mutex_lock(&g_inode->i_attr_mutex);
 	struct chunk_block *lockblk =
 		chunk_store_lookup(g_inode->i_chunk_store, 0);
-	lockblk->cb_flags |= CHUNK_BLOCK_LOCKED;
+	lockblk->cb_flags |= CHUNK_BLOCK_LOCKED | CHUNK_BLOCK_ESCROW;
 	lockblk->cb_lock_cohort_id = 0x1234;
 	lockblk->cb_lock_client_id = 0xBEEF;
 	lockblk->cb_lock_owner_id = 99;
@@ -2748,6 +2748,8 @@ START_TEST(test_chunk_read_loads_persisted_store_after_restart)
 	ck_assert_uint_eq(lockblk->cb_lock_client_id, 0xBEEF);
 	ck_assert_uint_eq(lockblk->cb_lock_owner_id, 99);
 	ck_assert_uint_eq(lockblk->cb_lock_count, 1);
+	ck_assert_uint_eq(lockblk->cb_flags & CHUNK_BLOCK_ESCROW,
+			  CHUNK_BLOCK_ESCROW);
 	uint8_t expected_stateid[CHUNK_LOCK_STATEID_SIZE];
 	memset(expected_stateid, 0xA5, sizeof(expected_stateid));
 	ck_assert_mem_eq(lockblk->cb_lock_stateid, expected_stateid,
