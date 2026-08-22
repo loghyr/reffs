@@ -2587,6 +2587,55 @@ START_TEST(test_chunk_full_cycle)
 }
 END_TEST
 
+/* A fresh inode view must recover lifecycle metadata before CHUNK_READ. */
+START_TEST(test_chunk_read_loads_persisted_store_after_restart)
+{
+	static char wbuf[CHUNK_SZ];
+	chunk_owner4 owner = { .co_client_id = 0xBEEF, .co_id = 99 };
+	struct cm_ctx *cm = cm_alloc(1);
+
+	memset(wbuf, 0x5A, sizeof(wbuf));
+	cm_set_inode(cm, g_inode);
+	ck_assert_ptr_nonnull(cm->compound->c_server_state->ss_state_dir);
+
+	ck_assert_int_eq(run_chunk_write(cm, wbuf), NFS4_OK);
+	ck_assert_int_eq(run_chunk_finalize(cm, &owner), NFS4_OK);
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_COMMIT);
+	{
+		CHUNK_COMMIT4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_commit;
+		a->cca_offset = 0;
+		a->cca_count = 1;
+		a->cca_chunks.cca_chunks_val = &owner;
+		a->cca_chunks.cca_chunks_len = 1;
+	}
+	nfs4_op_chunk_commit(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_commit.ccr_status,
+			 NFS4_OK);
+	free_commit_res(cm);
+
+	/* Drop the in-memory index to model a server restart. */
+	pthread_mutex_lock(&g_inode->i_attr_mutex);
+	struct chunk_store *old = g_inode->i_chunk_store;
+	g_inode->i_chunk_store = NULL;
+	chunk_store_destroy(old);
+	pthread_mutex_unlock(&g_inode->i_attr_mutex);
+
+	ck_assert_ptr_null(g_inode->i_chunk_store);
+	ck_assert_int_eq(run_chunk_read(cm), NFS4_OK);
+	ck_assert_ptr_nonnull(g_inode->i_chunk_store);
+	ck_assert_int_eq(
+		chunk_store_lookup(g_inode->i_chunk_store, 0)->cb_state,
+		CHUNK_STATE_COMMITTED);
+
+	cm_free(cm);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Group G: chunk-collision counter observability (Phase 4b.7)         */
 /*                                                                     */
@@ -3253,6 +3302,8 @@ static Suite *chunk_suite(void)
 	TCase *tc_f = tcase_create("full_cycle");
 	tcase_add_checked_fixture(tc_f, chunk_setup, chunk_teardown);
 	tcase_add_test(tc_f, test_chunk_full_cycle);
+	tcase_add_test(tc_f,
+		       test_chunk_read_loads_persisted_store_after_restart);
 	suite_add_tcase(s, tc_f);
 
 	TCase *tc_g = tcase_create("collision_counter");
