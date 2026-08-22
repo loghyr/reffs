@@ -45,6 +45,7 @@
 #include "reffs/super_block.h"
 #include "nfs4/attr.h"
 #include "nfs4/chunk_checksum.h"
+#include "nfs4/chunk_epoch.h"
 #include "nfs4/chunk_store.h"
 #include "nfs4/client.h"
 #include "nfs4/compound.h"
@@ -3527,6 +3528,28 @@ START_TEST(test_chunk_lock_transfer_flags_are_not_supported)
 }
 END_TEST
 
+START_TEST(test_chunk_mds_epoch_persistence_roundtrip)
+{
+	struct server_state *ss = server_state_find();
+	struct chunk_mds_epoch saved = {
+		.epoch = 41,
+		.expires_at_ns = 987654321,
+		.issuer_clientid = 0x1122334455667788ULL,
+	};
+	struct chunk_mds_epoch loaded = { 0 };
+
+	ck_assert_ptr_nonnull(ss);
+	ck_assert_ptr_nonnull(ss->ss_state_dir);
+	ck_assert_int_eq(chunk_mds_epoch_persist(ss->ss_state_dir, &saved), 0);
+	ck_assert_int_eq(chunk_mds_epoch_load(ss->ss_state_dir, &loaded), 0);
+	ck_assert_uint_eq(loaded.epoch, saved.epoch);
+	ck_assert_uint_eq(loaded.expires_at_ns, saved.expires_at_ns);
+	ck_assert_uint_eq(loaded.issuer_clientid, saved.issuer_clientid);
+
+	server_state_put(ss);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
@@ -3628,6 +3651,7 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_chunk_lock_and_unlock_empty_range);
 	tcase_add_test(tc_h, test_chunk_lock_conflict_reports_holder);
 	tcase_add_test(tc_h, test_chunk_lock_transfer_flags_are_not_supported);
+	tcase_add_test(tc_h, test_chunk_mds_epoch_persistence_roundtrip);
 	suite_add_tcase(s, tc_h);
 
 	return s;

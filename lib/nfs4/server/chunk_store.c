@@ -21,6 +21,7 @@
  */
 
 #include "nfs4/chunk_store.h"
+#include "nfs4/chunk_epoch.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -63,6 +64,100 @@ static int ensure_chunks_dir(const char *state_dir)
 		return -ENAMETOOLONG;
 	if (mkdir(dir, 0700) && errno != EEXIST)
 		return -errno;
+	return 0;
+}
+
+struct chunk_mds_epoch_disk {
+	uint32_t magic;
+	uint32_t version;
+	struct chunk_mds_epoch value;
+};
+
+static int chunk_mds_epoch_path(char *buf, size_t bufsz, const char *state_dir)
+{
+	int n;
+
+	if (!state_dir)
+		return -EINVAL;
+	n = snprintf(buf, bufsz, "%s/chunk_mds_epoch", state_dir);
+	if (n < 0 || (size_t)n >= bufsz)
+		return -ENAMETOOLONG;
+	return 0;
+}
+
+int chunk_mds_epoch_load(const char *state_dir, struct chunk_mds_epoch *out)
+{
+	char path[512];
+	struct chunk_mds_epoch_disk disk;
+	int fd;
+	ssize_t n;
+
+	if (!out)
+		return -EINVAL;
+	if (chunk_mds_epoch_path(path, sizeof(path), state_dir))
+		return -EINVAL;
+
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return -errno;
+	n = read(fd, &disk, sizeof(disk));
+	close(fd);
+	if (n != (ssize_t)sizeof(disk) || disk.magic != CHUNK_MDS_EPOCH_MAGIC ||
+	    disk.version != CHUNK_MDS_EPOCH_VERSION)
+		return -EINVAL;
+
+	*out = disk.value;
+	return 0;
+}
+
+int chunk_mds_epoch_persist(const char *state_dir,
+			    const struct chunk_mds_epoch *epoch)
+{
+	char path[512], tmp[520];
+	struct chunk_mds_epoch_disk disk;
+	int fd;
+	ssize_t n;
+
+	if (!epoch)
+		return -EINVAL;
+	disk.magic = CHUNK_MDS_EPOCH_MAGIC;
+	disk.version = CHUNK_MDS_EPOCH_VERSION;
+	disk.value = *epoch;
+	if (chunk_mds_epoch_path(path, sizeof(path), state_dir))
+		return -EINVAL;
+	if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp))
+		return -ENAMETOOLONG;
+
+	fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd < 0)
+		return -errno;
+	n = write(fd, &disk, sizeof(disk));
+	if (n != (ssize_t)sizeof(disk)) {
+		int ret = n < 0 ? -errno : -EIO;
+
+		close(fd);
+		unlink(tmp);
+		return ret;
+	}
+	if (reffs_fdatasync(fd)) {
+		int ret = -errno;
+
+		close(fd);
+		unlink(tmp);
+		return ret;
+	}
+	if (close(fd)) {
+		int ret = -errno;
+
+		unlink(tmp);
+		return ret;
+	}
+	if (rename(tmp, path)) {
+		int ret = -errno;
+
+		unlink(tmp);
+		return ret;
+	}
 	return 0;
 }
 
