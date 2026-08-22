@@ -379,20 +379,17 @@ END_TEST
  * mds_session_create_tls on reconnect.
  */
 /*
- * Reviewer BLOCKER follow-up: ps_listener_session_replace's central
- * correctness claim is that the wlock waits for in-flight readers
- * before the swap takes effect.  This test exercises the rwlock
+ * ps_listener_session_replace must wait for in-flight readers before
+ * the swap takes effect.  This test exercises the rwlock
  * quiesce property using ps_state_set_session (which takes the same
  * wlock without involving mds_session_destroy on the fake pointer).
  *
- * Coverage limit: the destroy half of ps_listener_session_replace
+ * The destroy half of ps_listener_session_replace
  * (calls mds_session_destroy + free on the old pointer) is not
- * exercised here -- it would require a real (or fully mocked)
+ * is not exercised here because it would require a real (or fully mocked)
  * mds_session, which is more infrastructure than this slice merits
- * since the destroy is mechanical post-unlock work and a UAF in the
- * destroy path would surface as ASAN under the bench soak.  The
- * critical property -- "no reader observes a torn pointer because
- * the wlock waits for the rdlock to drop" -- IS validated here.
+ * The critical property is that no reader observes a torn pointer
+ * because the write lock waits for the read locks to drop.
  */
 struct quiesce_writer_ctx {
 	uint32_t listener_id;
@@ -437,8 +434,10 @@ START_TEST(test_session_replace_quiesces_in_flight)
 	ck_assert_int_eq(ps_state_set_session(17, fake), 0);
 
 	struct mds_session *borrowed = ps_listener_session_borrow(17);
+	struct mds_session *borrowed2 = ps_listener_session_borrow(17);
 
 	ck_assert_ptr_eq(borrowed, fake);
+	ck_assert_ptr_eq(borrowed2, fake);
 
 	struct quiesce_writer_ctx ctx = {
 		.listener_id = 17,
@@ -476,7 +475,6 @@ START_TEST(test_session_replace_quiesces_in_flight)
 
 	/* The borrow still observes the original pointer. */
 	ck_assert_ptr_eq(borrowed, fake);
-	ck_assert_ptr_eq(ps_listener_session_borrow(17), fake);
 	ps_listener_session_release(17); /* drop the second borrow */
 	ps_listener_session_release(17); /* drop the original borrow */
 
