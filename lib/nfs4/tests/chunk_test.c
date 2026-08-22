@@ -3867,6 +3867,48 @@ START_TEST(test_chunk_escrow_enumerate_probe)
 }
 END_TEST
 
+START_TEST(test_chunk_escrow_rejects_stale_epoch)
+{
+	static const escrow_id4 escrow = { 0x61 };
+	struct server_state *ss = server_state_find();
+	struct chunk_mds_epoch epoch = {
+		.epoch = 90,
+		.expires_at_ns = reffs_now_ns() + 60000000000ULL,
+	};
+	struct cm_ctx *cm = cm_alloc(1);
+
+	ck_assert_ptr_nonnull(ss);
+	ck_assert_int_eq(chunk_mds_epoch_persist(ss->ss_state_dir, &epoch), 0);
+	server_state_put(ss);
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+	cm->compound->c_nfs4_client->nc_exchgid_flags =
+		EXCHGID4_FLAG_USE_PNFS_MDS;
+	set_chunk_escrow_install_args(cm, epoch.epoch + 1, 0, 1, escrow);
+	nfs4_op_chunk_escrow_install(cm->compound);
+	ck_assert_int_eq(
+		cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opchunk_escrow_install.ceir_status,
+		NFS4ERR_STALE_MDS_EPOCH);
+
+	epoch.epoch++;
+	epoch.expires_at_ns = reffs_now_ns() - 1;
+	ss = server_state_find();
+	ck_assert_ptr_nonnull(ss);
+	ck_assert_int_eq(chunk_mds_epoch_persist(ss->ss_state_dir, &epoch), 0);
+	server_state_put(ss);
+	cm_reset_slot(cm, 0);
+	set_chunk_escrow_enumerate_args(cm, epoch.epoch, 0, 1, 0);
+	nfs4_op_chunk_escrow_enumerate(cm->compound);
+	ck_assert_int_eq(
+		cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opchunk_escrow_enumerate.ceer_status,
+		NFS4ERR_STALE_MDS_EPOCH);
+
+	cm_free(cm);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
@@ -3975,6 +4017,7 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_chunk_escrow_survives_writer_expiry_cleanup);
 	tcase_add_test(tc_h, test_chunk_escrow_requires_mds_session);
 	tcase_add_test(tc_h, test_chunk_escrow_enumerate_probe);
+	tcase_add_test(tc_h, test_chunk_escrow_rejects_stale_epoch);
 	suite_add_tcase(s, tc_h);
 
 	return s;
