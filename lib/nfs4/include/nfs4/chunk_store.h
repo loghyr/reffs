@@ -277,6 +277,10 @@ int chunk_store_touch(struct chunk_store *cs, uint64_t offset);
 /* Refresh the deduplicated escrow index from authoritative block state. */
 int chunk_store_refresh_escrows(struct chunk_store *cs);
 
+/* Return true when the refreshed index contains this exact escrow range. */
+bool chunk_store_has_escrow(const struct chunk_store *cs, uint64_t offset,
+			    uint32_t count, const void *id);
+
 /*
  * chunk_store_transition -- move blocks from one state to another.
  * Transitions blocks matching the owner triple at offsets

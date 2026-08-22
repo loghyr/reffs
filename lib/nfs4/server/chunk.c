@@ -1838,6 +1838,24 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
 		*status = NFS4ERR_SERVERFAULT;
 		return 0;
 	}
+	if ((flags & CHUNK_LOCK_FLAGS_ADOPT) &&
+	    chunk_store_refresh_escrows(cs) != 0) {
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		free(saved);
+		free(created);
+		*status = NFS4ERR_SERVERFAULT;
+		return 0;
+	}
+	if ((flags & CHUNK_LOCK_FLAGS_ADOPT) &&
+	    !chunk_store_has_escrow(
+		    cs, args->cla_offset, args->cla_count,
+		    args->cla_adopt.chunk_lock_adopt4_u.cla_escrow_id)) {
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		free(saved);
+		free(created);
+		*status = NFS4ERR_NO_ADOPTABLE_LOCK;
+		return 0;
+	}
 	for (uint32_t i = 0; i < args->cla_count; i++) {
 		struct chunk_block *blk =
 			chunk_store_lookup_any(cs, args->cla_offset + i);
@@ -3007,6 +3025,19 @@ uint32_t nfs4_op_chunk_escrow_release(struct compound *compound)
 	}
 
 	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	if (chunk_store_refresh_escrows(cs) != 0) {
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		free(saved);
+		*status = NFS4ERR_SERVERFAULT;
+		return 0;
+	}
+	if (!chunk_store_has_escrow(cs, args->cera_offset, args->cera_count,
+				    args->cera_escrow_id)) {
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		free(saved);
+		*status = NFS4ERR_STALE_ESCROW;
+		return 0;
+	}
 	for (uint32_t i = 0; i < args->cera_count; i++) {
 		struct chunk_block *blk =
 			chunk_store_lookup_any(cs, args->cera_offset + i);

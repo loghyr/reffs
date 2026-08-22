@@ -149,6 +149,18 @@ int chunk_store_refresh_escrows(struct chunk_store *cs)
 	return 0;
 }
 
+bool chunk_store_has_escrow(const struct chunk_store *cs, uint64_t offset,
+			    uint32_t count, const void *id)
+{
+	if (!cs || !escrow_range_valid(offset, count, id))
+		return false;
+	for (uint32_t i = 0; i < cs->cs_nescrows; i++) {
+		if (escrow_range_equal(&cs->cs_escrows[i], offset, count, id))
+			return true;
+	}
+	return false;
+}
+
 /* ------------------------------------------------------------------ */
 /* Path helpers                                                        */
 /* ------------------------------------------------------------------ */
