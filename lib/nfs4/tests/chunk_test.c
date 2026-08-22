@@ -3767,6 +3767,13 @@ START_TEST(test_chunk_escrow_survives_writer_expiry_cleanup)
 		.cb_flags = CHUNK_BLOCK_LOCKED | CHUNK_BLOCK_ESCROW,
 		.cb_writer_clientid = 0xfeed,
 	};
+	struct chunk_block adopted = {
+		.cb_state = CHUNK_STATE_FINALIZED,
+		.cb_flags = CHUNK_BLOCK_LOCKED,
+		.cb_lock_client_id = 0xBEEF,
+		.cb_writer_clientid = 0xfeed,
+		.cb_lock_escrow_id = { 0x51 },
+	};
 	struct chunk_store *cs;
 	struct cm_ctx *cm = cm_alloc(1);
 
@@ -3776,12 +3783,18 @@ START_TEST(test_chunk_escrow_survives_writer_expiry_cleanup)
 	cs = chunk_store_get(g_inode, ss->ss_state_dir);
 	ck_assert_ptr_nonnull(cs);
 	ck_assert_int_eq(chunk_store_write(cs, 12, &escrowed), 0);
-	ck_assert_uint_eq(chunk_store_rollback_for_client(cs, 0xfeed), 0);
+	ck_assert_int_eq(chunk_store_write(cs, 13, &adopted), 0);
+	ck_assert_uint_eq(chunk_store_rollback_for_client(cs, 0xfeed), 1);
 	ck_assert_int_eq(chunk_store_lookup_any(cs, 12)->cb_state,
 			 CHUNK_STATE_FINALIZED);
 	ck_assert_msg(chunk_store_lookup_any(cs, 12)->cb_flags &
 			      CHUNK_BLOCK_ESCROW,
 		      "expiry cleanup must not release an escrowed payload");
+	ck_assert_msg(chunk_store_lookup_any(cs, 13)->cb_flags &
+			      CHUNK_BLOCK_ESCROW,
+		      "expiry cleanup must return adopted custody to the MDS");
+	ck_assert_int_eq(chunk_store_lookup_any(cs, 13)->cb_lock_client_id,
+			 CHUNK_GUARD_CLIENT_ID_MDS);
 	cm_free(cm);
 	server_state_put(ss);
 }

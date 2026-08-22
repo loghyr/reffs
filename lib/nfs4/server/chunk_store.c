@@ -36,6 +36,14 @@
 #include "reffs/log.h"
 #include "reffs/posix_shims.h"
 
+static bool chunk_block_has_escrow_custody(const struct chunk_block *blk)
+{
+	static const uint8_t zero[CHUNK_LOCK_ESCROW_ID_SIZE];
+
+	return (blk->cb_flags & CHUNK_BLOCK_LOCKED) &&
+	       memcmp(blk->cb_lock_escrow_id, zero, sizeof(zero)) != 0;
+}
+
 /* Initial allocation: 64 blocks.  Grows by doubling. */
 #define CHUNK_STORE_INIT_BLOCKS 64
 #define CHUNK_STORE_MAX_BLOCKS (1024 * 1024)
@@ -414,6 +422,19 @@ uint32_t chunk_store_rollback_for_client(struct chunk_store *cs,
 		/* An MDS escrow pins the payload and owner association. */
 		if (blk->cb_flags & CHUNK_BLOCK_ESCROW)
 			continue;
+		if (chunk_block_has_escrow_custody(blk)) {
+			/* Return adopted custody to the MDS on lease expiry. */
+			blk->cb_flags |= CHUNK_BLOCK_ESCROW;
+			blk->cb_lock_cohort_id = 0;
+			blk->cb_lock_client_id = UINT32_MAX;
+			blk->cb_lock_owner_id = 0;
+			blk->cb_lock_flags = 0;
+			memset(blk->cb_lock_stateid, 0,
+			       sizeof(blk->cb_lock_stateid));
+			blk->cb_writer_clientid = 0;
+			ntransitioned++;
+			continue;
+		}
 
 		/*
 		 * Lease-driven cleanup: in-flight (PENDING) and
