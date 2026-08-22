@@ -2673,6 +2673,27 @@ START_TEST(test_chunk_error_quarantines_committed_chunk)
 				 .nfs_argop4_u.opchunk_error;
 		a->cea_stateid = cm->chunk_stateid;
 		a->cea_offset = 0;
+		a->cea_count = CHUNK_MAX_CHUNKS_PER_OP + 1;
+		a->cea_error = NFS4ERR_PAYLOAD_NOT_ATOMIC;
+		a->cea_owner = owner;
+	}
+	nfs4_op_chunk_error(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_error.cer_status,
+			 NFS4ERR_INVAL);
+	ck_assert_uint_eq(
+		chunk_store_lookup(g_inode->i_chunk_store, 0)->cb_flags &
+			CHUNK_BLOCK_ERROR,
+		0);
+
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_ERROR);
+	{
+		CHUNK_ERROR4args *a =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_error;
+		a->cea_stateid = cm->chunk_stateid;
+		a->cea_offset = 0;
 		a->cea_count = 1;
 		a->cea_error = NFS4ERR_PAYLOAD_NOT_ATOMIC;
 		a->cea_owner = owner;
