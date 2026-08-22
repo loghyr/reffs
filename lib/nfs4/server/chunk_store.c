@@ -522,7 +522,7 @@ int chunk_store_rollback(struct chunk_store *cs, uint64_t offset,
 			 * Repair-path: COMMITTED rollback requires cg_gen_id
 			 * handling per draft-haynes-nfsv4-flexfiles-v2
 			 * sec-CHUNK_ROLLBACK; not implemented in this slice.
-			 * NOT_NOW_BROWN_COW.
+			 * is not implemented in this slice.
 			 */
 			return -ENOTSUP;
 		default:

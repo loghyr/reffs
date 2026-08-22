@@ -1681,8 +1681,7 @@ END_TEST
  * NFS4ERR_NOENT because PENDING blocks are not visible to readers.
  */
 /*
- * Track 1b Option C (commit 5b20efae8509,
- * design/chunk-collision-validation.md): CHUNK_READ on a PENDING
+ * The chunk-collision policy requires CHUNK_READ on a PENDING
  * block returns NFS4ERR_DELAY -- "in-flight write, retry shortly"
  * -- not NFS4ERR_NOENT.  Pre-Option-C this returned NOENT, which
  * the client read as 'no data' and aborted the RMW; the new code
@@ -2989,13 +2988,11 @@ START_TEST(test_multi_ps_overlap_stripe_increments_displaced)
 
 	/*
 	 * PS-B writes to block 0 with a different owner triple.  Per
-	 * Option C (commit 03d91554a34c, design/chunk-collision-
-	 * validation.md), the chunk-store gate rejects this write with
+	 * collision gate rejects this write with
 	 * NFS4ERR_DELAY: PS-B's owner triple does not match the PENDING
 	 * block PS-A still holds.  PS-B's client is expected to retry
 	 * the whole RMW after PS-A's FINALIZE+COMMIT.  The counter
-	 * cs_chunk_busy_delay (which replaced the observational
-	 * cs_pending_displaced for the post-Option-C call sites) records
+	 * cs_chunk_busy_delay records
 	 * the rejection.
 	 */
 	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL, 0);
@@ -3012,7 +3009,7 @@ START_TEST(test_multi_ps_overlap_stripe_increments_displaced)
 	/*
 	 * cs_chunk_busy_delay must have incremented for the rejected
 	 * second write.  cs_pending_displaced stays at zero -- the
-	 * Option C gate fires BEFORE the older displaced-counting code
+	 * collision gate fires BEFORE the older displaced-counting code
 	 * runs, and the displaced-counting code is dead in the new
 	 * path (it counted a state -- "PENDING block overwritten by a
 	 * different owner" -- that no longer exists, the gate prevents
@@ -3032,7 +3029,7 @@ END_TEST
 /*                                                                     */
 /* Quantifies what DSes actually see during T1b / T2 to answer         */
 /* Hellwig msg 5 (in-place update) + msg 9 (NFS block size).           */
-/* See .claude/design/inv1-ds-instrumentation.md.                      */
+/* Instrumentation tests for chunk-write shape and fragmentation.          */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -3158,8 +3155,7 @@ START_TEST(test_inv1_overwrite_counted)
 	cm_reset_slot(cm, 0);
 
 	/*
-	 * PS-B write to same offset.  Per Option C
-	 * (design/chunk-collision-validation.md), the chunk-store
+	 * PS-B write to same offset.  The chunk-store
 	 * rejects cross-owner overwrite of a PENDING block: PS-B gets
 	 * NFS4ERR_DELAY.  The cs_blocks_overwrite counter is therefore
 	 * NOT incremented (the metadata-recording loop runs only on
@@ -3187,7 +3183,7 @@ START_TEST(test_inv1_overwrite_counted)
 	ck_assert_uint_eq(atomic_load_explicit(&st->cs_blocks_overwrite,
 					       memory_order_relaxed),
 			  0);
-	/* Gate fired -- this is the post-Option-C contention signal. */
+	/* The collision gate fired; this is the contention signal. */
 	ck_assert_uint_eq(atomic_load_explicit(&st->cs_chunk_busy_delay,
 					       memory_order_relaxed),
 			  1);

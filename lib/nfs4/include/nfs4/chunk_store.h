@@ -48,9 +48,7 @@ enum chunk_state {
  * Set by OP_CHUNK_WRITE_REPAIR on every block it touches; persisted
  * via cbd_flags.  Purely informational (operator audit trail for
  * "this block was the result of an EC repair, not a normal write");
- * does not gate any state transition.  See
- * .claude/design/ec-repair.md sec 2 (Option C state-machine
- * choice).
+ * does not gate any state transition.
  */
 #define CHUNK_BLOCK_REPAIR_PROVENANCE 0x2
 /* Set by CHUNK_ERROR until a repair is confirmed. */
@@ -370,9 +368,8 @@ void chunk_store_destroy(struct chunk_store *cs);
  * chunk_store_count_runs -- count contiguous runs of non-EMPTY
  * blocks separated by EMPTY gaps.
  *
- * INV-1 fragmentation measurement (see
- * .claude/design/inv1-ds-instrumentation.md).  A defragmented
- * file is one run; a shared-file workload with interleaved
+ * INV-1 fragmentation measurement.  A defragmented file is one
+ * run; a shared-file workload with interleaved
  * writes from multiple writers produces many more.
  *
  * Caller must hold the owning inode's i_attr_mutex (matches the
@@ -391,8 +388,8 @@ uint64_t chunk_store_count_runs(const struct chunk_store *cs);
  * FINALIZED chunk owned by writer_clientid to EMPTY.  Persists each
  * affected chunk_store to disk.
  *
- * Two-pass implementation per .claude/patterns/rcu-violations.md
- * Pattern 1: collect inode active-refs under rcu_read_lock; drop
+ * Two-pass implementation: collect inode active-refs under
+ * rcu_read_lock; drop
  * the lock; then per-inode lock + chunk_store_rollback_for_client +
  * persist + unlock + drop ref.
  *

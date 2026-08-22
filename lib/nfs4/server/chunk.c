@@ -210,9 +210,8 @@ static nfsstat4 chunk_check_trusted_stateid(const struct compound *compound,
  *
  * Returns NFS4_OK when the caller may proceed.
  *
- * Note: response-size gating against ca_maxresponsesize is a
- * NOT_NOW_BROWN_COW; the array-bound check here caps allocation
- * on the request path, which is the sharper of the two knobs.
+ * Response-size gating against ca_maxresponsesize is separate from
+ * this request-side allocation bound.
  */
 static nfsstat4 chunk_lifecycle_check_bounds(uint32_t chunks_len)
 {
@@ -588,8 +587,7 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 				      NULL;
 
 	/*
-	 * Track 1b chunk-collision gate (Option C, design/chunk-collision-
-	 * validation.md).  Before committing any payload or metadata, scan
+ * Chunk-collision gate.  Before committing any payload or metadata, scan
 	 * the target range for an existing PENDING block owned by a different
 	 * writer.  If we find one, refuse the write with NFS4ERR_DELAY -- the
 	 * client retries the full RMW, picks up the prior writer's COMMITTED
@@ -906,18 +904,18 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		/*
 		 * INV-1 / chunk-collision instrumentation.  cs_pending_
 		 * displaced (cross-writer PENDING overwrite) used to
-		 * bump here, but the Option C gate above (commit
-		 * d8a09448671b) rejects PENDING-from-different-writer
+		 * bump here, but the collision gate above rejects
+		 * PENDING-from-different-writer
 		 * before this loop runs.  cs_chunk_busy_delay is the
-		 * post-Option-C counter that records the same shape of
-		 * contention.  Option C does NOT reject FINALIZED or
+		 * contention counter that records the same shape of
+		 * contention.  The collision gate does NOT reject FINALIZED or
 		 * COMMITTED overwrites from other writers, so a
 		 * non-NULL prev here can be either same-writer or
 		 * other-writer of a durable prior state -- the
 		 * distinction is not made in the current INV-1 axes.
 		 * The cs_pending_displaced wire field stays in probe1's
-		 * response struct for backward compat with deployed
-		 * probe clients; it reports zero in any post-Option-C
+		 * response struct for backward compatibility with deployed
+		 * probe clients; it reports zero after the collision gate
 		 * build (callers should read cs_chunk_busy_delay
 		 * instead).
 		 */
@@ -1067,7 +1065,7 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 	/*
 	 * Determine how many blocks are available.  A block that is
 	 * PENDING (in-flight write) requires special handling for
-	 * cross-writer RMW correctness (Track 1b Option C full):
+	 * cross-writer RMW correctness:
 	 *
 	 *   - PENDING block from a DIFFERENT owner: the prior COMMITTED
 	 *     bytes have already been overwritten on disk by the PENDING
@@ -1224,10 +1222,6 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 		 * launder path.  LOG remains so operators still see the
 		 * disk error and can drive scrub.
 		 *
-		 * Cross-tree ref: /Volumes/Sensitive/linux ffv2-client
-		 * commit 301745e8b0f5 kernel comment cites this bit-rot
-		 * preservation contract as the load-bearing correctness
-		 * property for its wire-integrity ONLY CRC verify claim.
 		 */
 		if (blk->cb_checksum_len > 0 &&
 		    blk->cb_checksum_algorithm == CHECKSUM_ALG_CRC32 &&
@@ -2242,7 +2236,7 @@ uint32_t nfs4_op_chunk_rollback(struct compound *compound)
 	 * Per draft-haynes-nfsv4-flexfiles-v2 fig-chunk-state-machine:
 	 * ROLLBACK admits PENDING -> EMPTY and FINALIZED -> EMPTY.  The
 	 * COMMITTED -> newer-COMMITTED repair path requires cg_gen_id
-	 * handling and is NOT_NOW_BROWN_COW; chunk_store_rollback returns
+	 * handling and is not implemented here; chunk_store_rollback returns
 	 * -ENOTSUP for that case and we surface NFS4ERR_NOTSUPP.
 	 *
 	 * Unlike FINALIZE/COMMIT (which return per-owner status arrays),
@@ -2411,8 +2405,7 @@ uint32_t nfs4_op_chunk_unlock(struct compound *compound)
  * The collection buffer grows in increments outside RCU; the
  * callback under RCU only appends to a pre-sized region and signals
  * "buffer full" to the caller so the caller can grow + retry.  This
- * keeps the RCU read-side critical section blocking-free per
- * .claude/patterns/rcu-violations.md Pattern 1.
+ * keeps the RCU read-side callback non-blocking.
  */
 
 #define CHUNK_ROLLBACK_INITIAL_INODE_CAP 64
@@ -2577,8 +2570,8 @@ uint32_t chunk_rollback_for_client(uint64_t writer_clientid,
  *      requires the trust entry's iomode to be LAYOUTIOMODE4_RW
 	 *      (NFS4ERR_ACCESS for a READ-only entry).
  *
- *   2. Concurrency control.  CHUNK_WRITE has the Track 1b chunk-
- *      collision gate (Option C, lines 393-424 above) that rejects
+ *   2. Concurrency control.  CHUNK_WRITE has a chunk-collision
+ *      gate that rejects
  *      writes landing on a PENDING block owned by a different
  *      writer.  CHUNK_WRITE_REPAIR explicitly bypasses that gate
  *      because the layout-layer (FFV2_DS_FLAGS_REPAIR +
@@ -2586,7 +2579,7 @@ uint32_t chunk_rollback_for_client(uint64_t writer_clientid,
  *      a repair client is the sole authorised writer for the slot
  *      while its repair-flagged layout is in effect.
  *
- *      NOT_NOW_BROWN_COW: tighter concurrency control inside the
+	 *      Tighter concurrency control inside the
  *      repair-write path itself is needed if the MDS ever issues a
  *      repair-flagged layout while a normal writer is mid-PENDING.
  *      The demo cells do not exercise that case (the MDS issues
@@ -2642,8 +2635,7 @@ uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 	uint32_t nchecksums = args->cwra_checksums.cwra_checksums_len;
 
 	/*
-	 * Stateid auth (rules 6/7/8 of .claude/design/ec-repair.md sec
-	 * 4).  Repair MUST use a real layout stateid -- special
+	 * Repair MUST use a real layout stateid -- special
 	 * stateids do not carry authorisation for a repair-write.
 	 */
 	if (stateid4_is_special(&args->cwra_stateid)) {
