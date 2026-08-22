@@ -4004,6 +4004,34 @@ START_TEST(test_chunk_escrow_rejects_stale_epoch)
 }
 END_TEST
 
+START_TEST(test_chunk_escrow_takeover_remains_disabled)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	CHUNK_ESCROW_TAKEOVER4args *args;
+	CHUNK_ESCROW_TAKEOVER4res *res;
+	struct chunk_store *cs;
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+	cm->compound->c_nfs4_client->nc_exchgid_flags =
+		EXCHGID4_FLAG_USE_PNFS_MDS;
+	cm_set_op(cm, 0, OP_CHUNK_ESCROW_TAKEOVER);
+	args = &cm->compound->c_args->argarray.argarray_val[0]
+			.nfs_argop4_u.opchunk_escrow_takeover;
+	args->ceta_expected_prior_epoch = 1;
+	args->ceta_new_epoch = 2;
+	args->ceta_proof_profile = PROOF_PROFILE_HA_AUTHORITY_ED25519;
+	res = &cm->compound->c_res->resarray.resarray_val[0]
+		       .nfs_resop4_u.opchunk_escrow_takeover;
+	nfs4_op_chunk_escrow_takeover(cm->compound);
+	ck_assert_int_eq(res->cetar_status, NFS4ERR_NOTSUPP);
+	cs = g_inode->i_chunk_store;
+	ck_assert_ptr_null(cs);
+
+	cm_free(cm);
+}
+END_TEST
+
 START_TEST(test_chunk_escrow_install_conflict_is_all_or_nothing)
 {
 	static const escrow_id4 escrow = { 0x71 };
@@ -4155,6 +4183,7 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_chunk_escrow_requires_mds_session);
 	tcase_add_test(tc_h, test_chunk_escrow_enumerate_probe);
 	tcase_add_test(tc_h, test_chunk_escrow_rejects_stale_epoch);
+	tcase_add_test(tc_h, test_chunk_escrow_takeover_remains_disabled);
 	tcase_add_test(tc_h,
 		       test_chunk_escrow_install_conflict_is_all_or_nothing);
 	suite_add_tcase(s, tc_h);
