@@ -1453,7 +1453,7 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
  * requested range and persists the layout segments so the cleared
  * state survives an MDS restart.
  *
- * Validation rules (.claude/design/ec-repair.md sec 4):
+ * Validation rules:
  *   1. current FH set                 -> NFS4ERR_NOFILEHANDLE
  *   2. current FH is a regular file   -> NFS4ERR_INVAL
  *   3. cpa_owner.co_client_id not reserved -> NFS4ERR_INVAL
@@ -1468,13 +1468,9 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
  * per-call).  An idempotent retry that clears zero mirrors does
  * not bump the counter.
  *
- * NOT_NOW_BROWN_COW: rigorous cpa_stateid validation (must resolve
- * to a valid OPEN or layout stateid on the inode) is deferred to a
- * follow-up.  The IETF-demo cooperative-client model treats
- * stateid auth as a layout-layer concern enforced by the MDS at
- * LAYOUTGET time; the chunk-state-clearing surface here is
- * controlled by the layout's own clientid match (Open Question 1
- * answer: defence-in-depth TRUST_STATEID hint is out of scope).
+ * The stateid is validated against the trusted stateid table and the
+ * owner client identity before any layout flags are changed.  This
+ * keeps a stale or unrelated repair actor from clearing repair state.
  *
  * NOT_NOW_BROWN_COW: cpa_offset / cpa_count range matching against
  * the layout segments' byte ranges.  Single-segment whole-file
@@ -1482,10 +1478,10 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
  * striped repair lands, this needs the per-segment chunk_size
  * plumbing flagged in Open Question 3.
  *
- * NOT_NOW_BROWN_COW: clientid match between the layout-holder and
- * the calling client (rule 7 in the design doc).  Deferred to the
- * same follow-up as stateid validation; the demo's cooperative
- * single-writer model is unaffected.
+ * Range matching against the CHUNK_ERROR episode and validation that
+ * every affected chunk reached COMMITTED remain follow-up work for
+ * the striped repair implementation.  The prototype's layout model
+ * clears the repair flag at the mirror-set level.
  */
 uint32_t nfs4_op_chunk_repaired(struct compound *compound)
 {
@@ -1510,6 +1506,15 @@ uint32_t nfs4_op_chunk_repaired(struct compound *compound)
 
 	if (chunk_cid_is_reserved(args->cpa_owner.co_client_id)) {
 		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	nfsstat4 stid_err =
+		chunk_check_trusted_stateid(compound, &args->cpa_stateid,
+					    args->cpa_owner.co_client_id, true);
+
+	if (stid_err != NFS4_OK) {
+		*status = stid_err;
 		return 0;
 	}
 

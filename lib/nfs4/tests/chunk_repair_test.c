@@ -1115,8 +1115,8 @@ START_TEST(test_repaired_reserved_client_id_mds)
 END_TEST
 
 /*
- * Inode with no i_layout_segments -> NFS4ERR_INVAL.  The repair was
- * never issued for this file.
+ * Inode with no i_layout_segments and an untrusted stateid fails the
+ * authorization check before the layout lookup.
  */
 START_TEST(test_repaired_no_layout_segments)
 {
@@ -1131,8 +1131,33 @@ START_TEST(test_repaired_no_layout_segments)
 	CHUNK_REPAIRED4res *res = &cm->compound->c_res->resarray.resarray_val[0]
 					   .nfs_resop4_u.opchunk_repair;
 
-	ck_assert_int_eq(res->cpr_status, NFS4ERR_INVAL);
+	ck_assert_int_eq(res->cpr_status, NFS4ERR_BAD_STATEID);
 
+	cm_free(cm);
+}
+END_TEST
+
+/* A repair confirmation must use a stateid trusted for this file. */
+START_TEST(test_repaired_unknown_stateid_rejected)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	stateid4 stid = make_stateid(0xFA);
+
+	cm_set_inode(cm, g_inode);
+	attach_layout_segments(2, FFV2_DS_FLAGS_REPAIR);
+	set_repaired_args(cm, &stid, 0, 0);
+	nfs4_op_chunk_repaired(cm->compound);
+
+	CHUNK_REPAIRED4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					   .nfs_resop4_u.opchunk_repair;
+
+	ck_assert_int_eq(res->cpr_status, NFS4ERR_BAD_STATEID);
+	ck_assert_uint_eq(
+		g_inode->i_layout_segments->lss_segs[0].ls_files[0].ldf_flags &
+			FFV2_DS_FLAGS_REPAIR,
+		FFV2_DS_FLAGS_REPAIR);
+
+	detach_layout_segments();
 	cm_free(cm);
 }
 END_TEST
@@ -1149,6 +1174,8 @@ START_TEST(test_repaired_no_mirror_in_repair)
 	stateid4 stid = make_stateid(0xF6);
 
 	cm_set_inode(cm, g_inode);
+	register_trust(&stid, g_inode->i_ino, 0xDEAD0001, LAYOUTIOMODE4_RW,
+		       future_expire_ns());
 	attach_layout_segments(2, 0);
 
 	uint64_t completed_before =
@@ -1170,6 +1197,7 @@ START_TEST(test_repaired_no_mirror_in_repair)
 	ck_assert_uint_eq(completed_after, completed_before);
 
 	detach_layout_segments();
+	trust_stateid_revoke(&stid);
 	cm_free(cm);
 }
 END_TEST
@@ -1180,6 +1208,8 @@ START_TEST(test_repaired_clears_single_mirror)
 	stateid4 stid = make_stateid(0xF7);
 
 	cm_set_inode(cm, g_inode);
+	register_trust(&stid, g_inode->i_ino, 0xDEAD0001, LAYOUTIOMODE4_RW,
+		       future_expire_ns());
 	attach_layout_segments(2, 0);
 	g_inode->i_layout_segments->lss_segs[0].ls_files[1].ldf_flags =
 		FFV2_DS_FLAGS_REPAIR;
@@ -1207,6 +1237,7 @@ START_TEST(test_repaired_clears_single_mirror)
 	ck_assert_uint_eq(completed_after, completed_before + 1);
 
 	detach_layout_segments();
+	trust_stateid_revoke(&stid);
 	cm_free(cm);
 }
 END_TEST
@@ -1217,6 +1248,8 @@ START_TEST(test_repaired_clears_multiple_mirrors)
 	stateid4 stid = make_stateid(0xF8);
 
 	cm_set_inode(cm, g_inode);
+	register_trust(&stid, g_inode->i_ino, 0xDEAD0001, LAYOUTIOMODE4_RW,
+		       future_expire_ns());
 	attach_layout_segments(3, FFV2_DS_FLAGS_REPAIR);
 
 	uint64_t completed_before =
@@ -1245,6 +1278,7 @@ START_TEST(test_repaired_clears_multiple_mirrors)
 	ck_assert_uint_eq(completed_after, completed_before + 3);
 
 	detach_layout_segments();
+	trust_stateid_revoke(&stid);
 	cm_free(cm);
 }
 END_TEST
@@ -1255,6 +1289,8 @@ START_TEST(test_repaired_idempotent_second_call)
 	stateid4 stid = make_stateid(0xF9);
 
 	cm_set_inode(cm, g_inode);
+	register_trust(&stid, g_inode->i_ino, 0xDEAD0001, LAYOUTIOMODE4_RW,
+		       future_expire_ns());
 	attach_layout_segments(2, FFV2_DS_FLAGS_REPAIR);
 
 	uint64_t completed_start =
@@ -1291,6 +1327,7 @@ START_TEST(test_repaired_idempotent_second_call)
 	ck_assert_uint_eq(completed_after_second, completed_after_first);
 
 	detach_layout_segments();
+	trust_stateid_revoke(&stid);
 	cm_free(cm);
 }
 END_TEST
@@ -1336,6 +1373,7 @@ static Suite *chunk_repair_suite(void)
 	tcase_add_test(tc_f, test_repaired_reserved_client_id_none);
 	tcase_add_test(tc_f, test_repaired_reserved_client_id_mds);
 	tcase_add_test(tc_f, test_repaired_no_layout_segments);
+	tcase_add_test(tc_f, test_repaired_unknown_stateid_rejected);
 	tcase_add_test(tc_f, test_repaired_no_mirror_in_repair);
 	tcase_add_test(tc_f, test_repaired_clears_single_mirror);
 	tcase_add_test(tc_f, test_repaired_clears_multiple_mirrors);
