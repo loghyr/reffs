@@ -1513,10 +1513,10 @@ enum nfs_opnum4 {
 % * across metadata-server incarnations (TAKEOVER).  Op numbers
 % * 92-95 are TBD pending IANA assignment.
 % *
-% * The R5b handlers return NFS4ERR_NOTSUPP; XDR wire skeleton is
-% * live so an on-wire capability probe from a compliant metadata
-% * server observes a "known op returning NOTSUPP" rather than a
-% * decode error.
+% * INSTALL and RELEASE are implemented by the prototype server, and
+% * ENUMERATE supports its maxcount-zero capability probe.  Full
+% * ENUMERATE paging and TAKEOVER proof processing remain follow-up
+% * work; unsupported forms return NFS4ERR_NOTSUPP.
 % */
  OP_CHUNK_ESCROW_INSTALL    = 92,
  OP_CHUNK_ESCROW_RELEASE    = 93,
