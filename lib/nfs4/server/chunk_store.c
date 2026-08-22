@@ -167,15 +167,21 @@ struct chunk_store *chunk_store_get(struct inode *inode, const char *state_dir)
 
 struct chunk_block *chunk_store_lookup(struct chunk_store *cs, uint64_t offset)
 {
-	if (!cs || offset >= cs->cs_nblocks)
-		return NULL;
+	struct chunk_block *blk = chunk_store_lookup_any(cs, offset);
 
-	struct chunk_block *blk = &cs->cs_blocks[offset];
-
-	if (blk->cb_state == CHUNK_STATE_EMPTY)
+	if (!blk || blk->cb_state == CHUNK_STATE_EMPTY)
 		return NULL;
 
 	return blk;
+}
+
+struct chunk_block *chunk_store_lookup_any(struct chunk_store *cs,
+					   uint64_t offset)
+{
+	if (!cs || offset >= cs->cs_nblocks)
+		return NULL;
+
+	return &cs->cs_blocks[offset];
 }
 
 /*

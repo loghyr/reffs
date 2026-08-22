@@ -233,6 +233,15 @@ struct chunk_store *chunk_store_get(struct inode *inode, const char *state_dir);
 struct chunk_block *chunk_store_lookup(struct chunk_store *cs, uint64_t offset);
 
 /*
+ * chunk_store_lookup_any -- return the allocated entry at offset,
+ * including an EMPTY entry carrying a persisted CHUNK_LOCK.  The
+ * ordinary lookup intentionally hides EMPTY entries from data-path
+ * callers; lock management must still see a lock on an unwritten chunk.
+ */
+struct chunk_block *chunk_store_lookup_any(struct chunk_store *cs,
+					   uint64_t offset);
+
+/*
  * chunk_store_write -- record a chunk write at the given block offset.
  * Grows the store if needed.  Stores metadata; caller writes data
  * separately into the data_block.

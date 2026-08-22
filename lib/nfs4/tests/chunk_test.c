@@ -404,6 +404,46 @@ static void cm_reset_slot(struct cm_ctx *cm, unsigned int idx)
 	       sizeof(nfs_resop4));
 }
 
+static void set_chunk_lock_args(struct cm_ctx *cm, uint64_t offset,
+				uint32_t count, uint64_t cohort,
+				uint32_t client, uint32_t owner, uint32_t flags,
+				bool adopt)
+{
+	cm_set_op(cm, 0, OP_CHUNK_LOCK);
+	CHUNK_LOCK4args *args = &cm->compound->c_args->argarray.argarray_val[0]
+					 .nfs_argop4_u.opchunk_lock;
+
+	args->cla_stateid = cm->chunk_stateid;
+	args->cla_offset = offset;
+	args->cla_count = count;
+	args->cla_flags = flags;
+	args->cla_owner = (chunk_owner4){
+		.co_cohort_id = cohort,
+		.co_client_id = client,
+		.co_id = owner,
+	};
+	args->cla_adopt.cla_adopt = adopt;
+}
+
+static void set_chunk_unlock_args(struct cm_ctx *cm, uint64_t offset,
+				  uint32_t count, uint64_t cohort,
+				  uint32_t client, uint32_t owner)
+{
+	cm_set_op(cm, 0, OP_CHUNK_UNLOCK);
+	CHUNK_UNLOCK4args *args =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.opchunk_unlock;
+
+	args->cua_stateid = cm->chunk_stateid;
+	args->cua_offset = offset;
+	args->cua_count = count;
+	args->cua_owner = (chunk_owner4){
+		.co_cohort_id = cohort,
+		.co_client_id = client,
+		.co_id = owner,
+	};
+}
+
 /* ------------------------------------------------------------------ */
 /* Group A: Input validation                                           */
 /* ------------------------------------------------------------------ */
@@ -3392,6 +3432,87 @@ START_TEST(test_chunk_write_still_works_through_dispatch)
 }
 END_TEST
 
+START_TEST(test_chunk_lock_and_unlock_empty_range)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	struct chunk_block *blk;
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+	set_chunk_lock_args(cm, 4, 2, 0x1234, 0xBEEF, 7, 0, false);
+	nfs4_op_chunk_lock(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_lock.clr_status,
+			 NFS4_OK);
+
+	blk = chunk_store_lookup_any(g_inode->i_chunk_store, 4);
+	ck_assert_ptr_nonnull(blk);
+	ck_assert_int_eq(blk->cb_state, CHUNK_STATE_EMPTY);
+	ck_assert_msg(blk->cb_flags & CHUNK_BLOCK_LOCKED,
+		      "empty chunks retain their persisted lock");
+	blk = chunk_store_lookup_any(g_inode->i_chunk_store, 5);
+	ck_assert_ptr_nonnull(blk);
+	ck_assert_msg(blk->cb_flags & CHUNK_BLOCK_LOCKED,
+		      "every chunk in the range is locked");
+
+	cm_reset_slot(cm, 0);
+	set_chunk_unlock_args(cm, 4, 2, 0x1234, 0xBEEF, 7);
+	nfs4_op_chunk_unlock(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_unlock.cur_status,
+			 NFS4_OK);
+	ck_assert_int_eq(
+		chunk_store_lookup_any(g_inode->i_chunk_store, 4)->cb_flags &
+			CHUNK_BLOCK_LOCKED,
+		0);
+
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_chunk_lock_conflict_reports_holder)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+	CHUNK_LOCK4res *res;
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+	set_chunk_lock_args(cm, 2, 1, 0x100, 0xBEEF, 1, 0, false);
+	nfs4_op_chunk_lock(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_lock.clr_status,
+			 NFS4_OK);
+
+	cm_reset_slot(cm, 0);
+	set_chunk_lock_args(cm, 2, 1, 0x200, 0xBEEF, 2, 0, false);
+	nfs4_op_chunk_lock(cm->compound);
+	res = &cm->compound->c_res->resarray.resarray_val[0]
+		       .nfs_resop4_u.opchunk_lock;
+	ck_assert_int_eq(res->clr_status, NFS4ERR_CHUNK_LOCKED);
+	ck_assert_uint_eq(res->CHUNK_LOCK4res_u.clr_owner.co_cohort_id, 0x100);
+	ck_assert_uint_eq(res->CHUNK_LOCK4res_u.clr_owner.co_id, 1);
+
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_chunk_lock_transfer_flags_are_not_supported)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+	set_chunk_lock_args(cm, 0, 1, 0x100, 0xBEEF, 1, CHUNK_LOCK_FLAGS_ADOPT,
+			    true);
+	nfs4_op_chunk_lock(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_lock.clr_status,
+			 NFS4ERR_NOTSUPP);
+
+	cm_free(cm);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
@@ -3490,6 +3611,9 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_named_non_chunk_ops_rejected_on_chunked_file);
 	tcase_add_test(tc_h, test_filehandle_plumbing_allowed_on_chunked_file);
 	tcase_add_test(tc_h, test_chunk_write_still_works_through_dispatch);
+	tcase_add_test(tc_h, test_chunk_lock_and_unlock_empty_range);
+	tcase_add_test(tc_h, test_chunk_lock_conflict_reports_holder);
+	tcase_add_test(tc_h, test_chunk_lock_transfer_flags_are_not_supported);
 	suite_add_tcase(s, tc_h);
 
 	return s;
