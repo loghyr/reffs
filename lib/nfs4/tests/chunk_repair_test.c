@@ -843,23 +843,24 @@ START_TEST(test_repair_bypasses_pending_collision_gate)
 {
 	static char buf[CHUNK_SZ];
 	struct cm_ctx *cm = cm_alloc(1);
-	stateid4 anon;
+	stateid4 stid_writer = make_stateid(0xC4);
 	stateid4 stid_repair = make_stateid(0xC3);
 
-	memset(&anon, 0, sizeof(anon));
 	memset(buf, 0xCC, sizeof(buf));
 	uint32_t crc = crc32(0, (const Bytef *)buf, sizeof(buf));
 
 	cm_set_inode(cm, g_inode);
 
-	/* First writer (anonymous stateid, different owner) lands PENDING. */
+	/* First writer uses a valid stateid and a different owner. */
+	register_trust(&stid_writer, g_inode->i_ino, 0x0BAD0001,
+		       LAYOUTIOMODE4_RW, future_expire_ns());
 	cm_set_op(cm, 0, OP_CHUNK_WRITE);
 
 	CHUNK_WRITE4args *wargs =
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_write;
 
-	wargs->cwa_stateid = anon;
+	wargs->cwa_stateid = stid_writer;
 	wargs->cwa_offset = 0;
 	wargs->cwa_stable = UNSTABLE4;
 	wargs->cwa_chunk_size = CHUNK_SZ;
@@ -933,6 +934,7 @@ START_TEST(test_repair_bypasses_pending_collision_gate)
 
 	free_repair_res(cm);
 	free_repair_args(cm);
+	trust_stateid_revoke(&stid_writer);
 	trust_stateid_revoke(&stid_repair);
 	cm_free(cm);
 }
