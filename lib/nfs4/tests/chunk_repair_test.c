@@ -1374,6 +1374,18 @@ START_TEST(test_repaired_clears_quarantined_committed_chunk)
 			FFV2_DS_FLAGS_REPAIR,
 		0);
 
+	/* The cleared quarantine must survive a server restart. */
+	pthread_mutex_lock(&g_inode->i_attr_mutex);
+	struct chunk_store *old = g_inode->i_chunk_store;
+	g_inode->i_chunk_store = NULL;
+	chunk_store_destroy(old);
+	cs = chunk_store_get(g_inode,
+			     cm->compound->c_server_state->ss_state_dir);
+	ck_assert_ptr_nonnull(cs);
+	ck_assert_uint_eq(
+		chunk_store_lookup(cs, 0)->cb_flags & CHUNK_BLOCK_ERROR, 0);
+	pthread_mutex_unlock(&g_inode->i_attr_mutex);
+
 	detach_layout_segments();
 	trust_stateid_revoke(&stid);
 	cm_free(cm);
