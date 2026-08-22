@@ -3748,6 +3748,18 @@ START_TEST(test_chunk_lock_adopts_escrow)
 	ck_assert_mem_eq(blk->cb_lock_escrow_id, escrow, sizeof(escrow));
 
 	cm_reset_slot(cm, 0);
+	set_chunk_escrow_release_args(cm, epoch.epoch, 10, 1, escrow);
+	nfs4_op_chunk_escrow_release(cm->compound);
+	ck_assert_int_eq(
+		cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opchunk_escrow_release.cerr_status,
+		NFS4ERR_STALE_ESCROW);
+	blk = chunk_store_lookup_any(g_inode->i_chunk_store, 10);
+	ck_assert_int_eq(blk->cb_flags & CHUNK_BLOCK_LOCKED,
+			 CHUNK_BLOCK_LOCKED);
+	ck_assert_int_eq(blk->cb_lock_owner_id, 9);
+
+	cm_reset_slot(cm, 0);
 	set_chunk_unlock_args(cm, 10, 1, 0x200, 0xBEEF, 9);
 	nfs4_op_chunk_unlock(cm->compound);
 	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
