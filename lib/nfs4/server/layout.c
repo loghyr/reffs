@@ -2096,7 +2096,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		/*
 		 * Drive ffm_coding_type from the sb's
 		 * sb_default_coding when set, else fall back to the
-		 * legacy ls_m==0 -> PASSTHROUGH heuristic (step 5).
+		 * legacy ls_m==0 -> PASSTHROUGH heuristic.
 		 * No persistence touch on layout_segment.
 		 */
 		uint32_t coding_type;

@@ -973,7 +973,7 @@ int io_socket_close(int fd, int error)
 	 * could collide with a stale slot ("conn_buffers alias: ...
 	 * slot=N already occupied").
 	 *
-	 * After the fold-in: the bs lives on struct conn_info as
+	 * The bs lives on struct conn_info as
 	 * ci_bs and is freed at the CONN_CLOSING -> CONN_UNUSED
 	 * transition in conn_drain_if_idle_locked, under conn_mutex,
 	 * once all in-flight CQE counters drain.  No work to do here.
@@ -1147,10 +1147,7 @@ int io_conn_check_timeouts(time_t idle_timeout_seconds,
 	 *     io_socket_close() goes through io_conn_unregister(), which
 	 *     transitions the slot to CONN_CLOSING; the bs then drains
 	 *     to free via conn_drain_if_idle_locked() once all in-flight
-	 *     op counters hit zero.  (Pre-fold-in, io_socket_close called
-	 *     a separate io_client_fd_unregister() that walked a parallel
-	 *     conn_buffers[] array; that lifecycle now belongs to
-	 *     conn_info.)
+	 *     op counters hit zero.  The lifecycle is owned by conn_info.
 	 *
 	 * Race note: between the scan and the close, another thread
 	 * could accept a new connection whose fd hashes to the same

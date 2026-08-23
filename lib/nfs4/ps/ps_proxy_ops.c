@@ -2436,8 +2436,7 @@ static int pwb_ensure_capacity(struct ps_write_buffer *buf,
  *
  * Caller MUST hold `buf->pwb_mutex`.  The lock is held across the
  * per-stripe RPCs (LAYOUTGET + CHUNK_READ + CHUNK_WRITE storm) per
- * the design's serialisation argument (Risk #1 in proxy-server-
- * phase4b.md tracks future async pipelining).
+ * the serialization required by the current pipeline implementation.
  *
  * Per-stripe dispatch:
  *   - fully-dirty (pds_partial_mask == NULL): direct
@@ -2456,7 +2455,7 @@ static int pwb_ensure_capacity(struct ps_write_buffer *buf,
  * boot epoch, so two stripes flushing in sequence see the same
  * verifier unless an MDS restart happened between them, in which
  * case the later stripe's verifier is the correct one to keep
- * (Risk #7 in proxy-server-phase4b.md).
+ *
  *
  * Shared by `ps_proxy_pipeline_commit` (the full or
  * range-bound dirty walk at COMMIT time) and
@@ -2902,8 +2901,7 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	 * 4b.6 inline flush completed; the composed verifier (listener
 	 * XOR MDS-if-captured) lets the client detect either a listener
 	 * restart OR an upstream DS reboot between WRITE and COMMIT
-	 * as a mismatch (RFC 8881 S18.32.4 semantics; Risk #3a in
-	 * proxy-server-phase4b.md).
+	 * as a mismatch (RFC 8881 S18.32.4 semantics).
 	 */
 	reply->count = data_len;
 	reply->committed = stable;

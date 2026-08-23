@@ -53,8 +53,7 @@
  * The Darwin build of mds_tls_xprt.c is a stub that returns NULL
  * (see __APPLE__ branch there); every assertion in this suite then
  * fails on a missing CLIENT*.  Skip the entire suite at the source
- * level: main() returns 77 (autotools SKIP) on Darwin, and dreamer
- * runs the real suite.  See feedback_remote_build_dreamer in memory.
+ * level: main() returns 77 (autotools SKIP) on Darwin.
  */
 
 /* ------------------------------------------------------------------ */

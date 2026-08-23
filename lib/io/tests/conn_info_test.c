@@ -709,11 +709,11 @@ END_TEST
 
 /*
  * --------------------------------------------------------------------
- * Buffer-state fold-in tests
+ * Buffer-state lifecycle tests
  * The buffer state lives on struct conn_info and follows the
  * --------------------------------------------------------------------
  *
- * After the fold-in, struct buffer_state lives on struct conn_info as
+ * struct buffer_state lives on struct conn_info as
  * ci_bs and its lifecycle is gated by conn_mutex + CONN_CLOSING.
  * Five tests below cover the post-fix invariants:
  *

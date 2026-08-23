@@ -195,8 +195,8 @@ bool io_buffer_append(struct buffer_state *bs, const char *data, size_t len)
  * io_handler_fini after in-flight operations have drained.
  *
  * The per-fd buffer_state used to be freed here via a sweep of the
- * conn_buffers[] array; after the fold-in, those buffers live on
- * struct conn_info and are freed by io_conn_cleanup() in
+ * conn_buffers[] array; those buffers live on struct conn_info and
+ * are freed by io_conn_cleanup() in
  * lib/io/conn_info.c.  Callers must invoke io_conn_cleanup() BEFORE
  * io_net_state_fini() so any conn_info still holding a bs releases
  * it (otherwise the bs leaks at shutdown).

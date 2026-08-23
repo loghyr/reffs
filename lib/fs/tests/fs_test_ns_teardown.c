@@ -74,9 +74,9 @@
 
 /* ------------------------------------------------------------------ */
 /* ------------------------------------------------------------------ */
-/* Eviction repair helper removed: i_dirent back-pointer now ensures   */
-/* inode_release() nulls rd_inode before call_rcu.  No workaround      */
-/* needed.  See reffs-i-dirent-handoff.md Step 3.                      */
+/* Eviction repair helper removed: the i_dirent back-pointer ensures  */
+/* inode_release() nulls rd_inode before call_rcu, so no workaround   */
+/* is needed.                                                         */
 /* ------------------------------------------------------------------ */
 
 /* ------------------------------------------------------------------ */

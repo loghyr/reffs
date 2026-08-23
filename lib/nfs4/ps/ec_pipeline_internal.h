@@ -44,8 +44,7 @@
  * order / alignment must match exactly.
  */
 /* Mirror of EC_CTX_MAX_MIRRORS in ec_pipeline.c -- field-layout
- * lock-step.  See the comment block above and the chunk-collision-
- * validation design doc for the cwa_guard CAS plumbing rationale. */
+ * lock-step. */
 #define EC_CTX_MAX_MIRRORS 16
 
 struct ec_context {

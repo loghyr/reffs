@@ -2253,12 +2253,11 @@ uint32_t nfs4_op_write(struct compound *compound)
 
 		memset(&wreply, 0, sizeof(wreply));
 		/*
-		 * Phase 4a step 7: proxy WRITE goes through the pipeline
-		 * (buffer-on-WRITE, flush-on-COMMIT) instead of forward_write.
+		 * Proxy WRITE goes through the pipeline (buffer-on-WRITE,
+		 * flush-on-COMMIT) instead of forward_write.
 		 * No fallback to forward_write on this branch -- mixing the
 		 * two would produce two different verifier sources for the
-		 * same client+file, see proxy-server-phase4a.md "RFC
-		 * compliance" + Risk #3a.
+		 * same client and file.
 		 */
 		fret = ps_proxy_pipeline_write(
 			ms, upstream_fh, upstream_fh_len, args->stateid.seqid,
@@ -2575,12 +2574,12 @@ uint32_t nfs4_op_commit(struct compound *compound)
 
 		memset(&creply, 0, sizeof(creply));
 		/*
-		 * Phase 4a step 7: proxy COMMIT flushes the per-listener
-		 * write buffer through the pipeline.  The pipeline path
+			* Proxy COMMIT flushes the per-listener write buffer through
+			* the pipeline.  The pipeline path
 		 * also handles the no-buffered-bytes case (returns the
 		 * listener verifier directly), so no forward_commit
 		 * fallback is needed -- and removing it keeps the
-		 * verifier-source uniform (see Risk #3a in the design).
+			* verifier-source uniform.
 		 */
 		fret = ps_proxy_pipeline_commit(ms, upstream_fh,
 						upstream_fh_len, args->offset,

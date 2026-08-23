@@ -138,8 +138,7 @@ struct reffs_chunk_stats {
 	_Atomic uint64_t cs_writes_8to31; /* 8..31 */
 	_Atomic uint64_t cs_writes_32plus; /* >= 32 */
 	/*
-	 * Track 1b chunk-collision gate (Option C, design/chunk-collision-
-	 * validation.md "Triage: chunk-store sub-stripe atomicity").  A
+	 * Track chunk-collision gate.  A
 	 * CHUNK_WRITE arrived at a block that already holds a PENDING entry
 	 * from a different writer; the server returned NFS4ERR_DELAY rather
 	 * than silently last-write-wins.  Pairs with cs_pending_displaced

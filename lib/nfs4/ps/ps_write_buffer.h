@@ -44,7 +44,7 @@ struct ps_write_buffer; /* opaque to most callers; full def in
  * stripe bitmap and RMW path see a consistent (k, m, shard_size)
  * tuple even if the underlying layout reissues with different
  * parameters mid-buffer (a geometry mismatch at flush time forces
- * a buffer drop + NFS4ERR_STALE; see proxy-server-phase4b.md).
+ * a buffer drop + NFS4ERR_STALE).
  *
  * Field semantics:
  *   pwbg_k          number of data shards per stripe
@@ -295,13 +295,12 @@ size_t ps_write_buffer_dirty_total(struct ps_listener_state *pls);
  * mds_verf[0..PS_WRITE_VERIFIER_SIZE]`.  An upstream MDS/DS reboot
  * between WRITE and COMMIT changes `mds_verf`, the composed
  * verifier changes, and the client sees a mismatch on COMMIT and
- * rewrites -- closing Risk #3a from Phase 4a (silent data loss).
+	 * rewrites when the upstream verifier changes.
  *
  * Composition is XOR (non-cryptographic) because verifier compare
  * is equality and collisions only cause a missed-mismatch, which
  * degrades to "wait for the next COMMIT" (not a correctness
- * violation).  See proxy-server-phase4b.md "Composed write
- * verifier" and Risk #4.
+	 * violation).
  *
  * The buffer's `pwb_mds_verf` / `pwb_mds_verf_set` are mutated
  * under pwb_mutex; the reply paths snapshot those into local

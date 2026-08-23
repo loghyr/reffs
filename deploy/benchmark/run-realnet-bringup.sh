@@ -304,8 +304,8 @@ fi
 EOF
 
 # Launch reffsd PS.  Use nohup-via-env so ASAN_OPTIONS reaches the
-# child env (feedback in the prior session: `nohup ASAN_OPTIONS=...`
-# fails with command-not-found because nohup eats the assignment).
+# child environment.  Put the sanitizer assignments in `env` so
+# `nohup` receives an executable command rather than an assignment.
 ssh "$ADEPT_HOST" bash -s <<EOF
 set -euo pipefail
 LOG=/tmp/ps_realnet_state/reffsd.log

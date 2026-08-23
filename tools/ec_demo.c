@@ -1391,7 +1391,7 @@ static int cmd_bigfile(const char *mds_host, const char *nfs_file,
 
 	/* Open (create if needed) the file for writing.  hint_arg is
 	 * non-NULL when either --stripe-unit-hint or --expected-size-hint
-	 * was passed; the MDS validates per slice-2. */
+	 * was passed; the MDS validates the supplied hints. */
 	ret = mds_file_open(&ms, nfs_file, &mf, hint_arg);
 	if (ret) {
 		fprintf(stderr, "ec_demo: open %s failed: %d\n", nfs_file, ret);

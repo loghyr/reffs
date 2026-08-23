@@ -427,7 +427,7 @@ int ps_listener_stop(uint32_t listener_id)
 	 * ps_write_buffer_table_destroy(), double-destroying the lfht
 	 * + pls_drain_mutex + pls_drain_cv.  Reviewer caught this in
 	 * verdict-1 of 4a.2a; the design's prose said "atomic
-	 * exchange" but exchange does not gate followers.
+	 * exchange" alone does not gate followers.
 	 */
 	expected = PS_LISTENER_RUNNING;
 	if (!atomic_compare_exchange_strong_explicit(

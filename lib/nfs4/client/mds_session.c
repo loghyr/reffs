@@ -630,7 +630,7 @@ int mds_session_send_proxy_progress(
 			proxy_deviceid_decode(a->pa_target_deviceid);
 		/*
 		 * pa_file_fh is the network_file_handle bytes the MDS
-		 * marshalled at slice-6c-y reply-build time.  Decode
+		 * marshalled in the reply.  Decode
 		 * back to (sb_id, ino) so the PS-side OPEN+LAYOUTGET
 		 * has the file identity in hand.
 		 */

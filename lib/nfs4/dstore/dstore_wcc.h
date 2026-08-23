@@ -9,7 +9,8 @@
  *   - Writes that happened without an outstanding write layout (WWWL)
  *   - Backwards-moving timestamps (possible DS reboot)
  *
- * See mds.md "WCC Data and Write Layout Checking" for the full design.
+ * The WCC data and write-layout checks are implemented by the dstore
+ * operation handlers that use this interface.
  */
 
 #ifndef _REFFS_DSTORE_WCC_H

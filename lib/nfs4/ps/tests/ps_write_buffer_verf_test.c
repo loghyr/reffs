@@ -147,7 +147,7 @@ START_TEST(test_listener_verf_change_on_mds_restart)
 	 * Same listener (same boot-gen), two different MDS verifiers
 	 * (V1 then V2 -- simulating an upstream DS reboot between
 	 * captures).  Composed outputs differ, so the client sees a
-	 * verifier mismatch on COMMIT -- closing Risk #3a from 4a.
+	 * verifier mismatch on COMMIT.
 	 */
 	struct reffs_proxy_mds_config cfg = make_cfg(TEST_LISTENER_ID);
 	struct ps_listener_state *pls;

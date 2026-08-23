@@ -272,11 +272,10 @@ struct ps_listener_state {
 	 *                             REFFS_PS_WRITE_BUFFER_MAX
 	 *   pls_close_flush_timeouts_total
 	 *                             reserved -- close-flush timeout
-	 *                             machinery (design Risk #7) is
-	 *                             deferred; counter stays zero
-	 *                             until that lands.
-	 *   pls_rmw_reads_total       Phase 4b.7: CHUNK_READ issued as
-	 *                             a partial-stripe RMW prefix.
+	 *                             machinery is not implemented; the
+	 *                             counter stays zero until it lands.
+	 *   pls_rmw_reads_total       CHUNK_READ issued as a
+	 *                             partial-stripe RMW prefix.
 	 *                             High on non-RMW-heavy workloads
 	 *                             flags unexpected partial-stripe
 	 *                             patterns from the client.

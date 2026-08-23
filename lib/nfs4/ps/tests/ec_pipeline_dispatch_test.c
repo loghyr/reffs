@@ -338,8 +338,7 @@ START_TEST(test_dispatch_remote_mirror_skips_stub)
 END_TEST
 
 /*
- * The load-bearing case from proxy-server-phase5.md
- * `test_shortcircuit_partial`: a layout with 2 mirrors, 1 local +
+ * The load-bearing short-circuit case: a layout with 2 mirrors, 1 local +
  * 1 remote.  Drive both mirrors in a single test; assert the
  * counter advances by exactly 1 (the local one) and that both
  * arms fired (1 stub call + 1 RPC call).  The order here mirrors

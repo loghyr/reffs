@@ -138,8 +138,8 @@ END_TEST
 /*
  * Explicit RS(4,2), runway popped
  * 6 files (k + m == 6 == target).  ls_k must be 4 from the
- * config, NOT 6 from nfiles.  Today's pre-fix code silently
- * set ls_k = nfiles, corrupting the encoding geometry.
+ * config, NOT 6 from nfiles.  Deriving ls_k from nfiles would
+ * corrupt the encoding geometry.
  */
 START_TEST(test_segment_runway_target_drives_k_m)
 {
@@ -187,9 +187,9 @@ END_TEST
 /*
  * default_coding wants k+m=6 but the runway popped only 5.
  * Resolve returns -EAGAIN, which the LAYOUTGET dispatch maps
- * to NFS4ERR_LAYOUTUNAVAILABLE.  Today's pre-fix code silently
- * accepted ls_k=5, ls_m=0 -- this test catches a regression
- * to that broken behaviour.
+ * to NFS4ERR_LAYOUTUNAVAILABLE.  Accepting ls_k=5, ls_m=0 would
+ * silently degrade the configured geometry; this test catches
+ * that regression.
  */
 START_TEST(test_segment_insufficient_dstores)
 {

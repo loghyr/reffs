@@ -219,9 +219,8 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 	 * pointer) and ctx_devs / ctx_conns get reclaimed.  Routing
 	 * direct returns would leak every successful per-mirror
 	 * mds_session_create that ran before the first failure --
-	 * ASAN-visible, and the pre-slice-6 inline-struct shape had the
-	 * same kind of leak with a smaller surface (one inline struct
-	 * per mirror).
+	 * ASAN-visible.  Keeping all cleanup on this path also avoids
+	 * leaking one session for every mirror after the first failure.
 	 */
 	int ret = 0;
 
@@ -1679,11 +1678,10 @@ retry_stripe:
 			 * Otherwise mirror 0's writeverf is the sample
 			 * we keep and we pass NULL for mirrors
 			 * 1..k+m-1 to skip the per-call copy.  One
-			 * verifier per stripe-flush is sufficient:
-			 * monotonic per upstream boot epoch, fed by
-			 * 4b.6's FILE_SYNC4 inline flush path into the
-			 * WRITE-reply composer (Risk #7 in proxy-
-			 * server-phase4b.md).
+			 * verifier per stripe-flush is sufficient: it is
+			 * monotonic per upstream boot epoch and is fed by the
+			 * FILE_SYNC4 inline flush path into the WRITE-reply
+			 * composer.
 			 */
 			ret = ds_chunk_commit(
 				ctx.ctx_ds_sess[i], em->em_fh, em->em_fh_len,
