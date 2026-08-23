@@ -229,7 +229,7 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	 * CHUNK_WRITE failing with NFS4ERR_BAD_STATEID -- the trust-
 	 * stateid revocation signal -- map to -ESTALE so the inner
 	 * retry in ec_chunk_write and the outer retry in
-	 * ec_write_encoding (slice 1.6) can recognise it.  Without this
+	 * ec_write_encoding can recognise it.  Without this
 	 * remap the BAD_STATEID surfaces as -EREMOTEIO, the per-op
 	 * status check below is unreachable, and the retry path is
 	 * effectively dead for the only error mode it was designed
@@ -305,7 +305,7 @@ out:
 }
 
 /* ------------------------------------------------------------------ */
-/* CHUNK_WRITE_REPAIR (ec-repair slice 3)                              */
+/* CHUNK_WRITE_REPAIR                                                    */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -527,7 +527,7 @@ int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 
 	ret = mds_compound_send(&mc, ds);
 	/* Surface CHUNK_READ BAD_STATEID as -ESTALE
-	 * so the slice 1.6 retry path can recognise it.  NFS4ERR_DELAY
+	 * so the retry path can recognise it.  NFS4ERR_DELAY
 	 * is the "in-flight write, retry shortly" signal --
 	 * map to -EAGAIN so the RMW retry can distinguish it from
 	 * fatal -EIO.
@@ -852,7 +852,7 @@ int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		ret = -EIO;
 	} else if (writeverf_out) {
 		/*
-		 * Capture the per-DS writeverf (PS Phase 4b slice 4b.4).
+		 * Capture the per-DS writeverf.
 		 * Folded into the PS composed write verifier so a DS
 		 * reboot between WRITE and COMMIT surfaces to the client
 		 * as a verifier mismatch.

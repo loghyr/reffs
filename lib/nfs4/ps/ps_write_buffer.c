@@ -6,16 +6,15 @@
 #endif
 
 /*
- * Per-listener write buffer table for PS Phase 4a.
+ * Per-listener write buffer table for the proxy server.
  *
  * Each NFSv4 client (open stateid) accumulates WRITE bytes here per
- * upstream FH; ps_proxy_pipeline_commit (4a.2b) flushes the buffer
+ * upstream FH; ps_proxy_pipeline_commit flushes the buffer
  * through ec_write_encoding_with_file when the client COMMITs.
  *
- * The table follows the proxy write-buffer quiesce and Rule 6 lifecycle
- * design.  This file ships the table machinery and
- * the quiesce primitives; the actual flush-on-COMMIT shim lives in
- * ps_proxy_ops.c (Phase 4a step 5, slice 4a.2b).
+ * The table follows the proxy write-buffer quiesce and reference-count
+ * lifecycle.  This file provides the table machinery and quiesce
+ * primitives; the flush-on-COMMIT shim lives in ps_proxy_ops.c.
  */
 
 #include <errno.h>
@@ -647,7 +646,7 @@ int ps_write_buffer_set_geom(struct ps_write_buffer *buf,
 		/*
 		 * Different geometry after the buffer has been touched
 		 * is a fatal mismatch; the caller (pipeline shim in
-		 * slice 4b.2 onward) drops the buffer and replies
+		 * pipeline drops the buffer and replies
 		 * NFS4ERR_STALE so the client rewrites under the new
 		 * geometry.
 		 */
@@ -983,7 +982,7 @@ size_t ps_write_buffer_dirty_total(struct ps_listener_state *pls)
 }
 
 /* ------------------------------------------------------------------ */
-/* Composed write verifier (Phase 4b slice 4b.4)                       */
+/* Composed write verifier                                               */
 /* ------------------------------------------------------------------ */
 
 void ps_compose_write_verf(const struct ps_listener_state *pls,
