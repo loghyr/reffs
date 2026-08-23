@@ -36,7 +36,7 @@ struct fanout_slot {
 	struct dstore_wcc fs_wcc; /* post-op WCC from SETATTR ops */
 	/*
 	 * FANOUT_REVOKE_STATEID per-slot stateid: the trust-stateid
-	 * slice 1 conflict-recall path packs N prior-client stateids
+	 * conflict-recall path packs N prior-client stateids
 	 * x M DSes in one fan-out, each slot carrying the stateid the
 	 * recipient DS should remove from its trust table.  Other
 	 * fanout_op types ignore these fields.

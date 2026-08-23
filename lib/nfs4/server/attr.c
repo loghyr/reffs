@@ -2639,14 +2639,13 @@ static nfsstat4 nattr_from_fattr4(fattr4 *fattr, struct nfsv42_attr *nattr)
 			break;
 		case FATTR4_LAYOUT_HINT:
 			/*
-			 * Slice 2 of the Macklem-hint extension made
-			 * FATTR4_LAYOUT_HINT settable via nattr_is_settable
-			 * and added validation in nattr_to_inode, but the
+			 * FATTR4_LAYOUT_HINT is settable via nattr_is_settable
+			 * and validated in nattr_to_inode, but the
 			 * per-attr decode loop here was missed.  Without
 			 * this case the decode falls through to
 			 * default->NFS4ERR_BADXDR before nattr_to_inode
-			 * ever runs.  Caught by slice-3 end-to-end on
-			 * 2026-06-08.
+			 * ever runs.  Keep the decode case paired with the
+			 * validation path.
 			 */
 			ok = xdr_fattr4_layout_hint(&sptr, &nattr->layout_hint);
 			break;

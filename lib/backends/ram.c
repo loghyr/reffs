@@ -21,13 +21,13 @@
 #include "reffs/super_block.h"
 
 /*
- * RAM dstore reverse index (mirror-lifecycle Slice B'').
+ * RAM dstore reverse index for mirror lifecycle.
  *
  * Per-SB hash table keyed by (ds_id, inum) pairs, lock-free reads via
  * liburcu lfht.  Per-(sb, ds_id) lfht as the design suggests would give
  * O(matching) iter/count, but the cache `ds_instance_count` already
- * makes count O(1) on the probe path; iter is only called by the slice
- * E autopilot which is a cold scan.  One per-SB lfht with composite
+ * makes count O(1) on the probe path; iter is only called by the
+ * cold-scan maintenance path.  One per-SB lfht with composite
  * keys is operationally identical and trivial to manage.
  *
  * The entries are leaf nodes (no embedded refs to outside objects), so

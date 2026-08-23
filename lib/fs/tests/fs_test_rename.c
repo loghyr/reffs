@@ -536,7 +536,7 @@ START_TEST(test_rename_nonexistent_src_enoent)
 END_TEST
 
 /*
- * NOT_NOW_BROWN_COW: rename(x, "/missing/f") where "/missing" does not
+ * rename(x, "/missing/f") where "/missing" does not
  * exist ought to return -ENOENT per POSIX.  However,
  * find_matching_directory_entry() with LAST_COMPONENT_IS_NEW breaks out
  * of the walk early when a non-terminal component is absent, leaving

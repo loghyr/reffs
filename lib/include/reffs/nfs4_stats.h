@@ -123,11 +123,10 @@ struct reffs_chunk_stats {
 	_Atomic uint64_t cs_fences_rotated; /* synthetic uid/gid bumps */
 
 	/*
-	 * INV-1 instrumentation -- partial-stripe write pattern on
+	 * Partial-stripe write instrumentation on
 	 * the DS.  Answers in-place update and block-size questions
 	 * + msg 9 (NFS block size) by quantifying what the DS
-	 * actually sees during T1b (sub-chunk interleave) and T2
-	 * (IOR shared-file through PSes) workloads.  Relaxed
+	 * actually sees during shared-file workloads.  Relaxed
 	 * memory order -- diagnostic counters, not synchronization.
 	 */
 	_Atomic uint64_t cs_blocks_full; /* len == chunk_size */

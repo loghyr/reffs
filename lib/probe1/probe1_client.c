@@ -735,7 +735,7 @@ struct rpc_trans *probe1_client_op_inode_layout_list(uint64_t sb_id,
 	return rt;
 }
 
-/* Slice B: dstore lifecycle ops. */
+/* Dstore lifecycle operations. */
 
 static const char *dstore_state_name(probe_dstore_state1 s)
 {

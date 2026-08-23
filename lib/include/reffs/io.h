@@ -466,7 +466,7 @@ int io_conn_get_peer_cert_fingerprint(int fd, char *out_buf,
 				      size_t out_buf_len);
 
 /*
- * TLS lifecycle for a connection's SSL object (INV-5 / INV-6 fix).
+ * TLS lifecycle for a connection's SSL object.
  *
  * struct conn_info is a stable slot, but ci_ssl is installed by the
  * event-loop thread and freed by the heartbeat thread (io_socket_close

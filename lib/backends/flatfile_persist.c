@@ -161,7 +161,7 @@ static int ff_migration_record_remove(void *ctx, const uint8_t *stateid_other)
 	 * Read the file into memory, drop the matching record, write
 	 * back via a temp file + rename.  File is small (one record per
 	 * in-flight migration; cap << 1 MiB at any realistic load) so a
-	 * full rewrite is acceptable; a future slice can switch to a
+	 * full rewrite is acceptable; a future implementation can switch to a
 	 * tombstone-then-compact scheme if the in-flight count grows.
 	 */
 	struct migration_record_persistent buf;

@@ -322,7 +322,7 @@ static void rocksdb_inode_sync(struct inode *inode)
 		 * the POSIX backend's .layouts file (minus the disk header).
 		 */
 		size_t buf_sz = sizeof(uint32_t); /* count */
-		buf_sz += sizeof(uint64_t); /* lss_gen (slice B') */
+		buf_sz += sizeof(uint64_t); /* lss_gen */
 		for (uint32_t s = 0; s < lss->lss_count; s++) {
 			buf_sz += sizeof(struct layout_segment_disk);
 			buf_sz += lss->lss_segs[s].ls_nfiles *
@@ -335,7 +335,7 @@ static void rocksdb_inode_sync(struct inode *inode)
 			memcpy(p, &lss->lss_count, sizeof(uint32_t));
 			p += sizeof(uint32_t);
 			/*
-			 * lss_gen (slice B') -- snapshot once with relaxed
+			 * lss_gen -- snapshot once with relaxed
 			 * load; the caller holds i_attr_mutex so no concurrent
 			 * mutator is bumping it.
 			 */

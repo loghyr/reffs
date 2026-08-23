@@ -420,7 +420,7 @@ START_TEST(test_registry_default_coding_persisted)
 END_TEST
 
 /*
- * Intent: a sb with no default_coding (legacy / pre-slice entry
+ * Intent: a sb with no default_coding (legacy entry
  * shape) loads as reffs_coding_spec_is_unset() == true.  The test
  * also asserts that the on-disk record version remains unchanged.
  */
@@ -432,8 +432,7 @@ START_TEST(test_registry_default_coding_absent_legacy)
 						      REFFS_STORAGE_RAM, NULL);
 	ck_assert_ptr_nonnull(child);
 	uuid_generate(child->sb_uuid);
-	/* DO NOT call super_block_set_default_coding -- field stays zero,
-	 * exercising the legacy / pre-slice path. */
+	/* Leave default_coding unset to exercise the legacy path. */
 
 	ck_assert_int_eq(super_block_dirent_create(child, NULL,
 						   reffs_life_action_birth),

@@ -368,7 +368,7 @@ void chunk_store_destroy(struct chunk_store *cs);
  * chunk_store_count_runs -- count contiguous runs of non-EMPTY
  * blocks separated by EMPTY gaps.
  *
- * INV-1 fragmentation measurement.  A defragmented file is one
+ * Fragmentation measurement.  A defragmented file is one
  * run; a shared-file workload with interleaved
  * writes from multiple writers produces many more.
  *

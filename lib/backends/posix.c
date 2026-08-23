@@ -219,7 +219,7 @@ static void posix_inode_sync(struct inode *inode)
 					 sizeof(lss->lss_count)) ==
 					   sizeof(lss->lss_count);
 			/*
-			 * lss_gen (slice B') -- snapshot once with relaxed
+			 * lss_gen -- snapshot once with relaxed
 			 * load; we hold the inode's i_attr_mutex via the
 			 * call chain into inode_sync_to_disk so no concurrent
 			 * mutator is bumping it underneath us.

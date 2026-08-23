@@ -152,7 +152,7 @@ static SSL_CTX *build_ssl_ctx(const char *cfg_cert, const char *cfg_key,
 	SSL_CTX_set_session_id_context(ctx, (const unsigned char *)"reffs", 5);
 
 	/*
-	 * Slice plan-1-tls.c (#139): when the operator supplies a CA
+	 * When the operator supplies a CA
 	 * bundle, request and verify the peer's client cert so the
 	 * per-connection peer-cert fingerprint becomes available to
 	 * io_conn_get_peer_cert_fingerprint (used by the MDS

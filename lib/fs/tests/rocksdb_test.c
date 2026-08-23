@@ -298,8 +298,8 @@ START_TEST(test_rocksdb_ldf_flags_roundtrip)
 
 	/*
 	 * Build a 1-segment / 2-mirror layout.  Mirror 0 carries the
-	 * FFV2_DS_FLAGS_REPAIR bit (the per-mirror flag the ec-repair
-	 * slice persists on a half-repaired file); mirror 1 is clean.
+ * FFV2_DS_FLAGS_REPAIR bit (the per-mirror flag persisted on a
+ * half-repaired file); mirror 1 is clean.
 	 * Both must round-trip through RocksDB byte-for-byte so an MDS
 	 * restart does not lose track of a repair in progress.
 	 */
