@@ -1407,7 +1407,7 @@ uint32_t nfs4_op_close(struct compound *compound)
 	/*
 	 * Proxy-SB fast path: forward CLOSE to upstream MDS.  The end
 	 * client's stateid here is the MDS's own open stateid that
-	 * ps_proxy_forward_open returned verbatim in slice 2e-iv-j, so
+	 * ps_proxy_forward_open returned verbatim, so
 	 * no translation is needed.  Special stateids (anonymous /
 	 * current / bypass) are rejected -- the proxy has no local
 	 * open_stateid table to resolve "current", and anonymous /
@@ -1453,12 +1453,12 @@ uint32_t nfs4_op_close(struct compound *compound)
 		      binding->psb_listener_id, compound->c_inode->i_ino);
 
 		/*
-		 * Phase 4a step 6: flush any buffered WRITEs for this
+		 * Flush any buffered WRITEs for this
 		 * (stateid, fh) BEFORE the upstream CLOSE releases the
 		 * open stateid.  Best-effort -- if the flush fails the
 		 * bytes are lost, but the CLOSE still proceeds so the
-		 * upstream stateid does not leak.  TRACE the loss so
-		 * the operator-visible counter (slice 4a.4) catches it.
+		 * upstream stateid does not leak.  TRACE the loss for
+		 * operator visibility.
 		 */
 		int flush_ret = ps_proxy_pipeline_close(
 			ms, upstream_fh, upstream_fh_len,
@@ -1678,7 +1678,7 @@ uint32_t nfs4_op_read(struct compound *compound)
 	 * Proxy-SB fast path: forward READ to upstream MDS without
 	 * consulting the local stateid / access-check machinery.  The
 	 * proxy SB holds no local state for this inode (no OPEN was
-	 * issued against the PS -- that's slice 2e-iv-j), so any
+	 * issued against the PS), so any
 	 * stateid-based checks here would over-reject.  The MDS does
 	 * its own stateid validation on the forwarded compound; if the
 	 * client's stateid is wrong, the MDS returns NFS4ERR_BAD_STATEID
@@ -1741,12 +1741,12 @@ uint32_t nfs4_op_read(struct compound *compound)
 
 		memset(&reply, 0, sizeof(reply));
 		/*
-		 * PS Phase 3: route proxy SB reads through the EC
+		 * Route proxy SB reads through the EC
 		 * pipeline (LAYOUTGET + CHUNK_READ + decode) instead of
 		 * the transparent forward to upstream MDS.  Same
 		 * signature so the call is a 1:1 swap; encoding parameters
 		 * are pinned to RS 4+2 / FFV2 / 4 KiB inside the shim
-		 * for this slice (see proxy-server-phase3.md Risk #1).
+		 * for this implementation.
 		 *
 		 * args->stateid.other is `char[12]` in the generated
 		 * XDR; cast to the uint8_t * the primitive takes (same
@@ -1954,8 +1954,8 @@ out:
  * Initial implementation: always returns a single NFS4_CONTENT_DATA
  * segment (no SEEK_HOLE detection).  Valid DS operation per S3.3.1.
  *
- * NOT_NOW_BROWN_COW: hole detection via SEEK_HOLE/SEEK_DATA on
- * POSIX backends, async io_uring path.
+ * Hole detection via SEEK_HOLE/SEEK_DATA on POSIX backends and an
+ * asynchronous io_uring path are not currently implemented.
  */
 uint32_t nfs4_op_read_plus(struct compound *compound)
 {
@@ -2732,7 +2732,7 @@ out:
  * ALLOCATE -- RFC 7862 S15.1.
  *
  * Preallocate space in a file.  Standalone mode only; MDS fan-out
- * deferred (NOT_NOW_BROWN_COW).
+ * MDS fan-out is not currently implemented.
  */
 uint32_t nfs4_op_allocate(struct compound *compound)
 {
@@ -2841,7 +2841,7 @@ out:
  *
  * Deallocate space in a file.  The file size is not changed
  * (FALLOC_FL_KEEP_SIZE semantics).  Standalone mode only; MDS
- * fan-out deferred (NOT_NOW_BROWN_COW).
+ * MDS fan-out is not currently implemented.
  *
  * For the RAM and POSIX backends without FALLOC_FL_PUNCH_HOLE
  * support, we zero-fill the range instead.  This satisfies the
