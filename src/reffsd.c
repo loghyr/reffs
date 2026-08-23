@@ -110,8 +110,7 @@ static void ps_discovery_sb_alloc_cb(const struct ps_export *ex, void *ctx_)
  *                   false positives we cannot fix.  When [server]
  *                   register_with_rpcbind = true (the default),
  *                   pmap_set() (TIRPC) is an additional source --
- *                   see .claude/design/no-rpcbind.md for the slice
- *                   that lets soak/CI runs opt out via
+ *                   the setting lets soak/CI runs opt out via
  *                   register_with_rpcbind = false.
  * halt_on_error=0 -- continue after the first error so the full run is visible
  *                   in the log rather than stopping at the first finding.
@@ -696,7 +695,7 @@ int main(int argc, char *argv[])
 	 * upstream MDS.  Non-fatal: a create failure (MDS down at
 	 * startup) logs and leaves the listener's session NULL; the
 	 * proxy namespace stays dark until someone drives session
-	 * recovery (NOT_NOW_BROWN_COW) or reffsd is restarted.
+	 * recovery or reffsd is restarted.
 	 *
 	 * Empty address is intentional -- skip quietly, consistent with
 	 * the tolerance the config parser gives to proxy_mds entries
@@ -777,7 +776,7 @@ int main(int argc, char *argv[])
 		 * registration_id: random 16 bytes per PS-process lifetime
 		 * for first-smoke testing.  Persistent registration_id
 		 * (so a PS restart looks like renewal not squat) is a
-		 * NOT_NOW_BROWN_COW for a follow-up slice; today a PS
+		 * deferred until persistent registration is implemented; today a PS
 		 * restart triggers the squat-guard's NFS4ERR_DELAY for
 		 * one lease period, after which it succeeds.
 		 *
@@ -1248,8 +1247,7 @@ int main(int argc, char *argv[])
 
 	/*
 	 * Skip rpcbind registration entirely when [server]
-	 * register_with_rpcbind = false.  See
-	 * .claude/design/no-rpcbind.md: NFSv4 uses well-known port 2049
+	 * register_with_rpcbind = false.  NFSv4 uses well-known port 2049
 	 * (RFC 8881 S1.5) and does not need rpcbind; only NFSv3 MOUNT
 	 * auto-discovery clients do.  The ~22 round-trips here can
 	 * cause readiness-race flakes when rpcbind is slow or

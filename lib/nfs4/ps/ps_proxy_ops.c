@@ -3122,7 +3122,7 @@ int ps_proxy_pipeline_close(struct mds_session *ms, const uint8_t *upstream_fh,
 }
 
 /* ------------------------------------------------------------------ */
-/* Layout passthrough (task #150) -- foundation stubs.                */
+/* Layout passthrough -- foundation stubs.                             */
 /*                                                                    */
 /* The reply_free helpers below are fully wired so the handler hooks  */
 /* in lib/nfs4/server/layout.c can call them on every error path.     */

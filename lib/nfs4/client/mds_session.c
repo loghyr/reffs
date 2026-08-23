@@ -117,9 +117,8 @@ static int mds_exchange_id(struct mds_session *ms)
 	 * and the future MDS-to-DS dstore path (USE_PNFS_MDS --
 	 * required by trust_stateid_ops.c which gates TRUST_STATEID
 	 * acceptance on the flag).  Default zero preserves the
-	 * pre-#140 USE_NON_PNFS behaviour for every existing caller
-	 * of mds_session_create.  Tracked as task #140 reviewer
-	 * follow-up #1.
+	 * historical USE_NON_PNFS behaviour for every existing caller
+	 * of mds_session_create.
 	 */
 	args->eia_flags = ms->ms_exchgid_flags ? ms->ms_exchgid_flags :
 						 EXCHGID4_FLAG_USE_NON_PNFS;
@@ -353,8 +352,7 @@ out:
  * lib/nfs4/dstore/ds_renewal.c).  Promoted from
  * lib/nfs4/ps/ps_state.c::ps_session_is_dead so DS renewal can
  * share it.  PS keeps a thin wrapper for source compatibility;
- * future cleanup may delete that wrapper.  See
- * .claude/design/mds-ds-session-keepalive.md.
+ * future cleanup may delete that wrapper.
  */
 bool mds_session_is_dead(int err, nfsstat4 sr_status)
 {
@@ -1253,7 +1251,7 @@ int mds_session_create_tls(struct mds_session *ms, const char *host,
 		 *
 		 * IPv4-only path today: IPv6 literals contain colons and
 		 * the parser strrchr's the last one; bracketing in
-		 * mds_session_clnt_open is NOT_NOW_BROWN_COW.
+		 * IPv6 bracketing is not handled by this parser yet.
 		 */
 		if (port == 0)
 			return mds_session_create(ms, host);

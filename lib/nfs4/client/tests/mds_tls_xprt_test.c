@@ -2,10 +2,10 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * Slice plan-1-tls.a unit tests for the custom libtirpc CLIENT*
+ * Unit tests for the custom libtirpc CLIENT*
  * over TLS (mds_tls_xprt.c).
  *
- * Scope (per .claude/design/proxy-server-tls.md):
+ * Scope:
  *   - bad-args validation
  *   - successful create + clnt_destroy round-trip with no leaks
  *   - round-trip: client encodes a NULL call, mock server reads it,

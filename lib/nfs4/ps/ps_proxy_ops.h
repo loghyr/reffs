@@ -1034,7 +1034,7 @@ int ps_proxy_forward_readdir(struct mds_session *ms, const uint8_t *upstream_fh,
 void ps_proxy_readdir_reply_free(struct ps_proxy_readdir_reply *reply);
 
 /* ------------------------------------------------------------------ */
-/* Layout passthrough -- task #150 (encoding demos through PS)           */
+/* Layout passthrough (encoding demos through PS)                       */
 /* ------------------------------------------------------------------ */
 /*
  * The PS forwards layout-related ops verbatim to the upstream MDS

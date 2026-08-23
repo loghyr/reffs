@@ -364,7 +364,7 @@ START_TEST(test_alloc_for_export_root_double_bind_rejected)
 END_TEST
 
 /*
- * Regression coverage for task #149: a per-listener LOOKUP from the
+ * Regression coverage for per-listener LOOKUP from the
  * listener root must mount-cross into a child proxy SB allocated by
  * ps_sb_alloc_for_export.  The earlier symptom (NFS4ERR_NOENT on
  * LOOKUP "<sub>" against PS) showed up when the upstream MDS did
