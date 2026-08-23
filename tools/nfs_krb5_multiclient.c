@@ -11,8 +11,7 @@
  * authenticate with their own krb5 identity and run a
  * write/read/CRC exchange, then tears everything down.
  *
- * See .claude/design/krb5-multiclient-test.md.  --help lists the
- * full flag set, including the --external-kdc family.
+ * --help lists the full flag set, including the --external-kdc family.
  *
  * Exit: 0  all workers passed
  *       1  a worker or a setup step failed

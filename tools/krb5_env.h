@@ -8,8 +8,7 @@
  * The embedded provider stands up a private mini-KDC (realm
  * TEST.REFFS) and owns its whole lifecycle -- the self-contained
  * mode.  A future external provider will consume a pre-provisioned
- * KDC (a real AD-joined realm); see the External-KDC mode section of
- * .claude/design/krb5-multiclient-test.md.
+ * KDC (a real AD-joined realm).
  */
 
 #ifndef _REFFS_KRB5_ENV_H

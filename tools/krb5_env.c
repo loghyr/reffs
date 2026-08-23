@@ -11,8 +11,7 @@
  *               realm): a krb5.conf, a service keytab for reffsd, and
  *               a file of client principals + passwords to kinit.
  *
- * See the External-KDC mode section of
- * .claude/design/krb5-multiclient-test.md.
+ * The external-KDC mode uses a pre-provisioned Kerberos realm.
  */
 
 #ifdef HAVE_CONFIG_H
