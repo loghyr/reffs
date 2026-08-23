@@ -90,8 +90,8 @@ struct rs_private {
  *           where g = 2 in GF(2^8) with primitive polynomial 0x1d.
  *           Byte-identical to Linux md's (P, Q), ISA-L's first two
  *           Reed-Solomon rows, and SnapRAID's first two Cauchy rows
- *           (see Slice 7.2 wire-compat findings).  This is the
- *           `Slice S.1` change -- the pre-S.1 rs-vand used
+ *           This is the wire-compatible m=2 mapping; the previous
+ *           implementation used
  *           normalized-Vandermonde bottom rows which are equivalent
  *           MDS coefficients but diverge from the on-the-wire
  *           choices in every other m=2 encoding.
@@ -101,10 +101,9 @@ struct rs_private {
  *           extract the top k x k sub-matrix, invert it, and
  *           left-multiply the whole Vandermonde by the inverse.
  *           The top k rows become the identity; the bottom m rows
- *           become the parity generation matrix that Slice A.1
- *           locked in.  These do not match any external encoding
- *           at m >= 3.  Widening the wire-compat map further is
- *           tracked as follow-up Slice S.2.
+ *           become the parity generation matrix.  These do not match
+ *           any external encoding at m >= 3.  Widening the wire-
+ *           compatibility map remains future work.
  */
 static struct gf_matrix *build_encoding_matrix(int k, int m)
 {

@@ -17,8 +17,8 @@
  * agree with reffs's own rs.c (2^(2^i * j)) or SnapRAID's Cauchy
  * point-choice; needs its own wire enum despite the shared field.
  *
- * The wrapper is portable-C uniformly for now.  Slice 7.3 will
- * re-vendor the SIMD tree behind an AC_CHECK_PROG(NASM) gate.
+ * The wrapper is portable-C uniformly for now.  SIMD acceleration can
+ * be added later behind an AC_CHECK_PROG(NASM) gate.
  * The public API entry points (ec_encode_data, ec_init_tables,
  * gf_gen_rs_matrix, gf_invert_matrix) come from ISA-L's
  * ec_base_aliases.c which routes them to the _base
