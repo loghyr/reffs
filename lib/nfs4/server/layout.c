@@ -94,7 +94,7 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	}
 
 	/*
-	 * Proxy-SB fast path (task #150): forward GETDEVICEINFO to
+	 * Proxy-SB fast path: forward GETDEVICEINFO to
 	 * upstream MDS.  The compound has no PUTFH (deviceids are not
 	 * filehandles), so c_curr_sb is not set when GETDEVICEINFO
 	 * runs.  Detect proxy-ness via the connection's listener_id
@@ -272,8 +272,8 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 
 		memset(&ver, 0, sizeof(ver));
 		/*
-		 * Trust-stateid slice 1.5: when the dstore is tight-coupled
-		 * (slice 1.5 opt-in for NFSv3 dstores known to be reffsd, or
+		 * When the dstore is tight-coupled
+		 * (an opt-in for NFSv3 dstores known to be reffsd, or
 		 * always-true for local dstores), advertise NFSv4.2 in the
 		 * device-version reply.  The client's tight-coupling activator
 		 * at lib/nfs4/client/mds_layout.c:389 requires
@@ -924,7 +924,8 @@ out_v1:
  * Pin the alignment here -- this is the one place that includes
  * both nfsv42_xdr.h and reffs/coding_spec.h, so a future XDR
  * change to FFV2_ENCODING_* gets caught at compile time.
- * Plan-review N2 of .claude/design/per-export-default-coding.md.
+ * Keep these assertions next to the translation so enum drift is
+ * detected at compile time.
  */
 _Static_assert(
 	(int)REFFS_ENCODING_PASSTHROUGH == (int)FFV2_ENCODING_PASSTHROUGH,
@@ -1096,7 +1097,7 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 	 * passes FFV2_ENCODING_PASSTHROUGH -- preserving the old
 	 * "ls_m == 0 -> PASSTHROUGH" behaviour as the legacy path.
 	 *
-	 * NOT_NOW_BROWN_COW: fattr4_layout_hint SETATTR attribute
+	 * The fattr4_layout_hint SETATTR attribute
 	 * (RFC 8881 attribute 63) is the per-file mechanism that
 	 * supersedes the per-export default.  See the design's
 	 * Deferred section.
@@ -1308,8 +1309,7 @@ out_v2:
  *
  * Best-effort: if the fan-out failed (DS unreachable or returned an
  * error), log and proceed -- the layout response has already been built
- * and the client will use anonymous stateids as a fallback.  Clearing
- * ds_tight_coupled on NFS4ERR_NOTSUPP is NOT_NOW_BROWN_COW.
+	 * and the client will use anonymous stateids as a fallback.
  */
 uint32_t nfs4_op_layoutget_trust_resume(struct rpc_trans *rt)
 {
@@ -1329,7 +1329,7 @@ uint32_t nfs4_op_layoutget_trust_resume(struct rpc_trans *rt)
 }
 
 /* ------------------------------------------------------------------ */
-/* LAYOUTGET conflict-recall (trust-stateid slice 1)                   */
+/* LAYOUTGET conflict-recall (trust-stateid)                          */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -1362,7 +1362,7 @@ uint32_t nfs4_op_layoutget_revoke_resume(struct rpc_trans *rt)
 }
 
 /*
- * nfs4_layoutget_check_conflicts - the trust-stateid slice 1 conflict-
+ * nfs4_layoutget_check_conflicts - the trust-stateid conflict-
  * detection step.
  *
  * Walks the inode's stateid table for Layout_Stateids belonging to
@@ -1549,10 +1549,9 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	}
 
 	/*
-	 * Proxy-SB fast path (task #150): forward LAYOUTGET to upstream
+	 * Proxy-SB fast path: forward LAYOUTGET to upstream
 	 * MDS, return the layout body verbatim.  ec_demo then dials the
-	 * upstream DSes directly using the deviceids in the layout.  See
-	 * .claude/design/proxy-server.md.
+	 * upstream DSes directly using the deviceids in the layout.
 	 *
 	 * Foundation stub: ps_proxy_forward_layoutget returns -ENOSYS
 	 * until the deep-copy implementation lands; surface as NOTSUPP
@@ -1727,8 +1726,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		uint32_t target;
 
 		/*
-		 * Per-export default_coding (step 5 of
-		 * .claude/design/per-export-default-coding.md):
+		 * Per-export default_coding:
 		 * if the export has a non-PASSTHROUGH default, target
 		 * = k + m from the spec.  Otherwise the legacy server-
 		 * wide ss_layout_width drives target.  File layouts
@@ -1829,7 +1827,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 
 		if (code_rc == -EAGAIN) {
 			/*
-			 * NOT_NOW_BROWN_COW: the popped FHs are
+		 * If geometry resolution fails, the popped FHs are
 			 * dropped on the floor here -- no in-memory
 			 * layout_segment owns them, the runway has no
 			 * return-to-pool API, and the data server does
@@ -1865,7 +1863,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		 * three per-file SETATTRs happen after the geometry
 		 * check.
 		 *
-		 * NOT_NOW_BROWN_COW: this is three round-trips per file
+		 * This is three round-trips per file
 		 * where two would do.  fence already sends a
 		 * SETATTR(uid, gid) and attribute 90 could ride in the
 		 * same attrmask.  Kept separate here so that a
@@ -1980,7 +1978,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
 	/*
-	 * Trust-stateid slice 1: detect prior-client layout stateids on
+	 * Trust-stateid: detect prior-client layout stateids on
 	 * this inode and revoke them at the DSes synchronously before
 	 * granting the new client's layout.  If a recall + revoke is
 	 * pending, the resume callback re-invokes nfs4_op_layoutget;
@@ -2038,15 +2036,15 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	struct layout_segment *seg = &lss->lss_segs[0];
 
 	/*
-	 * Slice 6c-x.4: during-migration view.  If a migration record
+	 * During-migration view.  If a migration record
 	 * is hashed for this inode, apply its per-instance deltas to
 	 * the base segment to compute the LAYOUTGET-visible view.
 	 * `i_layout_segments` itself is never mutated; the view is a
 	 * transient that lives only for the duration of this op (freed
 	 * by migration_release_view at the end of the build path).
 	 *
-	 * The view-build is always omit-and-replace per slice 6c-x.4
-	 * scope: DRAINING slots are omitted, INCOMING slots inserted.
+	 * The view-build uses omit-and-replace: DRAINING slots are omitted,
+	 * INCOMING slots inserted.
 	 * Keep-and-shadow (INTERPOSED) requires PS-as-DS plumbing not
 	 * present in this slice.
 	 */
@@ -2194,7 +2192,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	 * View is no longer needed -- the body has been encoded.
 	 * Release before the tight-coupling fan-out which keys off the
 	 * BASE segment's per-DS list (the migration record's INCOMING
-	 * DSes get their TRUST_STATEID via the slice 6c-y / 6c-z PS-side
+	 * DSes get their TRUST_STATEID via the PS-side
 	 * path, not via this LAYOUTGET fan-out).  Safe to release a
 	 * zero-initialized view.
 	 */
@@ -2251,8 +2249,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 						compound->c_nfs4_client)
 						->c_id :
 					0;
-			df->df_ts_principal[0] =
-				'\0'; /* NOT_NOW_BROWN_COW: GSS */
+			df->df_ts_principal[0] = '\0';
 
 			uint32_t fi = 0;
 			int setup_ok = 1;
@@ -2688,7 +2685,7 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	}
 
 	/*
-	 * Proxy-SB fast path (task #150): forward LAYOUTRETURN to the
+			 * Proxy-SB fast path: forward LAYOUTRETURN to the
 	 * upstream MDS so it can free the layout state it issued via
 	 * the forwarded LAYOUTGET.  Foundation stub returns -ENOSYS ->
 	 * NOTSUPP; deep-copy implementation lands in the next commit.
@@ -3148,8 +3145,7 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 					ds, ldf->ldf_fh, ldf->ldf_fh_len,
 					w.seqid, (const uint8_t *)w.other,
 					LAYOUTIOMODE4_RW, clientid, expire_sec,
-					expire_nsec,
-					"" /* NOT_NOW_BROWN_COW: GSS */);
+					expire_nsec, "");
 				if (ret != 0)
 					nfailed++;
 
