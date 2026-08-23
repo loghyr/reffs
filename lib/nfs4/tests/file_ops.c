@@ -593,10 +593,9 @@ END_TEST
 /* ------------------------------------------------------------------ */
 
 /*
- * NOT_NOW_BROWN_COW: COPY tests disabled -- data_block_read
- * returns 0 after data_block_write on RAM backend.  The COPY
- * handler works on real NFS mounts (ci-check passes); the
- * issue is specific to the unit test harness.
+ * COPY tests are disabled because data_block_read returns 0 after
+ * data_block_write on the RAM backend.  The COPY handler works on
+ * real NFS mounts; the limitation is specific to this test harness.
  */
 /*
  * Helper: create a second inode with data for COPY source.

@@ -366,9 +366,7 @@ START_TEST(test_destroy_clientid_unknown_is_ok)
 	/*
 	 * Unknown clientid -> NFS4_OK, not NFS4ERR_STALE_CLIENTID.
 	 * The destroy is idempotent: the client is already gone.
-	 * See lib/nfs4/server/session.c nfs4_op_destroy_clientid and
-	 * .claude/patterns/nfs4-protocol.md "DESTROY_CLIENTID
-	 * idempotent semantics" for the rationale.
+	 * See nfs4_op_destroy_clientid for the idempotent semantics.
 	 */
 	COMPOUND4args args = { 0 };
 	COMPOUND4res res = { 0 };
@@ -389,16 +387,14 @@ END_TEST
 START_TEST(test_destroy_clientid_with_session_expires_client)
 {
 	/*
-	 * Lenient teardown (issue #64 follow-up to the probe-session
-	 * reaper): DESTROY_CLIENTID on a client that still has live
+	 * Lenient teardown: DESTROY_CLIENTID on a client that still has live
 	 * sessions returns NFS4_OK and tears the client down -- it
 	 * does NOT return NFS4ERR_CLIENTID_BUSY.  RFC 8881 S18.50.3
 	 * sanctions CLIENTID_BUSY here, but real-world Linux clients
 	 * leak trunking-probe sessions and pay a 10x/1Hz retry tax
 	 * per peer on BUSY; treating the call as "destroy this client
 	 * and everything it owns" matches the net outcome the spec
-	 * sketches without the kernel-retry penalty.  See
-	 * .claude/patterns/nfs4-protocol.md.
+	 * sketches without the kernel-retry penalty.
 	 *
 	 * Drive the handler with a stack compound, then verify the
 	 * session is unhashed (cannot be found via sessionid) and a

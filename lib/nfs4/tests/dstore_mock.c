@@ -129,8 +129,8 @@ static int mock_remove(struct dstore *ds __attribute__((unused)),
  * Trust-stateid hooks: count only.  No mock trust table; tests that
  * need to assert "the prior client's trust entry is gone" use the
  * revoke-call counter instead.  The probe_tight_coupling stub
- * returns 0 so dstore_alloc considers the mock tight-coupled (which
- * the slice 1 path requires before issuing TRUST_STATEID).
+ * returns 0 so dstore_alloc considers the mock tight-coupled before
+ * issuing TRUST_STATEID.
  */
 static int mock_probe_tight_coupling(struct dstore *ds __attribute__((unused)))
 {

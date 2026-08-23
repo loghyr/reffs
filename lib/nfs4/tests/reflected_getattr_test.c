@@ -39,7 +39,8 @@
  *   Tests that verify LAYOUTCOMMIT updates i_size but NOT i_mtime,
  *   and that it returns 0 (sync) in all cases.
  *
- * Design document: .claude/design/reflected-getattr-tests.md
+ * The cases below cover the reflected-GETATTR behavior exercised by
+ * the test fixture.
  */
 
 #ifdef HAVE_CONFIG_H

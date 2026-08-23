@@ -311,7 +311,7 @@ START_TEST(test_multiple_segments)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Slice B' tests: lss_gen counter                                      */
+/* lss_gen counter tests                                                */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_lss_gen_starts_at_zero)
@@ -426,7 +426,7 @@ START_TEST(test_lss_gen_persists_across_inode_sync)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Pending Change 6 step 6: per-segment checksum algorithm              */
+/* Per-segment checksum algorithm                                       */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -526,7 +526,7 @@ START_TEST(test_persist_checksum_algorithm)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* ldf_flags persistence (ec-repair slice 2)                            */
+/* ldf_flags persistence                                                 */
 /* ------------------------------------------------------------------ */
 
 /*

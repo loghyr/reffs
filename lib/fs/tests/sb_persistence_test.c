@@ -296,7 +296,7 @@ END_TEST
 /* ------------------------------------------------------------------ */
 /* Per-export default_coding round-trip                                */
 /*                                                                      */
-/* See .claude/design/per-export-default-coding.md step 4.             */
+/* Verify that the configured coding survives a restart.                 */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -421,10 +421,8 @@ END_TEST
 
 /*
  * Intent: a sb with no default_coding (legacy / pre-slice entry
- * shape) loads as reffs_coding_spec_is_unset() == true.  Also
- * asserts srh_version remains 1 -- the per-export-default-coding
- * slice does NOT bump the on-disk version (per CLAUDE.md
- * no-deployed-storage rule and plan-review W5).
+ * shape) loads as reffs_coding_spec_is_unset() == true.  The test
+ * also asserts that the on-disk record version remains unchanged.
  */
 START_TEST(test_registry_default_coding_absent_legacy)
 {
