@@ -287,8 +287,8 @@ write_ms=\$(( (t1 - t0) / 1000000 ))
 # the drop fails (typically permission), warn via the note column
 # but continue: a stale-cache read timing is better than no read
 # timing at all, and the note column lets the operator discount
-# the read value when relevant.  Matches the design doc's
-# documented "warn once and continue" contract.
+# the read value when relevant.  The harness documents this as a
+# "warn once and continue" condition.
 drop_note=
 if ! echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1; then
     drop_note=drop_caches_failed

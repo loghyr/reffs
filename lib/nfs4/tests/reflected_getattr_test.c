@@ -497,7 +497,7 @@ END_TEST
  * Two successive PUTFH ops each to a different inode: first PUTFH
  * clears the flag; second PUTFH (switching back to A) also clears it.
  *
- * This covers the three-visit case from the design doc:
+ * This covers the three-visit case:
  *   PUTFH(a) GETATTR PUTFH(b) GETATTR PUTFH(a) GETATTR
  * where each switch must clear the flag so each GETATTR gets an
  * independent fan-out decision.
