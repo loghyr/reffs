@@ -56,7 +56,7 @@ int ps_inode_set_upstream_fh(struct inode *inode, const uint8_t *fh,
 		/*
 		 * First assignment under the inode's attr mutex would
 		 * be ideal, but this path is only called from the
-		 * single-writer LOOKUP hook (slice 2e-iv-f) which holds
+		 * single-writer LOOKUP hook which holds
 		 * no races with readers yet: the inode was just
 		 * allocated on behalf of this one compound and has not
 		 * been published anywhere concurrent readers can reach.
@@ -146,7 +146,7 @@ int ps_proxy_lookup_forward_for_inode(
 	/*
 	 * No session -> transient proxy-side unavailability (boot before
 	 * first connect, or renewal thread mid-reconnect).  -ENOTCONN is
-	 * a clean signal for the op handler (slice 2e-iv-g) to translate
+	 * a clean signal for the op handler to translate
 	 * to NFS4ERR_DELAY without having to distinguish session-down
 	 * from generic I/O errors.
 	 */
@@ -240,7 +240,7 @@ int ps_lookup_materialize(struct inode *parent, const char *name,
 	 * This is a best-effort pre-check, not a race-free guard.  Two
 	 * concurrent calls for the same (parent, name) can both observe
 	 * existing==NULL and both proceed to dirent_alloc.  The LOOKUP
-	 * hook in slice 2e-iv-g-ii is the caller's serialization point:
+	 * hook is the caller's serialization point:
 	 * it holds the compound's single-dispatch discipline per parent
 	 * inode, so two compounds racing on the same parent are
 	 * interleaved one-at-a-time at the op-handler layer.  vfs_create
@@ -282,7 +282,7 @@ int ps_lookup_materialize(struct inode *parent, const char *name,
 
 	/*
 	 * Type + mode promotion.  If the caller fetched attrs alongside
-	 * the LOOKUP (slice 2e-iv-h piggyback), use them to set i_mode;
+	 * the LOOKUP piggyback, use them to set i_mode;
 	 * otherwise fall back to S_IFREG | 0644 as the safe default --
 	 * a regular file that is immediately readable without access-
 	 * check failures before the first real GETATTR lands.
