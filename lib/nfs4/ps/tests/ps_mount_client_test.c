@@ -105,7 +105,7 @@ static Suite *ps_mount_client_suite(void)
 	 * and there is no clean ASAN suppression for an unnamed-
 	 * symbol allocation inside the .so.  Re-enable when fixed
 	 * upstream or once we add a .lsan_suppressions file scoped
-	 * to libtirpc.so.  Tracked: GitHub issue #57.
+	 * to libtirpc.so.
 	 */
 	(void)test_fetch_connect_refused;
 	/*
@@ -113,9 +113,9 @@ static Suite *ps_mount_client_suite(void)
 	 * clnttcp_create explicit-port path (port > 0 in
 	 * ps_mount_fetch_exports).  Enabled because the explicit-port
 	 * path does NOT call into libtirpc's pmap_set /
-	 * authunix_create_default leak surface (issue #57 affects only
+	 * authunix_create_default leak surface affects only
 	 * the portmap path).  This is the only test giving make-check
-	 * coverage of the new code path the slice exists to add.
+	 * coverage of the explicit-port connection path.
 	 */
 	tcase_add_test(tc, test_fetch_connect_refused_explicit_port);
 	/*

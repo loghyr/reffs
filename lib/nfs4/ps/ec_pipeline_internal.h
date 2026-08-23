@@ -10,7 +10,7 @@
  * Whitebox surface for ec_pipeline.c.  Tests include this header
  * to drive the per-mirror CHUNK dispatch (ec_chunk_write /
  * ec_chunk_read) directly without standing up a full LAYOUTGET +
- * encoding stack.  The Phase 5 short-circuit dispatch hook lives at
+ * encoding stack.  The short-circuit dispatch hook lives at
  * the very top of those functions; the partial-2-mirrors test
  * needs to exercise the hook with synthetic per-mirror em_local
  * flags, so the test allocates a struct ec_context on the stack
@@ -93,7 +93,7 @@ struct ec_context {
 };
 
 /*
- * Per-mirror CHUNK_WRITE.  Phase 5 short-circuit dispatch lives
+ * Per-mirror CHUNK_WRITE.  Short-circuit dispatch lives
  * at the top of this function (em_local && ctx_pls &&
  * pls_sc_write_fn).  Returns 0 on success, -errno on failure.
  * The dispatch path through pls_sc_write_fn returns whatever the

@@ -13,7 +13,7 @@
 /*
  * Per-proxy-SB upstream binding.
  *
- * Slice 2e-iii-c introduces the data shape.  Slice 2e-iii-d will add
+ * The binding carries the data shape.  The superblock owns and attaches
  * the `void *sb_proxy_binding` field to struct super_block and attach
  * one of these to every proxy SB created by reffsd startup + on-demand
  * re-discovery.  Op handlers then determine "is this a proxy SB?" with
@@ -33,8 +33,8 @@
  *     handlers do not re-walk on every compound.
  *
  * Ownership: the binding is owned by the super_block that references
- * it.  ps_sb_binding_free() is the single release point; slice 2e-iii-d
- * will call it from super_block_release().  Non-proxy SBs carry a
+ * it.  ps_sb_binding_free() is the single release point, called from
+ * super_block_release().  Non-proxy SBs carry a
  * NULL sb_proxy_binding and never invoke the free path.
  *
  * This is the proxy superblock binding used by the forwarding path.

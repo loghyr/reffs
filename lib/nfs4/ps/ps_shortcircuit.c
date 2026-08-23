@@ -75,7 +75,7 @@ static int decode_fh(const uint8_t *fh, uint32_t fh_len, uint64_t *sb_id_out,
  * ref-held on success and MUST be dropped via finish_lookup().
  * super_block_find() is intentionally the unscoped variant -- a
  * co-resident DS sb is owned by the native listener but the
- * Phase 5 short-circuit reaches it from the PS listener thread,
+ * Short-circuit dispatch reaches it from the PS listener thread,
  * so the sb_listener_id will not match.  This is the documented
  * cross-listener access pattern for the DS sb.
  */
@@ -213,8 +213,8 @@ int ps_shortcircuit_write(const uint8_t *fh, uint32_t fh_len,
 	/*
 	 * Lock ordering matches lib/nfs4/server/chunk.c's nfs4_op_chunk_write:
 	 * i_db_rwlock (write) covers both the lazy data_block_alloc and
-	 * the size bookkeeping.  The Phase 5 design mandates "the short
-	 * path must produce a state byte-identical to the RPC path", so
+	 * the size bookkeeping.  The short path must produce state
+	 * byte-identical to the RPC path, so
 	 * we follow the same lock + size-update sequence the DS would
 	 * have run inside its CHUNK_WRITE handler.
 	 */

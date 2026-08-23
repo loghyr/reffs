@@ -113,7 +113,7 @@ int ps_proxy_lookup_forward_for_inode(
  *
  * `parent` MUST be a loaded directory inode on a proxy SB (its SB has
  * sb_proxy_binding != NULL) whose dirent chain is resident; the LOOKUP
- * hook in slice 2e-iv-g-ii runs inode_reconstruct_path_to_root before
+ * lookup processing runs inode_reconstruct_path_to_root before
  * reaching here, so parent->i_dirent is non-NULL by contract.
  *
  * `child_fh` is the upstream MDS FH the caller just obtained.  It is
@@ -121,7 +121,7 @@ int ps_proxy_lookup_forward_for_inode(
  * to the upstream without a fresh LOOKUP round-trip.
  *
  * `attrs` is an optional type + mode hint harvested from the forwarded
- * GETATTR that rides on the same LOOKUP compound (slice 2e-iv-h).  When
+ * GETATTR that rides on the same LOOKUP compound.  When
  * `attrs->have_type` is set, the new inode's mode gets the matching
  * S_IFDIR / S_IFLNK / etc. (and i_nlink starts at 2 for directories).
  * When `attrs->have_mode` is set, the permission bits come from there

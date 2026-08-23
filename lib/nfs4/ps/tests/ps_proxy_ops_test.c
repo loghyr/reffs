@@ -149,7 +149,7 @@ END_TEST
 
 /*
  * LOOKUP-forwarding arg validation.  Live-MDS coverage is deferred
- * to CI integration + slice 2e-iv-e (the op-handler hook).
+ * to CI integration and the op-handler hook.
  */
 START_TEST(test_forward_lookup_null_args)
 {
