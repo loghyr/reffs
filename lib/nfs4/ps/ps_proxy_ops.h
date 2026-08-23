@@ -252,7 +252,7 @@ int ps_proxy_forward_read(struct mds_session *ms, const uint8_t *upstream_fh,
  * Same shape as ps_proxy_forward_read so the call site in
  * nfs4_op_read can swap them out 1:1.
  *
- * Encoding parameters for this slice are pinned to RS 4+2, layout
+ * Encoding parameters for the current prototype are pinned to RS 4+2, layout
  * type LAYOUT4_FLEX_FILES_V2, shard size 4096.  An incoming layout
  * whose shape differs would surface as a decode failure inside
  * ec_pipeline (logged, returns -EINVAL).  Parameter discovery
@@ -463,7 +463,7 @@ struct ps_proxy_write_reply {
  *
  * stateid_seqid + stateid_other make up the stateid4 on the wire.
  * Today the only expected use is with the MDS's own open stateid
- * (from ps_proxy_forward_open in slice 2e-iv-j), which the proxy
+ * (from ps_proxy_forward_open), which the proxy
  * pass-through model means the PS returned to the end client
  * verbatim.  The primitive does no local validation; the MDS
  * checks the stateid on its side.
@@ -471,7 +471,7 @@ struct ps_proxy_write_reply {
  * On any failure `reply` is left zero-initialised and no durable
  * state ran on the upstream.
  *
- * Credential forwarding is wired (slice 2e-iv-c-iii).  COMMIT
+ * Credential forwarding is wired.  COMMIT
  * forwarding is implemented by ps_proxy_forward_commit() below
  * so UNSTABLE4 writes can be flushed by the client.
  *
@@ -491,7 +491,7 @@ int ps_proxy_forward_write(struct mds_session *ms, const uint8_t *upstream_fh,
 			   struct ps_proxy_write_reply *reply);
 
 /*
- * PS Phase 4a: pipeline-driven WRITE through the per-listener
+ * Pipeline-driven WRITE through the per-listener
  * write-buffer table.  The bytes are buffered in PS RAM; the
  * COMMIT-time flush uses ec_write_encoding_with_file.
  *
@@ -504,7 +504,7 @@ int ps_proxy_forward_write(struct mds_session *ms, const uint8_t *upstream_fh,
  * FILE_SYNC4 is documented Phase 4b territory).
  *
  * `creds` is threaded through the per-stripe primitives when the
- * slice 4b.6 inline flush fires (stable != UNSTABLE4); the
+ * inline flush fires (stable != UNSTABLE4); the
  * UNSTABLE4 path defers the upstream call to COMMIT.
  *
  * `stable` (stable_how4 per RFC 8881 S3.1.16):
@@ -576,7 +576,7 @@ int ps_proxy_forward_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 			    struct ps_proxy_commit_reply *reply);
 
 /*
- * PS Phase 4a: pipeline-driven COMMIT.  Flushes the per-listener
+ * Pipeline-driven COMMIT.  Flushes the per-listener
  * write buffer for `upstream_fh` through ec_write_encoding_with_file
  * (encode + per-DS CHUNK_WRITE + FINALIZE + COMMIT).  On success
  * the buffer is dropped from the table; on failure the buffer is
@@ -917,7 +917,7 @@ struct ps_proxy_close_reply {
  *
  * The stateid passed in is the end client's open stateid -- which
  * for a proxy file is the MDS's own stateid from a prior OPEN
- * forward (see slice 2e-iv-j).  No translation is needed.
+ * forward.  No translation is needed.
  *
  * On any failure `reply` is left zero-initialised and no durable
  * state ran on the upstream.
@@ -939,7 +939,7 @@ int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
 			   struct ps_proxy_close_reply *reply);
 
 /*
- * PS Phase 4a: pre-CLOSE buffer flush hook.  Called by the
+ * Pre-CLOSE buffer flush hook.  Called by the
  * nfs4_op_close proxy branch BEFORE ps_proxy_forward_close so any
  * buffered WRITEs land upstream before the open stateid is
  * released.  Best-effort: failure here does NOT abort the CLOSE;
@@ -951,8 +951,7 @@ int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
  * A watchdog-thread close-on-deadline mechanism
  * (REFFS_PS_FLUSH_TIMEOUT_NS) is deferred.  Today the
  * flush blocks for as long as ec_write_encoding_with_file takes.  A
- * future slice will add the per-RPC budget + xprt-fd-close
- * watchdog (design's "Flush timeout interrupt mechanism" subsection).
+ * future work may add a per-RPC budget and xprt-fd-close watchdog.
  *
  * Returns:
  *   0        success (buffer flushed and dropped, or no buffer
