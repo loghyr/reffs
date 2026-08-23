@@ -904,8 +904,7 @@ static void fill_sb_info(probe_sb_info1 *psi, const struct super_block *sb)
 	psi->psi_checksum_algorithm = sb->sb_checksum_algorithm;
 
 	/* Per-export default erasure-coding spec.  Unset (all zero)
-	 * is the legacy fallback sentinel; see
-	 * .claude/design/per-export-default-coding.md step 5. */
+	 * is the legacy fallback sentinel. */
 	psi->psi_default_coding.pcs_encoding_type =
 		(unsigned int)sb->sb_default_coding.cs_encoding_type;
 	psi->psi_default_coding.pcs_k =
@@ -934,12 +933,11 @@ static void fill_sb_info(probe_sb_info1 *psi, const struct super_block *sb)
 		&cs->cs_fences_rotated, memory_order_relaxed);
 
 	/*
-	 * INV-1 partial-stripe write counters
-	 * (.claude/design/inv1-ds-instrumentation.md).  pcs_fragmentation_runs
-	 * stays 0 in this slice -- chunk_store_count_runs() exists and is
+	 * Partial-stripe write counters.  pcs_fragmentation_runs stays 0
+	 * here -- chunk_store_count_runs() exists and is
 	 * unit-tested, but wiring it here would require taking the inode lock
 	 * for every inode in the sb and that needs a per-inode probe op.
-	 * Deferred to a follow-up slice that adds INODE_CHUNK_STATS.
+	 * Deferred until an inode-level statistics operation is available.
 	 */
 	psi->psi_chunk_stats.pcs_blocks_full =
 		atomic_load_explicit(&cs->cs_blocks_full, memory_order_relaxed);
@@ -1285,7 +1283,7 @@ static int probe1_op_sb_get(struct rpc_trans *rt)
 
 /*
  * INODE_LAYOUT_LIST -- read-only enumeration of an inode's mirror set.
- * See .claude/design/mirror-lifecycle.md "Slice A".
+ * The operation returns a consistent metadata snapshot.
  *
  * Resolves (sb_id, inum) -> inode, walks i_layout_segments under the
  * inode's i_attr_mutex to pick a consistent snapshot, copies each
@@ -1399,9 +1397,9 @@ static int probe1_op_inode_layout_list(struct rpc_trans *rt)
 	}
 
 	/*
-	 * lss_gen as of Slice B' -- monotonic counter bumped on every
+	 * lss_gen is a monotonic counter bumped on every
 	 * mutation.  Snapshot under the same i_attr_mutex hold so the
-	 * gen returned matches the mirror snapshot above.  Slices C/D
+	 * generation returned matches the mirror snapshot above.  Callers
 	 * pass the value back as expected_gen for TOCTOU defence; if
 	 * the layout was mutated between this LIST and the follow-up
 	 * ADD/REMOVE, the gen mismatch surfaces as PROBE1ERR_STALE.
@@ -1423,8 +1421,8 @@ static int probe1_op_inode_layout_list(struct rpc_trans *rt)
 }
 
 /*
- * Slice B: dstore lifecycle ops (DSTORE_LIST / DSTORE_DRAIN /
- * DSTORE_UNDRAIN).  See .claude/design/mirror-lifecycle.md "Slice B".
+ * Dstore lifecycle operations (DSTORE_LIST / DSTORE_DRAIN /
+ * DSTORE_UNDRAIN).
  */
 
 #define PROBE1_DSTORE_LIST_MAX 256
@@ -1435,17 +1433,15 @@ static enum probe_dstore_state1 dstore_observable_state(const struct dstore *ds)
 		atomic_load_explicit(&ds->ds_drained, memory_order_acquire);
 
 	/*
-	 * DRAINED (count == 0) and LOST require slice B''/G state that
-	 * isn't wired yet -- collapse those to DRAINING/ALIVE for now;
-	 * later slices flip the bits without changing the wire surface.
+	 * DRAINED (count == 0) and LOST are not represented by the current
+	 * dstore state cache, so collapse those to DRAINING/ALIVE.
 	 */
 	return drained ? PROBE1_DSTORE_DRAINING : PROBE1_DSTORE_ALIVE;
 }
 
 /*
  * PS_LISTENER_LIST handler -- snapshot every registered PS upstream
- * listener's reconnect state.  Closes the "Probe visibility for
- * reconnect state" deferral in .claude/design/ps-reconnect.md.
+ * listener's reconnect state.
  *
  * Per-listener fields surfaced to the wire:
  *   - listener id, upstream host:port (from cached config; the
@@ -1516,8 +1512,7 @@ static int probe1_ps_collect_one(const struct ps_listener_state *pls, void *arg)
 		&pls->pls_reconnect_next_attempt_ns, memory_order_acquire);
 
 	/*
-	 * Observability fields (per
-	 * .claude/design/ps-listener-list-observability.md).  All four
+	 * Observability fields.  All four
 	 * are reads of existing per-listener state; the source-field
 	 * contracts are tested in
 	 * lib/nfs4/ps/tests/ps_listener_list_observability_test.c.
@@ -1638,7 +1633,7 @@ static int probe1_pwbs_collect_one(const struct ps_listener_state *pls,
 		&pls->pls_fbig_rejections_total, memory_order_relaxed);
 
 	/*
-	 * Slice 4b.7 additions: dirty_stripes_total is computed lazily
+	 * dirty_stripes_total is computed lazily
 	 * across the listener's buffer table (cheap; tables are small).
 	 * rmw_reads_total / rmw_read_failures_total are maintained
 	 * relaxed-atomics bumped inside pwb_flush_range_locked.
@@ -1651,7 +1646,7 @@ static int probe1_pwbs_collect_one(const struct ps_listener_state *pls,
 		&pls->pls_rmw_read_failures_total, memory_order_relaxed);
 
 	/*
-	 * Slice 5.5: short-circuit hit count.  Surfaced so benchmarks
+	 * Short-circuit hit count.  Surfaced so benchmarks
 	 * can prove the per-mirror dispatch routed through the local-
 	 * VFS fast path instead of falling back to the RPC fanout.
 	 * Stays zero on hosts that never hit the em_local guard, so a
@@ -1768,9 +1763,9 @@ static int probe1_op_dstore_list(struct rpc_trans *rt)
 		out[i].pdi_state = dstore_observable_state(ds);
 		out[i].pdi_drained = atomic_load_explicit(&ds->ds_drained,
 							  memory_order_acquire);
-		/* pdi_lost wired in slice G */
+		/* pdi_lost is not represented in the current cache. */
 		out[i].pdi_lost = false;
-		/* pdi_instance_count wired in slice B'' (reverse index) */
+		/* The reverse-index count is not cached here. */
 		out[i].pdi_instance_count = 0;
 		out[i].pdi_runway_capacity =
 			ds->ds_runway ? ds->ds_runway->rw_capacity : 0;
@@ -1826,7 +1821,7 @@ static int probe1_op_dstore_undrain(struct rpc_trans *rt)
 }
 
 /*
- * DSTORE_INSTANCE_COUNT (op 36, mirror-lifecycle Slice B'') -- read
+ * DSTORE_INSTANCE_COUNT (op 36) -- read
  * the cached count of (sb, inum) entries indexed against this dstore.
  * O(1) -- consults the ds_instance_count atomic on the dstore.  The
  * authoritative source is the per-SB reverse index; the cache is
@@ -1975,8 +1970,7 @@ static int probe1_op_sb_lint_flavors(struct rpc_trans *rt)
 	SB_LINT_FLAVORS1resok *resok = &res->SB_LINT_FLAVORS1res_u.lfr_resok;
 
 	resok->lfr_warnings = super_block_lint_flavors();
-	/* NOT_NOW_BROWN_COW: collect lint messages into lfr_messages.
-	 * Must not be NULL -- xdr_string calls strlen on it. */
+	/* Keep the string non-NULL: xdr_string calls strlen on it. */
 	resok->lfr_messages = strdup("");
 	return 0;
 }
@@ -2052,11 +2046,10 @@ static int probe1_op_sb_set_client_rules(struct rpc_trans *rt)
  * Read-side counterpart of SB_SET_CLIENT_RULES.  Looks up the sb,
  * copies sb->sb_client_rules out into the wire-form rule list.
  *
- * NOT_NOW_BROWN_COW: gate this op on the [[allowed_ps]] allowlist
+	 * This operation should eventually be gated on the [[allowed_ps]] allowlist
  * (mTLS fingerprint or GSS principal).  Today the probe transport
  * does not surface either to handlers, so the gate is deferred.
- * See .claude/design/proxy-server.md "Export-rule mirror via probe
- * protocol".
+	 * once the probe transport exposes the authenticated identity.
  */
 static int probe1_op_sb_get_client_rules(struct rpc_trans *rt)
 {
@@ -2177,7 +2170,7 @@ static int probe1_op_sb_set_stripe_unit(struct rpc_trans *rt)
 }
 
 /*
- * SB_SET_CHECKSUM_ALGORITHM -- Pending Change 6 step 6.
+ * SB_SET_CHECKSUM_ALGORITHM.
  *
  * Stores a per-SB CHECKSUM_ALG_* policy value used by the MDS when
  * it stamps ffm_checksum_algorithm onto new layout_segments at
@@ -2223,7 +2216,7 @@ static int probe1_op_sb_set_checksum_algorithm(struct rpc_trans *rt)
  * SB_SET_DEFAULT_CODING (op 31) -- per-export erasure-coding
  * policy used by LAYOUTGET dispatch (lib/nfs4/server/layout.c
  * default_coding_resolve_*).  See
- * .claude/design/per-export-default-coding.md step 7.
+ * The setter validates the policy before storing it.
  *
  * Stamps the spec on super_block::sb_default_coding via the
  * existing setter, which validates: encoding_type known, k in
@@ -2233,11 +2226,10 @@ static int probe1_op_sb_set_checksum_algorithm(struct rpc_trans *rt)
  *
  * Adds one cross-validation the setter cannot do without
  * knowing the sb's layout-types: if the sb advertises file
- * layouts (SB_LAYOUT_FILE), only PASSTHROUGH with m == 0 is
- * accepted -- file layouts are single-DS per
- * per-export-dstore.md, an EC spec on a file-layout sb would
- * silently break LAYOUTGET.  See plan-review BLOCKER B3 in
- * the design doc.  This mirrors the existing pattern in
+	 * layouts (SB_LAYOUT_FILE), only PASSTHROUGH with m == 0 is
+	 * accepted -- file layouts are single-DS per export, and an EC
+	 * spec on a file-layout sb would silently break LAYOUTGET.  This
+	 * mirrors the existing pattern in
  * probe1_op_sb_set_dstores (lines around 1897).
  */
 static int probe1_op_sb_set_default_coding(struct rpc_trans *rt)
