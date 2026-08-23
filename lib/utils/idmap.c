@@ -15,7 +15,8 @@
  * Entries are inserted via idmap_cache_uid/gid (from GSS auth)
  * or lazily on cache miss via libnfsidmap / nsswitch fallback.
  *
- * NOT_NOW_BROWN_COW: persistence across restarts, TTL eviction.
+ * Persistence across restarts and TTL eviction are not currently
+ * implemented.
  */
 
 #include <ctype.h>

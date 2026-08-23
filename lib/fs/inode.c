@@ -85,7 +85,7 @@ static void inode_free_rcu(struct rcu_head *rcu)
 	chunk_store_destroy(inode->i_chunk_store);
 
 	/*
-	 * Proxy-SB convention (slice 2e-iv-e): on a SB that carries a
+	 * Proxy-SB convention: on a SB that carries a
 	 * sb_proxy_binding, i_storage_private points at a PS-owned
 	 * ps_inode_proxy_data -- a POD struct with no internal
 	 * allocations, so plain free() is the right release.  This

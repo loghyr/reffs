@@ -1198,7 +1198,7 @@ int gss_ctx_wrap_reply(struct gss_ctx_entry *entry, uint32_t svc, uint32_t seq,
 #endif /* HAVE_GSSAPI_KRB5 */
 
 /*
- * Slice plan-A.i: extract the GSS display name (principal) from
+ * Extract the GSS display name (principal) from
  * an RPCSEC_GSS-authenticated rpc_info.  Lives outside the
  * HAVE_GSSAPI_KRB5 block so callers (compound_alloc) link
  * unconditionally; in non-GSS builds the function returns

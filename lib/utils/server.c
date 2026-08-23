@@ -391,9 +391,7 @@ server_state_init(const char *state_path, int port,
 		goto err_path;
 	}
 
-	/*
-         * NOT_NOW_BROWN_COW: allocate ss_incarnations hash table.
-         */
+	/* The incarnation table is not currently allocated. */
 
 	urcu_ref_init(&ss->ss_ref);
 	server_lifecycle_set(ss, SERVER_BOOTING);
