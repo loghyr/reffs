@@ -11,8 +11,7 @@
 # ASAN/UBSAN errors, bounded RSS / FD growth, and successful recovery
 # (re-mount within 30s) after every restart.
 #
-# Acceptance criteria from .claude/design/proxy-server.md
-# "Systematic testing > Soak testing":
+# Acceptance criteria for the proxy-server soak test:
 #   - Zero `ERROR: AddressSanitizer` lines in PS or MDS log
 #   - Zero `runtime error:` (UBSAN) lines in PS or MDS log
 #   - PS RSS at end <= 2x PS RSS at the 60s mark (under load)
@@ -202,7 +201,7 @@ cd "$PROJECT_ROOT"
 # NFSv4-only soak: rpcbind is not required (the MDS and PS TOML
 # configs both set register_with_rpcbind = false, and NFSv4 uses
 # well-known port 2049 directly per RFC 8881 S1.5).  Removed the
-# historical rpcbind start step -- see .claude/design/no-rpcbind.md.
+# historical rpcbind start step.
 
 # ----------------------------------------------------------------------
 # Fresh dirs + configs

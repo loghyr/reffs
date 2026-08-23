@@ -277,8 +277,7 @@ def test_sb_get_client_rules(client, sb_id):
 
 def test_sb_default_coding(client, sb_id):
     """SB_SET_DEFAULT_CODING + SB_GET_DEFAULT_CODING round-trip,
-    plus the unset / clear-policy sentinel.  See
-    .claude/design/per-export-default-coding.md step 9.
+    plus the unset / clear-policy sentinel.
 
     FFV2_ENCODING_* wire values used here:
         4 = RS_VANDERMONDE
@@ -426,8 +425,7 @@ def main():
     test_sb_set_client_rules(client, sb_id)
     test_sb_get_client_rules(client, sb_id)
 
-    # Phase 3c: Default-coding policy round-trip (step 9 of
-    # .claude/design/per-export-default-coding.md)
+    # Default-coding policy round-trip.
     test_sb_default_coding(client, sb_id)
 
     # Phase 4: Mount

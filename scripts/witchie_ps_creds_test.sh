@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# witchie_ps_creds_test.sh -- FreeBSD validation of slice 2e-iv-c-iii
+# witchie_ps_creds_test.sh -- FreeBSD validation of PS credential
 # (PS forwards end-client AUTH_SYS credentials to upstream MDS).
 #
 # Sets up:

@@ -379,6 +379,6 @@ If you opted out of rocksdb (the default), the RocksDB backend is
 disabled at configure time.  Re-run this script with
 INSTALL_ROCKSDB=1 to enable it.
 
-See CLAUDE.md + .claude/standards.md for the full developer rules.
+See the project contribution documentation for the full developer rules.
 ==================================================================
 EOF

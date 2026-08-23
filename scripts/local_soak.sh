@@ -156,8 +156,7 @@ grace_period          = 5
 workers               = 4
 trace_file            = "$TRACE"
 # NFSv4-only soak; opt out of rpcbind to skip the ~22 startup
-# round-trips that have caused readiness-race flakes (see
-# .claude/design/no-rpcbind.md).
+# round-trips that have caused readiness-race flakes.
 register_with_rpcbind = false
 
 [backend]
@@ -430,7 +429,7 @@ info "=== Local soak: ${DURATION_MIN}m, restart every ${RESTART_MIN}m, ${CLIENTS
 # NFSv4-only soak: rpcbind is not required (the TOML config sets
 # register_with_rpcbind = false, and NFSv4 uses well-known port
 # 2049 directly per RFC 8881 S1.5).  Removed the historical
-# rpcbind start step -- see .claude/design/no-rpcbind.md.
+# rpcbind start step.
 
 sudo mkdir -p "$MOUNT"
 sudo chmod 777 "$MOUNT"

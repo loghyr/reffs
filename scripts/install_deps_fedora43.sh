@@ -225,6 +225,6 @@ reffs build deps installed.  Quick-start:
 CI gate:
     make -f Makefile.reffs ci-check       # ASAN/LSAN clean required
 
-See CLAUDE.md + .claude/standards.md for the full developer rules.
+See the project contribution documentation for the full developer rules.
 ==================================================================
 EOF

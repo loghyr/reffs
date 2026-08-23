@@ -11,8 +11,8 @@
 # and drives the FFv1 layout path -- LAYOUTGET + direct DS I/O via
 # ec_demo -- because the intended target does not proxy inbound I/O.
 #
-# See .claude/design/krb5-ffv1-stress.md for the design rationale
-# and docs/krb5-multiclient-testing.md for QA-facing instructions.
+# See the project test documentation for the design rationale and
+# multi-client testing instructions.
 
 set -euo pipefail
 

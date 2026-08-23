@@ -735,8 +735,7 @@ def sb_get_cmd(client, args):
             ('rollback_invoked', cs.pcs_rollback_invoked),
             ('repair_initiated', cs.pcs_repair_initiated),
             ('fences_rotated', cs.pcs_fences_rotated),
-            # INV-1 partial-stripe write instrumentation
-            # (.claude/design/inv1-ds-instrumentation.md).
+            # Partial-stripe write instrumentation.
             ('blocks_full', getattr(cs, 'pcs_blocks_full', 0)),
             ('blocks_partial', getattr(cs, 'pcs_blocks_partial', 0)),
             ('blocks_first_write', getattr(cs, 'pcs_blocks_first_write', 0)),
@@ -925,7 +924,7 @@ def inode_layout_list_cmd(client, args):
               f"fh={fh_hex}")
 
 
-# Slice B: dstore lifecycle.
+# Dstore lifecycle.
 DSTORE_STATE_NAMES = {
     0: 'ALIVE', 1: 'DRAINING', 2: 'DRAINED', 3: 'LOST', 4: 'DESTROYED',
 }
@@ -934,7 +933,7 @@ DSTORE_STATE_NAMES = {
 def ps_listener_list_cmd(client, args):
     """Snapshot of every registered PS upstream listener: identity,
     reconnect schedule, and observability fields documented in
-    .claude/design/ps-listener-list-observability.md.
+    the PS listener observability contract.
 
     Columns:
       SC       -- short-circuit dispatch installed (pls_sc_write_fn set)
@@ -1445,7 +1444,7 @@ def parse_args():
 
     p_ps_write_buffer_stats = subparsers.add_parser(
         'ps-write-buffer-stats',
-        help='Per-listener PS Phase 4a write-buffer counters')
+        help='Per-listener PS write-buffer counters')
     p_ps_write_buffer_stats.set_defaults(func=ps_write_buffer_stats_cmd)
 
     p_trust_stateid_stats = subparsers.add_parser(

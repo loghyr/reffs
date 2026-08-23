@@ -243,7 +243,7 @@ class Probe1Client(ProtocolClient):
     def sb_set_checksum_algorithm(self, sb_id, algorithm):
         """Set MDS checksum-algorithm policy on a superblock.
 
-        Pending Change 6 step 6.  `algorithm` is a CHECKSUM_ALG_*
+        `algorithm` is a CHECKSUM_ALG_*
         wire constant (0 = NONE = "no policy, use server default";
         1 = CRC32; 2 = CRC32C; 3 = FLETCHER4; 4 = SHA256;
         5 = SHA512; 6 = BLAKE3).  The MDS stamps this onto every
@@ -256,7 +256,7 @@ class Probe1Client(ProtocolClient):
     def sb_set_default_coding(self, sb_id, encoding_type, k, m):
         """Set per-export default erasure-coding policy.
 
-        See .claude/design/per-export-default-coding.md.  The
+        The
         spec drives LAYOUTGET's (ls_k, ls_m, ffm_coding_type) at
         layout-issue time, replacing the legacy "runway count
         IS ls_k, ls_m = 0" heuristic for exports that have a
@@ -303,8 +303,7 @@ class Probe1Client(ProtocolClient):
 
         Returns INODE_LAYOUT_LIST1res with ill_lss_gen and the
         ill_mirrors[] array (each mirror has plm_dstore_id,
-        plm_ds_fh, plm_size, plm_mtime_sec/nsec).  See
-        .claude/design/mirror-lifecycle.md "Slice A".
+        plm_ds_fh, plm_size, plm_mtime_sec/nsec).
         """
         args = INODE_LAYOUT_LIST1args(sb_id, inum)
         return self.proc(PROBEPROC1_INODE_LAYOUT_LIST, args,
@@ -315,8 +314,7 @@ class Probe1Client(ProtocolClient):
         listener id, upstream host:port, whether the upstream MDS
         session is currently open, and the current reconnect schedule
         (backoff seconds + CLOCK_MONOTONIC nanosecond deadline of the
-        next attempt).  Closes the "Probe visibility for reconnect
-        state" deferral in .claude/design/ps-reconnect.md."""
+        next attempt)."""
         return self.proc(PROBEPROC1_PS_LISTENER_LIST,
                          response_type='PS_LISTENER_LIST1res')
 
@@ -326,8 +324,7 @@ class Probe1Client(ProtocolClient):
         delta-tracking lands in 4b), cap-rejections (offset+count
         exceeded write_buffer_max_bytes), close-flush timeouts
         (reserved zero until the timeout mechanism lands), and
-        FBIG rejections (single WRITE > cap).  See
-        .claude/design/proxy-server-phase4a.md "Admin interface"."""
+        FBIG rejections (single WRITE > cap)."""
         return self.proc(PROBEPROC1_PS_WRITE_BUFFER_STATS,
                          response_type='PS_WRITE_BUFFER_STATS1res')
 
@@ -343,13 +340,12 @@ class Probe1Client(ProtocolClient):
         return self.proc(PROBEPROC1_TRUST_STATEID_STATS,
                          response_type='TRUST_STATEID_STATS1res')
 
-    # Slice B: dstore lifecycle.
+    # Dstore lifecycle.
     def dstore_list(self):
         """Operator dashboard for the dstore pool.  Returns
         DSTORE_LIST1res with one probe_dstore_info1 per dstore
         (id, address, path, state, drained, lost, instance_count,
-        runway_capacity).  See .claude/design/mirror-lifecycle.md
-        "Slice B"."""
+        runway_capacity)."""
         return self.proc(PROBEPROC1_DSTORE_LIST,
                          response_type='DSTORE_LIST1res')
 
@@ -371,7 +367,7 @@ class Probe1Client(ProtocolClient):
 
     def dstore_instance_count(self, dstore_id):
         """Read the cached count of (sb, inum) entries indexed against
-        this dstore (mirror-lifecycle Slice B'').  Admin's fast
+        this dstore.  Admin's fast
         'is the drain complete?' query.  Returns
         DSTORE_INSTANCE_COUNT1res; success branch carries dicr_count.
         """
