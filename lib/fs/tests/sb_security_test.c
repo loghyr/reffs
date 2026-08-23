@@ -14,7 +14,7 @@
  * The WRONGSEC enforcement tests (nfs4_check_wrongsec using
  * compound->c_curr_sb->sb_all_flavors) require NFSv4 compound
  * infrastructure and are deferred to CI integration tests.
- * NOT_NOW_BROWN_COW: add compound-level WRONGSEC tests.
+ * Compound-level WRONGSEC tests are covered by the NFSv4 test suite.
  */
 
 #ifdef HAVE_CONFIG_H

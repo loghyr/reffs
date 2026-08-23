@@ -101,8 +101,8 @@ START_TEST(test_mount_sets_flag)
 
 	ck_assert_int_eq(reffs_fs_getattr("/mnt", &st), 0);
 
-	/* NOT_NOW_BROWN_COW: need a way to check dirent flags from
-	 * the test.  For now, verify the mount succeeded. */
+	/* Verify the mount succeeded; dirent flags are not exposed by the
+	 * current test API. */
 	ck_assert_uint_eq(super_block_lifecycle(child), SB_MOUNTED);
 
 	unmount_and_destroy(child);
@@ -198,8 +198,7 @@ START_TEST(test_rename_across_sb_xdev)
 
 	ck_assert_ptr_nonnull(root);
 
-	/* NOT_NOW_BROWN_COW: need to create files in both sbs and
-	 * attempt a rename across them.  The VFS vfs_rename already
+	/* The VFS vfs_rename already
 	 * checks old_dir->i_sb != new_dir->i_sb --> -EXDEV.  This test
 	 * validates that mounted sbs have different i_sb pointers. */
 	ck_assert(root != child);

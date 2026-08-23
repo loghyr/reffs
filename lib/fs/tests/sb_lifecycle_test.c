@@ -2,13 +2,10 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * Phase 1 TDD: Superblock lifecycle state machine tests.
+ * Superblock lifecycle state machine tests.
  *
- * These tests are written BEFORE the implementation.  They define
- * the expected behavior of the state machine and will initially
- * fail.  The implementation makes them pass.
- *
- * See .claude/design/multi-superblock.md for the state diagram.
+ * These tests define the expected state transitions and teardown
+ * behavior of the superblock lifecycle.
  */
 
 #ifdef HAVE_CONFIG_H
