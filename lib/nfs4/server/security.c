@@ -36,7 +36,7 @@
 
 /*
  * Returns true if `op` is a namespace-discovery op that bypasses
- * export-rule filtering for a registered Proxy Server (slice 6b-ii).
+ * export-rule filtering for a registered Proxy Server.
  *
  * Discovery ops let a registered PS walk the MDS namespace to
  * resolve client-driven LOOKUP / GETFH paths into FHs the PS can
@@ -219,15 +219,14 @@ nfsstat4 nfs4_check_wrongsec(struct compound *compound)
 			.argop;
 
 	/*
-	 * Slice 6b-ii: registered Proxy Server bypass.  A client whose
-	 * PROXY_REGISTRATION succeeded (slice 6b-i) gets nc_is_registered_ps
+	 * Registered Proxy Server bypass.  A client whose
+	 * PROXY_REGISTRATION succeeded gets nc_is_registered_ps
 	 * set; on namespace-discovery ops only, we skip both the
 	 * client-rule peer match and the flavor check, granting the PS
 	 * the narrow privilege it needs to walk the MDS namespace.
 	 *
 	 * Data-access ops (OPEN, READ, etc.) still hit the normal path.
-	 * The forwarded-credentials story for those ops is unchanged --
-	 * see proxy-server.md "Privilege model".
+	 * Forwarded credentials still govern those operations.
 	 *
 	 * Audit at TRACE: every bypassed compound emits one line so an
 	 * operator with the trace category enabled can review the
@@ -403,9 +402,9 @@ fill_gss:
  * Called from mutating ops (WRITE, CREATE, REMOVE, RENAME, SETATTR,
  * LINK, etc.) when the current filehandle belongs to a per-rule sb.
  *
- * NOT_NOW_BROWN_COW: wire into every write op handler.  The function
- * and matching logic are ready; the call sites are deferred to keep
- * this step focused on the security enforcement framework.
+ * The function is available to mutating operation handlers; callers
+ * that enforce per-client read-only exports must invoke it before
+ * changing file state.
  */
 nfsstat4 nfs4_check_rofs(struct compound *compound)
 {

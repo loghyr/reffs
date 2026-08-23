@@ -255,11 +255,9 @@ void trust_stateid_renewal_scan(uint32_t lease_sec)
 		 * one scan interval -- a briefly stale entry that gets one
 		 * extra renewal is harmless.
 		 *
-		 * NOT_NOW_BROWN_COW: in the multi-machine (MDS != DS) case,
-		 * renewal should be driven by the MDS re-issuing TRUST_STATEID
-		 * before expiry (design/trust-stateid.md Step 2.8).  This
-		 * DS-side extension is correct only for combined mode where
-		 * the MDS and DS share a process.
+		 * In a multi-machine deployment the MDS should re-issue
+		 * TRUST_STATEID before expiry.  This DS-side extension is
+		 * intended for combined mode where the MDS and DS share a process.
 		 */
 		uint64_t new_exp = now + new_lifetime_ns;
 		atomic_store_explicit(&te->te_expire_ns, new_exp,
@@ -481,7 +479,7 @@ int trust_stateid_register_fh(const stateid4 *stateid, uint64_t sb,
 			atomic_store_explicit(&te->te_flags, TRUST_ACTIVE,
 					      memory_order_release);
 			/*
-			 * NOT_NOW_BROWN_COW: te_iomode is a plain field
+			 * te_iomode is a plain field
 			 * updated here while the entry is live in the
 			 * hash table.  If CHUNK_WRITE ever enforces
 			 * read-only constraints via te_iomode, convert

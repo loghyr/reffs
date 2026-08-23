@@ -70,8 +70,8 @@
  * control in the deployment (GSS machine principal, TLS client cert,
  * or an isolated control-session network).
  *
- * NOT_NOW_BROWN_COW: local metadata-server allowlist, mirroring
- * [[allowed_ps]] for proxy-server registration.
+ * Deployments that need stronger separation can additionally restrict
+ * this session by GSS principal, TLS client certificate, or network.
  *
  * Note also that the flag reuses an RFC 8881 S13.1 role-*request*
  * bit, whose RFC meaning is "I want to use you as my metadata
