@@ -943,7 +943,7 @@ END_TEST
  * memory flag-set check in test_repair_single_block_empty +
  * test_repair_multi_block exercises the same cb_flags path that
  * the persist code copies; full reload coverage is additive, not
- * load-bearing for the Slice 1 contract.
+ * part of the repair contract.
  */
 
 /* ------------------------------------------------------------------ */

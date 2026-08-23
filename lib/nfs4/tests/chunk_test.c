@@ -831,7 +831,7 @@ START_TEST(test_chunk_write_valid_crc)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Pending Change 6 step 8: server-side algorithm enforcement          */
+/* Server-side algorithm enforcement                                    */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -3023,11 +3023,9 @@ START_TEST(test_multi_ps_overlap_stripe_increments_displaced)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Group H: INV-1 partial-stripe write instrumentation                 */
+/* Partial-stripe write instrumentation                                 */
 /*                                                                     */
-/* Quantifies what DSes actually see during T1b / T2 to answer         */
-/* Hellwig msg 5 (in-place update) + msg 9 (NFS block size).           */
-/* Instrumentation tests for chunk-write shape and fragmentation.          */
+/* Quantifies the block and fragmentation shape observed by data servers. */
 /* ------------------------------------------------------------------ */
 
 /*
