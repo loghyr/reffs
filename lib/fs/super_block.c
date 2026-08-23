@@ -553,7 +553,7 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 	 * sb_uuid is NOT generated here.  Callers are responsible:
 	 * - New sbs: uuid_generate(sb->sb_uuid) after alloc
 	 * - Loaded sbs: uuid_copy(sb->sb_uuid, persisted) after alloc
-	 * This ensures UUIDs are stable across restarts (reviewer rule 8).
+	 * This ensures UUIDs are stable across restarts.
 	 */
 
 	sb->sb_bytes_max = SIZE_MAX;
@@ -793,8 +793,7 @@ int super_block_destroy(struct super_block *sb)
 		return -EINVAL;
 
 	/*
-	 * NOT_NOW_BROWN_COW: check for active open files.
-	 * Return -EBUSY if any stateid references this sb.
+	 * Open-file stateid references are not checked by this prototype.
 	 */
 
 	sb->sb_lifecycle = SB_DESTROYED;
@@ -900,7 +899,7 @@ void super_block_set_client_rules(struct super_block *sb,
 /*
  * Shim kept for SB_SET_FLAVORS probe op compatibility.
  * Synthesizes a single catch-all "*" rule.
- * NOT_NOW_BROWN_COW: remove after SB_SET_CLIENT_RULES is the only path.
+ * Retained for compatibility with the legacy SB_SET_FLAVORS probe op.
  */
 void super_block_set_flavors(struct super_block *sb,
 			     const enum reffs_auth_flavor *flavors,
