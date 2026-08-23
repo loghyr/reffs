@@ -71,7 +71,7 @@ START_TEST(test_unmapped_default_eio)
 {
 	/*
 	 * NFS4ERR_STALE is not on the explicit map; every unmapped
-	 * status must fall through to -EIO.  If a future slice adds
+	 * status must fall through to -EIO.  If a future change adds
 	 * STALE to the table, replace this assertion (don't drop
 	 * the unmapped-default coverage).
 	 */

@@ -6,8 +6,8 @@
 #endif
 
 /*
- * Unit tests for ec_layout_validate_checksums -- Pending Change 6
- * step 7 client-side supported-set check.
+ * Unit tests for ec_layout_validate_checksums and the client-side
+ * supported-set check.
  *
  * The decode-path call site in mds_layout_get needs a live MDS
  * session to exercise end-to-end; these tests cover the policy

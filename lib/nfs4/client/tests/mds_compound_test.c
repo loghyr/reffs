@@ -196,7 +196,7 @@ START_TEST(test_result_accessor_null)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Slice 6c-z: PS-side senders + step driver -- input validation       */
+/* PS-side senders and input validation                                */
 /* ------------------------------------------------------------------ */
 
 /*

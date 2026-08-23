@@ -9,14 +9,14 @@
  * The PS-MDS session (lib/nfs4/client/mds_session.c) uses the
  * libtirpc CLIENT API (clnt_call / cl_auth / clnt_destroy) for
  * every wire op (EXCHANGE_ID, CREATE_SESSION, SEQUENCE,
- * PROXY_REGISTRATION, PROXY_*).  Slice plan-1-tls.b will swap
+ * PROXY_REGISTRATION, PROXY_*).  The session-open path swaps
  * mds_session_clnt_open's plain-TCP path to call
  * mds_tls_xprt_create when the [[proxy_mds]] config carries TLS
  * cert paths; everything above clnt_call stays unchanged.
  *
- * Out of scope for slice plan-1-tls.a:
- *   - mds_session integration (1-tls.b)
- *   - [[proxy_mds]] tls_cert / tls_key / tls_ca config (1-tls.b)
+ * The transport helper does not own:
+ *   - mds_session integration
+ *   - [[proxy_mds]] TLS configuration
  *   - mini-CA fixture + end-to-end smoke (1-tls.c)
  *
  * The XPRT owns the SSL* and the underlying fd: clnt_destroy

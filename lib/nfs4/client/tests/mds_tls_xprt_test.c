@@ -307,7 +307,7 @@ START_TEST(test_initial_err_state_is_success)
 	 * tls_rpc_send -> tls_rpc_recv -> decode) cannot run
 	 * against the in-memory BIO fixture here -- there is no
 	 * second thread driving the server side, so tls_rpc_recv
-	 * would block forever.  Slice plan-1-tls.c carries the
+	 * would block forever.  A live integration test can carry the
 	 * real round-trip via the docker compose mini-CA stack
 	 * where a live MDS thread answers.
 	 *

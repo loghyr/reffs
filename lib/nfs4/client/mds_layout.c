@@ -61,7 +61,7 @@ static uint32_t parse_owner_id(const char *str, uint32_t len)
 }
 
 /*
- * Pending Change 6 step 7: enumerate which CHECKSUM_ALG_* values this
+ * Enumerate which CHECKSUM_ALG_* values this
  * client knows how to compute end-to-end.
  *
  * Today only CRC32 has a working dispatcher
@@ -281,7 +281,7 @@ int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 		xdr_free((xdrproc_t)xdr_ffv2_layout4, (caddr_t)&ffl);
 
 		/*
-		 * Pending Change 6 step 7: validate every mirror's
+		 * Validate every mirror's
 		 * checksum algorithm against the client's supported set.
 		 * Cleaning up internally keeps the caller's contract
 		 * simple: a non-zero return from mds_layout_get always
@@ -540,7 +540,7 @@ int mds_getdeviceinfo(struct mds_session *ms, const deviceid4 devid,
  * FFV2_DS_FLAGS_REPAIR on every flagged mirror covered by the
  * range.  Wire-shape mirrors mds_layout_return (same compound
  * structure; the layout-type-specific body of LAYOUTRETURN does
- * not apply here).  ec-repair slice 3.
+ * not apply here).
  */
 int mds_chunk_repaired(struct mds_session *ms, struct mds_file *mf,
 		       const stateid4 *stateid, uint64_t offset, uint32_t count,
