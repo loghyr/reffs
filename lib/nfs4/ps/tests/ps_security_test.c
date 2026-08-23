@@ -6,8 +6,7 @@
 /*
  * Unit coverage for ps_proxy_compound_is_gss -- the gate that
  * refuses RPCSEC_GSS-authed compounds on the proxy fast-path
- * until full RPCSEC_GSSv3 forwarding is implemented (see
- * proxy-server.md Action Item 3).
+ * until full RPCSEC_GSSv3 forwarding is implemented.
  *
  * The helper is small (one field comparison + NULL guards) and
  * the entire failure mode that surfaces it on the wire is the

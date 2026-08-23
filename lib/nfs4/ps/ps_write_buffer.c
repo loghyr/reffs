@@ -296,8 +296,7 @@ void ps_write_buffer_table_destroy(struct ps_listener_state *pls)
 			node, struct ps_write_buffer, pwb_ht_node);
 
 		/*
-		 * Advance BEFORE put per patterns/rcu-violations.md
-		 * Pattern 7: put may run the release callback which
+		 * Advance before put: the release callback may
 		 * call_rcu's the free, and we cannot iterate past a
 		 * removed-then-freed node.  cds_lfht_del is idempotent.
 		 */
@@ -942,8 +941,7 @@ size_t ps_write_buffer_dirty_total(struct ps_listener_state *pls)
 	 * in mid-teardown (refcount zero) we skip it (the dirty
 	 * count is "best effort" and the buffer is about to vanish).
 	 *
-	 * "Advance BEFORE put" (patterns/rcu-violations.md Pattern
-	 * 7): the put may run pwb_release synchronously, which
+	 * Advance before put: the put may run pwb_release synchronously, which
 	 * cds_lfht_del's `buf` from pls_write_buffer_ht.  Advance
 	 * past the node before dropping the ref so the outer
 	 * iterator never traverses from a deleted node.

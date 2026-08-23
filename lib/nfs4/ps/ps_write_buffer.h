@@ -21,8 +21,7 @@
  *     increments pls_active_buffer_refs and gates on pls_state.
  *     Every "OK to proceed" return is matched by exactly one
  *     leave_quiesce() somewhere on the unwind.
- *   - Buffer ref discipline is urcu_ref (Rule 6 in
- *     patterns/ref-counting.md): one table ref taken at
+ *   - Buffer ref discipline is urcu_ref: one table ref taken at
  *     insertion; per-op find refs taken via lookup_or_alloc.
  *   - pwb_mutex is leaf-most: nothing else is acquired while it
 	 *     is held.  This prevents a concurrent final put from freeing

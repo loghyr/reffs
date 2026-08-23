@@ -255,7 +255,7 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 	 * the slower CONNECTION_CHECK_INTERVAL cadence, so a wedged
 	 * CONN_CLOSING slot is force-drained within a second or two of
 	 * crossing CONN_CLOSING_FORCE_DRAIN_SECS rather than waiting up
-	 * to a full check interval (see conn-info-closing-wedge.md).
+	 * to a full check interval.
 	 * io_conn_check_timeouts is the single shared implementation the
 	 * kqueue loop also calls -- closing live connections idle past
 	 * the idle timeout and force-draining stuck CONN_CLOSING slots --

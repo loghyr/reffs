@@ -51,7 +51,7 @@
 /*
  * Four fd numbers, well clear of stdio and of conn_info_test's
  * 201-203.  CHURN_ITERS and the per-fd reader count are tuned so the
- * test fits the standards.md two-second budget even under TSAN; the
+ * test fits the two-second budget even under TSAN; the
  * goal is enough register/unregister cycles to interleave with the
  * reader threads, not raw throughput.
  */

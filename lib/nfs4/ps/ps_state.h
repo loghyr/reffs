@@ -284,7 +284,7 @@ struct ps_listener_state {
 	 *                             unreachable / decode quorum
 	 *                             lost).  Surfaces DS degradation
 	 *                             the WRITE-side counters miss.
-	 *   pls_shortcircuit_total    Phase 5.5: bumped whenever the
+	 *   pls_shortcircuit_total    Bumped whenever the
 	 *                             ec_pipeline dispatch hook
 	 *                             routes a per-mirror CHUNK
 	 *                             read/write through the local

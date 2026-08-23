@@ -44,8 +44,7 @@
  * (OPEN, READ, WRITE, etc.) are NOT in this set: they apply normal
  * authorization against the forwarded client credentials.
  *
- * GETFH and SEQUENCE are listed in the design (proxy-server.md
- * "Privilege model") but do not call nfs4_check_wrongsec(), so they
+ * GETFH and SEQUENCE do not call nfs4_check_wrongsec(), so they
  * are not enumerated here.  RESTOREFH is included because it is a
  * put-FH op that can land on a flavor-restricted export, same as
  * PUTFH.

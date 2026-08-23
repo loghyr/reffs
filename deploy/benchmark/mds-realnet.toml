@@ -99,8 +99,8 @@ default_coding = "rs:4+2"
 
 # REPLACED by run-realnet-bringup.sh: the bringup script splices
 # the bench PS's mTLS cert fingerprint here, defaulting-deny against
-# unknown PS identities.  See proxy-server.md sec-security: the
-# MDS<->PS session MUST be authenticated and the allowlist is the
+# unknown PS identities.  The MDS<->PS session MUST be authenticated
+# and the allowlist is the
 # fingerprint-based mechanism.  Without this block the PS cannot
 # register and variant d cannot run.
 [[allowed_ps]]

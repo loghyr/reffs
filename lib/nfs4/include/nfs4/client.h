@@ -72,7 +72,7 @@ struct nfs4_client {
 	 * meaningful when nc_is_registered_ps == true.  Set at
 	 * registration time so the squat-guard can scan for "another
 	 * registered client with the same GSS principal"; lease is in
-	 * CLOCK_MONOTONIC ns (dual-clock strategy in standards.md).
+	 * CLOCK_MONOTONIC ns; wall-clock time is not used for lease expiry.
 	 *
 	 * nc_ps_lease_expire_ns is _Atomic because the renewal path
 	 * writes it from one session while the squat-check reader runs

@@ -11,7 +11,8 @@
  * CHUNK_READ validate against this table when the server operates
  * as a tightly-coupled DS.
  *
- * Ref-counting follows Rule 6 (patterns/ref-counting.md).
+ * References are held until the corresponding trust-table removal
+ * callback has completed.
  * Hash table: cds_lfht, keyed by XXH3_64bits(te_other, 12).
  */
 

@@ -1044,7 +1044,7 @@ uint32_t nfs4_op_destroy_clientid(struct compound *compound)
 		 * for an already-gone clientid stops the retry loop
 		 * without violating any invariant -- there is no
 		 * client record for any caller to observe a state
-		 * transition on.  See patterns/nfs4-protocol.md.
+		 * transition on.
 		 */
 		goto out; /* *status stays NFS4_OK from calloc */
 	}

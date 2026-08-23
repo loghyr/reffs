@@ -1082,7 +1082,7 @@ def sb_get_client_rules_cmd(client, args):
 
     Pulls and prints the rule list for the named superblock.  Used as
     a sanity-check after sb-set-client-rules and as the PS-side rule
-    cache hydration entry-point (see proxy-server.md).
+    cache hydration entry-point.
     """
     res = client.sb_get_client_rules(args.id)
     probe_error_handler(res.sgcrr_status)

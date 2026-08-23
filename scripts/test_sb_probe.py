@@ -339,7 +339,7 @@ def test_sb_default_coding(client, sb_id):
 
     # 6) File-layout sb (SB_LAYOUT_FILE = 1U << 0) must refuse any
     #    EC spec.  File layouts are
-    #    single-DS per per-export-dstore.md, so an EC default would
+    #    single data server, so an EC default would
     #    silently break LAYOUTGET.  Verify rs:4+2 and mojette-sys:8+2
     #    are both rejected with non-zero status; then verify
     #    PASSTHROUGH and the unset sentinel are still accepted on

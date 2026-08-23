@@ -543,8 +543,8 @@ AC_ARG_ENABLE(noscalar-vec,
 [  --enable-noscalar-vec   Disable compiler auto-vectorization of the
                           scalar encoding paths (lib/ec/*.c).  Used by the
                           SIMD-vs-scalar honest comparison in
-                          experiments/03-larger-shards: without these
-                          flags the compiler may auto-vectorize the
+                          without these flags the compiler may
+                          auto-vectorize the
                           'scalar' code path, making the SIMD vs scalar
                           benchmark meaningless.  Configure a separate
                           build tree with --enable-noscalar-vec to get

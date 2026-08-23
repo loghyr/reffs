@@ -104,9 +104,8 @@ unsigned int lease_reaper_sweep_probe_sessions(struct server_state *ss,
 						     memory_order_acquire);
 
 		/*
-		 * Advance the iterator BEFORE any unhash (patterns/
-		 * rcu-violations.md Pattern 7 / ref-counting.md Rule 6):
-		 * nfs4_session_unhash drops the table's ref which may
+		 * Advance the iterator before any unhash: nfs4_session_unhash
+		 * drops the table's ref, which may
 		 * fire the release callback synchronously, invalidating
 		 * the current node.
 		 */

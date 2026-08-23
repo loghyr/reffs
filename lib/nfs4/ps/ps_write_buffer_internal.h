@@ -10,11 +10,10 @@
  * Whitebox surface for ps_write_buffer.c.  Tests
  * include this header to inspect / mutate buffer-table state
  * directly without going through the public surface.  The
- * Phase 4a pipeline shim (4a.2b) also includes this header for
+ * The pipeline shim also includes this header for
  * the byte-copy critical section that needs pwb_data /
  * pwb_high_water / pwb_mutex access -- the alternative would be
- * a forest of accessors, and per the patterns/ps_proxy_ops_internal.h
- * precedent that's not worth the boilerplate when the consumer
+ * a forest of accessors; that is not worth the boilerplate when the consumer
  * is in the same library.
  *
  * Production code outside ps_write_buffer.c and the immediate

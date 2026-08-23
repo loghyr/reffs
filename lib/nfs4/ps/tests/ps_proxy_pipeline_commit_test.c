@@ -338,7 +338,7 @@ START_TEST(test_commit_partial_stripe_attempts_rmw_read)
 	 *
 	 * The success path (post-decode merge + CHUNK_WRITE +
 	 * FINALIZE + COMMIT) is exercised end-to-end by
-	 * scripts/ci_ps_phase4b_test.sh against a real MDS+DS
+	 * the integration test suite against a real MDS and data-server
 	 * topology.  Pinning it in a unit test would require a
 	 * full mock MDS+DS pair, which is out of scope.
 	 */

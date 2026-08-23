@@ -275,7 +275,7 @@ class Probe1Client(ProtocolClient):
         (unless clearing), k > 32, k+m > 32, PASSTHROUGH with
         m > 0, non-PASSTHROUGH with m == 0, and any EC spec on a
         superblock that advertises SB_LAYOUT_FILE (file layouts
-        require single-DS per per-export-dstore.md).
+        require a single data server).
         """
         coding = probe_coding_spec1(encoding_type, k, m)
         args = SB_SET_DEFAULT_CODING1args(sb_id, coding)
@@ -392,7 +392,7 @@ class Probe1Client(ProtocolClient):
         Returns SB_GET_CLIENT_RULES1res; on success the resok branch
         carries sgcrr_rules (a list of probe_client_rule1).  The PS-side
         rule cache populates from this op at registration time and on
-        per-rule-refresh triggers (see proxy-server.md).
+        per-rule-refresh triggers.
         """
         args = SB_GET_CLIENT_RULES1args(sb_id)
         return self.proc(PROBEPROC1_SB_GET_CLIENT_RULES, args,

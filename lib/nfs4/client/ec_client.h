@@ -300,8 +300,7 @@ int proxy_reg_nfsstat_to_errno(nfsstat4 status);
  * MDS uses to distinguish a renewal (same id, refreshes lease)
  * from a squat attempt (different id while prior lease is valid;
  * MDS returns NFS4ERR_DELAY).  Caller is responsible for
- * persisting the id across PS-process restarts (see
- * proxy-server-plan-a.md "registration_id persistence").
+ * persisting the id across PS-process restarts.
  *
  * Returns 0 on NFS4_OK, -EPERM if the MDS rejected (allowlist
  * miss / AUTH_SYS / wrong session flag), -EAGAIN on
@@ -1078,9 +1077,9 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
  * so a client retry can flush once the affected DSes recover).
  * Sparse-file semantics (every shard reads back zero bytes) are
  * out of scope for this slice -- a partial-stripe RMW into a stripe
- * with no prior bytes on the DS returns -EIO.  The functional
- * scripts/ci_ps_phase4b_test.sh covers the success path against
- * a real MDS+DSes.
+ * with no prior bytes on the DS returns -EIO.  The success path is
+ * covered by the integration test suite against a real MDS and
+ * data servers.
  *
  * `creds` -- optional per-call AUTH_SYS override for the MDS-side
  * compounds (LAYOUTGET / LAYOUTRETURN).  Same forwarding contract

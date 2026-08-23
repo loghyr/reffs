@@ -2522,7 +2522,7 @@ static int pwb_flush_range_locked(struct ps_write_buffer *buf,
 
 		/*
 		 * Two-pass to keep allocation OUT of the rcu_read_lock
-		 * section (patterns/rcu-violations.md Pattern 1).
+		 * section; allocation must not occur while the RCU read lock is held.
 		 * pwb_mutex is held across both passes, so the entry
 		 * count cannot change between them.
 		 */

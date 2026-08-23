@@ -404,7 +404,8 @@ reconstruction is required.
 NFSv3 RPCs larger than ~32 KB stall in the io_uring read pipeline on
 the server side.  The benchmark uses 4 KB shard size as a workaround.
 This constrains minimum useful file sizes and may affect large-file
-throughput.  See `project_iouring_large_msg.md` in memory for context.
+throughput.  This 4 KB shard size avoids a known large-message
+limitation in the io_uring receive path.
 
 ### Same-host Docker network
 

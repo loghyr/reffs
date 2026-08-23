@@ -946,15 +946,15 @@ END_TEST
  * compare flavors.
  *
  * Proof: registered-PS with uid=0 + AUTH_SYS, child_sb_id rule has
- * root_squash=true (default for the super_block_set_flavors shim
- * per export-policy.md).  PUTFH succeeds via the bypass without
+ * root_squash=true (the default for the super_block_set_flavors shim).
+ * PUTFH succeeds via the bypass without
  * touching c_ap.  OPEN runs the rule-match path; the rule sets
  * c_ap.aup_uid = 65534, c_ap.aup_gid = 65534; then the flavor
  * check rejects AUTH_SYS on the KRB5-only export and OPEN returns
  * WRONGSEC.  The squash happened.
  *
- * This pins the design promise from proxy-server.md "Privilege
- * model": `root_squash applies in the normal way based on the
+ * This pins the authorization rule: `root_squash applies in the
+ * normal way based on the
  * client-rule for the PS's source address and the forwarded
  * credentials.`  A future refactor that hoists the bypass above
  * the squash (or that drops the squash from the bypass-fall-

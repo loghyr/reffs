@@ -368,9 +368,9 @@ START_TEST(test_dispatch_two_mirrors_partial_shortcircuit)
 	 * Exactly one bump: only the em_local=true mirror routed
 	 * through ps_listener_record_shortcircuit.  This is the
 	 * specific claim the per-mirror counter is supposed to
-	 * support (proxy-server.md "Phase 5.5: bumped whenever the
-	 * ec_pipeline dispatch hook routes a per-mirror CHUNK
-	 * read/write through the local VFS short-circuit").
+	 * support: it is bumped whenever the ec_pipeline dispatch hook
+	 * routes a per-mirror CHUNK read/write through the local VFS
+	 * short-circuit.
 	 */
 	ck_assert_uint_eq(pls_counter(), 1);
 

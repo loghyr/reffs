@@ -367,8 +367,7 @@ workload_writes() {
 
 workload_reads() {
 	# Reader reads what the writer with id=1 produces.  The soak
-	# runs exactly one reader and one writer per design
-	# (proxy-server.md "Soak testing"); do NOT add more workers
+	# runs exactly one reader and one writer; do NOT add more workers
 	# without generalising the writer-dir argument here.  The id
 	# parameter is unused but kept for symmetry with workload_writes.
 	local _id=$1 mount_dir=$2
@@ -456,8 +455,8 @@ while true; do
 		MOUNT="${MOUNT_BASE}_${RESTART_COUNT}"
 		sudo mkdir -p "$MOUNT"
 
-		# proxy-server.md "Soak testing" calls for "MOUNT/LOOKUP must
-		# succeed within 30s" after restart, but that 30s budget is
+		# MOUNT/LOOKUP must succeed within 30s after restart, but that
+		# 30s budget is
 		# measured from PS-ready, not from PS-stop -- start_reffsd's
 		# 60s cap and stop_ps's 10s SIGTERM grace can together push
 		# the user-visible window to ~90s.  The 30s budget below

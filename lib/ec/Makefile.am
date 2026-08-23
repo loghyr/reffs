@@ -40,8 +40,7 @@ mojette.lo: AM_CFLAGS += @AVX2_CFLAGS@
 # SIMD-vs-scalar honest comparison cannot be auto-vectorized by the
 # compiler.  When the flag is absent NOSCALAR_VEC_CFLAGS is empty so
 # this is a no-op for normal builds.  Used by the
-# experiments/03-larger-shards SIMD-vs-scalar arm (see
-# experiments/03-larger-shards.md).
+# SIMD-vs-scalar comparison arm.
 gf.lo:            AM_CFLAGS += @NOSCALAR_VEC_CFLAGS@
 matrix.lo:        AM_CFLAGS += @NOSCALAR_VEC_CFLAGS@
 mojette.lo:       AM_CFLAGS += @NOSCALAR_VEC_CFLAGS@

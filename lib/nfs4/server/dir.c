@@ -184,11 +184,10 @@ uint32_t nfs4_op_lookup(struct compound *compound)
 			}
 
 			/*
-			 * Audit-log obligation (see proxy-server.md
-			 * "Audit logging"): the forwarded compound rides
+			 * Audit-log obligation: the forwarded compound rides
 			 * on the PS session's credentials rather than the
-			 * end client's AUTH_SYS creds.  TRACE until slice
-			 * 2e-iv-c plumbs real credential forwarding.
+			 * end client's AUTH_SYS creds.  TRACE until credential
+			 * forwarding is fully plumbed.
 			 */
 			TRACE("proxy lookup: listener=%u parent_ino=%" PRIu64
 			      " name=%s (forwarded with PS creds)",

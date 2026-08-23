@@ -21,8 +21,8 @@
  * listener-only.
  *
  * The actual capture from CHUNK_COMMIT into the buffer is
- * exercised end-to-end by scripts/ci_ps_phase4b_test.sh against
- * a live MDS+DS topology; here we drive the composer directly
+	 * exercised end-to-end by the integration test suite against
+	 * a live MDS and data-server topology; here we drive the composer directly
  * and inject the buffer state via the whitebox surface.
  */
 

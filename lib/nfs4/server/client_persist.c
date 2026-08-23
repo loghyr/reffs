@@ -133,14 +133,12 @@ void nfs4_client_expire(struct server_state *ss, struct nfs4_client *nc)
 
 	/*
 	 * Lease-driven CHUNK_ROLLBACK: release any PENDING / FINALIZED
-	 * chunks owned by this dying writer.  Closes the kill_ms=150
-	 * READ_FAILED cell in experiment 12 (write-hole) -- without this
-	 * sweep, a writer killed mid-stripe leaves blocks PENDING
+	 * chunks owned by this dying writer.  Without this sweep, a
+	 * writer killed mid-stripe leaves blocks PENDING
 	 * forever and subsequent CHUNK_READs return NFS4ERR_IO until the
 	 * MDS removes the file.  See draft-haynes-nfsv4-flexfiles-v2
 	 * sec-system-model-consistency for the per-chunk consistency
-	 * model and `experiments/12-write-hole.md` for the cell that
-	 * motivated this hook.
+	 * model and closes the corresponding write-hole case.
 	 *
 	 * Already-COMMITTED chunks survive expiry by design (the
 	 * writer's durable work persists past its session); only
