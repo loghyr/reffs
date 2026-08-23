@@ -271,7 +271,7 @@ END_TEST
 
 /*
  * ps_proxy_lookup_forward_for_inode arg validation.  The live-MDS
- * happy path is deferred to CI integration + slice 2e-iv-g.  The
+ * happy path is deferred to CI integration.  The
  * "not a proxy SB" guard is the interesting one -- it prevents the
  * function from calling into the PS session registry for inodes
  * whose SBs might in the future use i_storage_private differently.
@@ -494,8 +494,8 @@ END_TEST
 /*
  * NULL / zero-length / oversize-FH guards.  Same flavor as the
  * set_upstream_fh arg tests; belts and braces on the materialize API
- * since it will be reachable from the LOOKUP op handler in the next
- * slice and bad args there would be a server bug we want loud.
+ * since it is reachable from the LOOKUP op handler and bad args there
+ * would be a server bug we want loud.
  */
 START_TEST(test_materialize_rejects_bad_args)
 {

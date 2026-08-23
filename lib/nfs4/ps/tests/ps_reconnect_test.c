@@ -386,9 +386,9 @@ END_TEST
  *
  * The destroy half of ps_listener_session_replace
  * (calls mds_session_destroy + free on the old pointer) is not
- * is not exercised here because it would require a real (or fully mocked)
- * mds_session, which is more infrastructure than this slice merits
- * The critical property is that no reader observes a torn pointer
+ * exercised here because it would require a real (or fully mocked)
+ * mds_session, which is outside this unit test's scope.  The critical
+ * property is that no reader observes a torn pointer
  * because the write lock waits for the read locks to drop.
  */
 struct quiesce_writer_ctx {
