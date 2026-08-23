@@ -25,7 +25,7 @@
 #include <unistd.h>
 #include <openssl/rand.h>
 
-#include "ec_client.h" /* mds_session_send_proxy_registration (slice plan-A.iii) */
+#include "ec_client.h" /* mds_session_send_proxy_registration */
 #include "mntv3_xdr.h"
 #include "nfsv3_xdr.h"
 #include "nfsv42_xdr.h"
@@ -475,14 +475,14 @@ int main(int argc, char *argv[])
 
 	/*
 	 * Snapshot [[allowed_ps]] -- restart-only allowlist for
-	 * PROXY_REGISTRATION (slice 6b-i).  Default-deny if absent.
+	 * PROXY_REGISTRATION.  Default-deny if absent.
 	 */
 	for (unsigned int i = 0;
 	     i < cfg.nallowed_ps && i < REFFS_CONFIG_MAX_ALLOWED_PS; i++) {
 		strncpy(ss->ss_allowed_ps[i], cfg.allowed_ps[i].principal,
 			REFFS_CONFIG_MAX_PRINCIPAL - 1);
 		ss->ss_allowed_ps[i][REFFS_CONFIG_MAX_PRINCIPAL - 1] = '\0';
-		/* Slice 6b-iv: TLS-fingerprint identity column. */
+		/* TLS-fingerprint identity column. */
 		strncpy(ss->ss_allowed_ps_tls_fingerprint[i],
 			cfg.allowed_ps[i].tls_cert_fingerprint,
 			REFFS_CONFIG_MAX_TLS_FINGERPRINT - 1);
@@ -524,7 +524,7 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 	/*
-	 * Slice 6c-zz wiring: install the persistence backend on the
+	 * Install the persistence backend on the
 	 * migration_record table and reload any in-flight migrations
 	 * from a previous boot.  No-op for RAM-backed servers
 	 * (ss_persist_ops is always set, but ss_persist_ctx is NULL
@@ -676,15 +676,14 @@ int main(int argc, char *argv[])
 			goto out;
 		}
 		/*
-		 * Phase 5 short-circuit dispatch: install function
+		 * Install function
 		 * pointers on the freshly-registered pls so the EC
 		 * pipeline can bypass loopback RPC for mirrors that
 		 * resolve to one of our own bound addresses.  Cast away
 		 * const because ps_state_find returns a read-only view;
 		 * ps_shortcircuit_install is the single legitimate
 		 * mutator, called once at startup before any worker can
-		 * observe the new slot.  See ps_shortcircuit.h for the
-		 * archive-split rationale.
+		 * observe the new slot.
 		 */
 		ps_shortcircuit_install(
 			(struct ps_listener_state *)ps_state_find(lid));
@@ -721,7 +720,7 @@ int main(int argc, char *argv[])
 		mds_session_set_owner(ms, owner);
 
 		/*
-		 * TLS path (slice plan-1-tls.b): mds_session_create_tls
+		 * The TLS path: mds_session_create_tls
 		 * routes through tls_starttls / tls_direct_connect +
 		 * mds_tls_xprt_create when tls_cert + tls_key are set.
 		 * When both are empty it falls back to the plain-TCP
@@ -767,17 +766,15 @@ int main(int argc, char *argv[])
 		      pmc->address);
 
 		/*
-		 * Slice plan-A.iii: send PROXY_REGISTRATION on the
+		 * Send PROXY_REGISTRATION on the
 		 * freshly-opened MDS session so the PS picks up the
 		 * registered-PS attribute (`nc_is_registered_ps`) on the
 		 * MDS-side client record.  Subsequent namespace-discovery
-		 * ops (LOOKUP / GETFH / etc.) get the slice 6b-ii bypass.
+		 * ops (LOOKUP / GETFH / etc.) use the registered-client bypass.
 		 *
-		 * registration_id: random 16 bytes per PS-process lifetime
-		 * for first-smoke testing.  Persistent registration_id
-		 * (so a PS restart looks like renewal not squat) is a
-		 * deferred until persistent registration is implemented; today a PS
-		 * restart triggers the squat-guard's NFS4ERR_DELAY for
+		 * registration_id: random 16 bytes per PS-process lifetime.
+		 * Persistent registration identifiers are not implemented;
+		 * today a PS restart triggers the squat guard's NFS4ERR_DELAY for
 		 * one lease period, after which it succeeds.
 		 *
 		 * Non-fatal on PS failure: log and continue.  An MDS

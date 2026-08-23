@@ -283,8 +283,7 @@ struct probe_client_rule1 {
  * (PASSTHROUGH=1, MOJETTE_SYS=2, MOJETTE_NONSYS=3, RS_VANDERMONDE=4,
  * REPLICATED=5).  An all-zero spec (cs_encoding_type == 0) is the
  * "unset" sentinel: LAYOUTGET falls back to the legacy
- * ls_k = nfiles, ls_m = 0 path.  See
- * .claude/design/per-export-default-coding.md.
+ * ls_k = nfiles, ls_m = 0 path.
  */
 struct probe_coding_spec1 {
 	unsigned int	pcs_encoding_type;
@@ -293,11 +292,9 @@ struct probe_coding_spec1 {
 };
 
 /*
- * Chunk activity counters (per-sb).  See
- * .claude/design/chunk-collision-validation.md (BLOCKER 2):
- * harness reads these before/after a sweep and asserts on
- * deltas to prove contention happened cleanly.  Future-facing
- * fields stay zero until the corresponding code path lands.
+ * Chunk activity counters (per-sb).  The probe client can read these
+ * before and after a workload to measure contention and repair activity.
+ * Fields for paths not enabled by the server remain zero.
  */
 struct probe_chunk_stats1 {
 	unsigned hyper		pcs_writes;
@@ -309,9 +306,9 @@ struct probe_chunk_stats1 {
 	unsigned hyper		pcs_repair_completed;
 	unsigned hyper		pcs_fences_rotated;
 	/*
-	 * INV-1 partial-stripe write instrumentation (appended for
-	 * wire compat; probe is internal-only, client+server ship
-	 * together).  See .claude/design/inv1-ds-instrumentation.md.
+	 * Partial-stripe write instrumentation (appended for
+	 * wire compat; probe is internal-only and client/server ship
+	 * together).
 	 */
 	unsigned hyper		pcs_blocks_full;
 	unsigned hyper		pcs_blocks_partial;
@@ -345,14 +342,13 @@ struct probe_sb_info1 {
 	/* Chunk activity counters (appended for wire compat). */
 	probe_chunk_stats1	psi_chunk_stats;
 	/*
-	 * MDS-side checksum algorithm policy (Pending Change 6 step 6).
+	 * MDS-side checksum algorithm policy.
 	 * CHECKSUM_ALG_* wire value; 0 means "no policy, use default".
 	 * Appended for wire compat.
 	 */
 	unsigned int		psi_checksum_algorithm;
 	/*
-	 * Per-export default erasure-coding spec (step 6 of
-	 * .claude/design/per-export-default-coding.md).  An all-zero
+	 * Per-export default erasure-coding spec.  An all-zero
 	 * spec is the "unset" sentinel -- LAYOUTGET falls back to the
 	 * legacy nfiles-driven path.  Appended for wire compat.
 	 */
@@ -440,9 +436,9 @@ struct SB_SET_CLIENT_RULES1args {
  * but with the rest of the sb summary attached; this op lets the PS
  * pull just the rules without paying for the full info encode.
  *
- * NOT_NOW_BROWN_COW: gate this op on the [[allowed_ps]] allowlist
+ * Access to this operation should be restricted by the [[allowed_ps]] allowlist
  * once the probe transport surfaces the caller's mTLS fingerprint /
- * GSS principal (see .claude/design/proxy-server.md).  Today the op
+ * GSS principal.  Today the op
  * is reachable from any probe caller; that matches the rest of the
  * probe protocol's open-by-default posture, but is wider than the
  * design ultimately wants.
@@ -468,8 +464,7 @@ struct SB_SET_STRIPE_UNIT1args {
 
 /*
  * SB_SET_CHECKSUM_ALGORITHM (op 38) -- per-export checksum policy
- * for MDS-issued layouts.  Pending Change 6 step 6 from
- * ../flexfiles-v2/reffs-pending-changes.md.  Values are the
+ * for MDS-issued layouts.  Values are the
  * checksum_algorithm4 wire constants (CHECKSUM_ALG_NONE / CRC32 /
  * CRC32C / FLETCHER4 / SHA256 / SHA512 / BLAKE3).
  *
@@ -487,8 +482,7 @@ struct SB_SET_CHECKSUM_ALGORITHM1args {
 
 /*
  * SB_SET_DEFAULT_CODING (op 31) -- per-export default
- * erasure-coding policy.  Step 6 of
- * .claude/design/per-export-default-coding.md.
+ * erasure-coding policy.
  *
  * The MDS stores this on the super_block and consults it from
  * LAYOUTGET (lib/nfs4/server/layout.c
@@ -496,7 +490,7 @@ struct SB_SET_CHECKSUM_ALGORITHM1args {
  * issued layout's (ls_k, ls_m, ffm_coding_type) without using
  * the runway-pop count as the encoding geometry.
  *
- * Validation in the handler (see step 7 in the design doc):
+ * Validation in the handler:
  *   - scda_coding.pcs_encoding_type must be a known
  *     FFV2_ENCODING_* value
  *   - pcs_k >= 1, pcs_k <= LAYOUT_SEG_MAX_FILES (32)
@@ -505,7 +499,7 @@ struct SB_SET_CHECKSUM_ALGORITHM1args {
  *   - File-layout cross-check (plan-review B3): if the sb's
  *     sb_layout_types includes SB_LAYOUT_FILE, only PASSTHROUGH
  *     with pcs_m == 0 is accepted -- file layouts require a
- *     single DS per per-export-dstore.md.
+ *     single DS per export.
  *
  * Setting an all-zero spec (pcs_encoding_type == 0, k == 0,
  * m == 0) clears the policy: LAYOUTGET falls back to the legacy
@@ -521,7 +515,7 @@ struct SB_SET_DEFAULT_CODING1args {
  * SB_SET_DEFAULT_CODING.  Returns the matched sb's
  * sb_default_coding verbatim.  SB_GET (op 18) returns the same
  * spec embedded in probe_sb_info1 via psi_default_coding; this
- * dedicated op lets the integration test in step 9 round-trip
+ * dedicated op lets an integration test round-trip
  * the value without walking the full sb summary.
  */
 struct SB_GET_DEFAULT_CODING1args {
@@ -539,13 +533,11 @@ union SB_GET_DEFAULT_CODING1res switch (probe_stat1 sgda_status) {
 
 /*
  * INODE_LAYOUT_LIST (op 28) -- read-only enumeration of an inode's
- * mirror set.  See .claude/design/mirror-lifecycle.md "Slice A".
+ * mirror set.
  *
  * Resolves an inode by (sb_id, inum).  Returns:
  *   - ill_lss_gen   -- per-inode layout-segments generation counter,
- *                      bumped on every mutation by slice B' onward.
- *                      Slice A returns 0 as a placeholder until B'
- *                      lands the field on struct layout_segments.
+ *                      bumped on every mutation.
  *   - ill_mirrors[] -- one entry per layout_data_file, exposing the
  *                      dstore_id, DS-side filehandle, and cached
  *                      size/mtime.  Cached times reflect the last
@@ -581,8 +573,7 @@ union INODE_LAYOUT_LIST1res switch (probe_stat1 ill_status) {
 
 /*
  * DSTORE_LIST (op 33) -- read-only operator dashboard.  Returns one
- * entry per dstore in the global pool.  See
- * .claude/design/mirror-lifecycle.md "Slice B".
+ * entry per dstore in the global pool.
  */
 enum probe_dstore_state1 {
 	PROBE1_DSTORE_ALIVE	= 0,
@@ -631,7 +622,7 @@ struct DSTORE_DRAIN1args {
  * DSTORE_UNDRAIN (op 35) -- clear the drained flag.  Already-migrated
  * files stay on their new dstores; in-flight autopilot workers detect
  * the UNDRAIN at the post-ADD checkpoint and abort the REMOVE
- * (slice E).  Returns probe_stat1 directly.
+ * Returns probe_stat1 directly.
  */
 struct DSTORE_UNDRAIN1args {
 	unsigned int		dua_id;
@@ -639,7 +630,7 @@ struct DSTORE_UNDRAIN1args {
 
 /*
  * DSTORE_INSTANCE_COUNT (op 36) -- read the cached count of (sb, inum)
- * entries indexed against this dstore (mirror-lifecycle Slice B'').
+ * entries indexed against this dstore.
  * Admin's fast "is the drain complete?" query (DSTORE_LIST is the
  * dashboard form).  Returns the count via the resok branch when the
  * dstore exists; PROBE1ERR_NOENT in the error branch otherwise.
@@ -661,8 +652,7 @@ union DSTORE_INSTANCE_COUNT1res switch (probe_stat1 dicr_status) {
 /* PS_LISTENER_LIST (op 30) -- per-listener PS upstream-session and    */
 /* reconnect schedule snapshot for runtime introspection.              */
 /*                                                                     */
-/* Closes the "Probe visibility for reconnect state" deferral in       */
-/* .claude/design/ps-reconnect.md.  Each entry mirrors the relevant    */
+/* Each entry mirrors the relevant                                    */
 /* fields from struct ps_listener_state (lib/nfs4/ps/ps_state.h):      */
 /*   - ppli_session_present: snapshot of whether pls_session != NULL   */
 /*     at the moment the handler ran (atomic via the borrow API)       */
@@ -684,10 +674,9 @@ struct probe_ps_listener_info1 {
 	unsigned int	ppli_reconnect_backoff_sec;
 	unsigned hyper	ppli_reconnect_next_attempt_ns;
 	/*
-	 * Wire-additive observability fields (per
-	 * .claude/design/ps-listener-list-observability.md).  Probe1
-	 * is internal-only (reviewer rule 9 explicit exemption), so
-	 * the append is rebuild-only; no migration.
+	 * Wire-additive observability fields.  Probe1 is internal-only and
+	 * clients are rebuilt with the server, so these fields require no
+	 * migration.
 	 *
 	 *   ppli_sc_installed -- pls_sc_write_fn != NULL.  False on a
 	 *     listener that registered but never ran
@@ -703,7 +692,7 @@ struct probe_ps_listener_info1 {
 	 *     discovery has not happened or returned no paths.
 	 *   ppli_nlocal_addrs -- size of the per-listener local-
 	 *     address table that gates em_local on the dispatch hook
-	 *     (Phase 5 short-circuit).  Zero means short-circuit will
+	 *     (short-circuit dispatch).  Zero means short-circuit will
 	 *     never fire even when pls_sc_write_fn is non-NULL.
 	 */
 	bool		ppli_sc_installed;
@@ -725,8 +714,7 @@ union PS_LISTENER_LIST1res switch (probe_stat1 pllr_status) {
 
 /* ------------------------------------------------------------------ */
 /* PS_WRITE_BUFFER_STATS (op 37) -- per-listener write-buffer counters */
-/* and live-state snapshot.  Phase 4a observability surface; see       */
-/* .claude/design/proxy-server-phase4a.md "Admin interface".           */
+/* and live-state snapshot.                                           */
 /*                                                                     */
 /* Per-listener fields:                                                */
 /*   ppwbs_active_buffers              count of live entries in the    */
@@ -736,10 +724,10 @@ union PS_LISTENER_LIST1res switch (probe_stat1 pllr_status) {
 /*                                     counter)                       */
 /*   ppwbs_total_bytes_buffered        sum of pwb_high_water across   */
 /*                                     all live buffers; reserved 0   */
-/*                                     until Phase 4b adds the delta-  */
+/*                                     until delta tracking adds the  */
 /*                                     tracking under pwb_mutex       */
 /*   ppwbs_peak_bytes_buffered         high watermark; reserved 0     */
-/*                                     until Phase 4b                  */
+/*                                     until that mechanism is enabled */
 /*   ppwbs_cap_rejections_total        WRITEs rejected with            */
 /*                                     NFS4ERR_DELAY because           */
 /*                                     offset+count > cap              */
@@ -750,7 +738,7 @@ union PS_LISTENER_LIST1res switch (probe_stat1 pllr_status) {
 /*                                     NFS4ERR_FBIG because           */
 /*                                     data_len > cap                 */
 /*                                                                     */
-/* Slice 4b.7 additions (wire-additive append; probe is internal-     */
+/* Additional fields (wire-additive append; probe is internal-only,   */
 /* only, client + server ship together):                              */
 /*                                                                     */
 /*   ppwbs_dirty_stripes_total         sum of dirty-stripe entries    */
@@ -770,7 +758,7 @@ union PS_LISTENER_LIST1res switch (probe_stat1 pllr_status) {
 /*                                     degradation the WRITE-side    */
 /*                                     counters miss.                 */
 /*                                                                     */
-/* Slice 5.5 addition (wire-additive append; probe is internal-only,  */
+/* Additional fields (wire-additive append; probe is internal-only,   */
 /* client + server ship together):                                    */
 /*                                                                     */
 /*   ppwbs_shortcircuit_total          CHUNK read/write calls the     */
@@ -1078,44 +1066,36 @@ program PROBE_PROGRAM {
 		probe_stat1 PROBEPROC1_SB_SET_CLIENT_RULES(SB_SET_CLIENT_RULES1args) = 26;
 		probe_stat1 PROBEPROC1_SB_SET_STRIPE_UNIT(SB_SET_STRIPE_UNIT1args) = 27;
 
-		/* Mirror lifecycle ops -- see .claude/design/mirror-lifecycle.md */
+		/* Mirror lifecycle ops */
 		INODE_LAYOUT_LIST1res PROBEPROC1_INODE_LAYOUT_LIST(INODE_LAYOUT_LIST1args) = 28;
 
 		/* Read-side rules pull (PS-side rule cache hydration) */
 		SB_GET_CLIENT_RULES1res
 		PROBEPROC1_SB_GET_CLIENT_RULES(SB_GET_CLIENT_RULES1args) = 29;
 
-		/* PS reconnect-state introspection
-		 * (.claude/design/ps-reconnect.md "Admin diagnostics") */
+		/* PS reconnect-state introspection */
 		PS_LISTENER_LIST1res PROBEPROC1_PS_LISTENER_LIST(void) = 30;
 
-		/* Slice B: dstore lifecycle ops */
+		/* Dstore lifecycle ops */
 		DSTORE_LIST1res PROBEPROC1_DSTORE_LIST(void) = 33;
 		probe_stat1 PROBEPROC1_DSTORE_DRAIN(DSTORE_DRAIN1args) = 34;
 		probe_stat1 PROBEPROC1_DSTORE_UNDRAIN(DSTORE_UNDRAIN1args) = 35;
 
-		/* Slice B'': dstore reverse-index instance counter */
+		/* Dstore reverse-index instance counter */
 		DSTORE_INSTANCE_COUNT1res
 		PROBEPROC1_DSTORE_INSTANCE_COUNT(DSTORE_INSTANCE_COUNT1args)
 			= 36;
 
-		/* PS write-buffer observability
-		 * (.claude/design/proxy-server-phase4a.md slice 4a.4) */
+		/* PS write-buffer observability */
 		PS_WRITE_BUFFER_STATS1res
 		PROBEPROC1_PS_WRITE_BUFFER_STATS(void) = 37;
 
-		/* Per-SB checksum algorithm policy for MDS layouts
-		 * (Pending Change 6 step 6) */
+		/* Per-SB checksum algorithm policy for MDS layouts */
 		probe_stat1 PROBEPROC1_SB_SET_CHECKSUM_ALGORITHM(
 			SB_SET_CHECKSUM_ALGORITHM1args) = 38;
 
-		/* Per-SB default erasure-coding policy for MDS layouts
-		 * (.claude/design/per-export-default-coding.md step 6).
-		 * The design originally called for ops 28 + 29; those
-		 * numbers were taken by INODE_LAYOUT_LIST and
-		 * SB_GET_CLIENT_RULES between the first review pass and
-		 * this slice landing, so the implementation uses
-		 * 31 (set) and 32 (get). */
+		/* Per-SB default erasure-coding policy for MDS layouts.
+		 * Operations 31 and 32 are reserved for set and get. */
 		probe_stat1 PROBEPROC1_SB_SET_DEFAULT_CODING(
 			SB_SET_DEFAULT_CODING1args) = 31;
 		SB_GET_DEFAULT_CODING1res
