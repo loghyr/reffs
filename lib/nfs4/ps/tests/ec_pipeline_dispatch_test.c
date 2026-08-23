@@ -8,11 +8,11 @@
 #endif
 
 /*
- * PS Phase 5 dispatch-hook coverage for
+ * Dispatch-hook coverage for
  * `test_shortcircuit_partial_2_mirrors`, complementary to the
  * short-circuit counter test.
  *
- * Slice 5.5 pins the counter primitive
+ * The counter primitive
  * (ps_listener_record_shortcircuit) in isolation.  This file pins
  * the dispatch decision at ec_pipeline.c:262-269 (write) and
  * :321-329 (read): the hook fires only when

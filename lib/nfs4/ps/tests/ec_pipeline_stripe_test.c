@@ -163,7 +163,7 @@ END_TEST
 /*                                                                     */
 /* The v2 CHUNK write path strides each per-stripe write by            */
 /* DIV_CEIL(ds_stride, chunk_sz) blocks (ec_pipeline.c lines 656,      */
-/* 689) and FINALIZE/COMMIT must cover that same total.  Task #147     */
+/* 689) and FINALIZE/COMMIT must cover that same total.                 */
 /* was a truncation bug -- nstripes * (ds_stride / chunk_sz) under-    */
 /* covered when ds_stride was not a chunk-multiple, which is the       */
 /* mojette-systematic case.  These tests pin both sides agreeing.      */

@@ -8,7 +8,7 @@
 #endif
 
 /*
- * Behaviour of ps_proxy_pipeline_commit (PS Phase 4a slice 4a.2c).
+ * Behaviour of ps_proxy_pipeline_commit.
  *
  * The shim drives ec_write_encoding_with_file -> mds_layout_get for
  * the flush; mds_layout_get goes through mds_compound_send_with_auth
@@ -20,7 +20,8 @@
  *
  * The happy-path success case (encoding returns 0, buffer is dropped)
  * is exercised end-to-end by ec_demo against the bench docker-
- * compose; see scripts/ci_ps_phase4a_test.sh (slice 4a.5).
+ * compose; the end-to-end success case is covered by the integration
+ * test suite.
  */
 
 #include <check.h>
@@ -163,7 +164,7 @@ START_TEST(test_commit_returns_same_verifier_as_writes)
 				       NULL, &c);
 	/*
 	 * The full-stripe WRITE marks the buffer fully-dirty for
-	 * stripe 0; the slice 4b.2 commit walk dispatches
+	 * stripe 0; the commit walk dispatches
 	 * ec_write_stripe_with_file -> mds_layout_get, the mock
 	 * returns -EIO, the encoding bails before any DS work, and
 	 * pipeline_commit returns -EIO to the caller.
@@ -209,7 +210,7 @@ START_TEST(test_commit_keeps_buffer_on_failure)
 	ck_assert_int_eq(ret, -EIO);
 	/*
 	 * Buffer must remain so the client can retry COMMIT.  In
-	 * slice 4b.2 the failure path also leaves the dirty entry
+	 * the failure path also leaves the dirty entry
 	 * for stripe 0 set so the retry walks back to the same
 	 * ec_write_stripe_with_file call.
 	 */
@@ -323,14 +324,14 @@ START_TEST(test_commit_partial_stripe_attempts_rmw_read)
 			 0);
 
 	/*
-	 * Slice 4b.3 contract: a partial-mask dirty entry triggers
+	 * A partial-mask dirty entry triggers
 	 * the RMW prefix read (ec_read_stripe_with_file) BEFORE the
 	 * encode + write back.  The strong-override fails the very
 	 * first compound (the RMW read's LAYOUTGET) with -EIO;
 	 * expected counts:
 	 *   - ret == -EIO (per-stripe failure propagates).
 	 *   - g_send_call_count == 1 -- LAYOUTGET attempted.  This
-	 *     is the slice 4b.2 -> 4b.3 flip: 4b.2 short-circuited
+	 *     this differs from the full-stripe path, which short-circuited
 	 *     at 0 sends, 4b.3 fires at least 1.
 	 *   - buffer kept (listener_table_count == 1) so the client
 	 *     can retry COMMIT once the DSes are reachable.
@@ -351,7 +352,7 @@ START_TEST(test_commit_partial_stripe_attempts_rmw_read)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Slice 4b.5: COMMIT range honouring                                   */
+/* COMMIT range honouring                                                 */
 /* ------------------------------------------------------------------ */
 
 /*

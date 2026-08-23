@@ -8,8 +8,8 @@
 #endif
 
 /*
- * Buffer-fill behaviour of ps_proxy_pipeline_write (PS Phase 4a
- * slice 4a.2b) plus the slice 4b.6 inline-flush behaviour for
+ * Buffer-fill behaviour of ps_proxy_pipeline_write plus inline-flush
+ * behaviour for
  * stable != UNSTABLE4.  The UNSTABLE4 tests pin the buffered-bytes
  * contract clients see across sequential, sparse, and overwrite
  * WRITE patterns -- without any upstream MDS / DS round-trip.
@@ -323,11 +323,11 @@ START_TEST(test_write_arg_validation)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Slice 4b.6: FILE_SYNC4 / DATA_SYNC4 inline flush                    */
+/* FILE_SYNC4 / DATA_SYNC4 inline flush                                  */
 /* ------------------------------------------------------------------ */
 
 /*
- * Geometry constants mirror the WRITE handler's hardcoded Phase 4a
+ * Geometry constants mirror the WRITE handler's hardcoded prototype
  * snapshot (k=4, m=2, shard=4096).  A full TG_STRIPE-sized WRITE
  * marks the buffer fully-dirty for the touched stripe, so the
  * 4b.6 inline flush dispatches via ec_write_stripe_with_file
@@ -407,7 +407,7 @@ START_TEST(test_write_file_sync_flushes_inline)
 					  sid, 0, /* stable FILE_SYNC4 */ 2,
 					  data, TG_STRIPE, NULL, &r);
 	/*
-	 * FILE_SYNC4 triggers the slice 4b.6 inline flush.  The
+	 * FILE_SYNC4 triggers the inline flush.  The
 	 * strong-override fails ec_write_stripe_with_file's
 	 * LAYOUTGET with -EIO, the per-stripe helper returns -EIO,
 	 * and the WRITE propagates -EIO.  Exactly one upstream
