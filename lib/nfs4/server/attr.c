@@ -3514,8 +3514,8 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 	 * computing from local (empty) cached attrs.
 	 *
 	 * The per-inode upstream FH comes from ps_inode_get_upstream_fh,
-	 * which handles both cases: a deeper inode populated by slice
-	 * 2e-iv-f's LOOKUP hook carries its FH in i_storage_private;
+	 * which handles both cases: a deeper inode populated by the LOOKUP
+	 * hook carries its FH in i_storage_private;
 	 * the SB root inode falls back to the SB binding's FH (cached
 	 * at discovery time before the inode itself existed).  If the
 	 * accessor returns -ENOENT, the client has an inode that the

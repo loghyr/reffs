@@ -11,7 +11,7 @@
 # lib/raid6/test/Makefile so the userspace-portable subset builds
 # without any kernel headers.
 #
-# Slice 6.3 adds x86 (SSE2 / AVX2 / AVX-512) and aarch64 (NEON)
+# The build adds x86 (SSE2 / AVX2 / AVX-512) and aarch64 (NEON)
 # SIMD variants behind HAVE_MD_X86_SIMD / HAVE_MD_NEON_SIMD
 # conditionals from configure.ac.
 
@@ -27,7 +27,7 @@ nodist_libreffs_linux_md_raid_la_SOURCES = \
 	int1.c int2.c int4.c int8.c int16.c int32.c \
 	tables.c
 
-# Slice 6.3 x86 SIMD (SSE2 / AVX2 / AVX-512) -- 8 files + x86.h.
+# x86 SIMD (SSE2 / AVX2 / AVX-512) -- 8 files + x86.h.
 # Per-file arch flags below.
 if HAVE_MD_X86_SIMD
 libreffs_linux_md_raid_la_SOURCES += \
@@ -35,7 +35,7 @@ libreffs_linux_md_raid_la_SOURCES += \
 	recov_ssse3.c recov_avx2.c recov_avx512.c
 endif
 
-# Slice 6.3 aarch64 NEON -- neon.c dispatcher + recov_neon.c +
+# aarch64 NEON -- neon.c dispatcher + recov_neon.c +
 # recov_neon_inner.c, plus neon{1,2,4,8}.c generated from neon.uc.
 if HAVE_MD_NEON_SIMD
 libreffs_linux_md_raid_la_SOURCES += \

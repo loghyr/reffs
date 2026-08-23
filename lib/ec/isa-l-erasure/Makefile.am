@@ -4,7 +4,7 @@
 # Vendored Intel ISA-L erasure_code/ subset.  Sources carry
 # Intel's BSD-3-Clause -- see NOTICE.md.
 #
-# Slice 7.1 landed portable-C only.  Slice 7.3 adds the x86
+# The portable-C baseline is always available.  The x86
 # SIMD tree behind HAVE_ISA_L_X86_SIMD (host is x86_64 AND
 # NASM assembler is available).  aarch64 NEON is deferred to
 # a follow-up sub-slice.
@@ -22,7 +22,7 @@ SUFFIXES = .asm
 
 noinst_LTLIBRARIES = libreffs_isa_l_erasure.la
 
-# Portable-C baseline (Slice 7.1).  Always compiled.
+# Portable-C baseline.  Always compiled.
 libreffs_isa_l_erasure_la_SOURCES = \
 	erasure_code/ec_base.c
 
@@ -35,7 +35,7 @@ if !HAVE_ISA_L_X86_SIMD
 libreffs_isa_l_erasure_la_SOURCES += erasure_code/ec_base_aliases.c
 endif
 
-# x86 SIMD path (Slice 7.3).  72 gf_*.asm files + the runtime
+# x86 SIMD path.  72 gf_*.asm files + the runtime
 # dispatcher (ec_multibinary.asm) + the high-level function
 # hooks (ec_highlevel_func.c).  Every .asm assembles through
 # NASM (see .asm.lo rule below); the .c compiles as normal.

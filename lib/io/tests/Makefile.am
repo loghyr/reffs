@@ -36,11 +36,9 @@ LDADD = \
 check_PROGRAMS = $(TESTS)
 LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
-# conn_lifecycle_race_test was a deliberate red reproducer for the
-# INV-5/INV-6 conn_info lifecycle defect (unguarded ci_ssl).  Slice 1
-# of .claude/design/io-conn-lifecycle.md added the refcounted ci_ssl
-# accessors and the lock-safe TLS-flag snapshot; the test now uses
-# that safe API and is expected to stay GREEN under TSAN and ASAN.
+# conn_lifecycle_race_test covers the refcounted ci_ssl accessors and
+# lock-safe TLS-flag snapshot.  It is expected to stay green under
+# TSAN and ASAN.
 
 # tls_write_count_test exercises io_handle_write which is backend-
 # specific and currently only implemented on the liburing backend.

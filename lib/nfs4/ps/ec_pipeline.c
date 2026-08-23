@@ -136,7 +136,8 @@ struct ec_context {
 	 *
 	 * The captured owners themselves have no reader yet -- the write
 	 * path needs only the guard.  They are retained for the cohort
-	 * slice, which carries the read-time co_cohort_id into the
+	 * read/write transaction identity, which carries the read-time
+	 * co_cohort_id into the
 	 * matching write so an RMW keeps one transaction identity.  Until
 	 * then only ctx_read_owners_valid is load-bearing; do not read
 	 * this array expecting it to be consumed anywhere today.
@@ -220,7 +221,7 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 	 * mds_session_create that ran before the first failure --
 	 * ASAN-visible, and the pre-slice-6 inline-struct shape had the
 	 * same kind of leak with a smaller surface (one inline struct
-	 * per mirror) until this fix.
+	 * per mirror).
 	 */
 	int ret = 0;
 
@@ -375,8 +376,8 @@ int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
 	 * (the same arithmetic the local DS CHUNK_WRITE handler runs
 	 * before calling data_block_write).  owner_id and stid are
 	 * unused on this path -- the local sb's i_db_rwlock already
-	 * serialises concurrent writers; trust-stateid is the slice
-	 * 5.4 follow-up.
+	 * serialises concurrent writers; trust-stateid is handled by
+	 * the caller when required.
 	 *
 	 * Indirected through pls_sc_write_fn so this TU (linked into
 	 * libreffs_nfs4_ps.la and pulled in by ec_demo) does not
@@ -1359,8 +1360,8 @@ out_encoding:
  * other's bytes -- that is the 4a multi-writer-shared-file fix.
  *
  * Caller MUST pass exactly k * shard_size bytes in
- * stripe_bytes -- partial-stripe RMW is the next slice (4b.3) and
- * lives outside this primitive.  The structure intentionally
+ * stripe_bytes -- partial-stripe RMW is handled outside this
+ * primitive.  The structure intentionally
  * mirrors ec_write_encoding_with_file's per-stripe inner loop body
  * to keep the failure modes (encode error, DS write error,
  * NFS4ERR_BAD_STATEID retry via ec_chunk_write, ESTALE outer
