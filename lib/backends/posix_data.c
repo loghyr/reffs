@@ -263,7 +263,7 @@ ssize_t posix_data_db_write(struct data_block *db, const char *buffer,
 	 * POSIX allows pwrite to return fewer bytes than requested
 	 * (signal, short queue).  Loop until the full request is
 	 * written or a real error occurs.  A 0 return with size > 0
-	 * is unusual; treat as retryable.
+	 * makes no progress and must not turn into an unbounded retry.
 	 */
 	size_t done = 0;
 	while (done < size) {
@@ -273,8 +273,10 @@ ssize_t posix_data_db_write(struct data_block *db, const char *buffer,
 			done += (size_t)n;
 			continue;
 		}
-		if (n == 0)
-			continue; /* unusual; retry */
+		if (n == 0) {
+			LOG("pwrite to %s made no progress", priv->pd_path);
+			return -EIO;
+		}
 		if (errno == EINTR)
 			continue;
 		LOG("pwrite to %s failed: %s", priv->pd_path, strerror(errno));
