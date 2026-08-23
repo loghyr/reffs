@@ -275,7 +275,7 @@ mds_compound_send_with_auth(struct mds_compound *mc, struct mds_session *ms,
 
 	if (rpc_stat != RPC_SUCCESS) {
 		/*
-		 * Stage 4 INV-6 dig: surface the TIRPC failure mode.  The
+		 * Surface the TIRPC failure mode.  The
 		 * caller (renewal_tick_one, layout/IO compound issuers)
 		 * only logs `errno=I/O` from the -EIO we return here, which
 		 * collapses every distinct TIRPC failure -- timeout,

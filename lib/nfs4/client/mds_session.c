@@ -406,7 +406,7 @@ void mds_reconnect_backoff_reset(uint32_t *backoff_sec)
 }
 
 /* ------------------------------------------------------------------ */
-/* PROXY_REGISTRATION (slice plan-A.iii)                               */
+/* PROXY_REGISTRATION                                                   */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -528,7 +528,7 @@ out:
 }
 
 /* ------------------------------------------------------------------ */
-/* PROXY_PROGRESS / PROXY_DONE / PROXY_CANCEL (slice 6c-z)            */
+/* PROXY_PROGRESS / PROXY_DONE / PROXY_CANCEL                          */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -1433,8 +1433,8 @@ int mds_session_create_sec_spn(struct mds_session *ms, const char *host,
 	/*
 	 * Record the default auth so send_with_auth's restore path
 	 * works the same way as the AUTH_SYS session.  GSS sessions
-	 * never take the AUTH_SYS-override path today (PS's proxy
-	 * forwarders are AUTH_SYS only per slice 2e-iv-c scope), but
+	 * never take the AUTH_SYS-override path today (PS proxy
+	 * forwarders use AUTH_SYS), but
 	 * keeping the bookkeeping uniform avoids a branch in the send
 	 * helper.
 	 */

@@ -27,8 +27,8 @@
  * Hand-rolled headers (instead of xdr_callmsg / xdr_replymsg)
  * avoid the libtirpc-vs-Darwin-libsystem struct rpc_msg shape
  * differences (Darwin's `acpted_rply.ar_results.proc` is a u_int,
- * libtirpc's is an xdrproc_t); the slice is meant to compile on
- * dreamer ASAN as canonical and not block on local Darwin builds.
+	 * libtirpc's is an xdrproc_t); keeping this code self-contained
+	 * also avoids platform-specific RPC header dependencies.
  *
  * Buffers are sized to MDS_TLS_BUFSZ; the PS-MDS protocol surface
  * (EXCHANGE_ID + CREATE_SESSION + SEQUENCE + PROXY_*) fits well
@@ -232,10 +232,8 @@ static int mds_tls_encode_call(CLIENT *clnt, uint32_t proc, xdrproc_t xargs,
  * the start of the results.  Returns RPC_SUCCESS on success.
  *
  * On failure logs which stage of the header parse rejected the
- * bytes plus the first 32 received bytes -- INV-6 root-cause dig:
- * Track 2 PSes log rpc_stat=2 (RPC_CANTDECODERES) for every
- * compound mid-stream, and we need to know whether the header or
- * the body decoder is the rejector.
+	 * bytes plus the first 32 received bytes so callers can distinguish
+	 * a header rejection from a body-decoder rejection.
  */
 static enum clnt_stat
 mds_tls_decode_reply_header(struct mds_tls_xprt_priv *priv, size_t reply_len,
@@ -313,10 +311,9 @@ mds_tls_decode_reply_header(struct mds_tls_xprt_priv *priv, size_t reply_len,
 	if (v != RPCWIRE_PROC_SUCCESS) {
 		/*
 		 * Map every non-success accept_stat onto a generic
-		 * RPC_PROGUNAVAIL since the slice plan-1-tls.a scope
-		 * does not need finer error discrimination -- callers
+		 * RPC_PROGUNAVAIL; callers
 		 * see the failure via clnt_perror and proceed to error
-		 * handling.  Future polish (slice 1-tls.b) can split
+		 * handling.  Future work can split
 		 * PROG_UNAVAIL / PROG_MISMATCH / PROC_UNAVAIL /
 		 * GARBAGE_ARGS / SYSTEM_ERR when mds_session needs
 		 * them.
@@ -384,7 +381,7 @@ static enum clnt_stat mds_tls_call(CLIENT *clnt, rpcproc_t proc,
 			      (u_int)((size_t)n - body_pos), XDR_DECODE);
 		if (!mds_tls_call_xdrproc(xresults, &xdrs, resultsp)) {
 			/*
-			 * INV-6 dig: body-XDR rejection.  Log enough state
+				 * Body-XDR rejection.  Log enough state
 			 * to tell apart truncated reply (n - body_pos
 			 * surprisingly short), wrong opcode list, or
 			 * stream-desync (bytes look unrelated to a
