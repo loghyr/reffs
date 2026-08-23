@@ -150,8 +150,8 @@ void nfs4_client_expire(struct server_state *ss, struct nfs4_client *nc)
 	 * of inodes that have a chunk_store, not with the number of
 	 * dying clients.  For very large file counts, an indexed
 	 * "writers -> {inode}" reverse map would let the sweep target
-	 * exactly the affected inodes; that scaling is on slide 14's
-	 * open-class disclosure (NOT_NOW_BROWN_COW).
+	 * exactly the affected inodes; the current implementation performs
+	 * a conservative sweep.
 	 */
 	chunk_rollback_for_client((uint64_t)client->c_id, ss->ss_state_dir);
 

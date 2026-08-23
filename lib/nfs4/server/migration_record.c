@@ -7,11 +7,10 @@
  * In-flight proxy migration record table.
  *
  * Two-index cds_lfht (by proxy_stateid.other and by inode) with
- * Rule 6 ref-counted entries.  Modeled on lib/nfs4/server/
- * trust_stateid.c; see the design doc revision section "RCU + Rule 6
- * discipline for migration_record table" for the dual-index dance.
+ * Rule 6 ref-counted entries.  Modeled on lib/nfs4/server/trust_stateid.c;
+ * both indexes follow the same RCU/refcount discipline.
  *
- * Slice 6c-x.2 ships the table primitives + lease-expiry reaper.
+ * The table primitives and lease-expiry reaper live here.
  * The phase transitions and per-instance delta application that
  * PROXY_DONE / PROXY_CANCEL and LAYOUTGET consume this table.
  */
@@ -69,7 +68,7 @@ static pthread_cond_t migration_reaper_cv = PTHREAD_COND_INITIALIZER;
 static _Atomic bool migration_reaper_running;
 
 /*
- * Slice 6c-zz persistence helpers (defined later in this file).
+ * Persistence helpers (defined later in this file).
  * Forward-declared here because migration_record_create and
  * migration_record_unhash call them.
  */
@@ -237,8 +236,7 @@ static void *migration_reaper_thread_fn(void *arg __attribute__((unused)))
 			continue;
 
 		/*
-		 * Silence threshold = 1.5x lease (per design doc revision
-		 * "Lease accounting + PS-crash reaper").  Integer math: the
+		 * Silence threshold = 1.5x lease.  Integer math: the
 		 * factor is encoded as "lease + lease/2" to avoid casting
 		 * through doubles.
 		 */
@@ -352,8 +350,8 @@ int migration_record_create(const stateid4 *stid, struct super_block *sb,
 
 	/*
 	 * Per-inode invariant check: refuse a second migration on a
-	 * file that already has an active record.  Slice 6c-y will
-	 * also enforce this at the assignment-builder layer; this
+	 * file that already has an active record.  The assignment-builder
+	 * layer also enforces this; this
 	 * defensive check makes mis-callers explicit rather than
 	 * silently overwriting the prior record.
 	 */
@@ -400,7 +398,7 @@ int migration_record_create(const stateid4 *stid, struct super_block *sb,
 	rcu_read_unlock();
 
 	/*
-	 * Slice 6c-zz: persist the freshly-hashed record so a future
+	 * Persist the freshly-hashed record so a future
 	 * MDS restart can reload it.  Save AFTER the hash insert so a
 	 * crash during persist still leaves the in-memory state
 	 * consistent (the record is live and its proxy_stateid is the
@@ -437,7 +435,7 @@ void migration_record_unhash(struct migration_record *mr)
 	rcu_read_unlock();
 
 	/*
-	 * Slice 6c-zz: remove from disk too.  Symmetric with the
+	 * Remove from disk too.  Symmetric with the
 	 * save in migration_record_create.  Idempotent at the backend
 	 * (already-removed -> 0).
 	 */
@@ -556,12 +554,11 @@ int migration_apply_deltas_to_segment(const struct layout_segment *base_seg,
 	uint32_t out_n = 0;
 
 	/*
-	 * Phase 1: copy non-DRAINING base entries.  Skip any base
+	 * Copy non-DRAINING base entries.  Skip any base
 	 * position covered by a DRAINING delta (omit-and-replace).
-	 * INTERPOSED is forward-compat per design-doc invariant 3 --
-	 * no slice-6c-x autopilot path emits INTERPOSED, so the
-	 * lookup below will not find one in this slice; if a future
-	 * slice adds them, we keep the base entry (the PS shadow is
+	 * INTERPOSED is forward-compatible.  Current autopilot paths do not
+	 * emit it, so the lookup below will not find one; if a future
+	 * caller adds one, we keep the base entry (the PS shadow is
 	 * invisible to the LAYOUTGET view by definition).
 	 */
 	for (uint32_t i = 0; i < base_seg->ls_nfiles; i++) {
@@ -584,7 +581,7 @@ int migration_apply_deltas_to_segment(const struct layout_segment *base_seg,
 	}
 
 	/*
-	 * Phase 2: append INCOMING entries.  Each INCOMING delta
+	 * Append INCOMING entries.  Each INCOMING delta
 	 * carries a fully-populated layout_data_file in
 	 * mid_replacement_file (built by the record's creator).
 	 */
@@ -610,7 +607,7 @@ void migration_release_view(struct layout_segment *view)
 }
 
 /* ------------------------------------------------------------------ */
-/* Slice 6c-zz: persistence + reload                                   */
+/* Persistence and reload                                               */
 
 /*
  * Compile-time guards: the persistent header
@@ -745,8 +742,7 @@ int migration_record_from_persistent(
 	/*
 	 * Patch in the persisted sb_id so PROXY_DONE / PROXY_CANCEL
 	 * lookups still see the right sb identity even though the
-	 * in-memory super_block * is NULL on the reload path.  Slice
-	 * 6c-zz reviewer note W2.
+	 * in-memory super_block * is NULL on the reload path.
 	 */
 	mr->mr_sb_id = mrp->mrp_sb_id;
 

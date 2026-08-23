@@ -4,7 +4,7 @@
  */
 
 /*
- * Proxy assignment queue -- slice 6c-y.
+ * Proxy assignment queue.
  *
  * FIFO queue of proxy_assignment_item.  Mutex-guarded; concurrent
  * producers + a single consumer (PROXY_PROGRESS reply builder)

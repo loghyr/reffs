@@ -6,26 +6,20 @@
 /*
  * PROXY_REGISTRATION + PROXY_PROGRESS op handlers.
  *
- * Slice 6a + 6b-i (mirror of design phase 6 in
- * .claude/design/proxy-server.md and slice plan in
- * .claude/design/proxy-server-phase6b.md):
+ * PROXY_REGISTRATION validates the session identity and records the
+ * registration; PROXY_PROGRESS reports queued work assignments:
  *
  *   - PROXY_REGISTRATION wires the bare flag-bit and
  *     session-context validation, sets nc_is_registered_ps on the
- *     calling client (6a), and rejects any GSS principal absent
- *     from the [[allowed_ps]] allowlist (6b-i).  SQUAT-GUARD +
- *     RENEWAL + TLS-vs-AUTH_SYS distinction land in slices
- *     6b-iii / 6b-iv along with the bypass-wiring + audit logs
- *     (6b-ii) that consume nc_is_registered_ps.
+ *     calling client, and rejects any GSS principal absent from the
+ *     [[allowed_ps]] allowlist.  SQUAT-GUARD +
+ *     RENEWAL + TLS-vs-AUTH_SYS distinction are handled by the
+ *     corresponding protocol paths along with the bypass wiring and
+ *     audit logs that consume nc_is_registered_ps.
  *
  *   - PROXY_PROGRESS is wire-allocated (op number 94) but its
- *     handler is a NFS4ERR_NOTSUPP stub.  Slice 6c-w (the
- *     2026-04-26 architecture revision) walked back the original
- *     CB_PROXY_* design and re-shaped PROXY_PROGRESS as a fore-
- *     channel poll whose reply carries work assignments inline;
- *     slice 6c-y populates the assignment list from the autopilot
- *     queue.  Until then the handler stays as a NFS4ERR_NOTSUPP
- *     stub.
+ *     handler is a NFS4ERR_NOTSUPP stub until the assignment queue
+ *     is enabled.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -55,11 +49,9 @@
  * fingerprint) exactly matches any entry in the server-state
  * allowlist.  Empty allowlist -> always false (deny).  Realm fuzz /
  * DNS canonicalization / glob are intentionally NOT supported on
- * either column -- an entry binds to one identity, full stop.  See
- * proxy-server-phase6b.md "Security model".
+ * either column -- an entry binds to one identity, full stop.
  *
- * Slice 6b-i seeded the principal column; slice 6b-iv added the
- * tls_fingerprint column.  Either context is sufficient -- the
+ * Either context is sufficient -- the
  * matched identity (principal OR fingerprint) is the privilege
  * grant, and a registration only needs ONE recognised identity.
  */
@@ -132,15 +124,14 @@ uint32_t nfs4_op_proxy_registration(struct compound *compound)
 	/*
 	 * The data-mover draft (sec-security) mandates that the
 	 * MDS<->PS session use RPCSEC_GSS or RPC-over-TLS with mutual
-	 * authentication; AUTH_SYS over plain TCP is forbidden.  Slice
-	 * 6b-iv broadens the slice-6a "no GSS principal -> reject"
+	 * authentication; AUTH_SYS over plain TCP is forbidden.  TLS
+	 * identity support broadens the original "no GSS principal -> reject"
 	 * check to "neither GSS principal NOR TLS fingerprint -> reject":
 	 * a TLS-authenticated session with an allowlisted client cert
 	 * is now a valid identity context, even with no GSS principal.
 	 *
-	 * Production wiring of c_gss_principal and c_tls_fingerprint
-	 * remains NOT_NOW_BROWN_COW -- both fields are populated only
-	 * via test mocks today.  See compound.h.
+	 * The compound layer supplies c_gss_principal and
+	 * c_tls_fingerprint before this handler runs.
 	 */
 	if (compound->c_gss_principal == NULL &&
 	    compound->c_tls_fingerprint == NULL) {
@@ -149,7 +140,7 @@ uint32_t nfs4_op_proxy_registration(struct compound *compound)
 	}
 
 	/*
-	 * Slice 6b-i + 6b-iv: identity check.  Either the GSS principal
+	 * Identity check.  Either the GSS principal
 	 * OR the TLS fingerprint must match an entry on the operator-
 	 * curated [[allowed_ps]] allowlist.  Default-deny: an absent or
 	 * empty list rejects every PROXY_REGISTRATION, which is the
@@ -178,7 +169,7 @@ uint32_t nfs4_op_proxy_registration(struct compound *compound)
 	}
 
 	/*
-	 * Slice 6b-iii: squat-guard.  If another in-memory client is
+	 * Squat guard.  If another in-memory client is
 	 * already registered with this same GSS principal AND its
 	 * lease is still valid AND the incoming prr_registration_id
 	 * does not match -- this is a different peer trying to displace
@@ -240,8 +231,8 @@ uint32_t nfs4_op_proxy_registration(struct compound *compound)
 	 * Capture identity + lease on self, then record the privilege.
 	 * Future namespace-discovery ops on any session belonging to
 	 * this client will bypass export-rule filtering -- see
-	 * .claude/design/proxy-server.md "Privilege model".  Audit
-	 * logging of the bypassed ops landed in slice 6b-ii.
+	 * Privileged namespace-discovery operations use this recorded
+	 * identity; bypassed operations are audited.
 	 */
 	if (compound->c_gss_principal) {
 		strncpy(self->nc_ps_principal, compound->c_gss_principal,
@@ -330,7 +321,7 @@ uint32_t nfs4_op_proxy_progress(struct compound *compound)
 	}
 
 	/*
-	 * Slice 6b-iii's squat-guard refreshes nc_ps_lease_expire_ns
+	 * The squat guard refreshes nc_ps_lease_expire_ns
 	 * on every PROXY_PROGRESS via the SEQUENCE-driven lease
 	 * renewal path.  Surface the remaining seconds to the PS so it
 	 * can size its next poll interval.  Floor to zero on a stale
@@ -351,7 +342,7 @@ uint32_t nfs4_op_proxy_progress(struct compound *compound)
 	 * create the in-flight migration record, and emit a
 	 * proxy_assignment4 entry.  If migration_record_create returns
 	 * -EBUSY (the inode already has an active migration -- per-
-	 * inode invariant from slice 6c-x.2), drop the item and move
+	 * inode invariant), drop the item and move
 	 * on; the autopilot will re-enqueue when the prior migration
 	 * commits or aborts.
 	 */
@@ -508,10 +499,9 @@ static nfsstat4 proxy_record_validate(struct compound *compound,
 	 *   - In-memory record (mr_sb non-NULL): pointer compare
 	 *     against the compound's current sb.
 	 *   - Reloaded record (mr_sb == NULL after persistence
-	 *     reload, slice 6c-zz): fall back to mr_sb_id, which
+	 *     reload): fall back to mr_sb_id, which
 	 *     was preserved through the round-trip via mrp_sb_id.
-	 *     This is the auth-fallback path slice 6c-zz reviewer
-	 *     note W2 flagged as missing.
+	 *     This is the persistence fallback path.
 	 */
 	if (compound->c_curr_nfh.nfh_ino != mr->mr_ino) {
 		migration_record_put(mr);
@@ -556,12 +546,11 @@ uint32_t nfs4_op_proxy_done(struct compound *compound)
 	 * Side effects keyed off pd_status:
 	 *
 	 *   NFS4_OK    -> commit the migration (transitions phase to
-	 *                 COMMITTED and unhashes the record).  Slice
-	 *                 6c-x.4 wires the actual per-instance delta
-	 *                 application onto i_layout_segments; slice
-	 *                 6c-x.5 issues CB_LAYOUTRECALL on DRAINING
-	 *                 slot removal.  This slice ships the protocol
-	 *                 surface + record-state mutation only.
+	 *                 COMMITTED and unhashes the record).  The
+	 *                 per-instance delta application updates
+	 *                 i_layout_segments; commit issues CB_LAYOUTRECALL
+	 *                 on DRAINING slot removal.  This path owns the
+	 *                 protocol surface and record-state mutation.
 	 *   non-OK     -> abandon the migration (rollback).  No CB
 	 *                 needed: external clients never saw the
 	 *                 post-image (omit-and-replace policy delays
@@ -575,13 +564,13 @@ uint32_t nfs4_op_proxy_done(struct compound *compound)
 	if (args->pd_status == NFS4_OK) {
 		(void)migration_record_commit(mr);
 		/*
-		 * Slice 6c-x.5: queue CB_LAYOUTRECALL on every external
+		 * Queue CB_LAYOUTRECALL on every external
 		 * layout outstanding for this inode (excluding the PS's
 		 * own client, which already returned its L3 layout via
 		 * the LAYOUTRETURN earlier in this compound).  Clients
 		 * holding pre-migration layouts that included the now-
 		 * removed DRAINING DS get told to re-LAYOUTGET, at which
-		 * point the during-migration view (slice 6c-x.4) is
+		 * point the during-migration view is
 		 * already gone and they see the post-image directly.
 		 *
 		 * Fire-and-forget: PROXY_DONE returns NFS4_OK as soon as

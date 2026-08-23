@@ -286,7 +286,7 @@ struct stateid *stateid_inode_find_delegation(struct inode *inode,
 }
 
 /* ------------------------------------------------------------------ */
-/* Layout-stateid conflict scan (trust-stateid slice 1)                */
+/* Layout-stateid conflict scan                                        */
 
 int stateid_inode_collect_layouts_excluding(struct inode *inode,
 					    struct client *exclude_client,

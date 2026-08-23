@@ -4,7 +4,7 @@
  */
 
 /*
- * proxy_stateid value primitives -- slice 6c-x.1.
+ * proxy_stateid value primitives.
  *
  * Implements proxy_stateid_alloc, proxy_stateid_extract_boot_seq,
  * proxy_stateid_is_stale, and proxy_stateid_other_eq.  See
@@ -12,9 +12,9 @@
  * other[12] layout.
  *
  * The lookup table that resolves proxy_stateid -> migration record
- * is built in slice 6c-x.2 because the entries IN that table ARE
- * migration records; this slice provides only the value primitives
- * those records depend on.
+ * is built alongside the migration record table because the entries
+ * in that table ARE migration records; this file provides only the
+ * value primitives those records depend on.
  */
 
 #ifdef HAVE_CONFIG_H
