@@ -1207,11 +1207,8 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 		 * recomputes against the data anyway).
 		 *
 		 * On mismatch we PRESERVE the stored checksum on the wire
-		 * (do NOT repack with the disk-derived CRC).  Rationale:
-		 * a client-side CRC verify -- e.g. the ffv2-client K.2
-		 * patch 4b slice 2 CHUNK_READ dispatch at
-		 * flexfilesv2_write.c:1646-1662, which recomputes CRC over
-		 * received bytes and fail-closes on mismatch -- MUST see
+		 * (do NOT repack with the disk-derived CRC).  A client-side
+		 * integrity check that recomputes CRC over received bytes MUST see
 		 * the checksum the CHUNK_WRITE committed, otherwise the
 		 * client happily verifies corrupted disk bytes against a
 		 * checksum synthesised from those same corrupted bytes and

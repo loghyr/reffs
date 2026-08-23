@@ -63,7 +63,7 @@ enum chunk_state {
 /*
  * CHUNK_VALUE_MAX is sized for the largest supported checksum (SHA512,
  * 64 bytes).  CRC32 / CRC32C / FLETCHER4 use 4-8 of the 64 bytes; the
- * rest is zero-padded.  The wasted space is acceptable for the Phase 1
+ * rest is zero-padded.  The wasted space is acceptable for the current
  * fixed-size record format; a variable-length payload area can replace
  * it when storage density warrants it.
  */

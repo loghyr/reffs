@@ -4075,14 +4075,14 @@ struct proxy_assignment4 {
      * Kind-specific descriptor space for future fields (e.g.
      * source/dest layout descriptors so the PS can dial the
      * source DSes immediately without a second LAYOUTGET).  Empty
-     * in slice 6c-w; future slices extend.
+     * currently empty; future revisions may extend it.
      */
     opaque          pa_descriptor<>;
 };
 
 struct PROXY_PROGRESS4args {
     /*
-     * Heartbeat-only in slice 6c-w -- args extend in 6c-y when the
+     * Heartbeat-only today; future revisions may add fields when the
      * PS reports progress on its in-flight migrations and signals
      * its appetite for new assignments.
      */
@@ -4884,7 +4884,7 @@ union nfs_cb_argop4 switch (nfs_cb_opnum4 argop) {
       CB_OFFLOAD4args           opcboffload;
 
  /*
-  * MDS-to-PS data-mover CB ops 95-98 retired in slice 6c-w; the op
+  * MDS-to-PS data-mover CB ops 95-98 are retired; the op
   * numbers are reserved (see OP_PROXY_RESERVED_95..98 above) but
   * have no callable handler.
   */
@@ -4934,8 +4934,8 @@ union nfs_cb_resop4 switch (nfs_cb_opnum4 resop) {
  case OP_CB_OFFLOAD:    CB_OFFLOAD4res  opcboffload;
 
  /*
-  * MDS-to-PS data-mover CB ops 95-98 retired in slice 6c-w (see
-  * nfs_cb_argop4 above).
+  * MDS-to-PS data-mover CB ops 95-98 are retired (see nfs_cb_argop4
+  * above).
   */
 
  /* Not new operation */

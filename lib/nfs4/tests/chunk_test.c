@@ -1730,9 +1730,8 @@ END_TEST
  * Bit-rot preservation contract: on stored-vs-disk CRC mismatch,
  * CHUNK_READ MUST return the STORED checksum on the wire, not a
  * recomputed CRC over the corrupted disk bytes.  A client-side
- * CRC verify -- e.g. the ffv2-client K.2 patch 4b slice 2
- * CHUNK_READ dispatch at flexfilesv2_write.c:1646-1662 -- then
- * catches the rot as an integrity failure.  Repacking the CRC
+ * CRC verification then catches the rot as an integrity failure.
+ * Repacking the CRC
  * over corrupted bytes would let the client happily verify and
  * launder the rot through an RMW round-trip.
  *
@@ -2880,13 +2879,12 @@ START_TEST(test_chunk_error_quarantines_committed_chunk)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Group G: chunk-collision counter observability (Phase 4b.7)         */
+/* Group G: chunk-collision counter observability                     */
 /*                                                                     */
-/* Pre-Option-C, cs_pending_displaced incremented when a CHUNK_WRITE   */
+/* Earlier implementations incremented cs_pending_displaced when a     */
 /* landed at an offset whose previous PENDING block came from a        */
-/* different writer.  Post-Option-C (chunk-collision-validation.md     */
-/* 'Triage: chunk-store sub-stripe atomicity'), the CHUNK_WRITE gate   */
-/* rejects that case BEFORE the displaced-counting code runs;          */
+/* different writer.  The current CHUNK_WRITE gate rejects that case  */
+/* before the displaced-counting code runs;                            */
 /* cs_chunk_busy_delay is the new counter that records the same        */
 /* contention pattern with reject-semantics instead of                 */
 /* observe-then-allow.  The tests in this group still drive the same   */
