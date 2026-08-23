@@ -83,9 +83,9 @@ static inline ssize_t copy_file_range(int src_fd, loff_t *soff, int dst_fd,
  * Both must be regular files.  The compound sets up the FHs via
  * PUTFH(src) + SAVEFH + PUTFH(dst) + COPY.
  *
- * Synchronous only: ca_synchronous must be TRUE, the server performs
- * the copy inline and returns the result.  Async COPY (WI-3.6) is
- * deferred (NOT_NOW_BROWN_COW).
+	 * Synchronous only: ca_synchronous must be TRUE, the server performs
+	 * the copy inline and returns the result.  Asynchronous COPY is not
+	 * currently implemented.
  *
  * Cross-sb COPY returns NFS4ERR_XDEV for now.  The compound's PUTFH
  * ops already enforce per-export security (NFS4ERR_WRONGSEC).
@@ -125,7 +125,7 @@ uint32_t nfs4_op_copy(struct compound *compound)
 		goto out;
 	}
 
-	/* Cross-sb COPY deferred (NOT_NOW_BROWN_COW). */
+	/* Cross-superblock COPY is not currently implemented. */
 	if (compound->c_curr_sb != compound->c_saved_sb) {
 		*status = NFS4ERR_XDEV;
 		goto out;
@@ -395,7 +395,7 @@ uint32_t nfs4_op_copy_notify(struct compound *compound)
  * CURRENT_FH (destination).  Both must be regular files in the same
  * filesystem (superblock).
  *
- * Standalone mode only; MDS fan-out deferred (NOT_NOW_BROWN_COW).
+	 * Standalone mode only; MDS fan-out is not currently implemented.
  *
  * The underlying filesystem must support FICLONE_RANGE (XFS, Btrfs).
  * RAM backend and non-reflink POSIX filesystems return NFS4ERR_NOTSUPP.

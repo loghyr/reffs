@@ -160,8 +160,8 @@ uint32_t nfs4_op_get_dir_delegation(struct compound *compound)
 	 * even when the server sends cinfo indicating a change (RENAME,
 	 * REMOVE).  Returning GDD4_UNAVAIL causes the client to rely solely
 	 * on the cinfo mechanism, which works correctly.
-	 * NOT_NOW_BROWN_COW: grant dir delegations once CB_NOTIFY is in
-	 * place and client revalidation is confirmed.
+	 * Directory delegations can be enabled once CB_NOTIFY is in place
+	 * and client revalidation is confirmed.
 	 */
 	GET_DIR_DELEGATION4res_non_fatal *nf =
 		&res->GET_DIR_DELEGATION4res_u.gddr_res_non_fatal4;
