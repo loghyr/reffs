@@ -320,7 +320,7 @@ int ps_discovery_run(const struct ps_listener_state *pls)
 
 	/*
 	 * Serialize concurrent discovery runs on the same listener.
-	 * Closes the single-writer gap flagged in slice 2e-iii-b: on-
+	 * Closes the single-writer gap: on-
 	 * demand re-discovery from op-handler workers is now safe
 	 * against two writers racing on pls_exports[] / pls_nexports.
 	 * Readers (op handlers calling ps_state_find_export) still use
@@ -348,8 +348,8 @@ int ps_discovery_run(const struct ps_listener_state *pls)
 		 * full urcu/xxhash/fs dep graph, blowing up the unit-test
 		 * link.  The rest of the ps/ subsystem follows the same
 		 * "caller does structured logging" discipline; reffsd.c
-		 * will turn these lines into proper LOG events when it
-		 * consumes the coordinator in slice 2e-iii-e.
+		 * will turn these lines into structured LOG events when it
+		 * consumes the coordinator.
 		 */
 		fprintf(stderr,
 			"ps[%u]: MOUNT3 export enumeration against %s "
