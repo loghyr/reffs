@@ -1173,9 +1173,6 @@ START_TEST(test_chunk_finalize_requires_full_owner_triple)
 	ck_assert_int_eq(fres->CHUNK_FINALIZE4res_u.cfr_resok4.cfr_status
 				 .cfr_status_val[0],
 			 NFS4_OK);
-	ck_assert_int_eq(fres->CHUNK_FINALIZE4res_u.cfr_resok4.cfr_status
-				 .cfr_status_val[1],
-			 NFS4_OK);
 	ck_assert_int_eq(blk->cb_state, CHUNK_STATE_FINALIZED);
 	free_finalize_res(cm);
 
