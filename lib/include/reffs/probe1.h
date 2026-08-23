@@ -46,8 +46,7 @@ struct rpc_trans *probe1_client_op_sb_set_stripe_unit(uint64_t id,
 						      uint32_t stripe_unit);
 
 /*
- * Per-export default erasure-coding policy (step 8 of
- * .claude/design/per-export-default-coding.md).  An all-zero
+ * Per-export default erasure-coding policy.  An all-zero
  * spec (encoding_type == 0, k == 0, m == 0) clears the policy.
  */
 struct rpc_trans *probe1_client_op_sb_set_default_coding(uint64_t id,
@@ -61,20 +60,18 @@ struct rpc_trans *probe1_client_op_inode_layout_list(uint64_t sb_id,
 
 /*
  * PS reconnect-state introspection.  See
- * .claude/design/ps-reconnect.md "Admin diagnostics" and
  * lib/xdr/probe1_xdr.x PS_LISTENER_LIST.
  */
 struct rpc_trans *probe1_client_op_ps_listener_list(void);
 
 /*
- * PS Phase 4a write-buffer observability.  See
- * .claude/design/proxy-server-phase4a.md "Admin interface" and
+ * PS write-buffer observability.  See
  * lib/xdr/probe1_xdr.x PS_WRITE_BUFFER_STATS.
  */
 struct rpc_trans *probe1_client_op_ps_write_buffer_stats(void);
 struct rpc_trans *probe1_client_op_trust_stateid_stats(void);
 
-/* Slice B: dstore lifecycle ops. */
+/* Dstore lifecycle ops. */
 struct rpc_trans *probe1_client_op_dstore_list(void);
 struct rpc_trans *probe1_client_op_dstore_drain(uint32_t dstore_id);
 struct rpc_trans *probe1_client_op_dstore_undrain(uint32_t dstore_id);

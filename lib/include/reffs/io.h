@@ -50,8 +50,7 @@
  * -- a healthy drain completes in milliseconds -- and is force-
  * drained back to CONN_UNUSED by io_conn_check_timeouts.  Five
  * seconds is three orders of magnitude past a healthy drain, so it
- * cannot false-positive a drain merely in progress.  See
- * .claude/design/conn-info-closing-wedge.md.
+ * cannot false-positive a drain merely in progress.
  */
 #define CONN_CLOSING_FORCE_DRAIN_SECS 5
 
@@ -129,8 +128,8 @@ struct buffer_state;
  * had any application-level read / write activity, as seen by
  * io_conn_check_timeouts.
  *
- * Slice 3 of conn-info-closing-wedge raised this from 60 s.
- * The original 60 s was inherited from a generic "idle TCP"
+ * The timeout was raised from 60 s, which was inherited from a generic
+ * "idle TCP"
  * heuristic; for an NFS-server connection that is too aggressive.
  * The Linux kernel NFS client legitimately leaves the connection
  * quiet for many seconds between RPCs -- userspace mount.nfs4
@@ -141,8 +140,7 @@ struct buffer_state;
  * regression: kernel mount.nfs4 sent its NULL probe, took 2+
  * minutes setting up the next RPC, and the server reaped the
  * connection at 60 s -- the client surfaced "mount(2): Input
- * /output error".  See .claude/design/conn-info-closing-wedge.md
- * Slice 3.
+ * /output error".
  *
  * 600 s (10 min) is a compromise between "never idle-close an
  * NFS connection" (which is what the Linux kernel NFS server
@@ -180,7 +178,7 @@ enum conn_state {
 	 * a slot must not be reused for a new fd until those CQEs drain,
 	 * otherwise an old completion would corrupt the new connection's
 	 * state.  io_conn_register on a CLOSING slot returns NULL so the
-	 * accept path can retry.  Stage 3 Slice 4 (INV-6).
+	 * accept path can retry.
 	 */
 	CONN_CLOSING
 };
@@ -290,8 +288,7 @@ void add_task(struct task *task);
 // the first plain-NFS read via io_buffer_state_create(fd) and freed
 // at the CONN_CLOSING -> CONN_UNUSED transition in conn_info.c.  The
 // previous io_client_fd_register / io_client_fd_unregister pair is
-// gone; the buffer state lives on struct conn_info as ci_bs.  See
-// .claude/design/io-buffer-state-fd-recycle.md.
+// gone; the buffer state lives on struct conn_info as ci_bs.
 bool io_buffer_append(struct buffer_state *bs, const char *data, size_t len);
 struct buffer_state *io_buffer_state_create(int fd);
 struct buffer_state *io_buffer_state_get(int fd);
@@ -378,7 +375,7 @@ const char *io_conn_role_to_str(enum conn_role role);
  * -- they are closed.  closing_timeout_seconds bounds slots stuck
  * in CONN_CLOSING: a slot whose drain has not completed in that
  * long is force-drained back to CONN_UNUSED so its fd-keyed table
- * slot can be reused (see .claude/design/conn-info-closing-wedge.md).
+ * slot can be reused.
  * Returns the count of connections closed plus slots force-drained.
  */
 int io_conn_check_timeouts(time_t idle_timeout_seconds,
@@ -454,11 +451,11 @@ bool io_conn_is_tls_enabled(int fd);
 void io_conn_set_tls_handshaking(int fd, bool handshaking);
 
 /*
- * Slice plan-A.ii: extract the SHA-256 fingerprint of the TLS
+ * Extract the SHA-256 fingerprint of the TLS
  * peer's certificate (DER-encoded), formatted as colon-separated
  * uppercase hex.  Used by compound_alloc() to populate
  * compound->c_tls_fingerprint for PROXY_REGISTRATION's mTLS
- * allowlist match (slice 6b-iv).
+ * allowlist match.
  *
  * Returns 0 on success, -ENOENT when the connection is not over
  * TLS / no peer cert was presented / OpenSSL not compiled in,
@@ -504,14 +501,14 @@ bool io_conn_tls_snapshot(int fd, bool *tls_enabled, bool *handshaking);
 void io_conn_tls_set_state(int fd, bool tls_enabled, bool handshaking);
 
 /*
- * Per-SSL I/O serialisation gate (Stage 3 Slice 3, INV-6).
+ * Per-SSL I/O serialisation gate.
  *
  * Memory safety for ci_ssl is handled by io_conn_ssl_acquire/_release,
  * but OpenSSL's SSL_read / SSL_write / SSL_accept / BIO_* are not safe
  * to call concurrently on one SSL: the event-loop thread issues
  * SSL_read on the read path, a worker issues SSL_write under the per-
  * fd write gate, and io_conn_unregister's SSL_shutdown can race both.
- * Stage 4 Track 2 run 5 confirmed this hazard fires under sustained
+ * Testing confirmed this hazard fires under sustained
  * IOR write load (the MDS sends an unprompted close_notify ~6 s in).
  *
  * io_conn_ssl_io_lock takes a per-SSL mutex bound to the SSL's life

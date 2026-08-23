@@ -59,11 +59,10 @@ struct layout_data_file_disk {
 	uint16_t ldf_mode;
 	uint16_t ldf_pad;
 	/*
-	 * Per-mirror flag bits (ec-repair slice 2).  Currently only
+	 * Per-mirror flag bits.  Currently only
 	 * FFV2_DS_FLAGS_REPAIR -- ACTIVE/PARITY are derived
-	 * positionally at LAYOUTGET time.  Per CLAUDE.md "No
-	 * persistent storage has been deployed" no version bump is
-	 * needed; existing in-memory tests calloc-default to 0.
+	 * positionally at LAYOUTGET time.  Existing in-memory tests
+	 * calloc-default to 0.
 	 */
 	uint32_t ldf_flags;
 };
@@ -79,7 +78,7 @@ struct layout_data_file_disk {
  * over.  A stored value of 0 (CHECKSUM_ALG_NONE) is treated as
  * CHECKSUM_ALG_CRC32 on load -- a hold-over for segments persisted
  * before this field existed; no deployment exists so no migration
- * code is needed (per CLAUDE.md "Deployment Status").
+ * code is needed.
  */
 struct layout_segment_disk {
 	uint64_t ls_offset; /* byte range start */
@@ -109,8 +108,8 @@ struct layout_data_file {
 	uint16_t ldf_mode;
 	bool ldf_stale; /* true if last GETATTR to this DS failed */
 	/*
-	 * Per-mirror flag bits (FFV2_DS_FLAGS_REPAIR / SPARE -- ec-repair
-	 * slice 2).  Both read and write paths are i_attr_mutex-protected:
+	 * Per-mirror flag bits (FFV2_DS_FLAGS_REPAIR / SPARE).  Both read
+	 * and write paths are i_attr_mutex-protected:
 	 * the LAYOUTGET encoder at layout.c:824 reads it under
 	 * c_inode->i_attr_mutex while building ffv2ds_flags; OP_CHUNK_REPAIRED
 	 * at chunk.c clears it under the same mutex; posix / rocksdb backends
@@ -148,16 +147,16 @@ struct layout_segment {
 /*
  * In-memory: all layout segments for an inode.
  *
- * lss_gen is the per-inode layout generation counter, monotonically
- * bumped on every mutation (add/remove segment, slice C/D mirror
- * mutations).  Used by the INODE_LAYOUT_* probe ops as a TOCTOU
+	 * lss_gen is the per-inode layout generation counter, monotonically
+	 * bumped on every mutation (add/remove segment and mirror
+	 * mutations).  Used by the INODE_LAYOUT_* probe ops as a TOCTOU
  * defence: LIST returns it, ADD/REMOVE require expected_gen to
- * match.  See .claude/design/mirror-lifecycle.md "Slice B'".
+	 * match.
  *
  * Persisted with the layout segments on-disk (after lss_count in
  * both POSIX .layouts files and the RocksDB layouts CF value).  No
- * SB_REGISTRY version bump per CLAUDE.md "Deployment Status: No
- * persistent storage has been deployed."
+	 * SB_REGISTRY version bump is required when this persisted shape
+	 * changes.
  *
  * _Atomic so the field is race-safe under TSan even if a future
  * reader appears outside i_attr_mutex.  Today the only reader is

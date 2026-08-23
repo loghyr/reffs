@@ -26,7 +26,7 @@
  *
  * OP_MAX is defined in nfsv42_names.h as (highest op code + 1).
  * Highest assigned op is OP_EXCHANGE_RANGE = 100 (renumbered from 96
- * in the R5a slice to make room for CHUNK_ESCROW at 92-95), so
+ * to make room for CHUNK_ESCROW at 92-95), so
  * OP_MAX is currently 101.  We use 108 for a small margin.  A
  * _Static_assert in ops.c enforces that OP_MAX never exceeds this
  * value.
@@ -105,9 +105,8 @@ struct reffs_layout_error_stats {
 /* ------------------------------------------------------------------ */
 /* Chunk activity stats (per-sb)                                       */
 /*                                                                     */
-/* Diagnostic counters for chunk-collision validation                  */
-/* (.claude/design/chunk-collision-validation.md, BLOCKER 2).  The     */
-/* harness reads these before/after a sweep and asserts on the deltas. */
+/* Diagnostic counters for chunk-collision validation.  The workload   */
+/* harness can read these before/after a sweep and assert on the deltas. */
 /* ------------------------------------------------------------------ */
 
 struct reffs_chunk_stats {
@@ -120,16 +119,15 @@ struct reffs_chunk_stats {
 	_Atomic uint64_t cs_rollback_invoked; /* CHUNK_ROLLBACK fired */
 	_Atomic uint64_t cs_repair_initiated; /* OP_CHUNK_WRITE_REPAIR entered */
 	_Atomic uint64_t
-		cs_repair_completed; /* OP_CHUNK_REPAIRED cleared a flag (slice 2) */
+		cs_repair_completed; /* OP_CHUNK_REPAIRED cleared a flag */
 	_Atomic uint64_t cs_fences_rotated; /* synthetic uid/gid bumps */
 
 	/*
 	 * INV-1 instrumentation -- partial-stripe write pattern on
-	 * the DS.  Answers Hellwig msg 5 (in-place update semantics)
+	 * the DS.  Answers in-place update and block-size questions
 	 * + msg 9 (NFS block size) by quantifying what the DS
 	 * actually sees during T1b (sub-chunk interleave) and T2
-	 * (IOR shared-file through PSes) workloads.  See
-	 * .claude/design/inv1-ds-instrumentation.md.  Relaxed
+	 * (IOR shared-file through PSes) workloads.  Relaxed
 	 * memory order -- diagnostic counters, not synchronization.
 	 */
 	_Atomic uint64_t cs_blocks_full; /* len == chunk_size */

@@ -249,7 +249,7 @@ void rpc_protocol_free(struct rpc_trans *rt);
  * Returns -EINVAL on bad arguments (NULL info, NULL buf, zero-len
  * buf).
  *
- * Slice plan-A.i: consumed by compound_alloc() to populate
+ * Consumed by compound_alloc() to populate
  * compound->c_gss_principal in production (today the field is
  * populated only by unit-test mocks).
  */

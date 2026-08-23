@@ -19,10 +19,9 @@
  * but the NFSv4 server code that DOES include both ensures the
  * values remain in lock-step.
  *
- * See `.claude/design/per-export-default-coding.md` for the full
- * design, including the TOML format ("rs:K+M" etc.), persistence
- * in `sb_registry_entry`, and the runway-target invariant the
- * LAYOUTGET dispatch must honour.
+ * The TOML format uses strings such as "rs:K+M"; the value is persisted
+ * in `sb_registry_entry`, and the LAYOUTGET dispatch honours the
+ * runway-target invariant.
  */
 
 #ifndef _REFFS_CODING_SPEC_H

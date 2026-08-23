@@ -2,12 +2,12 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * Persistent format for proxy-server migration records (slice 6c-zz).
+ * Persistent format for proxy-server migration records.
  *
  * This header lives in lib/include/reffs/ (not lib/nfs4/include/) so
  * the backends layer (lib/backends/flatfile_persist.c) can see the
  * struct shape without depending on lib/nfs4 -- backends layer must
- * not pull in nfs4 (one-way dependency rule, .claude/standards.md).
+ * not pull in nfs4 (the backend dependency is one-way).
  *
  * The matching in-memory record (struct migration_record) and the
  * runtime delta state enums live in lib/nfs4/include/nfs4/migration_record.h;
@@ -61,10 +61,8 @@ struct mr_persist_instance_delta {
  * Persistent migration record.  Fixed size; the flat-file backend
  * appends one of these per save and strides over the file at load.
  *
- * Wire-stable layout: append-only.  No version field per CLAUDE.md
- * "No persistent storage has been deployed" -- pre-deployment so
- * format changes are free until first ship.  When persistence ships
- * for production, add a leading version word and gate compatibility.
+ * Wire-stable layout: append-only.  When persistence compatibility
+ * requirements change, add a leading version word and gate loading.
  */
 struct migration_record_persistent {
 	uint8_t mrp_stateid_other[MR_PERSIST_NFS4_OTHER_SIZE];

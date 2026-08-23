@@ -22,8 +22,7 @@
  * Backwards-compat alias for the listener_id=0 (native) SSL_CTX.
  * New code should call io_tls_get_listener_context(listener_id)
  * so a combined role=mds + [[proxy_mds]] reffsd can run separate
- * server-side TLS postures per listener.  Slice plan-1-tls.c
- * documented the global-CTX limitation; this is the lift.
+ * server-side TLS postures per listener.
  */
 extern SSL_CTX *reffs_server_ssl_ctx;
 

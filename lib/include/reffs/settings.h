@@ -30,7 +30,7 @@
 /*
  * Room for a SHA-256 fingerprint formatted as colon-separated hex
  * (32 bytes * 2 + 31 colons = 95 chars, +NUL).  128 leaves headroom
- * for SHA-384/512 if a future slice extends the hash agility.
+ * for SHA-384/512 if a future implementation extends hash agility.
  */
 #define REFFS_CONFIG_MAX_TLS_FINGERPRINT 128
 #define REFFS_FENCE_UID_MIN_DEFAULT 1024
@@ -353,7 +353,7 @@ struct reffs_config {
 
 	/*
 	 * [mds] -- MDS-side tuning that does not belong in [server]
-	 * (server is generic across roles).  Keep-alive slice landed
+	 * (server is generic across roles).  Keep-alive support provides
 	 * the first knob here; future MDS-only options (e.g. fan-out
 	 * worker pool sizes) extend this struct.
 	 */

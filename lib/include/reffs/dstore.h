@@ -141,7 +141,7 @@ struct dstore {
 	 * Drain flag.  When true, LAYOUTGET /
 	 * runway-pop excludes this dstore from new placements.  Existing
 	 * instances on the dstore remain reachable until migrated off
-	 * (slice E autopilot) or the dstore is destroyed.
+	 * or the dstore is destroyed.
 	 *
 	 * Declared as a separate _Atomic bool rather than a bit in
 	 * ds_state because ds_state uses GCC __atomic_* builtins (a
@@ -156,9 +156,9 @@ struct dstore {
 
 	/*
 	 * Cached count of (sb, inum) entries indexed against this dstore
-	 * across all SBs (mirror-lifecycle Slice B'').  The persistent
+	 * across all SBs.  The persistent
 	 * reverse index is the source of truth; this is a hot-path cache
-	 * for DSTORE_INSTANCE_COUNT and (in slice G) DSTORE_DESTROY
+	 * for DSTORE_INSTANCE_COUNT and DSTORE_DESTROY
 	 * admission control.  Bumped/decremented in the same code path
 	 * that adds/removes index entries.  Memory order is relaxed --
 	 * no synchronization-with semantics required since the index is
@@ -201,7 +201,7 @@ void dstore_fini(void);
  * or NULL on failure (duplicate ID).
  */
 /*
- * tight_coupling: trust-stateid slice 1.5 opt-in for NFSv3 dstores
+ * tight_coupling: trust-stateid opt-in for NFSv3 dstores
  * known to be reffsd.  When true, ds_tight_coupled is set true at
  * alloc time (before the dstore is published to the hash table) so
  * the MDS advertises ffdv_tightly_coupled=true in GETDEVICEINFO and
@@ -299,7 +299,7 @@ int dstore_probe_root_access(struct dstore *ds);
  * atomic check; used by LAYOUTGET / runway-pop to exclude dstores
  * that should not receive new placements.
  *
- * Drain semantics (mirror-lifecycle Slice B): a drained dstore is
+ * Drain semantics: a drained dstore is
  * unavailable for NEW placements; existing instances are still
  * reachable via the normal data path -- this helper governs only
  * placement, not I/O.

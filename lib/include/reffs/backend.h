@@ -132,14 +132,14 @@ struct reffs_storage_ops {
 			  uint32_t *nblocks_out, uint32_t *chunk_size_out);
 
 	/*
-	 * Persistent reverse index (mirror-lifecycle Slice B'').  For each
+	 * Persistent reverse index.  For each
 	 * (sb, ds_id) pair the SB maintains the set of inums whose layout
-	 * includes a mirror on that dstore.  The autopilot drain workflow
-	 * (slice E) and DSTORE_DESTROY (slice G) need this to enumerate
+	 * includes a mirror on that dstore.  Drain and destroy operations
+	 * need this to enumerate
 	 * inodes-on-D in O(matching) instead of O(all inodes).
 	 *
-	 * NULL means the backend has no reverse index (POSIX in stage 1,
-	 * RocksDB until stage 2).  Callers fall back to no-persistence
+	 * NULL means the backend has no reverse index.  Callers fall back to
+	 * no-persistence
 	 * semantics: the cache `ds_instance_count` still tracks adds/
 	 * removes for the current boot, but persists nothing across
 	 * restart and iter is unavailable.
@@ -148,7 +148,7 @@ struct reffs_storage_ops {
 	 * transaction primitive (RocksDB WriteBatch), add/remove MUST
 	 * happen in the same on-disk transaction as the inode metadata
 	 * write that introduced or removed the mirror.  This is enforced
-	 * by inode_sync_with_dstore_diff in stage 2; the raw add/remove
+	 * by inode_sync_with_dstore_diff; the raw add/remove
 	 * here are for backends without transactions (RAM) and for tests.
 	 */
 	int (*dstore_index_add)(struct super_block *sb, uint32_t ds_id,
