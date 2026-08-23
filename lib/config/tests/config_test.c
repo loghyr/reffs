@@ -303,7 +303,6 @@ END_TEST
  * upgrade-safe default for NFSv3 MOUNT auto-discovery; an admin who
  * upgrades reffsd into an existing rpcbind environment without
  * reading the changelog must continue to see MOUNT discovery work.
- * See .claude/design/no-rpcbind.md.
  */
 START_TEST(test_defaults_register_with_rpcbind_true)
 {
@@ -513,7 +512,7 @@ END_TEST
 /* ------------------------------------------------------------------ */
 /* load -- default_coding (per-export encoding selection)                  */
 /*                                                                      */
-/* See .claude/design/per-export-default-coding.md.                     */
+/* Per-export default coding configuration.                             */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -1052,8 +1051,8 @@ START_TEST(test_load_proxy_mds_upstream_absent)
 	 * Missing address leaves the field empty string.  Later phases
 	 * treat empty address as "upstream unconfigured" rather than
 	 * failing reffsd startup, so the listener can still come up and
-	 * serve an empty proxy namespace.  Explicit here so the next
-	 * slice doesn't accidentally make empty-address fatal.
+	 * serve an empty proxy namespace.  This keeps an unconfigured
+	 * upstream distinct from a malformed proxy_mds entry.
 	 */
 	struct reffs_config cfg;
 	reffs_config_defaults(&cfg);
@@ -1075,7 +1074,7 @@ START_TEST(test_load_proxy_mds_upstream_absent)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* load -- [[proxy_mds]] TLS fields (slice plan-1-tls.b, #139)         */
+/* load -- [[proxy_mds]] TLS fields                                    */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_load_proxy_mds_tls_omitted_stays_off)
@@ -1083,8 +1082,8 @@ START_TEST(test_load_proxy_mds_tls_omitted_stays_off)
 	/*
 	 * Default for an entry that omits all tls_* keys: tls_mode
 	 * stays at OFF (= 0) and the cert/key/ca paths are empty.
-	 * Pre-#139 configs and dev/smoke topologies that have no
-	 * cert wired must keep working without edits.
+	 * Existing configurations and dev/smoke topologies that have no
+	 * cert configured must keep working without edits.
 	 */
 	struct reffs_config cfg;
 
@@ -1182,8 +1181,8 @@ START_TEST(test_load_proxy_mds_tls_cert_without_ca_rejected)
 	 * verification.  In production that is a downgrade vector.
 	 * Require an explicit tls_insecure_no_verify=true opt-in so a
 	 * forgotten tls_ca line in production fails closed; the smoke /
-	 * self-signed-MDS topology (slice plan-1-tls.c) sets the flag
-	 * and is exercised by test_load_proxy_mds_tls_cert_no_verify_ok.
+	 * self-signed-MDS topology sets the flag and is exercised by
+	 * test_load_proxy_mds_tls_cert_no_verify_ok.
 	 */
 	struct reffs_config cfg;
 
@@ -1262,7 +1261,7 @@ START_TEST(test_load_proxy_mds_tls_half_config_rejected)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* load -- [[allowed_ps]] entries (slice 6b-i)                          */
+/* load -- [[allowed_ps]] entries                                      */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_load_allowed_ps_single)

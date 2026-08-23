@@ -123,7 +123,7 @@ void reffs_config_defaults(struct reffs_config *cfg)
 	/*
 	 * Register with rpcbind by default to preserve NFSv3 MOUNT
 	 * auto-discovery for upgraded deployments.  Soak/CI scripts
-	 * (Bucket A in .claude/design/no-rpcbind.md) opt OUT to false
+	 * opt out to false
 	 * to avoid the ~22 startup round-trips that have caused
 	 * readiness-race flakes.
 	 */
@@ -767,9 +767,8 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 			}
 
 			/*
-			 * Trust-stateid slice 1.5: opt-in tight-coupling
-			 * for NFSv3 dstores known to be reffsd.  See
-			 * .claude/design/trust-stateid-slice-1-5.md.
+			 * Optional tight-coupling for NFSv3 dstores known to be
+			 * reffsd.
 			 */
 			d = toml_bool_in(ds_tbl, "tight_coupling");
 			if (d.ok)
@@ -824,8 +823,7 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 				pmc->mds_probe = (uint16_t)d.u.i;
 
 			/*
-			 * TLS for the PS-MDS session (slice plan-1-tls.b,
-			 * .claude/design/proxy-server-tls.md).  An empty /
+			 * TLS for the PS-MDS session.  An empty /
 			 * absent tls_cert leaves tls_mode at OFF and the
 			 * session stays on plain TCP.
 			 */
@@ -899,7 +897,7 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 			 * TCP connection could present any cert and the PS
 			 * would proceed.  Require an explicit
 			 * tls_insecure_no_verify=true opt-in so the smoke /
-			 * self-signed-MDS topology (slice plan-1-tls.c)
+			 * self-signed-MDS topology
 			 * stays expressible while a forgotten tls_ca line
 			 * in production fails closed.
 			 */
@@ -934,13 +932,11 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 			}
 
 			/*
-			 * Slice 6b-iv: TLS-fingerprint alternative to
+			 * TLS-fingerprint alternative to
 			 * principal.  Stored verbatim; the runtime
 			 * matcher does case-sensitive exact-string
 			 * comparison so the operator must format the
-			 * value the same way the production
-			 * tls_get_peer_cert_fingerprint() helper will
-			 * (deferred -- see proxy-server-phase6b.md).
+			 * value used by tls_get_peer_cert_fingerprint().
 			 */
 			d = toml_string_in(aps_tbl, "tls_cert_fingerprint");
 			if (d.ok) {
