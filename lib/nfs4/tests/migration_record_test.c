@@ -438,7 +438,7 @@ START_TEST(test_fini_drains_outstanding_records)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Slice 6c-x.4: apply-deltas view                                     */
+/* Apply-deltas view                                                      */
 /* ------------------------------------------------------------------ */
 
 static struct layout_data_file make_ldf(uint32_t dstore_id, uint8_t fh_byte)
@@ -620,13 +620,12 @@ START_TEST(test_apply_deltas_empty_input_segment)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Slice 6c-x.5: post-commit recall                                    */
+/* Post-commit recall                                                     */
 /* ------------------------------------------------------------------ */
 
 /*
- * Stub-level coverage (per design doc revision "6c-x.5 -- CB_LAYOUTRECALL
- * on DONE(OK) when DRAINING removed.  Reuse existing recall infra; just
- * queue the recalls.  Tests: recall-emitted (stub-level)").  Full
+ * Stub-level coverage for CB_LAYOUTRECALL on DONE(OK) when DRAINING is
+ * removed.  Full
  * end-to-end recall delivery exercises the existing CB infrastructure
  * and is covered by the integration soak harness; here we just pin
  * the no-stateid behavior so the helper is safe to call from
@@ -639,7 +638,7 @@ START_TEST(test_recall_layouts_no_inode_returns_zero)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Slice 6c-zz wiring: persist backend + reload                        */
+/* Persist backend + reload                                               */
 /* ------------------------------------------------------------------ */
 
 /*

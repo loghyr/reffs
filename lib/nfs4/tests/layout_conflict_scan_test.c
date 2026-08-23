@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * layout_conflict_scan_test -- enumerate sibling layout stateids on an
- * inode for the conflict-detection step of trust-stateid slice 1.
+ * inode for trust-stateid conflict detection.
  *
  * The function under test is
  * `stateid_inode_collect_layouts_excluding(inode, exclude_client,
@@ -11,10 +11,8 @@
  * stateid hash table and collects ref-bumped pointers to every
  * Layout_Stateid whose `s_client` differs from `exclude_client`.
  *
- * Slice plan: this is the Mon-PM deliverable of
- * `.claude/design/trust-stateid-slice-1.md`.  Tue wires the scan into
- * `nfs4_op_layoutget` and fires CB_LAYOUTRECALL + REVOKE_STATEID for
- * each entry returned.
+ * The LAYOUTGET path wires this scan into conflict handling and can
+ * fire CB_LAYOUTRECALL and REVOKE_STATEID for each entry returned.
  *
  * Tests:
  *   A. inode with no stateids -> count=0, out=NULL

@@ -5,8 +5,7 @@
 
 /*
  * default_coding_dispatch_test.c -- unit tests for the LAYOUTGET
- * dispatch helpers added in step 5 of
- * .claude/design/per-export-default-coding.md.
+ * dispatch helpers for per-export default coding.
  *
  * These exercise the two pure helpers
  * (default_coding_resolve_target and

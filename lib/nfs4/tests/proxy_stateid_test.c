@@ -2,14 +2,13 @@
  * SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Slice 6c-x.1: proxy_stateid value primitives.
+ * proxy_stateid value primitives.
  * Tests proxy_stateid_alloc / extract_boot_seq / is_stale /
  * other_eq from lib/nfs4/include/nfs4/proxy_stateid.h.
  *
  * The lookup table that resolves proxy_stateid -> migration record
- * is part of slice 6c-x.2; tests for the table-level Rule 6 lifecycle
- * (drain, dual-index consistency, find/remove race) live with that
- * slice.
+ * The lookup table is tested separately; table-level lifecycle tests
+ * cover drain, dual-index consistency, and find/remove races.
  */
 
 #ifdef HAVE_CONFIG_H
