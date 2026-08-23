@@ -4,19 +4,16 @@
  */
 
 /*
- * Proxy assignment queue -- slice 6c-y.
+ * Proxy assignment queue.
  *
- * The MDS-side autopilot (mirror-lifecycle slice E) decides what
+ * The MDS-side autopilot decides what
  * MOVE / REPAIR work needs to happen for which files; PROXY_PROGRESS
  * pulls those work items from this queue and ships them inline to
  * the polling PS in proxy_assignment4 form.
  *
- * Slice 6c-y scope: the queue mechanism + producer / consumer API
- * + PROXY_PROGRESS reply builder that consumes it.  The autopilot
- * ITSELF (the producer for normal operation) is mirror-lifecycle
- * slice E and lands separately; for now an admin probe op
- * (NOT_NOW_BROWN_COW for slice 6c-y -- slice 6c-y ships the
- * in-process API only) and the unit tests are the producers.
+ * The queue mechanism, producer/consumer API, and PROXY_PROGRESS
+ * reply builder consume these entries.  Normal producers are supplied
+ * by the MDS autopilot; the unit tests also exercise the API directly.
  *
  * Wire shape this maps to: proxy_assignment4 in nfsv42_xdr.x:
  *   { proxy_op_kind4 pa_kind;

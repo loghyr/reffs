@@ -54,11 +54,10 @@ struct nfs4_client {
 	 * discovery ops (LOOKUP / LOOKUPP / PUTFH / PUTROOTFH / GETFH /
 	 * SEQUENCE) bypass export-rule filtering on this client's
 	 * sessions.  Every other op continues to authorize against the
-	 * forwarded end-client credentials normally.  See
-	 * .claude/design/proxy-server.md "Privilege model".
+	 * forwarded end-client credentials normally.
 	 *
 	 * Atomic (release on publication, acquire on read) because the
-	 * slice 6b-iii squat-guard scans the client hashtable from one
+	 * squat-guard scans the client hashtable from one
 	 * session while another session may be in the middle of
 	 * publishing its own registration -- this flag is the publication
 	 * marker for the adjacent nc_ps_principal / nc_ps_registration_id
@@ -69,7 +68,7 @@ struct nfs4_client {
 	_Atomic bool nc_is_registered_ps;
 
 	/*
-	 * PROXY_REGISTRATION identity + lease (slice 6b-iii).  Only
+	 * PROXY_REGISTRATION identity + lease.  Only
 	 * meaningful when nc_is_registered_ps == true.  Set at
 	 * registration time so the squat-guard can scan for "another
 	 * registered client with the same GSS principal"; lease is in
@@ -253,8 +252,8 @@ void nfs4_client_put(struct nfs4_client *nc);
  * nfs4_client_find_other_registered_ps - scan the client hashtable
  * for an in-memory client (other than `self`) holding the
  * registered-PS privilege whose identity matches EITHER the given
- * GSS principal (slice 6b-iii squat-guard) OR the given TLS
- * fingerprint (slice 6b-iv).  At least one of the two arguments
+ * GSS principal OR the given TLS fingerprint.  At least one of the
+ * two arguments
  * must be a non-NULL non-empty string; either or both may be set.
  *
  * Returns ref-bumped match or NULL.  Caller drops ref via

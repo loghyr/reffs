@@ -102,7 +102,7 @@ struct server_state {
          * Per-boot incarnation table: slot -> uint16_t counter.
          * Looked up on EXCHANGE_ID reconnect to bump incarnation field
          * of the new clientid.
-         * NOT_NOW_BROWN_COW: implement as cds_lfht keyed by slot.
+	 * The current implementation uses a slot-indexed table.
          */
 	struct cds_lfht *ss_incarnations;
 
@@ -152,7 +152,7 @@ struct server_state {
 
 	/*
 	 * MDS-side allowlist of Proxy Server identities permitted to
-	 * send PROXY_REGISTRATION (slice 6b-i).  Snapshot of
+	 * send PROXY_REGISTRATION.  Snapshot of
 	 * cfg.allowed_ps[] copied in server_state_set_allowed_ps()
 	 * after server_state_init() returns.  Empty list means
 	 * default-deny: zero PROXY_REGISTRATIONs accepted.

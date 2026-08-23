@@ -193,11 +193,11 @@ struct stateid *stateid_inode_find_delegation(struct inode *inode,
  *
  * Returns -ENOMEM if allocation fails (no refs taken).
  *
- * This is the conflict-detection step for trust-stateid slice 1: at
+ * This is the conflict-detection step for trust-stateid: at
  * LAYOUTGET grant time, the MDS scans for sibling layout stateids on
  * the same inode held by OTHER clients (the prior-client set that
  * needs CB_LAYOUTRECALL + REVOKE_STATEID before the new layout is
- * granted).  See `.claude/design/trust-stateid-slice-1.md`.
+ * granted).
  */
 int stateid_inode_collect_layouts_excluding(struct inode *inode,
 					    struct client *exclude_client,

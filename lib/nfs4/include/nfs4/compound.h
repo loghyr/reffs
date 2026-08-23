@@ -69,32 +69,27 @@ struct compound {
 	 */
 	const char *c_gss_principal; /* NULL for AUTH_SYS */
 	/*
-	 * Backing storage for c_gss_principal in the production path
-	 * (slice plan-A.i).  compound_alloc() calls
+	 * Backing storage for c_gss_principal in the production path.
+	 * compound_alloc() calls
 	 * rpc_cred_get_gss_principal(); on success it copies the
 	 * principal into c_gss_principal_buf and points
 	 * c_gss_principal at the buffer.  Test mocks may bypass the
 	 * buffer and point c_gss_principal at a string literal --
 	 * compound_free() does not free or unwind this field.
 	 *
-	 * NOT_NOW_BROWN_COW (was deferred until plan-A.i): production
-	 * wiring of c_gss_principal from the GSS context now lives in
-	 * compound_alloc().  Unit tests retain the bypass-the-buffer
-	 * pattern.
+	 * Unit tests may retain the bypass-the-buffer pattern.
 	 */
 	char c_gss_principal_buf[REFFS_CONFIG_MAX_PRINCIPAL];
 
 	/*
-	 * Slice 6b-iv: TLS peer certificate identity context.  SHA-256
+	 * TLS peer certificate identity context.  SHA-256
 	 * of the peer cert's DER encoding, formatted as colon-separated
 	 * hex.  NULL when the session is not over TLS or the peer did
 	 * not present a cert.  PROXY_REGISTRATION matches against
-	 * either this OR c_gss_principal (slice 6b-i allowlist).
+	 * either this OR c_gss_principal.
 	 *
-	 * NOT_NOW_BROWN_COW: populate from
-	 * tls_get_peer_cert_fingerprint() once the dispatch path wires
-	 * SSL session -> compound (deferred alongside the c_gss_principal
-	 * production wiring; both are mockable in unit tests today).
+	 * The dispatch path populates this from the TLS connection when
+	 * a peer certificate is available.
 	 */
 	const char *c_tls_fingerprint; /* NULL for non-TLS or no peer cert */
 	/*
@@ -121,7 +116,7 @@ struct compound {
 	/* Compound-level state flags. */
 #define COMPOUND_DS_ATTRS_REFRESHED (1u << 0)
 /*
- * Trust-stateid slice 1: set by nfs4_layoutget_check_conflicts
+ * Set by nfs4_layoutget_check_conflicts
  * before it pauses for the REVOKE_STATEID fan-out.  The resume
  * callback re-invokes nfs4_op_layoutget; the second pass checks
  * this flag and skips the conflict scan.  Without it, the scan
