@@ -57,6 +57,7 @@ static off_t trace_bytes_written = 0;
 /* Global trace state */
 static pthread_mutex_t trace_mutex = PTHREAD_MUTEX_INITIALIZER;
 static FILE *trace_fp = NULL;
+static bool trace_io_failed;
 #ifdef ENABLE_ALL_TRACE_CATEGORIES
 static bool category_enabled[REFFS_TRACE_CAT_ALL] = { true, true, true,
 						      true, true, true,
@@ -426,6 +427,7 @@ reopen:
 void reffs_trace_init(const char *filename)
 {
 	reffs_trace_name = filename;
+	trace_io_failed = false;
 	pthread_create(&trace_compress_tid, NULL, trace_compress_thread, NULL);
 	if (reffs_trace_name)
 		trace_fp = fopen(reffs_trace_name, "a");
@@ -523,7 +525,7 @@ void reffs_trace_event(enum reffs_trace_category category, const char *name,
 	pid_t tid = reffs_gettid();
 
 	pthread_mutex_lock(&trace_mutex);
-	if (trace_fp != NULL) {
+	if (!trace_io_failed && trace_fp != NULL) {
 		int n = fprintf(trace_fp,
 				"[%s.%09ld] [%s] [epoch_ns=%" PRIu64
 				"] [Δ+%6" PRIu64 "us] [%d:%d] (%s:%d): ",
@@ -535,15 +537,23 @@ void reffs_trace_event(enum reffs_trace_category category, const char *name,
 		va_end(args);
 
 		n += fprintf(trace_fp, "\n");
-		fflush(trace_fp);
+		if (fflush(trace_fp) != 0) {
+			int saved_errno = errno;
 
-		/* fprintf/vfprintf return a negative value on error (ENOSPC
-		 * being the interesting one here).  Folding that into the
-		 * counter drives it backwards and desynchronises rotation
-		 * from the real file size, so only count real output. */
-		if (n > 0)
-			trace_bytes_written += n;
-		rotate_trace_if_needed_locked();
+			if (trace_fp != stderr) {
+				fclose(trace_fp);
+				trace_fp = NULL;
+			}
+			trace_io_failed = true;
+			fprintf(stderr,
+				"Trace disabled after write failure: %s\n",
+				strerror(saved_errno));
+		} else {
+			/* fprintf/vfprintf return a negative value on error. */
+			if (n > 0)
+				trace_bytes_written += n;
+			rotate_trace_if_needed_locked();
+		}
 	}
 	pthread_mutex_unlock(&trace_mutex);
 }
