@@ -19,6 +19,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <errno.h>
 #include <pthread.h>
 #include <netinet/in.h>
 
@@ -32,6 +33,65 @@
 #include "nfs4/client.h"
 #include "nfs4/client_persist.h"
 #include "nfs4_test_harness.h"
+
+#ifdef __APPLE__
+/* macOS does not expose the POSIX pthread barrier API. */
+struct reffs_test_barrier {
+	pthread_mutex_t mutex;
+	pthread_cond_t cond;
+	unsigned int trip;
+	unsigned int waiting;
+	unsigned int generation;
+};
+
+typedef struct reffs_test_barrier pthread_barrier_t;
+
+static int reffs_test_barrier_init(pthread_barrier_t *barrier, const void *attr,
+				   unsigned int count)
+{
+	(void)attr;
+	if (count == 0)
+		return EINVAL;
+	if (pthread_mutex_init(&barrier->mutex, NULL) != 0)
+		return ENOMEM;
+	if (pthread_cond_init(&barrier->cond, NULL) != 0) {
+		pthread_mutex_destroy(&barrier->mutex);
+		return ENOMEM;
+	}
+	barrier->trip = count;
+	barrier->waiting = 0;
+	barrier->generation = 0;
+	return 0;
+}
+
+static int reffs_test_barrier_wait(pthread_barrier_t *barrier)
+{
+	unsigned int generation;
+
+	pthread_mutex_lock(&barrier->mutex);
+	generation = barrier->generation;
+	if (++barrier->waiting == barrier->trip) {
+		barrier->waiting = 0;
+		barrier->generation++;
+		pthread_cond_broadcast(&barrier->cond);
+	} else {
+		while (generation == barrier->generation)
+			pthread_cond_wait(&barrier->cond, &barrier->mutex);
+	}
+	pthread_mutex_unlock(&barrier->mutex);
+	return 0;
+}
+
+static int reffs_test_barrier_destroy(pthread_barrier_t *barrier)
+{
+	pthread_cond_destroy(&barrier->cond);
+	return pthread_mutex_destroy(&barrier->mutex);
+}
+
+#define pthread_barrier_init reffs_test_barrier_init
+#define pthread_barrier_wait reffs_test_barrier_wait
+#define pthread_barrier_destroy reffs_test_barrier_destroy
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Test fixture                                                        */
