@@ -89,11 +89,11 @@ void io_handler_fini(struct ring_context *rc)
 	 * io_conn_cleanup() MUST run before io_net_state_fini(): the
 	 * per-connection record-reassembly buffer (struct buffer_state)
 	 * now lives on struct conn_info as ci_bs and is freed inside
-	 * io_conn_cleanup().  Before the fold-in
-	 * (.claude/design/io-buffer-state-fd-recycle.md), kqueue
+	 * io_conn_cleanup().  Before buffer state moved onto struct
+	 * conn_info, kqueue
 	 * io_handler_fini did not call io_conn_cleanup at all -- the bs
 	 * free was incidentally covered by io_net_state_fini walking a
-	 * parallel conn_buffers[] array.  After the fold-in, that path
+	 * parallel conn_buffers[] array.  After that change, the path
 	 * is gone; without this call the kqueue shutdown leaks every
 	 * surviving bs.
 	 */
@@ -445,8 +445,8 @@ static int kqueue_arm_heartbeat_timer(struct ring_context *rc,
 #define KQUEUE_LISTENER_CHECK_INTERVAL 5
 #define KQUEUE_CONN_CHECK_INTERVAL 10
 /*
- * Slice 3 of conn-info-closing-wedge: the live-connection idle
- * deadline is the shared CONNECTION_TIMEOUT_SECONDS so the kqueue
+ * The live-connection idle deadline is the shared
+ * CONNECTION_TIMEOUT_SECONDS so the kqueue
  * (BSD/macOS) and io_uring (Linux) event loops cannot drift on
  * timeout policy.  Both loops call io_conn_check_timeouts; both
  * MUST pass the same idle deadline.

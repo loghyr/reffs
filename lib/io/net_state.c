@@ -16,8 +16,7 @@
  *     buffers.  The buffers themselves live on struct conn_info as
  *     ci_bs and are managed (lazy-allocate, drain-free) in
  *     lib/io/conn_info.c so their lifecycle is coordinated with
- *     conn_mutex + the CONN_CLOSING gate -- see
- *     .claude/design/io-buffer-state-fd-recycle.md.
+ *     conn_mutex and the CONN_CLOSING gate.
  *
  * Extracted from lib/io/handler.c so both the io_uring and kqueue
  * backends share a single implementation.  The only state this
@@ -153,8 +152,7 @@ int *io_heartbeat_get_listeners(int *num)
  * lib/io/conn_info.c so they can manage ci_bs on struct conn_info
  * under conn_mutex.  io_client_fd_register / io_client_fd_unregister
  * are gone -- buffer state is lazy-allocated on first read and freed
- * at the CONN_CLOSING -> CONN_UNUSED transition.  See
- * .claude/design/io-buffer-state-fd-recycle.md.
+ * at the CONN_CLOSING -> CONN_UNUSED transition.
  */
 
 bool io_buffer_append(struct buffer_state *bs, const char *data, size_t len)
