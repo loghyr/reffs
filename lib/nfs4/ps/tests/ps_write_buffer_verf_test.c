@@ -8,7 +8,7 @@
 #endif
 
 /*
- * Group C tests (PS Phase 4b slice 4b.4): composed write verifier.
+ * Composed write-verifier tests.
  *
  * The composer ps_compose_write_verf folds two halves into the
  * 8-byte verifier returned in WRITE / COMMIT replies:
@@ -284,7 +284,7 @@ END_TEST
 START_TEST(test_write_then_commit_verifier_equal_no_restart)
 {
 	/*
-	 * Regression test for the slice 4b.4 contract: in the happy
+	 * Regression test for the verifier contract: in the happy
 	 * single-cycle case (WRITE on a fresh buffer, then a
 	 * successful COMMIT that drops the buffer) the two reply
 	 * verifiers MUST be byte-equal, otherwise clients see a
@@ -334,7 +334,7 @@ START_TEST(test_write_then_commit_verifier_equal_no_restart)
 
 	/* And confirm a hypothetical fold differs (the choice is not
 	 * a no-op -- folding here WOULD cause V_w != V_c, which is
-	 * exactly the bug the slice avoids on this path).
+	 * exactly the bug this test guards against on this path).
 	 */
 	uint8_t hypo_verf[PS_WRITE_VERIFIER_SIZE];
 	uint8_t mds_v[PS_WRITE_VERIFIER_SIZE] = { 0xDE, 0xAD, 0xBE, 0xEF,

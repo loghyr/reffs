@@ -8,9 +8,8 @@
 #endif
 
 /*
- * Per-stripe dirty-bitmap state for PS Phase 4b (slice 4b.1).  4b.1
- * adds the data structures + WRITE-time dirty-marking that the
- * later slices (4b.2 per-stripe full-stripe flush, 4b.3 partial-
+ * Per-stripe dirty-bitmap state.  The data structures and WRITE-time
+ * dirty-marking support per-stripe full-stripe flush and partial-
  * stripe RMW) build on.  This file covers pure dirty-bitmap
  * mechanics, no flush or
  * RMW exercise yet.

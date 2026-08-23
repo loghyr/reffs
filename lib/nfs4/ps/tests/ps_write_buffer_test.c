@@ -8,8 +8,8 @@
 #endif
 
 /*
- * Buffer-table mechanics for PS Phase 4a (slice 4a.2a).  The flush-
- * on-COMMIT shim is slice 4a.2b; this file covers the table itself:
+ * Buffer-table mechanics.  The flush-on-COMMIT shim is tested
+ * separately; this file covers the table itself:
  * alloc, lookup, drop, listener-id disambiguation, table counter,
  * basic quiesce-enter/leave balance.
  *
