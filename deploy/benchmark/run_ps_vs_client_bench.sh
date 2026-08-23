@@ -30,7 +30,7 @@
 # the bench is assumed up already.
 # --keep-up leaves the bench up after the run for re-runs.
 #
-# Encoding scoping note (per design MVP decision): operator MUST
+# Encoding scoping note: operator MUST
 # pre-configure the MDS to issue --encoding for variant B's test
 # files.  Variant A passes --encoding directly to ec_demo.  This
 # harness does not orchestrate MDS encoding config; a probe-protocol

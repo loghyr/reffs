@@ -320,16 +320,10 @@ START_TEST(test_listener_shutdown_quiesce_deterministic)
 END_TEST
 
 /*
- * Note: an earlier version of this file had a separate
- * test_listener_toctou_state_check_after_increment that stored
- * PS_LISTENER_DRAINING directly on the listener state, bypassing
- * ps_listener_stop's CAS-elect protocol.  After the CAS-elect
- * landed (verdict-1 BLOCKER B1), direct DRAINING stores leave the
- * listener with no destroyer thread, so a subsequent ps_listener_stop
- * spin-waits for STOPPED forever.  The TOCTOU coverage is already
- * provided by test_listener_shutdown_quiesce_deterministic above
- * (primary parks in the pre_state_load hook; stopper runs
- * ps_listener_stop which is the only legal DRAINING writer).
+ * The TOCTOU coverage is provided by
+ * test_listener_shutdown_quiesce_deterministic above: the primary
+ * parks in the pre_state_load hook while the stopper runs
+ * ps_listener_stop, the only legal DRAINING writer.
  */
 
 /* ------------------------------------------------------------------ */

@@ -11,9 +11,9 @@
  * and snapraid_test.c.
  *
  * Also includes a wire-compat cross-check against
- * FFV2_ENCODING_SNAPRAID_CAUCHY at m=2: an IETF-126 review
- * remark asserted that SnapRAID's first two Cauchy-matrix rows
- * reproduce Linux md's P+Q coefficients byte-for-byte.
+ * FFV2_ENCODING_SNAPRAID_CAUCHY at m=2.  SnapRAID's first two
+ * Cauchy-matrix rows reproduce Linux md's P+Q coefficients
+ * byte-for-byte.
  * test_wire_compat_with_snapraid_at_m2 verifies this at k=4
  * and k=6.
  */
@@ -232,9 +232,8 @@ END_TEST
 
 #ifdef REFFS_ENABLE_PRIVATE_ENCODINGS
 /*
- * Wire-compat cross-check against SnapRAID at m=2 (the IETF-126
- * on-list assertion: SnapRAID's first two Cauchy rows reproduce
- * Linux md's P+Q coefficients).  Encode the same data with both
+ * Wire-compat cross-check against SnapRAID at m=2.  Encode the
+ * same data with both
  * encoders and memcmp the parity output.
  *
  * Only compiled when --enable-private-encodings brings the

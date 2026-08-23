@@ -425,9 +425,9 @@ int ps_listener_stop(uint32_t listener_id)
 	 * Without this election the original implementation would let
 	 * a second caller fall through to a duplicate
 	 * ps_write_buffer_table_destroy(), double-destroying the lfht
-	 * + pls_drain_mutex + pls_drain_cv.  Reviewer caught this in
-	 * verdict-1 of 4a.2a; the design's prose said "atomic
-	 * exchange" alone does not gate followers.
+	 * + pls_drain_mutex + pls_drain_cv.  The state transition
+	 * itself is the election; an atomic exchange without the
+	 * follower wait would permit duplicate destruction.
 	 */
 	expected = PS_LISTENER_RUNNING;
 	if (!atomic_compare_exchange_strong_explicit(

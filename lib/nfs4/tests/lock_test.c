@@ -963,7 +963,7 @@ END_TEST
  * per-inode lookup returned BAD_STATEID for every valid stateid.
  * The three tests immediately above set c_inode via cm_set_inode,
  * so none of them exercise the no-FH path -- add explicit
- * coverage.  Review origin: PR #65 review agent test suggestion.
+ * coverage for the no-filehandle stateid-recovery path.
  */
 START_TEST(test_test_stateid_no_fh)
 {
@@ -1019,8 +1019,7 @@ END_TEST
  * must return BAD_STATEID.  This is the per-client-scoping
  * guarantee of stateid_find_client -- a stateid absent from THIS
  * client's table but present in some other client's table must
- * not leak across the client boundary.  Review origin: PR #65
- * review agent test suggestion.
+ * not leak across the client boundary.
  */
 START_TEST(test_test_stateid_wrong_client)
 {

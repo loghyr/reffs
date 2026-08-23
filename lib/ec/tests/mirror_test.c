@@ -20,7 +20,7 @@
  * in lib/nfs4/ps/ec_pipeline.c and are exercised by
  * scripts/test_mirror_local.sh.
  *
- * Case coverage matches the reviewer-named matrix:
+ * Case coverage:
  *   1. encode replicates data[0] into data[1..k-1]
  *   2. encode is a no-op when caller already aliased data[i] = data[0]
  *   3. encode rejects NULL data[i] mid-array

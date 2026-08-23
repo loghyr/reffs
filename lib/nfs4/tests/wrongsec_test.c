@@ -1002,16 +1002,15 @@ START_TEST(test_registered_ps_does_not_bypass_root_squash)
 END_TEST
 
 /*
- * Audit-log capture: the bypass emits a TRACE line at
- * security.c:241 every time it fires.  This test runs a bypassed
+ * Audit-log capture: the bypass emits a TRACE line every time it
+ * fires.  This test runs a bypassed
  * LOOKUP and grep's the captured trace output for the "PS-bypass:"
  * substring.
  *
- * Capture mechanism: the reffs test harness inits the trace
- * subsystem with `reffs_trace_init(NULL)` (libreffs_test.c:36),
- * which sets the internal `trace_fp` to `stderr` (common.c:238).
+ * The test harness initializes the trace subsystem with
+ * `reffs_trace_init(NULL)`, which directs output to stderr.
  * `reffs_trace_event` writes via `fprintf(trace_fp, ...)` and
- * calls `fflush(trace_fp)` after each event (common.c:343).  The
+ * calls `fflush(trace_fp)` after each event.  The
  * test thus captures stderr to a `tmpfile()` stream, runs the
  * dispatch, and reads the captured bytes back.  No production
  * API surface needed.

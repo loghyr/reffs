@@ -192,9 +192,8 @@ struct migration_record {
 	/*
 	 * Per-instance deltas.  Ownership: the record OWNS the array
 	 * (allocated at register, freed at release).  Array length is
-	 * mr_ndeltas; entries are immutable after the record is hashed
-	 * (per design-doc invariant 3 -- record-replacement, not
-	 * in-place delta mutation, encodes any state change).
+	 * mr_ndeltas; entries are immutable after the record is hashed.
+	 * State changes replace the record rather than mutating its deltas.
 	 */
 	uint32_t mr_ndeltas;
 	struct migration_instance_delta *mr_deltas;
@@ -394,7 +393,7 @@ void migration_record_reaper_scan(uint64_t max_silence_ns,
  * Returns 0 on success, -ENOMEM on allocation failure.
  *
  * Thread-safe: reads only immutable record fields (deltas are
- * frozen after the record is hashed per design-doc invariant 3).
+	 * frozen after the record is hashed.
  * No RCU section is taken; the caller's existing record-find ref
  * keeps the record alive for the duration of this call.
  */

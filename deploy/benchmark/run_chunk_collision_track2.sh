@@ -96,7 +96,7 @@ NPS="${N}" bash "${HERE}/run-ps-bench-bringup.sh"
 # -- step 2: pre-run chunk-counter snapshot (best-effort) -------------
 # The per-sb chunk counters (sb_chunk_writes, sb_chunk_pending_
 # displaced, sb_chunk_finalize_crc_fail, ...) shipped with the
-# chunk-collision BLOCKER 2 work.  Snapshot them so the operator
+# chunk-collision analysis.  Snapshot them so the operator
 # can read the deltas; this is diagnostic -- the hard gate is the
 # fio verify result and the sanitizer scan below.
 snapshot_counters() {

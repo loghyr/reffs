@@ -151,11 +151,11 @@ static int g_nsessions = 1;
  * (one EXCHANGE_ID + CREATE_SESSION + M-1 BIND_CONN_TO_SESSION).
  * Total wire transports per `burst` run = nsessions x nconnect.
  *
- * Was a deprecated alias for --nsessions for one cycle (the rename
- * after the term-overload review); now reclaimed for the kernel
- * meaning that matches the Linux mount option and pd-protod's
+ * Was a deprecated alias for --nsessions for one cycle; it now
+ * uses the kernel meaning that matches the Linux mount option and
+ * pd-protod's
  * sxo_nconnect.  Drives the per-transport GSS context fan-out the
- * customer load shape produces -- N sessions x M transports each
+ * configured load shape produces -- N sessions x M transports each
  * with its own gss_init_sec_context -> gss_accept_sec_context
  * exchange against the server's identmap path.
  */
