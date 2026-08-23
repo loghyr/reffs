@@ -579,7 +579,7 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 
 	/*
 	 * Pull cstats up before the gate so the gate's reject path can
-	 * bump cs_chunk_busy_delay.  The existing INV-1 increments below
+	 * bump cs_chunk_busy_delay.  The increments below
 	 * still see the same pointer.
 	 */
 	struct reffs_chunk_stats *cstats =
@@ -729,15 +729,10 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 
 	/*
-	 * Allocate all three co-indexed per-chunk result arrays BEFORE the
-	 * loop.  Draft sec-CHUNK_WRITE (:9062-9065) mandates cwr_block_status,
-	 * cwr_block_activated, and cwr_owners are all one-entry-per-chunk in
-	 * the payload; leaving the two "arrays" empty violated the co-indexing
-	 * MUST and made strict decoders (Linux kernel client at
-	 * fs/nfs/flexfilesv2/flexfilesv2_xdr_chunk.c:547-570) return -EPROTO
-	 * on every reply.  Populating in-loop lets us capture
-	 * block_activated[i] from the first-write detection that INV-1 also
-	 * consumes -- consolidating the chunk_store_lookup that used to sit
+	 * Allocate all three co-indexed per-chunk result arrays before the
+	 * loop.  Each array has one entry per chunk in the payload.  Populating
+	 * them in-loop lets us capture block_activated[i] from the first-write
+	 * detection while consolidating the chunk_store_lookup that used to sit
 	 * inside the cstats guard.
 	 *
 	 * Any calloc failure fails the whole op with NFS4ERR_DELAY (matches
@@ -902,7 +897,7 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		};
 
 		/*
-		 * INV-1 / chunk-collision instrumentation.  cs_pending_
+		 * Chunk-collision instrumentation.  cs_pending_
 		 * displaced (cross-writer PENDING overwrite) used to
 		 * bump here, but the collision gate above rejects
 		 * PENDING-from-different-writer
@@ -912,7 +907,7 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		 * COMMITTED overwrites from other writers, so a
 		 * non-NULL prev here can be either same-writer or
 		 * other-writer of a durable prior state -- the
-		 * distinction is not made in the current INV-1 axes.
+		 * distinction is not made by the current counters.
 		 * The cs_pending_displaced wire field stays in probe1's
 		 * response struct for backward compatibility with deployed
 		 * probe clients; it reports zero after the collision gate
@@ -963,7 +958,7 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		atomic_fetch_add_explicit(&cstats->cs_writes, 1,
 					  memory_order_relaxed);
 		/*
-		 * INV-1 per-write block-count histogram.  Buckets sized
+		 * Per-write block-count histogram.  Buckets sized
 		 * for the practical range observed in T2 IOR runs
 		 * (typically 1, 4, or 16 chunks per CHUNK_WRITE).
 		 */
@@ -2589,11 +2584,10 @@ uint32_t chunk_rollback_for_client(uint64_t writer_clientid,
  * block was the result of an EC repair, not a normal write");
  * persisted via cbd_flags.
  *
- * cs_repair_initiated is bumped once per call (the existing INV-1
+	 * cs_repair_initiated is bumped once per call
  * counter; the stub also bumped it).  cs_repair_completed is the
  * MDS-side counter that the OP_CHUNK_REPAIRED handler bumps when a
- * client tells the MDS the repair landed -- that handler is Slice
- * 2 of the ec-repair work.
+	 * client tells the MDS the repair landed.
  */
 uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 {
