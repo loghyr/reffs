@@ -20,7 +20,7 @@
  *   4. duplicate ID: rejected by cds_lfht_add_unique
  *   5. unmounted:    dstore_is_available returns false
  *   6. unload_all:   drains the hash table
- *   7. drain mechanics (mirror-lifecycle Slice B):
+ *   7. drain mechanics:
  *        - drain excludes from collect_available
  *        - undrain restores it
  *        - drained still in collect_all
@@ -261,7 +261,7 @@ START_TEST(test_remote_vtable)
 END_TEST
 
 /*
- * Trust-stateid slice 1.5: opt-in tight-coupling for NFSv3 dstores
+ * Opt-in tight-coupling for NFSv3 dstores
  * known to be reffsd.  Setting tight_coupling=true at alloc time
  * sets ds_tight_coupled=true on the dstore, so the MDS will
  * advertise ffdv_tightly_coupled=true in GETDEVICEINFO.
@@ -335,7 +335,7 @@ START_TEST(test_explicit_port_alone_forces_remote)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Drain bit mechanics (mirror-lifecycle Slice B)                      */
+/* Drain bit mechanics                                                    */
 /* ------------------------------------------------------------------ */
 
 /* Helper: count how many of the given dstore IDs appear in `arr`,
@@ -474,14 +474,15 @@ START_TEST(test_drain_does_not_affect_is_connected)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Reverse-index mechanics (mirror-lifecycle Slice B'')                */
+/* Reverse-index mechanics                                                */
 /* ------------------------------------------------------------------ */
 
 /*
  * The dstore reverse index lives on a struct super_block, accessed
  * via sb->sb_ops->dstore_index_*.  The test harness's root SB is
- * RAM-backed, so the RAM impl is exercised here.  Slice C/D/E will
- * exercise it via real layout-mutation paths; this test set covers
+ * RAM-backed, so the RAM implementation is exercised here.  Higher-level
+ * layout-mutation tests exercise the same path through real operations;
+ * this test set covers
  * the underlying primitives.
  */
 
@@ -639,8 +640,7 @@ START_TEST(test_dstore_instance_count_field_present)
 
 	ck_assert_ptr_nonnull(ds);
 	/*
-	 * Cache starts at 0 -- slice B''-stage1 only adds the field;
-	 * stage 2 wires the rebuild.  This test pins the initial value
+	 * Cache starts at 0.  This test pins the initial value
 	 * so a future cache-rebuild change can't silently break the
 	 * "fresh dstore is empty" invariant.
 	 */

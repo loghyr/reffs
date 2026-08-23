@@ -148,8 +148,7 @@ END_TEST
  * ds_renewal_kick(NULL) is safe (covers the bare-wake path used by
  * tests).  Per-dstore kick clears both backoff fields atomically.
  *
- * The bench evidence the keep-alive slice validates against is
- * sensitive to recovery latency -- a kick that doesn't clear the
+	 * Recovery latency is observable -- a kick that doesn't clear the
  * backoff would let a parked dstore wait one full backoff window
  * before retry, defeating the W2 recovery channel.  This test
  * asserts the clear at the per-dstore visible API.
