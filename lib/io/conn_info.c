@@ -42,9 +42,9 @@ static struct conn_info *connections[MAX_CONNECTIONS];
 static pthread_mutex_t conn_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /*
- * Per-SSL I/O serialisation lock (Stage 3 Slice 3, INV-6).
+ * Per-SSL I/O serialisation lock.
  *
- * Memory safety for ci_ssl is in Slice 1; this lock serialises the
+ * Memory safety for ci_ssl is established separately; this lock serialises the
  * SSL state machine itself.  An ex_data index minted once at
  * io_conn_init() time tags each conn_info-owned SSL with a
  * reffs_ssl_io_lock that the install/lock/unlock/drop helpers
@@ -58,7 +58,7 @@ struct reffs_ssl_io_lock {
 
 static int reffs_ssl_io_lock_index = -1;
 
-/* Stage 3 Slice 4 drain helper (definition below); forward declared
+/* Drain helper (definition below); forward declared
  * here because the remove_*_op paths call it before its definition. */
 static void conn_drain_if_idle_locked(struct conn_info *ci);
 
@@ -125,7 +125,7 @@ struct conn_info *io_conn_register(int fd, enum conn_state initial_state,
 	int idx = fd % MAX_CONNECTIONS;
 	if (connections[idx] && connections[idx]->ci_state == CONN_CLOSING) {
 		/*
-		 * Stage 3 Slice 4 (INV-6): a prior connection on this slot
+		 * A prior connection on this slot
 		 * is still draining in-flight CQEs.  Refuse to reuse the
 		 * slot now -- if we did, a stale completion for the old
 		 * connection would land on the new one and corrupt state.
@@ -192,7 +192,7 @@ struct conn_info *io_conn_get(int fd)
 
 	int idx = fd % MAX_CONNECTIONS;
 	/*
-	 * Stage 3 Slice 4 (INV-6): a slot in CONN_CLOSING is unregistered
+	 * A slot in CONN_CLOSING is unregistered
 	 * from the caller's point of view; only in-flight count
 	 * bookkeeping (io_conn_remove_*_op / io_conn_write_done) is allowed
 	 * to touch it, and those use the internal *_locked helpers below.
@@ -286,7 +286,7 @@ int io_conn_add_read_op(int fd)
 
 	int idx = fd % MAX_CONNECTIONS;
 	/*
-	 * Stage 3 Slice 4 (INV-6): a late add_read_op racing
+	 * A late add_read_op racing
 	 * io_conn_unregister must not resurrect a CLOSING slot out of
 	 * its drain.  Caller gating via io_conn_get / tls_snapshot
 	 * catches the typical case but the check/add pair is not
@@ -334,7 +334,7 @@ int io_conn_remove_read_op(int fd)
 
 			/*
 			 * Skip the state-machine transitions for CONN_CLOSING
-			 * (Stage 3 Slice 4) -- the slot is draining toward
+			 * The slot is draining toward
 			 * CONN_UNUSED, not into a live state.  Decrement the
 			 * counter and let conn_drain_if_idle_locked complete
 			 * the transition.
@@ -657,7 +657,7 @@ static SSL *conn_ssl_detach_locked(struct conn_info *ci)
  *
  * SSL_shutdown writes the close_notify record into libssl state, so
  * it MUST NOT run concurrent with a worker SSL_write or the event
- * loop SSL_read on the same SSL (Stage 3 Slice 3).  Take the per-SSL
+ * loop SSL_read on the same SSL.  Take the per-SSL
  * io_lock first: outstanding use-ref holders that have entered an
  * SSL_ or BIO_ call hold the lock; we wait for them to finish before
  * issuing the shutdown.
@@ -688,8 +688,8 @@ void io_conn_destroy(struct conn_info *ci)
 /*
  * conn_drain_if_idle_locked -- if a slot in CONN_CLOSING has drained
  * (no in-flight read/write/accept/connect ops, write gate idle),
- * complete its transition to CONN_UNUSED so it can be reused.  Stage
- * 3 Slice 4 (INV-6) -- complements io_conn_unregister, which now
+ * complete its transition to CONN_UNUSED so it can be reused.  This
+ * complements io_conn_unregister, which now
  * leaves the slot in CONN_CLOSING so stale CQEs land on the correct
  * conn_info rather than corrupting whatever connection has reused
  * the fd in the meantime.  Caller holds conn_mutex.
@@ -706,9 +706,8 @@ void io_conn_destroy(struct conn_info *ci)
  * The returned bs pointer is safe to dereference outside conn_mutex
  * for the duration of the CQE handler that called this: as long as
  * the caller holds at least one in-flight op on the fd (its read or
- * write CQE counter is non-zero), conn_drain_if_idle_locked cannot
- * fire and the bs will not be freed.  See
- * .claude/design/io-buffer-state-fd-recycle.md.
+	 * write CQE counter is non-zero), conn_drain_if_idle_locked cannot
+	 * fire and the bs will not be freed.
  */
 struct buffer_state *io_buffer_state_get(int fd)
 {
@@ -804,9 +803,7 @@ static void conn_drain_if_idle_locked(struct conn_info *ci)
 	 * logically unreachable for the rest of this critical section.
 	 *
 	 * The free runs under the same conn_mutex acquisition (the caller
-	 * holds it for the entire drain transition); see
-	 * .claude/design/io-buffer-state-fd-recycle.md "Free-ordering
-	 * rationale".
+	 * holds it for the entire drain transition).
 	 */
 	ci->ci_state = CONN_UNUSED;
 	ci->ci_fd = -1;
@@ -850,7 +847,7 @@ int io_conn_unregister(int fd)
 		connections[idx]->ci_write_active = false;
 
 		/*
-		 * Stage 3 Slice 4 (INV-6): mark the slot CONN_CLOSING but
+		 * Mark the slot CONN_CLOSING but
 		 * keep ci_fd and the in-flight counters.  Stale CQEs
 		 * landing on this fd will still find this slot (rather
 		 * than a freshly-reused one) and naturally decrement the
@@ -935,8 +932,7 @@ void io_conn_cleanup(void)
 			 * shutdown we get here with live connections that
 			 * never drained.  io_net_state_fini used to walk a
 			 * parallel conn_buffers[] array for the same effect;
-			 * after the fold-in (see
-			 * .claude/design/io-buffer-state-fd-recycle.md) the
+			 * after buffer state moved onto conn_info, the
 			 * bs lives on conn_info and is freed here.
 			 */
 			if (connections[i]->ci_bs) {
@@ -975,8 +971,7 @@ int io_socket_close(int fd, int error)
 	 * a second close path on a recycled fd could free the new
 	 * connection's bs, or a new accept's io_buffer_state_create
 	 * could collide with a stale slot ("conn_buffers alias: ...
-	 * slot=N already occupied").  See
-	 * .claude/design/io-buffer-state-fd-recycle.md.
+	 * slot=N already occupied").
 	 *
 	 * After the fold-in: the bs lives on struct conn_info as
 	 * ci_bs and is freed at the CONN_CLOSING -> CONN_UNUSED
@@ -985,7 +980,7 @@ int io_socket_close(int fd, int error)
 	 */
 
 	/*
-	 * Slice 3c of conn-info-closing-wedge:
+	 * Shutdown before close:
 	 *
 	 * shutdown(SHUT_RDWR) before close() so any pending io_uring read
 	 * SQE on this fd receives a CQE.  In io_uring semantics, an SQE
@@ -1002,7 +997,7 @@ int io_socket_close(int fd, int error)
 	 * shutdown(SHUT_RDWR) propagates the TCP close to the SQE, which
 	 * completes with res=0 (EOF) or res=-ECONNRESET.  Both are
 	 * already handled in handler.c: the EOF branch and the
-	 * -ECANCELED/-ECONNRESET branch (the latter wired in Slice 3b)
+	 * -ECANCELED/-ECONNRESET branch
 	 * call io_context_destroy(), which decrements the per-fd read
 	 * counter via io_conn_remove_read_op(), letting the slot drain
 	 * cleanly to r=0 well before the 5-second force-drain backstop.
@@ -1154,16 +1149,15 @@ int io_conn_check_timeouts(time_t idle_timeout_seconds,
 	 *     to free via conn_drain_if_idle_locked() once all in-flight
 	 *     op counters hit zero.  (Pre-fold-in, io_socket_close called
 	 *     a separate io_client_fd_unregister() that walked a parallel
-	 *     conn_buffers[] array; the fold-in moved that lifecycle into
-	 *     conn_info.  See
-	 *     .claude/design/io-buffer-state-fd-recycle.md.)
+	 *     conn_buffers[] array; that lifecycle now belongs to
+	 *     conn_info.)
 	 *
 	 * Race note: between the scan and the close, another thread
 	 * could accept a new connection whose fd hashes to the same
 	 * conn_info slot.  For timed-out-idle connections this is
 	 * vanishingly unlikely (no completions fire on a truly idle fd),
 	 * and the worst case is closing a newly-accepted client which
-	 * will reconnect.  Slice 4 added the CONN_CLOSING state for the
+	 * will reconnect.  CONN_CLOSING handles the
 	 * other half of this hazard (slot reuse mid-drain); this sweep
 	 * does not close CLOSING slots -- their fd was already closed at
 	 * io_socket_close time and re-closing it here would risk
@@ -1274,7 +1268,7 @@ bool io_conn_write_try_start(int fd, struct io_context *ic)
 	pthread_mutex_lock(&conn_mutex);
 
 	int idx = fd % MAX_CONNECTIONS;
-	/* Stage 3 Slice 4: do not start new writes on a draining slot. */
+	/* Do not start new writes on a draining slot. */
 	if (connections[idx] && connections[idx]->ci_fd == fd &&
 	    connections[idx]->ci_state != CONN_CLOSING) {
 		struct conn_info *ci = connections[idx];
@@ -1333,7 +1327,7 @@ struct io_context *io_conn_write_done(int fd, uint32_t gen)
 			ci->ci_write_active = false;
 		}
 		/*
-		 * Stage 3 Slice 4 (INV-6): the write gate just emptied
+		 * The write gate just emptied
 		 * may have been the last in-flight op on a CLOSING slot.
 		 */
 		conn_drain_if_idle_locked(ci);
@@ -1369,7 +1363,7 @@ int io_conn_get_peer_cert_fingerprint(int fd, char *out_buf, size_t out_buf_len)
 	X509 *cert = NULL;
 
 	/*
-	 * Slice plan-A.ii: pull the X509 reference INSIDE the locked
+	 * Pull the X509 reference INSIDE the locked
 	 * window.  SSL_get_peer_certificate ref-bumps the X509 (we
 	 * X509_free below to balance), but SSL itself is NOT
 	 * refcounted by that call -- pulling a raw SSL pointer out of
@@ -1439,7 +1433,7 @@ void io_conn_set_tls_handshaking(int fd, bool handshaking)
 }
 
 /*
- * TLS SSL-object lifecycle (INV-5 / INV-6 fix).  See reffs/io.h for
+ * TLS SSL-object lifecycle.  See reffs/io.h for
  * the contract.  The SSL object's own atomic refcount is the lifecycle
  * counter: the slot holds one ref, each io_conn_ssl_acquire() adds a
  * use-ref, and the object frees when the last ref is dropped.
@@ -1506,7 +1500,7 @@ SSL *io_conn_ssl_acquire(int fd)
 	pthread_mutex_lock(&conn_mutex);
 	int idx = fd % MAX_CONNECTIONS;
 	/*
-	 * Stage 3 Slice 4: ci_ssl is detached in io_conn_unregister
+	 * ci_ssl is detached in io_conn_unregister
 	 * before the state moves to CONN_CLOSING, so the ssl pointer
 	 * is already NULL here in practice; the explicit state check
 	 * is defence in depth in case a future caller re-installs an
@@ -1553,7 +1547,7 @@ bool io_conn_tls_snapshot(int fd, bool *tls_enabled, bool *handshaking)
 	pthread_mutex_lock(&conn_mutex);
 	int idx = fd % MAX_CONNECTIONS;
 	/*
-	 * Stage 3 Slice 4 (INV-6): treat a CONN_CLOSING slot as gone --
+	 * Treat a CONN_CLOSING slot as gone --
 	 * callers (notably io_rpc_trans_cb) use this snapshot as the
 	 * gate for "is the connection still tracked", and the slot is
 	 * not tracked from a fresh op's point of view once it has
@@ -1583,7 +1577,7 @@ void io_conn_tls_set_state(int fd, bool tls_enabled, bool handshaking)
 }
 
 /*
- * Per-SSL I/O serialisation (Stage 3 Slice 3, INV-6).  The lock is
+ * Per-SSL I/O serialisation.  The lock is
  * attached to the SSL itself via ex_data, so its life matches the
  * SSL's life and slot reuse cannot poison it.  NULL-tolerant on the
  * SSL pointer and on a missing ex_data lock (only logged once at

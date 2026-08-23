@@ -301,13 +301,13 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			      ic->ic_id);
 
 			/*
-			 * Slice 3b of conn-info-closing-wedge: pair the
+			 * Pair the
 			 * cancellation CQE with io_context_destroy() so the
 			 * per-fd op counter (ci_read_count for OP_TYPE_READ,
 			 * etc.) is decremented.  Pre-Slice-3b this branch only
 			 * TRACE'd and io_uring_cqe_seen'd, leaving the context
 			 * leaked AND the counter stuck at >= 1.  When the idle
-			 * reaper (Slice 3a path) closes a fd, the kernel
+			 * reaper closes a fd, the kernel
 			 * cancels the pending READ SQE with -ECANCELED -- the
 			 * CQE landed here and the counter stuck, surfaced as
 			 * the r=1 "stuck in CLOSING ... force-draining"

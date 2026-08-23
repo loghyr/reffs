@@ -112,8 +112,8 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 	/*
 	 * Hold the per-SSL io_lock for every SSL_ / BIO_ call below --
 	 * including the kTLS probe, which queries libssl BIO flags --
-	 * so the event loop's SSL_read cannot race with us (Stage 3
-	 * Slice 3, INV-6).  Error paths MUST unlock before calling
+	 * so the event loop's SSL_read cannot race with us.  Error paths
+	 * MUST unlock before calling
 	 * io_socket_close: io_socket_close -> io_conn_unregister ->
 	 * conn_ssl_drop re-acquires this same mutex (to gate its own
 	 * SSL_shutdown), which would self-deadlock.  The `locked`
@@ -614,8 +614,7 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 
 	/*
 	 * The per-fd buffer_state used to be eagerly allocated here via
-	 * io_client_fd_register(client_fd).  After the fold-in (see
-	 * .claude/design/io-buffer-state-fd-recycle.md), the bs lives on
+	 * io_client_fd_register(client_fd).  The bs now lives on
 	 * struct conn_info as ci_bs and is lazy-allocated on the first
 	 * plain-NFS read by io_handle_read (handlers.c:~1491).  The
 	 * NULL-on-fresh-register state is load-bearing: the
@@ -995,7 +994,7 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 			 * process_ssl_accept drives the libssl state machine
 			 * (BIO_write, SSL_accept, BIO_pending, BIO_read), so
 			 * the per-SSL io_lock must be held around the whole
-			 * call (Stage 3 Slice 3, INV-6).
+			 * call.
 			 */
 			io_conn_ssl_io_lock(ssl);
 			int ret =
@@ -1388,7 +1387,7 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 			 * workers SSL_write in io_do_tls; without
 			 * serialisation libssl's state machine races and
 			 * the MDS sends an unprompted close_notify under
-			 * sustained load (Stage 3 Slice 3, INV-6).  Every
+			 * sustained load.  Every
 			 * early-return path unlocks before releasing the
 			 * use-ref.
 			 */
