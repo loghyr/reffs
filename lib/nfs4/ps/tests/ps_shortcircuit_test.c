@@ -6,7 +6,7 @@
 /*
  * Unit coverage for ps_shortcircuit_read / ps_shortcircuit_write.
  *
- * These are the helpers the Phase 5 dispatch hook routes to when a
+ * These are the helpers the dispatch hook routes to when a
  * mirror's deviceinfo resolves to one of the PS's own bound
  * addresses (em_local == true).  The helper decodes the upstream
  * filehandle (wire format struct network_file_handle), resolves the
@@ -46,7 +46,7 @@
  * Synthetic uid/gid the tests chown the runway-equivalent file to,
  * matching the MDS fence range default (1024-2048).  Keeping the
  * value distinct from both 0 (root) and 65534 (nobody) lets the
- * slice-5.3 cred-check cases exercise their intended paths without
+ * credential-check cases exercise their intended paths without
  * the fixture aliasing onto either edge.
  */
 #define SC_TEST_UID 1024
@@ -57,7 +57,7 @@ static void sc_setup(void)
 	fs_test_setup();
 	ck_assert_int_eq(ps_state_init(), 0);
 	/*
-	 * Slice 5.4: the cred / stateid check helpers in
+	 * The cred / stateid check helpers in
 	 * ps_shortcircuit.c call trust_stateid_find() when the dispatch
 	 * passes a non-NULL stateid.  The table must exist or
 	 * trust_stateid_find returns NULL on every lookup; the empty-
@@ -118,7 +118,7 @@ static uint32_t build_fh(uint8_t *out, uint64_t sb_id, uint64_t ino)
 
 /*
  * Create a regular file at `path` inside the root sb, chown it to
- * the slice-5.3 synthetic uid/gid (so the cred-check path has a
+ * the synthetic uid/gid (so the cred-check path has a
  * deterministic target), and return its inode number.  Recurring
  * through the public reffs_fs_* surface keeps the fixture aligned
  * with the path the NFS handlers actually exercise; the chown is
@@ -138,7 +138,7 @@ static uint64_t make_test_file(const char *path)
 /*
  * Write-then-read roundtrip through the short-circuit helpers
  * against a real local DS sb inode.  This is the load-bearing
- * dispatch test: when slice 5.2's em_local plumbing routes to the
+ * dispatch test: when em_local plumbing routes to the
  * helper, the bytes must land in the local inode's data block and
  * come back unchanged on the next call.  No RPC anywhere.
  */
@@ -307,7 +307,7 @@ START_TEST(test_shortcircuit_bad_fh)
 END_TEST
 
 /*
- * Slice 5.3: a forwarded uid + gid that does NOT match the local
+ * A forwarded uid + gid that does NOT match the local
  * file's synthetic uid/gid must reject before any data block I/O.
  * The MDS chmod'd the runway file with SC_TEST_UID/SC_TEST_GID; a
  * client whose layout cred carries different values is presenting
@@ -349,7 +349,7 @@ START_TEST(test_shortcircuit_reject_wrong_uid)
 END_TEST
 
 /*
- * Slice 5.3: forwarded uid matches stored synthetic uid -- write
+ * A forwarded uid matching the stored synthetic uid -- write
  * proceeds and the bytes land in the inode.  The complementary
  * accept case to test_shortcircuit_reject_wrong_uid; together they
  * prove the cred-check is enforcement, not theatre.
@@ -377,7 +377,7 @@ START_TEST(test_shortcircuit_accept_matching_uid)
 END_TEST
 
 /*
- * Slice 5.3: root_squash semantics.  When the upstream RPC layer
+ * Root-squash semantics.  When the upstream RPC layer
  * squashes a client uid=0 down to nobody (65534), the squashed
  * credential is what reaches the short-circuit dispatch hook.
  * Squashing happens before this layer, so the helper sees uid=65534
@@ -403,13 +403,13 @@ START_TEST(test_shortcircuit_root_squash)
 END_TEST
 
 /*
- * Slice 5.4: NULL layout stateid is the "anonymous stateid"
+ * A NULL layout stateid is the "anonymous stateid"
  * shortcut.  The dispatch hook in ec_pipeline.c passes NULL when
  * em_tight_coupled is false (the mirror's GETDEVICEINFO did not
  * advertise tight coupling), and the helper MUST accept without
  * consulting the trust table.  Today's compat path: the table
  * starts empty; without this bypass, every short-circuit would
- * reject -EBADSTATEID once Phase 1 trust-stateid is wired in.
+ * reject -EBADSTATEID once trust-stateid checking is enabled.
  */
 START_TEST(test_shortcircuit_null_stateid_skips_trust_check)
 {
@@ -438,7 +438,7 @@ START_TEST(test_shortcircuit_null_stateid_skips_trust_check)
 END_TEST
 
 /*
- * Slice 5.4: forwarded layout stateid that IS registered in the
+ * A forwarded layout stateid that IS registered in the
  * trust table (TRUST_ACTIVE, unexpired) accepts.  This pins the
  * load-bearing case once tight coupling is enabled per-mirror --
  * the RPC path's nfs4_op_chunk_write would accept on the same
@@ -478,11 +478,10 @@ START_TEST(test_shortcircuit_trusted_stateid_accepted)
 END_TEST
 
 /*
- * Slice 5.4: forwarded layout stateid that is NOT in the trust
+ * A forwarded layout stateid that is NOT in the trust
  * table -- the RPC path rejects with NFS4ERR_BAD_STATEID, so the
- * short path returns -EBADSTATEID.  This is the canonical phase 5
- * test_shortcircuit_rejects_unknown_stateid case from
- * proxy-server.md: a forwarded stateid for a file the MDS never
+ * short path returns -EBADSTATEID.  A forwarded stateid for a file
+ * the MDS never
  * registered (e.g., from a different client's lease, or a
  * revoked layout) must not bypass authorization.  Verify the
  * data block stays unwritten by reading back with NULL stid
@@ -518,7 +517,7 @@ START_TEST(test_shortcircuit_rejects_unknown_stateid)
 END_TEST
 
 /*
- * Slice 5.5: pls_shortcircuit_total bumps when the ec_pipeline
+ * pls_shortcircuit_total bumps when the ec_pipeline
  * dispatch hook routes through the short-circuit path.  The bump
  * lives in `ps_listener_record_shortcircuit()`, an inline helper
  * the dispatch hook calls before invoking pls_sc_write_fn /
@@ -526,7 +525,7 @@ END_TEST
  * freshly-registered pls verifies the counter atomic + the probe
  * surface's load both observe N.  The dispatch-hook call site is
  * exercised by the higher-level integration test
- * (test_shortcircuit_partial_2_mirrors, follow-up slice); this
+ * (test_shortcircuit_partial_2_mirrors); this
  * test pins the counter primitive in isolation so a future
  * refactor that swaps the helper for a direct atomic call cannot
  * silently drop the probe-surface plumbing.
