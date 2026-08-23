@@ -1800,11 +1800,11 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
 		*status = NFS4ERR_INVAL;
 		return 0;
 	}
-	if (flags & ~(CHUNK_LOCK_FLAGS_ADOPT | CHUNK_LOCK_FLAGS_TAKEOVER) ||
-	    (flags & CHUNK_LOCK_FLAGS_ADOPT) && !args->cla_adopt.cla_adopt ||
-	    !(flags & CHUNK_LOCK_FLAGS_ADOPT) && args->cla_adopt.cla_adopt ||
-	    (flags & CHUNK_LOCK_FLAGS_ADOPT) &&
-		    (flags & CHUNK_LOCK_FLAGS_TAKEOVER)) {
+	if ((flags & ~(CHUNK_LOCK_FLAGS_ADOPT | CHUNK_LOCK_FLAGS_TAKEOVER)) ||
+	    ((flags & CHUNK_LOCK_FLAGS_ADOPT) && !args->cla_adopt.cla_adopt) ||
+	    (!(flags & CHUNK_LOCK_FLAGS_ADOPT) && args->cla_adopt.cla_adopt) ||
+	    ((flags & CHUNK_LOCK_FLAGS_ADOPT) &&
+	     (flags & CHUNK_LOCK_FLAGS_TAKEOVER))) {
 		*status = NFS4ERR_INVAL;
 		return 0;
 	}

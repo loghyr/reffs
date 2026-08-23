@@ -138,8 +138,7 @@ struct mds_session {
 	 * sets this to EXCHGID4_FLAG_USE_PNFS_MDS so trust_stateid
 	 * gating on the DS side accepts TRUST_STATEID compounds from
 	 * the MDS.  Set the field before mds_session_create*; zero
-	 * preserves existing behaviour.  See task #140 in the topic
-	 * board ("Plan A reviewer follow-up #1").
+	 * preserves existing behaviour.
 	 */
 	uint32_t ms_exchgid_flags;
 	/*
@@ -227,8 +226,7 @@ int mds_session_create_sec(struct mds_session *ms, const char *host,
  * When spn is NULL, the behavior is identical to mds_session_create_sec
  * (build "nfs@<host>" from the host argument).
  *
- * Intended for the krb5 stress reproducer (see
- * .claude/design/krb5-stress-multi-xprt.md): drives the server's
+ * Intended for krb5 stress testing: drives the server's
  * SPN-resolution path with caller-chosen principals rather than
  * letting the library default.
  */
@@ -261,8 +259,7 @@ int mds_session_create_sec_spn_nc(struct mds_session *ms, const char *host,
 				  unsigned int nconnect);
 
 /*
- * TLS variant for the PS-MDS session (slice plan-1-tls.b,
- * .claude/design/proxy-server-tls.md).  When tls_cert and tls_key
+ * TLS variant for the PS-MDS session.  When tls_cert and tls_key
  * are non-empty, opens a TCP connection to host:port, brings up
  * mutually-authenticated TLS via tls_starttls (or direct TLS if
  * tls_mode == REFFS_PROXY_TLS_DIRECT, value 2), then wraps the
@@ -292,13 +289,13 @@ void mds_session_destroy(struct mds_session *ms);
 int proxy_reg_nfsstat_to_errno(nfsstat4 status);
 
 /*
- * Slice plan-A.iii: PS-side PROXY_REGISTRATION send.  Builds the
+ * PS-side PROXY_REGISTRATION send.  Builds the
  * compound `SEQUENCE PROXY_REGISTRATION(reg_id)` and sends it to
  * the upstream MDS over `ms`.  The PS uses this once at startup
  * to declare itself a registered Proxy Server; the MDS validates
- * the identity context (`compound->c_gss_principal` from slice
- * plan-A.i, or `compound->c_tls_fingerprint` from plan-A.ii)
- * against the `[[allowed_ps]]` allowlist (slice 6b-i).
+ * the identity context (`compound->c_gss_principal` or
+ * `compound->c_tls_fingerprint`) against the configured proxy-server
+ * allowlist.
  *
  * `registration_id` is a stable per-PS-instance opaque cookie the
  * MDS uses to distinguish a renewal (same id, refreshes lease)
@@ -323,8 +320,7 @@ int mds_session_send_proxy_registration(struct mds_session *ms,
  * alive between bursts of forwarded client traffic.  Without periodic
  * renewals the upstream MDS expires the session after one lease
  * period (~90s by default) and subsequent forwards return
- * NFS4ERR_BADSESSION; see .claude/design/proxy-server.md "Phase 6
- * follow-on: PS upstream session keepalive".
+ * NFS4ERR_BADSESSION.
  *
  * Returns:
  *   0        success (server accepted SEQUENCE; session still alive)
@@ -367,7 +363,7 @@ int mds_session_renew_lease_ex(struct mds_session *ms, nfsstat4 *sr_status_out);
  * Session-killer wire errnos: -EIO, -EPIPE, -ECONNRESET, -ETIMEDOUT,
  * -ENOTCONN, -ENETUNREACH (TCP teardown signals).
  *
- * See .claude/design/mds-ds-session-keepalive.md.
+ * The same classifier is used by both renewal paths.
  */
 bool mds_session_is_dead(int err, nfsstat4 sr_status);
 
@@ -539,7 +535,7 @@ int mds_compound_send(struct mds_compound *mc, struct mds_session *ms);
  * but authunix_create fails, the call is rejected with -ENOMEM
  * before hitting the wire.
  *
- * Added for the proxy-server forwarders (slice 2e-iv-c) so a
+ * Added for the proxy-server forwarders so a
  * forwarded op can carry the end client's AUTH_SYS creds rather
  * than the PS's service creds.
  */
@@ -568,9 +564,7 @@ struct mds_file {
  * @hint -- optional ffv2_layouthint4 payload to ride
  * OPEN(CREATE).createattrs as FATTR4_LAYOUT_HINT.  NULL leaves
  * createattrs zero-initialized (no hint).  The MDS validates and
- * TRACE's the hint per slice-2 of the Macklem-hint extension; see
- * .claude/design/layouthint-mds-hook.md for what the server does
- * with the four fields.
+ * traces the hint before applying its four fields.
  */
 int mds_file_open(struct mds_session *ms, const char *path, struct mds_file *mf,
 		  const ffv2_layouthint4 *hint);
@@ -777,9 +771,7 @@ int ds_chunk_write_repair(struct mds_session *ds, const uint8_t *fh,
  * [offset, offset+count) in chunk-index units.  Idempotent on the
  * MDS side: a re-issued call after a successful clear returns
  * NFS4_OK without bumping cs_repair_completed.  Caller passes the
- * real layout stateid from the LAYOUTGET; demo's cooperative model
- * does not exercise stricter stateid validation (NOT_NOW_BROWN_COW
- * in the server-side handler header).
+ * real layout stateid from the LAYOUTGET.
  *
  * Returns 0 on NFS4_OK, -EIO on non-OK status, or the usual
  * -errno on transport failure.
@@ -934,8 +926,7 @@ int ec_read_encoding(struct mds_session *ms, const char *path, uint8_t *buf,
 		     size_t shard_size);
 
 /*
- * Partial-range variants -- chunk-collision Track 1b
- * (.claude/design/chunk-collision-t1b.md).  Write or read
+ * Partial-range variants for chunked layouts.  Write or read
  * `length` bytes of the file starting at `offset`, walking only
  * the stripes the range touches.  The prefix and suffix stripes
  * are RMW-merged via ec_read_stripe_with_file +
@@ -945,10 +936,7 @@ int ec_read_encoding(struct mds_session *ms, const char *path, uint8_t *buf,
  * `length == 0` is a no-op success.  `offset + length` MUST NOT
  * overflow uint64_t.  For the write side, `offset + length` MUST
  * NOT exceed the existing file's logical size on the prefix /
- * suffix stripes that need RMW -- sparse RMW is the
- * per-stripe-primitive's NOT_NOW_BROWN_COW, so the harness
- * pre-fills the file with a full-file ec_write_encoding before any
- * range writers start.  Each stripe is one LAYOUTGET /
+ * suffix stripes that need RMW.  Each stripe is one LAYOUTGET /
  * FINALIZE / COMMIT / LAYOUTRETURN cycle; the demo client cost
  * model is correctness over throughput.
  */
@@ -969,8 +957,7 @@ int ec_read_encoding_range(struct mds_session *ms, const char *path,
  * does NOT call mds_file_open or mds_file_close.
  *
  * Used by the proxy-server subsystem to drive EC reads through the
- * pipeline without re-opening files it already discovered (PS
- * Phase 3 -- see .claude/design/proxy-server-phase3.md).
+ * pipeline without re-opening files it already discovered.
  * ec_read_encoding() remains the caller-friendly form for ec_demo and
  * tests.
  *
@@ -986,10 +973,8 @@ int ec_read_encoding_range(struct mds_session *ms, const char *path,
  * PS service identity.  Pass NULL to use the session's default auth
  * (ec_demo, dstore-MDS-to-DS, internal back-compat wrappers).
  *
- * NOT_NOW_BROWN_COW: DS-side cred forwarding (CHUNK_READ /
- * NFSv3 READ to the DS) is a separate slice -- the DS sessions
- * are pooled across requests today and don't yet have a per-call
- * auth swap.  This call's `creds` only reaches the MDS hops.
+ * DS-side credential forwarding is separate from this MDS-side
+ * override: pooled DS sessions retain their configured credentials.
  */
 int ec_read_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
 			       uint8_t *buf, size_t buf_len, size_t *out_len,
@@ -1006,17 +991,16 @@ int ec_read_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
  * and an optional AUTH_SYS override.  This function does NOT call
  * mds_file_open or mds_file_close.
  *
- * Used by the proxy-server subsystem (PS Phase 4a) to flush
+ * Used by the proxy-server subsystem to flush
  * COMMIT-buffered WRITE bytes through the EC pipeline against an
  * already-discovered upstream file, carrying the end client's
  * credentials to the upstream MDS for LAYOUTGET / LAYOUTRETURN.
- * See .claude/design/proxy-server-phase4a.md.
  *
  * `creds` -- optional per-call AUTH_SYS override for the MDS-side
  * compounds (LAYOUTGET / LAYOUTRETURN).  Pass NULL to use the
  * session's default auth (ec_demo, internal back-compat).  The
- * same NOT_NOW_BROWN_COW for DS-side cred forwarding documented
- * on ec_read_encoding_with_file applies here -- CHUNK_WRITE /
+ * DS-side credential forwarding is independent of this MDS-side
+ * override -- CHUNK_WRITE /
  * FINALIZE / COMMIT to DSes still use the DS session's pooled
  * auth, not `creds`.
  */
@@ -1065,8 +1049,7 @@ int ec_write_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
  * a batch of stripe calls -- the bulk RMW path
  * (`ec_write_encoding_range`) uses this to avoid the per-stripe DS
  * session create/destroy storm that pre-empts concurrent multi-writer
- * RMW workloads (Track 1b second-mechanism finding in
- * chunk-collision-validation.md).  Callers outside ec_pipeline.c must
+ * RMW workloads.  Callers outside ec_pipeline.c must
  * pass NULL.
  */
 int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
@@ -1103,8 +1086,8 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
  * `creds` -- optional per-call AUTH_SYS override for the MDS-side
  * compounds (LAYOUTGET / LAYOUTRETURN).  Same forwarding contract
  * as ec_write_stripe_with_file; pass NULL to use the session's
- * default auth.  The same NOT_NOW_BROWN_COW for DS-side cred
- * forwarding documented on ec_read_encoding_with_file applies.
+ * default auth.  DS-side credential forwarding is independent of
+ * this MDS-side override.
  */
 /*
  * `ctx_in_out` -- same opaque-shared-ctx contract as

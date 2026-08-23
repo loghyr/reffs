@@ -492,7 +492,7 @@ START_TEST(test_session_replace_quiesces_in_flight)
 END_TEST
 
 /*
- * Reviewer BLOCKER follow-up: minimal lifecycle test for the
+ * Minimal lifecycle test for the
  * renewal-thread machinery (start, then stop without crash or leak).
  * Coverage limit: this does NOT exercise mid-reconnect shutdown
  * (would require a stub mds_session_create_tls that blocks on a
