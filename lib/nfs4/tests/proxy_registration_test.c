@@ -3,12 +3,10 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * Unit tests for the PROXY_REGISTRATION + PROXY_PROGRESS op handlers
- * (mirror-of-design proxy-server.md Phase 6a).
+ * for the proxy registration and progress handlers.
  *
- * Slice 6a scope: bare flag-bit + session-context validation, sets
- * nc_is_registered_ps on success.  Allowlist identity check, mTLS
- * support, squat-guard and audit logging land in slice 6b -- tests
- * for those defer with the implementation.
+ * The tests cover session validation, allowlist identity checks, mTLS,
+ * squat-guard behavior, and progress delivery.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -136,7 +134,7 @@ static void pr_free(struct pr_ctx *cm)
 		 * pr_alloc only sets c_server_state and c_nfs4_client;
 		 * the other fields (c_inode, c_curr_sb, c_saved_sb,
 		 * c_curr_stid, c_saved_stid) are NULL.  The put helpers
-		 * are NULL-safe per .claude/standards.md, so calling
+		 * are NULL-safe, so calling
 		 * them unconditionally future-proofs the mock.
 		 */
 		server_state_put(c->c_server_state);
@@ -176,7 +174,7 @@ static PROXY_REGISTRATION4res *pr_res(struct pr_ctx *cm)
 
 /*
  * Seed the singleton server_state's [[allowed_ps]] mirror with one
- * principal.  Slice 6b-i flips the default to deny-all, so any test
+ * principal.  The default is deny-all, so any test
  * that wants the handler to ACCEPT a GSS principal must call this
  * first.  Calling with NULL clears the list.
  */
@@ -196,7 +194,7 @@ static void pr_allowlist_set(const char *principal)
 }
 
 /*
- * Slice 6b-iv: same as pr_allowlist_set but for the TLS-fingerprint
+ * Same as pr_allowlist_set but for the TLS-fingerprint
  * column of the allowlist.  An entry sets EITHER principal OR
  * fingerprint, not both -- the entry binds to one identity context.
  * Passing NULL clears the entire list.
@@ -248,8 +246,7 @@ static void teardown(void)
  * Happy path: USE_NON_PNFS session + GSS principal on the allowlist
  * + zero prr_flags -> NFS4_OK and the client is marked registered.
  *
- * Slice 6b-i: pr_allowlist_set() is required because the default is
- * deny-all.  Slice 6a's version of this test did not need it.
+ * pr_allowlist_set() is required because the default is deny-all.
  */
 START_TEST(test_proxy_registration_success)
 {
@@ -323,10 +320,8 @@ END_TEST
 
 /*
  * The data-mover draft (sec-security) forbids AUTH_SYS on the
- * MDS<->PS session.  Slice 6a approximates that with a c_gss_principal
- * NULL check -- catches AUTH_SYS, also (intentionally too-strict)
- * rejects a TLS-only session.  Slice 6b adds the TLS auth-context
- * check.
+ * MDS<->PS session.  A NULL c_gss_principal catches AUTH_SYS; a
+ * TLS-only session is handled by the separate TLS identity checks.
  */
 START_TEST(test_proxy_registration_rejects_auth_sys_session)
 {
@@ -345,7 +340,7 @@ START_TEST(test_proxy_registration_rejects_auth_sys_session)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Allowlist checks (slice 6b-i)                                       */
+/* Allowlist checks                                                       */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -447,7 +442,7 @@ START_TEST(test_proxy_registration_accept_allowlisted)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Squat-guard / renewal / lease (slice 6b-iii)                        */
+/* Squat-guard / renewal / lease                                         */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -577,14 +572,13 @@ START_TEST(test_proxy_registration_after_expiry_succeeds)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* mTLS auth-context (slice 6b-iv)                                     */
+/* mTLS auth-context                                                      */
 /* ------------------------------------------------------------------ */
 
 /*
  * A TLS-only session whose peer cert SHA-256 fingerprint is on the
  * tls_cert_fingerprint allowlist is permitted, even with no GSS
- * principal.  Mocks the production wiring (which is NOT_NOW_BROWN_COW
- * alongside the matching c_gss_principal wiring) by setting
+ * principal.  The test supplies the identity by setting
  * c_tls_fingerprint directly.
  */
 START_TEST(test_proxy_registration_accept_tls_fingerprint)
@@ -615,7 +609,7 @@ END_TEST
  * TLS context present but the fingerprint is NOT on the allowlist.
  * The session has no other identity to fall back on, so the handler
  * rejects with NFS4ERR_PERM -- mirrors the principal-not-allowlisted
- * case from slice 6b-i.
+ * case from the principal allowlist tests.
  */
 START_TEST(test_proxy_registration_reject_tls_fingerprint_not_allowlisted)
 {
@@ -668,11 +662,11 @@ START_TEST(test_proxy_registration_reject_both_contexts_null)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* PROXY_PROGRESS (slice 6a stub)                                      */
+/* PROXY_PROGRESS                                                         */
 /* ------------------------------------------------------------------ */
 
 /*
- * Slice 6c-x.0: nfs4_client_registered_ps_identity accessor.
+ * nfs4_client_registered_ps_identity accessor.
  * The accessor returns the canonical authorization principal for
  * subsequent migration-record owner_reg matching: registration_id
  * if non-empty, else GSS principal, else mTLS fingerprint, else NULL.
@@ -837,7 +831,7 @@ START_TEST(test_registered_ps_identity_eq_both_unregistered)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* PROXY_DONE / PROXY_CANCEL handlers (slice 6c-x.3)                   */
+/* PROXY_DONE / PROXY_CANCEL handlers                                    */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -1146,7 +1140,7 @@ START_TEST(test_proxy_done_idempotent_returns_bad_stateid_on_repeat)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Slice 6c-y: PROXY_PROGRESS assignment delivery                      */
+/* PROXY_PROGRESS assignment delivery                                    */
 /* ------------------------------------------------------------------ */
 
 /*
