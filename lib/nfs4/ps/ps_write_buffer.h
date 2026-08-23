@@ -7,8 +7,8 @@
 #define _REFFS_PS_WRITE_BUFFER_H
 
 /*
- * Per-(stateid, upstream FH) write-buffer state used by the PS Phase
- * 4a whole-file COMMIT-deferred WRITE path.
+ * Per-(stateid, upstream FH) write-buffer state used by the proxy
+ * server's whole-file COMMIT-deferred WRITE path.
  *
  * This header is the public PS-internal surface (ps_state.c, the
  * pipeline shim in ps_proxy_ops.c, op handlers).  The opaque
@@ -25,7 +25,8 @@
  *     patterns/ref-counting.md): one table ref taken at
  *     insertion; per-op find refs taken via lookup_or_alloc.
  *   - pwb_mutex is leaf-most: nothing else is acquired while it
- *     is held.  See Reviewer checklist rule 4 in the design doc.
+	 *     is held.  This prevents a concurrent final put from freeing
+	 *     the buffer while it is being inspected.
  */
 
 #include <stdbool.h>
@@ -98,7 +99,8 @@ void ps_write_buffer_table_destroy(struct ps_listener_state *pls);
  * concurrent ps_listener_stop sets pls_state = DRAINING and either
  * (a) sees us in the counter (waits), or (b) we observe DRAINING
  * on the post-add load and decrement out without taking any
- * downstream refs.  See "Quiesce protocol" in the design doc.
+	 * downstream refs.  The quiesce protocol is defined by the paired
+	 * enter/leave helpers below.
  */
 bool ps_write_buffer_enter_quiesce_or_bail(struct ps_listener_state *pls);
 
@@ -232,7 +234,7 @@ int ps_write_buffer_mark_dirty(struct ps_write_buffer *buf, uint64_t offset,
  * Count of dirty stripe entries in this buffer.  Caller MUST hold
  * buf->pwb_mutex.  Walks the dirty hash table; cost is O(N) in the
  * number of dirty stripes.  Used by tests and by the forthcoming
- * ps-write-buffer-stats probe extension (slice 4b.7).
+ * ps-write-buffer-stats probe extension.
  */
 size_t ps_write_buffer_dirty_count(struct ps_write_buffer *buf);
 
@@ -256,7 +258,7 @@ size_t ps_write_buffer_table_count(struct ps_listener_state *pls);
  * inside pwb_release before the rcu callback, so a ref-less walk
  * would UAF the inner table on a concurrent last-put).  Cost is
  * O(buffers * dirty stripes per buffer).  Used by the
- * ps-write-buffer-stats probe extension (slice 4b.7) as an
+ * ps-write-buffer-stats probe extension as an
  * operator signal that "stuff is buffered and waiting to flush".
  * Best-effort snapshot: a buffer in mid-teardown (refcount zero)
  * is skipped, and the inner walk is unsynchronized w.r.t.
@@ -266,7 +268,7 @@ size_t ps_write_buffer_table_count(struct ps_listener_state *pls);
 size_t ps_write_buffer_dirty_total(struct ps_listener_state *pls);
 
 /* ------------------------------------------------------------------ */
-/* Composed write verifier (Phase 4b slice 4b.4)                       */
+/* Composed write verifier                                               */
 /* ------------------------------------------------------------------ */
 
 /*

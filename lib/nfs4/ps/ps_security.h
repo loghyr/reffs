@@ -14,8 +14,8 @@ struct compound; /* lib/nfs4/include/nfs4/compound.h */
  * Security guards for proxy-server fast paths.
  *
  * Today the PS forwards every upstream compound under its own
- * AUTH_SYS service credentials (slice 2e-iv-c -- credential
- * forwarding -- threads the END CLIENT's AUTH_SYS uid/gid through;
+ * AUTH_SYS service credentials.  Credential forwarding threads the
+ * END CLIENT's AUTH_SYS uid/gid through;
  * see ps_proxy_ops.h).  RPCSEC_GSS-authed end-client compounds
  * cannot be forwarded under that model: the upstream MDS would
  * see the PS's service principal in place of the end client's,
@@ -24,8 +24,7 @@ struct compound; /* lib/nfs4/include/nfs4/compound.h */
  *
  * Full RPCSEC_GSSv3 forwarding (RFC 7861 structured privilege
  * assertion -- "I am acting on behalf of principal X") is the
- * documented path forward.  See proxy-server.md "Action Items"
- * item 3.  Until that lands, refuse GSS-authed compounds at the
+ * documented path forward.  Until that lands, refuse GSS-authed compounds at the
  * proxy fast-path entry rather than silently downgrading.
  */
 
@@ -54,8 +53,8 @@ struct compound; /* lib/nfs4/include/nfs4/compound.h */
  * kernel client surfaces the second WRONGSEC as EACCES at mount,
  * but the wire pattern is a loop).  Today's PS forwarding only
  * supports AUTH_SYS, so a krb5 proxy rule is a deployment-time
- * misconfiguration; this slice does not introduce the hazard,
- * it surfaces an existing one.
+ * misconfiguration; this guard surfaces the existing hazard rather
+ * than silently downgrading the authentication.
  *
  * NULL-safe: returns false if compound or compound->c_rt is NULL
  * (no inbound credential to inspect).
