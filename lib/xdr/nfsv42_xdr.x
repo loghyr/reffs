@@ -1527,13 +1527,10 @@ enum nfs_opnum4 {
 %/*
 % * Proxy-server fore-channel ops: draft-haynes-nfsv4-flexfiles-v2-proxy-server.
 % * Op numbers 96-99 are TBD pending IANA assignment; same caveat as
-% * CHUNK / TRUST_STATEID above.  Renumbered from 92-95 in the R5a
-% * slice of the FFv2 draft sync (plan at
-% * .claude/design/ffv2-sync-plan-2026-08-05.md) to make room for the
-% * draft-authoritative CHUNK_ESCROW block at 92-95.
+% * CHUNK / TRUST_STATEID above.  Numbered after the
+% * CHUNK_ESCROW block at 92-95.
 % *
-% * Architecture revision (2026-04-26, see
-% * .claude/design/proxy-server-phase6c.md): the back-channel
+% * The back-channel
 % * CB_PROXY_* approach is retired; PS work is delivered inline as
 % * assignments in the PROXY_PROGRESS reply, and per-move terminal
 % * state is reported via fore-channel PROXY_DONE / PROXY_CANCEL.
@@ -3993,10 +3990,9 @@ struct BULK_REVOKE_STATEID4res {
  *   pick up new assignments.  The reply carries (a) a lease ack
  *   so the PS knows the registration is still alive, and (b) zero
  *   or more assignments the MDS wants this PS to start work on.
- *   Architecture revision (2026-04-26) -- replaces the original
+ *   The current architecture replaces the original
  *   "report status of CB_PROXY_MOVE / CB_PROXY_REPAIR" framing
- *   with fore-channel polling.  See
- *   .claude/design/proxy-server-phase6c.md.
+ *   with fore-channel polling.
  *
  * PROXY_DONE: terminal-status notification from the PS to the
  *   MDS, tagged by the layout stateid that LAYOUTGET returned for
@@ -4802,9 +4798,8 @@ struct CB_OFFLOAD4res {
 };
 
 %/*
-% * MDS-to-PS callback op slots 95-98 (draft-haynes-nfsv4-flexfiles-
-% * v2-data-mover) are RETIRED in the 2026-04-26 architecture
-% * revision.  See .claude/design/proxy-server-phase6c.md.
+% * MDS-to-PS callback op slots 95-98 are retired by the current
+% * architecture.
 % *
 % * Slice 6c-i had originally wired four CB ops (CB_PROXY_STATUS,
 % * CB_PROXY_MOVE, CB_PROXY_REPAIR, CB_PROXY_CANCEL) under op
@@ -4844,9 +4839,7 @@ enum nfs_cb_opnum4 {
         OP_CB_OFFLOAD                   = 15,
 
 %/*
-% * MDS-to-PS callback op slots 95-98 are RESERVED per the
-% * 2026-04-26 architecture revision.  See above and
-% * .claude/design/proxy-server-phase6c.md.  These constants exist
+% * MDS-to-PS callback op slots 95-98 are reserved.  These constants exist
 % * to keep the wire op-number space stable; no case arms in
 % * nfs_cb_argop4 / nfs_cb_resop4 reference them.
 % */
@@ -5218,16 +5211,16 @@ struct ffv2_stripes4 {
 };
 
 /*
- * NOT_NOW_BROWN_COW: the draft collapses ffv2m_coding_type +
+ * The draft collapses ffv2m_coding_type +
  * ffv2m_protection into a single discriminated union
  * ffv2_encoding_type_data4 (draft-haynes-nfsv4-flexfiles-v2, the
  * ffv2_encoding_type_data4 section -- cited by name because that
- * section carries no sec- anchor).  The wire bytes are identical --
+ * section carries no dedicated anchor).  The wire bytes are identical --
  * every union arm carries ffv2_data_protection4, so the encoding
  * is discriminator + protection either way -- but the generated C
  * API differs (m->ffv2m_encoding_type_data.ffv2etd_encoding plus a
- * union body accessor).  Deferred as a structural change separate
- * from this naming sweep.
+ * union body accessor).  The structural rename remains a separate
+ * code change.
  *
  * ffv2m_coding_type below keeps the retired "coding" spelling; the
  * draft has no such field at all now, so renaming it is a reffs-only

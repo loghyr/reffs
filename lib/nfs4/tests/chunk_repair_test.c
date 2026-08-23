@@ -17,7 +17,7 @@
  *      rejected for repair-write.
  *   C. Happy path -- block transitions, CHUNK_BLOCK_REPAIR_PROVENANCE
  *      flag set, cs_repair_initiated bumped, multi-block, bypass of
- *      Track 1b PENDING-collision gate.
+ *      PENDING-collision gate.
  *   D. Persistence -- REPAIR_PROVENANCE flag round-trips through
  *      chunk_store persist + load.
  *   E. Idempotence -- repair-write of identical bytes over already-
@@ -810,7 +810,7 @@ START_TEST(test_repair_multi_block)
 END_TEST
 
 /*
- * The Track 1b PENDING-collision gate (chunk.c:351-382) rejects a
+ * The PENDING-collision gate rejects a
  * normal CHUNK_WRITE that lands on a PENDING block owned by a
  * different writer.  CHUNK_WRITE_REPAIR explicitly bypasses that gate
  * -- the repair client is the sole authorised writer for the slot
@@ -937,8 +937,8 @@ START_TEST(test_repair_bypasses_pending_collision_gate)
 END_TEST
 
 /*
- * NOT_NOW_BROWN_COW: Group D (persistence round-trip via
- * chunk_store_persist + chunk_store_load) lands in a follow-up
+ * Group D (persistence round-trip via chunk_store_persist +
+ * chunk_store_load) remains a follow-up
  * once the chunk_store lifecycle helpers are clarified.  The in-
  * memory flag-set check in test_repair_single_block_empty +
  * test_repair_multi_block exercises the same cb_flags path that
