@@ -320,7 +320,7 @@ START_TEST(test_write_gate_partial_write_continuation)
 END_TEST
 
 /*
- * SSL-object lifecycle tests (INV-5 / INV-6 fix).  These exercise the
+ * SSL-object lifecycle tests.  These exercise the
  * io_conn_ssl_* / io_conn_tls_* accessors that replaced unguarded
  * ci_ssl access.  The defect they guard against: io_conn_get()
  * returned a raw conn_info whose ci_ssl a consumer dereferenced after
@@ -389,7 +389,7 @@ END_TEST
 START_TEST(test_ssl_clear_with_outstanding_ref)
 {
 	/*
-	 * The core INV-5 / INV-6 safety property: a use-ref taken by
+ * The core safety property: a use-ref taken by
 	 * io_conn_ssl_acquire() keeps the SSL object alive even after
 	 * io_conn_ssl_clear() drops the slot's ref.  The acquirer may
 	 * safely dereference the SSL until it releases.
@@ -451,7 +451,7 @@ START_TEST(test_tls_snapshot)
 END_TEST
 
 /*
- * CONN_CLOSING force-drain (conn-info-closing-wedge.md, Slice 1).
+ * CONN_CLOSING force-drain.
  *
  * io_conn_unregister leaves a slot in CONN_CLOSING with its
  * in-flight op counters intact; the slot only reaches CONN_UNUSED
@@ -565,8 +565,7 @@ END_TEST
 START_TEST(test_connected_idle_under_new_deadline_not_reaped)
 {
 	/*
-	 * Slice 3 of conn-info-closing-wedge raised
-	 * CONNECTION_TIMEOUT_SECONDS from 60 s to 600 s.  This test is
+ * CONNECTION_TIMEOUT_SECONDS is 600 s.  This test is
 	 * the regression guard against a future change re-lowering the
 	 * deadline (or any code path re-introducing the old 60 s
 	 * literal): a CONN_CONNECTED slot idle 5 minutes (300 s) must
@@ -597,8 +596,8 @@ START_TEST(test_connected_idle_under_new_deadline_not_reaped)
 END_TEST
 
 /*
- * NOT_NOW_BROWN_COW: a counterweight "idle past deadline IS reaped"
- * test was attempted but io_conn_check_timeouts' idle-close path
+ * A counterweight "idle past deadline IS reaped" test was attempted
+ * but io_conn_check_timeouts' idle-close path
  * calls io_socket_close, which in turn drives the real io backend
  * (io_uring / kqueue) -- not initialized in the unit-test harness,
  * so it hangs.  The upper-bound is exercised end-to-end by the
@@ -612,7 +611,7 @@ END_TEST
 START_TEST(test_read_op_remove_paired_on_cancel)
 {
 	/*
-	 * Slice 3b of conn-info-closing-wedge: the -ECANCELED / -ECONNRESET
+ * The -ECANCELED / -ECONNRESET
 	 * CQE branch in handler.c was returning without calling
 	 * io_context_destroy(), so a cancelled read SQE never decremented
 	 * ci_read_count and the slot wedged in CONN_CLOSING with r=1.
@@ -628,7 +627,7 @@ START_TEST(test_read_op_remove_paired_on_cancel)
 	 * leaves the per-fd counter balanced.
 	 *
 	 * Reproduces the r=1 leak fingerprint the bench captured before
-	 * Slice 3b: drop the io_context_destroy() call here and the
+ * Drop the io_context_destroy() call here and the
 	 * post-destroy ci_read_count assertion below would fail at 1.
 	 */
 	ck_assert_int_eq(io_context_init(), 0);
@@ -654,7 +653,7 @@ END_TEST
 START_TEST(test_read_op_remove_paired_on_close)
 {
 	/*
-	 * Slice 3c of conn-info-closing-wedge: io_socket_close() now
+ * io_socket_close() now
 	 * issues shutdown(SHUT_RDWR) before close(fd) so the pending
 	 * read SQE in the kernel actually receives a CQE (EOF or
 	 * ECONNRESET).  Without that, the SQE held the kernel struct
@@ -665,15 +664,15 @@ START_TEST(test_read_op_remove_paired_on_close)
 	 * This test simulates the post-3c sequence: a read is in flight
 	 * (ci_read_count == 1, CONN_READING), io_conn_unregister moves
 	 * the slot to CONN_CLOSING but deliberately keeps ci_fd and the
-	 * counters (INV-6 anti-UAF -- a stale CQE must still find its
-	 * conn_info).  Then the CQE that Slice 3c's shutdown guarantees
+ * counters (a stale CQE must still find its
+	 * conn_info).  Then the CQE that shutdown guarantees
 	 * will arrive runs io_context_destroy, which decrements
 	 * ci_read_count and the slot drains all the way to CONN_UNUSED
-	 * without needing the 5-second force-drain backstop.
+ * without needing the 5-second force-drain backstop.
 	 *
 	 * Drop the io_context_destroy() call here and the slot stays in
 	 * CONN_CLOSING with r=1 -- exactly what the bench saw before
-	 * Slice 3c made the CQE actually fire.
+ * shutdown made the CQE actually fire.
 	 */
 	ck_assert_int_eq(io_context_init(), 0);
 
@@ -693,7 +692,7 @@ START_TEST(test_read_op_remove_paired_on_close)
 	ck_assert_int_eq(ci->ci_state, CONN_CLOSING);
 	ck_assert_int_eq(ci->ci_read_count, 1);
 
-	/* The CQE that Slice 3c's shutdown(SHUT_RDWR) ensures arrives
+	/* The CQE that shutdown(SHUT_RDWR) ensures arrives
 	 * runs io_context_destroy, which drains the counter and the
 	 * slot reaches CONN_UNUSED with no force-drain needed. */
 	io_context_destroy(ic);
@@ -702,7 +701,7 @@ START_TEST(test_read_op_remove_paired_on_close)
 
 	/* Slot is fully drained -- io_conn_register on the same fd
 	 * succeeds (vs. failing on a still-CLOSING slot, which is the
-	 * fingerprint the bench saw before Slice 3c). */
+	 * fingerprint seen before shutdown was added). */
 	ck_assert_ptr_nonnull(
 		io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_CLIENT));
 }
@@ -711,11 +710,11 @@ END_TEST
 /*
  * --------------------------------------------------------------------
  * Buffer-state fold-in tests
- * (see .claude/design/io-buffer-state-fd-recycle.md)
+ * The buffer state lives on struct conn_info and follows the
  * --------------------------------------------------------------------
  *
  * After the fold-in, struct buffer_state lives on struct conn_info as
- * ci_bs and its lifecycle is gated by conn_mutex + INV-6 (CONN_CLOSING).
+ * ci_bs and its lifecycle is gated by conn_mutex + CONN_CLOSING.
  * Five tests below cover the post-fix invariants:
  *
  *   1. lazy-alloc: ci_bs is NULL on fresh register (load-bearing for
@@ -818,7 +817,7 @@ START_TEST(test_bs_no_alias_on_recycle)
 	ck_assert_ptr_null(io_buffer_state_get(FD_A));
 
 	/* Second lifecycle on the same fd number.  io_conn_register
-	 * succeeds (INV-6 gate cleared); io_buffer_state_create yields
+	 * succeeds after the closing gate clears; io_buffer_state_create yields
 	 * a fresh bs with bs_filled == 0, NOT the prior stamped value. */
 	(void)io_conn_register(FD_A, CONN_ACCEPTED, CONN_ROLE_SERVER);
 	struct buffer_state *second = io_buffer_state_create(FD_A);
@@ -847,7 +846,7 @@ static void *bs_race_churn(void *arg)
 							CONN_ROLE_SERVER);
 		if (!ci) {
 			/*
-			 * Lost the INV-6 race against a still-CLOSING slot
+			 * Lost a race against a still-CLOSING slot
 			 * from a prior iteration's reader.  Retry; not a
 			 * failure.
 			 */

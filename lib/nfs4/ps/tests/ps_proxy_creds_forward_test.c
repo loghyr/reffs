@@ -9,7 +9,8 @@
 
 /*
  * Wire-level coverage for the credential-forwarding plumbing
- * (slice 2e-iv-c-iii).  c-ii threaded a const struct
+ * through the PS forwarding path.  The forwarding path threads a
+ * const struct
  * authunix_parms *creds parameter through every PS forwarder, and
  * c-iii made the hooks pass &compound->c_ap so the end client's
  * AUTH_SYS uid reaches the upstream MDS.
@@ -591,11 +592,10 @@ END_TEST
  * at the first mds_compound_send_with_auth call, so the encoding
  * bails to its out_encoding label before allocating any DS state.
  *
- * Closes slice 4a.1: ec_write_encoding_with_file factor-out + creds
- * threading.  The full smoke test (encode + CHUNK_WRITE +
+ * The full smoke test (encode + CHUNK_WRITE +
  * FINALIZE + COMMIT round-trip) is exercised by ec_demo on the
- * bench, not here -- this test only verifies the cred propagation
- * to LAYOUTGET, which is what slice 4a.1 changed.
+ * bench, not here -- this test only verifies the credential
+ * propagation to LAYOUTGET.
  */
 START_TEST(test_ec_write_encoding_with_file_propagates_creds)
 {

@@ -43,8 +43,8 @@ static void teardown(void)
 /*
  * After ps_state_register, pls_local_addrs must include at least
  * 127.0.0.1.  Every Unix host has a loopback interface; if seeding
- * silently failed, this test surfaces it before any later phase-5
- * slice depends on the table being populated.  We assert via the
+ * silently failed, this test surfaces it before later users of the
+ * table.  We assert via the
  * match primitive rather than peeking at the array directly so the
  * test stays decoupled from the on-disk layout of struct ps_local_addr.
  */

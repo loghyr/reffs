@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * Unit tests for rpc_cred_get_gss_principal() (slice plan-A.i).
+ * Unit tests for rpc_cred_get_gss_principal().
  *
  * The success path requires real GSS infrastructure (a configured
  * Kerberos environment with a service principal), so it is left to

@@ -8,7 +8,7 @@
 #endif
 
 /*
- * Per-listener lifecycle for PS Phase 4a (slice 4a.2a): the
+ * Per-listener lifecycle: the
  * RUNNING -> DRAINING -> STOPPED state machine, the listener-borrow
  * contract gate, ps_listener_stop idempotency, and the quiesce-wait
  * for in-flight ops to drain.

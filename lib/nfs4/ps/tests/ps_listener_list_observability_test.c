@@ -13,7 +13,7 @@
  * The probe handler `probe1_op_ps_listener_list` (lib/probe1/
  * probe1_server.c:1461) populates `probe_ps_listener_info1`
  * records from per-listener state on `struct ps_listener_state`.
- * This slice appends four observability fields to the XDR record:
+ * The probe record includes four observability fields:
  *
  *   ppli_sc_installed       <- pls_sc_write_fn != NULL
  *   ppli_root_fh_resolved   <- pls_mds_root_fh_len != 0
@@ -22,8 +22,8 @@
  *
  * The probe handlers in `probe1_server.c` are file-static so the
  * tests cannot invoke them directly without a test-only header
- * (which the prior ec_pipeline_dispatch slice introduced for a
- * different reason).  Instead, this test pins the source-field
+ * (which is intentionally not exposed by the production interface).
+ * Instead, this test pins the source-field
  * contract the handler must read.  Each test exercises one of the
  * four mappings:
  *

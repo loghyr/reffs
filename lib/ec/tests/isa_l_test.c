@@ -230,11 +230,11 @@ END_TEST
  * P = XOR-of-all-data and Q = sum(2^i * data_i) in GF(2^8),
  * the exact byte pattern that Linux md P+Q ships and that
  * SnapRAID's first two Cauchy rows reproduce (already
- * verified against Linux md in Slice 6.2).  So ISA-L, Linux
+ * verified against Linux md).  So ISA-L, Linux
  * md, and SnapRAID all wire-agree at m <= 2.
  *
- * Slice S.1 (2026-07-27) added reffs's own RS_VANDERMONDE
- * (0x4) to that agreement: build_encoding_matrix() now
+ * reffs's own RS_VANDERMONDE (0x4) also participates in that
+ * agreement: build_encoding_matrix() now
  * hand-crafts the P/Q parity rows at m <= 2 instead of using
  * the normalized-Vandermonde bottom rows.  The four encodings
  * are now byte-identical at m <= 2; RS_VANDERMONDE stays a
@@ -250,8 +250,7 @@ END_TEST
  * merge SNAPRAID_CAUCHY (0x6) into ISA_L_RS (0x9).  reffs's
  * RS_VANDERMONDE also diverges from both at m >= 3 (its own
  * point set is still {1, 2, 3, 4, ...} pre-normalization);
- * widening the wire-compat map further is tracked as follow-up
- * Slice S.2.
+ * widening the wire-compatibility map remains future work.
  */
 static bool parity_bytes_equal(uint8_t *a, uint8_t *b, size_t len)
 {
@@ -294,7 +293,7 @@ START_TEST(test_matrix_agrees_with_snapraid_at_m2)
 	ck_assert(parity_bytes_equal(p_il[0], p_sr[0], len));
 	ck_assert(parity_bytes_equal(p_il[1], p_sr[1], len));
 
-	/* Slice S.1: reffs's rs.c now hand-crafts P/Q at m<=2, so
+	/* reffs's rs.c hand-crafts P/Q at m<=2, so
 	 * RS_VANDERMONDE also agrees with ISA-L on BOTH rows here. */
 	ck_assert(parity_bytes_equal(p_il[0], p_rv[0], len));
 	ck_assert(parity_bytes_equal(p_il[1], p_rv[1], len));
@@ -317,7 +316,7 @@ START_TEST(test_matrix_agrees_with_snapraid_at_m2)
 END_TEST
 
 /*
- * Slice S.1 m=1 lock-in: rs-vand at m=1 must produce the plain
+ * For m=1, rs-vand must produce the plain
  * XOR-of-all-data parity byte, byte-identical to XOR_PARITY,
  * to ISA-L's single Reed-Solomon row (which reduces to XOR when
  * m=1), and to Linux md's P row.  Locks in the "RS_VANDERMONDE

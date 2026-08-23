@@ -2,14 +2,14 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * conn_info connection-lifecycle no-regression check (INV-5 / INV-6).
+ * conn_info connection-lifecycle no-regression check.
  *
- * Slice 1 of .claude/design/io-conn-lifecycle.md refcounts the SSL
- * object hung off conn_info and exposes a lock-safe accessor pair
+ * The connection layer refcounts the SSL object hung off conn_info
+ * and exposes a lock-safe accessor pair
  * (io_conn_ssl_install / _acquire / _release / _clear, plus
  * io_conn_tls_snapshot / _set_state).  With those primitives in
  * place the unguarded ci_ssl access pattern that produced the
- * INV-5 / INV-6 race no longer exists; this test stays in the
+ * connection lifecycle race no longer exists; this test stays in the
  * suite to keep it that way.
  *
  * The shape mirrors the original red reproducer -- a churn thread
@@ -64,7 +64,7 @@ static SSL_CTX *test_ctx;
 
 /*
  * Count of churn threads still running.  Readers spin until it hits
- * zero.  C11 atomic per .claude/standards.md (new code uses C11).
+ * zero.  This uses a C11 atomic counter.
  */
 static _Atomic int churn_alive;
 
@@ -73,7 +73,7 @@ static _Atomic int churn_alive;
  * one fd, mirroring a PS<->MDS connection that flaps under load.
  * Each register installs a fresh SSL via io_conn_ssl_install() (which
  * adopts SSL_new()'s +1 ref as the slot ref); io_conn_unregister()
- * detaches and drops it under the discipline added in Slice 1.
+ * detaches and drops it while holding the connection lock.
  */
 static void *churn_thread(void *arg)
 {
@@ -122,7 +122,7 @@ static void *reader_thread(void *arg)
 			continue;
 		/*
 		 * Hold the per-SSL io_lock across the dereference -- the
-		 * Slice 3 serialisation gate.  SSL_get_version is read-
+		 * serialisation gate.  SSL_get_version is read-
 		 * only but the call shape mirrors the handlers.c hot path
 		 * (acquire / lock / use / unlock / release) so a future
 		 * regression that drops either step is caught here under
