@@ -90,9 +90,8 @@ struct mds_session {
 	 * ms_xprt_rr.  Single-slot serialisation via ms_call_mutex still
 	 * applies (sa_slotid is hardcoded to 0 in mds_compound_add_sequence);
 	 * the nconnect knob currently delivers wire-shape accuracy and
-	 * GSS-context fan-out, NOT multi-slot throughput.  Multi-slot is
-	 * a separate slice the consumers (ps, dstore, ec_pipeline) can
-	 * opt into after it lands.
+	 * GSS-context fan-out, not multi-slot throughput.  Consumers can
+	 * opt into multi-slot operation when that support is available.
 	 */
 	CLIENT **ms_clnts;
 	unsigned int ms_nconnect;
@@ -382,7 +381,7 @@ uint32_t mds_reconnect_backoff_next(uint32_t *backoff_sec);
 void mds_reconnect_backoff_reset(uint32_t *backoff_sec);
 
 /*
- * Slice 6c-z: PS-side PROXY_PROGRESS / PROXY_DONE / PROXY_CANCEL
+ * PS-side PROXY_PROGRESS / PROXY_DONE / PROXY_CANCEL
  * senders + the PS migration step driver.  See
  * lib/nfs4/server/proxy_registration.c for the MDS side and
  * draft-haynes-nfsv4-flexfiles-v2-data-mover sec-PROXY_PROGRESS /
@@ -394,8 +393,8 @@ void mds_reconnect_backoff_reset(uint32_t *backoff_sec);
  * reply, and lets the caller decide whether to drive each one
  * synchronously or queue it for a worker thread.  The actual
  * byte-shoveling that fulfils a MOVE / REPAIR assignment lives
- * outside this slice (slot reserved for a future slice that wires
- * the ec_pipeline against the migration's source/target dstores).
+ * outside this API; a higher layer connects the ec_pipeline to the
+ * migration's source and target data stores.
  */
 
 /*
@@ -440,8 +439,8 @@ int mds_session_send_proxy_progress(
  * LAYOUTRETURN(L3_stid) PROXY_DONE(pd_stateid, status)` per the
  * draft.  The wrapper here builds just the SEQUENCE+PROXY_DONE
  * pair -- the surrounding LAYOUTRETURN + the L3_stateid mgmt are
- * the PS's responsibility (a future slice that wires the
- * ec_pipeline byte-shoveling will compound them all together).
+	 * the PS's responsibility; a higher-level migration worker may
+	 * compound them with the data-movement operations.
  *
  * `status == NFS4_OK` directs the MDS to commit the migration.
  * Any other value rolls back.
@@ -465,7 +464,7 @@ int mds_session_send_proxy_cancel(struct mds_session *ms,
  * Callback invoked by ps_migration_step for each assignment in
  * the PROXY_PROGRESS reply.  The PS can drive the work
  * synchronously, queue it on a worker thread, or hand it off to
- * the ec_pipeline -- this slice is silent on the choice.  The
+	 * the ec_pipeline -- the caller chooses the execution model.  The
  * callback's return value is reflected back to the caller of
  * ps_migration_step in case it needs to short-circuit.
  *
@@ -665,7 +664,7 @@ int mds_layout_return(struct mds_session *ms, struct mds_file *mf,
 void ec_layout_free(struct ec_layout *layout);
 
 /*
- * Pending Change 6 step 7: validate every mirror's
+ * Validate every mirror's
  * em_checksum_algorithm against the client's supported set.
  * Returns 0 if every mirror declares an algorithm this client can
  * compute, -ENOTSUP otherwise (with *bad_mirror_out set to the
@@ -754,7 +753,7 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
  * ds_chunk_write_repair -- OP_CHUNK_WRITE_REPAIR to a data server.
  * Wire-equivalent of ds_chunk_write minus the chunk_guard4; stateid
  * is REQUIRED.  See lib/nfs4/server/chunk.c nfs4_op_chunk_write_repair
- * for the matching server contract.  ec-repair slice 3.
+ * for the matching server contract.
  */
 int ds_chunk_write_repair(struct mds_session *ds, const uint8_t *fh,
 			  uint32_t fh_len, uint64_t block_offset,
@@ -837,7 +836,7 @@ int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
 /*
  * ds_chunk_commit -- CHUNK_COMMIT on a data server.
  *
- * `writeverf_out` (PS Phase 4b slice 4b.4) -- optional 8-byte buffer
+	 * `writeverf_out` -- optional 8-byte buffer
  * that receives the response's `ccr_writeverf` on success.  Pass
  * NULL to ignore.  The verifier captures the DS's boot-epoch token
  * and is folded into the PS composed write verifier (see
@@ -907,7 +906,7 @@ int ec_read(struct mds_session *ms, const char *path, uint8_t *buf,
  * LAYOUTRETURN.
  *
  * `out_stats` (optional, may be NULL) is populated with timing +
- * counts before return.  ec-repair slice 3.
+ * counts before return.
  */
 int ec_repair_encoding(struct mds_session *ms, const char *path, int k, int m,
 		       enum ec_encoding_type encoding_type,
@@ -1012,7 +1011,7 @@ int ec_write_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
 				struct ps_listener_state *pls);
 
 /*
- * Per-stripe write primitive (PS Phase 4b).  Mirror of
+ * Per-stripe write primitive.  Mirror of
  * ec_write_encoding_with_file but encodes and writes exactly one
  * stripe at file-level stripe number `stripe_no`, with its own
  * LAYOUTGET / FINALIZE / COMMIT / LAYOUTRETURN cycle.
@@ -1031,7 +1030,7 @@ int ec_write_encoding_with_file(struct mds_session *ms, struct mds_file *mf,
  * client can retry COMMIT.
  */
 /*
- * `mds_verf_out` / `mds_verf_set_out` (PS Phase 4b slice 4b.4) --
+ * `mds_verf_out` / `mds_verf_set_out` --
  * optional out-params for the composed-write-verifier mix.  On
  * success the function captures the writeverf from the first
  * mirror's CHUNK_COMMIT response into `mds_verf_out` and sets
@@ -1062,7 +1061,7 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			      struct ps_listener_state *pls, void *ctx_in_out);
 
 /*
- * Per-stripe read primitive (PS Phase 4b slice 4b.3).  Mirror of
+ * Per-stripe read primitive.  Mirror of
  * ec_write_stripe_with_file but for the RMW prefix: acquires a
  * READ layout, issues CHUNK_READ on each of the k+m mirrors for
  * exactly this stripe's blocks, decodes via the encoding's
