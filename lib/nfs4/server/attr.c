@@ -50,7 +50,7 @@
 #include "nfs4/cb.h"
 #include "nfs4/chunk_store.h"
 
-/* Proxy-server SB forwarding (see .claude/design/proxy-server.md). */
+/* Proxy-server superblock forwarding. */
 #include "ps_inode.h"
 #include "ps_proxy_ops.h"
 #include "ps_sb.h"
@@ -2446,10 +2446,10 @@ static void nattr_release(struct nfsv42_attr *nattr)
  * Validate a SETATTR-supplied layout_hint per
  * draft-haynes-nfsv4-flexfiles-v2 sec-ffv2-layouthint.
  *
- * Slice 2 of the Macklem-hint extension: validate-and-accept only.
+ * Validate-and-accept only.
  * The decoded values are TRACE'd and discarded -- storage on the
- * inode + LAYOUTGET consumer are separate slices (see
- * .claude/design/layouthint-mds-hook.md).
+ * The decoded values are currently traced and discarded; persistence
+ * and LAYOUTGET consumption are separate operations.
  *
  * Returns NFS4_OK if acceptable (including the zero "no hint" form).
  * NFS4ERR_NOTSUPP if loh_type is not LAYOUT4_FLEX_FILES_V2.
@@ -2501,13 +2501,11 @@ out:
  * are not listed here so any request containing them yields
  * NFS4ERR_ATTRNOTSUPP.
  *
- * FATTR4_LAYOUT_HINT is settable (slice 2 of the Macklem-hint
- * extension) but is intentionally still cleared from
+ * FATTR4_LAYOUT_HINT is settable but is intentionally still cleared from
  * supported_attributes -- well-behaved clients won't try to set
  * an unadvertised attr, but ec_demo and the unit tests drive the
  * validation path directly.  Advertising lands once the hint is
- * stored on the inode + consumed by the LAYOUTGET striping
- * policy (see .claude/design/layouthint-mds-hook.md).
+ * stored on the inode and consumed by the LAYOUTGET striping policy.
  */
 static bool nattr_is_settable(uint32_t attr)
 {
@@ -2889,9 +2887,8 @@ static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
 		case FATTR4_LAYOUT_HINT: {
 			/*
 			 * Validate-only: the hint is range-checked and
-			 * TRACE'd; storage on the inode + consumption at
-			 * LAYOUTGET are deferred to slices 2b/4 (see
-			 * .claude/design/layouthint-mds-hook.md).
+			 * traced; storage on the inode and consumption at
+			 * LAYOUTGET are not part of this validation helper.
 			 */
 			nfsstat4 hs =
 				nfs4_layouthint_validate(&nattr->layout_hint);
@@ -3576,13 +3573,11 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 		}
 
 		/*
-		 * Audit-log obligation (see .claude/design/proxy-server.md
-		 * "Audit logging" + the reviewer NOTE on slice 2e-iv-a):
+		 * Audit-log obligation:
 		 * the compound rides on the PS session's credentials, not
 		 * the end client's AUTH_SYS credentials.  The
-		 * NOT_NOW_BROWN_COW in ps_proxy_ops.h documents the
-		 * follow-up (slice 2e-iv-c) that closes the gap; until
-		 * then every forward emits a TRACE so operators have
+		 * until credential forwarding is extended, every forward emits
+		 * a TRACE so operators have
 		 * visibility in the trace log.
 		 */
 		TRACE("proxy getattr: listener=%u ino=%" PRIu64
