@@ -1543,11 +1543,9 @@ enum nfs_opnum4 {
  OP_PROXY_CANCEL        = 99,
 
 %/*
-% * EXCHANGE_RANGE: draft-haynes-nfsv4-swap.  Renumbered from 96 to
-% * 100 in the R5a slice of the FFv2 draft sync, alongside the
-% * PROXY_* block, to make room for the draft-authoritative
-% * CHUNK_ESCROW block at 92-95.  Op number remains TBD pending IANA
-% * assignment.
+% * EXCHANGE_RANGE: draft-haynes-nfsv4-swap.  Op number 100 is
+% * reserved pending IANA assignment; the CHUNK_ESCROW operations
+% * occupy the preceding reserved range.
 % */
  OP_EXCHANGE_RANGE      = 100,
 
@@ -4801,11 +4799,7 @@ struct CB_OFFLOAD4res {
 % * MDS-to-PS callback op slots 95-98 are retired by the current
 % * architecture.
 % *
-% * Slice 6c-i had originally wired four CB ops (CB_PROXY_STATUS,
-% * CB_PROXY_MOVE, CB_PROXY_REPAIR, CB_PROXY_CANCEL) under op
-% * numbers 95-98 to deliver work assignments and cancel requests
-% * from MDS to PS.  Slice 6c-w walks all four back: the protocol
-% * is now fore-channel-only.  Work assignments arrive in
+% * The protocol is fore-channel-only.  Work assignments arrive in
 % * PROXY_PROGRESS replies; per-move terminal state is reported by
 % * the PS via PROXY_DONE / PROXY_CANCEL.
 % *
@@ -4990,10 +4984,9 @@ struct ff_device_addr4 {
  * bitmask so an FFv2 data server can independently advertise the
  * synthetic-uid, tightly-coupled, and trusted-stateid coupling
  * modes.  Consumers (layout.c encoder, mds_layout.c decoder) still
- * use the FFv1 struct for the FFv2 wire today; the R5c slice adds
- * the type surface so a follow-up implementation slice can flip
- * v2 layouts to emit ffv2_device_addr4 alongside the v1 encoder
- * without another XDR revision.
+ * use the FFv1 struct for the FFv2 wire today.  The type surface is
+ * retained so a future encoder can emit ffv2_device_addr4 without
+ * another XDR revision.
  */
 
 const FFV2_COUPLING_SYNTHETIC_UIDS  = 0x00000000;
