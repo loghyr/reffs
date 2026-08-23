@@ -214,7 +214,7 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 
 	/*
 	 * Mid-loop failures unwind through `out_err` so partially
-	 * allocated unique sessions (slice 6: heap-allocated, dedup'd by
+	 * allocated unique sessions (heap-allocated, deduplicated by
 	 * pointer) and ctx_devs / ctx_conns get reclaimed.  Routing
 	 * direct returns would leak every successful per-mirror
 	 * mds_session_create that ran before the first failure --
@@ -824,11 +824,11 @@ out_close:
 }
 
 /*
- * Slice 1.6: outer retry on -ESTALE from ec_chunk_write/_read.
+ * Outer retry on -ESTALE from ec_chunk_write/_read.
  *
  * ec_chunk_write retries NFS4ERR_BAD_STATEID three times with
  * 50/100/200 ms backoff and on exhaustion returns -ESTALE.  When
- * the trust entry has actually been revoked (slice 1.5 race
+ * the trust entry has actually been revoked (a concurrent revocation
  * scenario), the inner retry alone cannot recover -- the stateid
  * stays revoked until the client gets a fresh layout from the
  * MDS.  ec_layout_refresh is the outer retry the inner path was
@@ -837,8 +837,7 @@ out_close:
  * failed stripe with the new stateid.  Bounded retry (3 attempts)
  * prevents a layout ping-pong with a competing writer; on
  * exhaustion the original -ESTALE propagates and the write fails
- * cleanly -- which is the slice 1.5 "loud failure" property,
- * preserved.
+ * cleanly, preserving the fail-closed behavior.
  */
 #define EC_OUTER_RETRY_MAX 3
 
@@ -1350,7 +1349,7 @@ out_encoding:
 }
 
 /*
- * Per-stripe write primitive (PS Phase 4b slice 4b.2).
+ * Per-stripe write primitive.
  *
  * Encodes and writes exactly one fully-dirty stripe at file-level
  * stripe number `stripe_no` using its own LAYOUTGET / FINALIZE /
@@ -1674,8 +1673,7 @@ retry_stripe:
 		for (int i = 0; i < k + m && ret == 0; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 			/*
-			 * Capture the writeverf from mirror 0 only (PS
-			 * Phase 4b slice 4b.4).  The loop exits on the
+			 * Capture the writeverf from mirror 0 only.  The loop exits on the
 			 * first error (ret != 0 in the for-condition);
 			 * if mirror 0 errors no verifier is captured.
 			 * Otherwise mirror 0's writeverf is the sample
@@ -2673,7 +2671,7 @@ out_close:
 }
 
 /* ------------------------------------------------------------------ */
-/* ec_repair_encoding -- wire-level EC repair end-to-end (slice 3)        */
+/* ec_repair_encoding -- wire-level EC repair end-to-end                  */
 /* ------------------------------------------------------------------ */
 
 static uint64_t repair_now_ns(void)
