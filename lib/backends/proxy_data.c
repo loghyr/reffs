@@ -10,9 +10,9 @@
  * the proxy-server subsystem).  Metadata lives in RAM as a cache
  * of upstream MDS state; data has no on-disk persistence.  Reads
  * route through ec_pipeline (LAYOUTGET + CHUNK_READ + decode);
- * writes are not yet wired (Phase 4).
+ * writes are not yet wired.
  *
- * The primary read path for PS Phase 3 is the
+ * The primary read path is the
  * ps_proxy_pipeline_read() shim called from nfs4_op_read for
  * proxy SBs -- it carries op-handler-shaped concerns (count
  * clamping, NFS4ERR mapping, GSS rejection) that do not belong
@@ -21,8 +21,6 @@
  * a coherent answer; for typical NFS4 read traffic on proxy SBs
  * the shim is what fires.
  *
- * See .claude/design/proxy-server-phase3.md for the full slice
- * plan and design rationale.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -55,8 +53,8 @@ int proxy_data_db_alloc(struct data_block *db __attribute__((unused)),
 	/*
 	 * No allocation work: db_size and the inode->i_sb proxy
 	 * binding fully describe what proxy_db_read needs.  Caller
-	 * may pass a non-NULL buffer (e.g. on first WRITE in Phase
-	 * 4) -- ignored here; the WRITE path will own its own
+	 * may pass a non-NULL buffer (e.g. on a future WRITE) -- ignored
+	 * here; the WRITE path will own its own
 	 * pipeline call.
 	 */
 	return 0;
@@ -73,7 +71,7 @@ ssize_t proxy_data_db_read(struct data_block *db __attribute__((unused)),
 			   off_t offset __attribute__((unused)))
 {
 	/*
-	 * Phase 3 routes proxy READ through ps_proxy_pipeline_read()
+	 * Proxy READ is routed through ps_proxy_pipeline_read()
 	 * (op-handler shim), which calls ec_read_encoding directly with
 	 * the proxy SB's session and the file's upstream FH -- that
 	 * path bypasses data_block_read entirely.  This stub returns
@@ -82,8 +80,8 @@ ssize_t proxy_data_db_read(struct data_block *db __attribute__((unused)),
 	 * read pre-existing data) fails loudly rather than silently
 	 * returning zeros.
 	 *
-	 * Phase 3.5 will replace this stub with a proper db_read that
-	 * carries forwarded creds.
+	 * A future implementation can replace this stub with a db_read that
+	 * carries forwarded credentials.
 	 */
 	return -ENOSYS;
 }
@@ -93,7 +91,7 @@ ssize_t proxy_data_db_write(struct data_block *db __attribute__((unused)),
 			    size_t size __attribute__((unused)),
 			    off_t offset __attribute__((unused)))
 {
-	/* Phase 4 territory -- WRITE through pipeline not yet wired. */
+	/* WRITE through the proxy pipeline is not yet wired. */
 	return -ENOSYS;
 }
 

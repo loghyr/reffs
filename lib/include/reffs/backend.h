@@ -226,8 +226,7 @@ void ram_data_inode_cleanup(struct inode *inode);
 /* ------------------------------------------------------------------ */
 /* PROXY data backend -- declarations for composition                  */
 /*                                                                     */
-/* Used for proxy super_blocks (PS Phase 3 -- see                      */
-/* .claude/design/proxy-server-phase3.md).  Pairs with REFFS_MD_RAM:   */
+/* Used for proxy superblocks.  Pairs with REFFS_MD_RAM:                */
 /* metadata is a RAM cache of upstream MDS state, data is fetched on   */
 /* demand via ec_pipeline (no on-disk persistence).                    */
 /* ------------------------------------------------------------------ */

@@ -80,8 +80,7 @@ struct reffs_storage_ops *reffs_backend_compose(enum reffs_md_type md,
 	 *
 	 * RAM/PROXY is the proxy-server SB shape: metadata is a RAM
 	 * cache of upstream MDS state, data has no on-disk persistence
-	 * (fetched on demand via ec_pipeline -- see PS Phase 3 in
-	 * .claude/design/proxy-server-phase3.md).
+	 * (fetched on demand via ec_pipeline).
 	 */
 	if (md == REFFS_MD_RAM && data == REFFS_DATA_POSIX) {
 		LOG("Invalid backend composition: RAM md cannot use POSIX data");

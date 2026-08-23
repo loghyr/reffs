@@ -160,8 +160,8 @@ out:
 /*
  * Registry save/load: delegate to flatfile sb_registry code.
  *
- * NOT_NOW_BROWN_COW: Direct RocksDB registry persistence.
- * Full RocksDB registry requires refactoring sb_registry.c to
+ * Direct RocksDB registry persistence is not implemented.  Full RocksDB
+ * registry persistence requires refactoring sb_registry.c to
  * separate logic (walk sb list) from I/O (read/write entries).
  * For now, the flatfile registry coexists with the namespace DB.
  */

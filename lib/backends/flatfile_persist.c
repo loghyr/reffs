@@ -88,7 +88,7 @@ static int ff_client_incarnation_load(void *ctx,
 }
 
 /*
- * Migration records (slice 6c-zz) live in <state_dir>/migration_records.
+ * Migration records live in <state_dir>/migration_records.
  * Append-on-save, full-rewrite-on-remove (a record's lifetime is short
  * relative to the file size cap so periodic compaction is not needed
  * at this slice's scale).  Fixed-size records via

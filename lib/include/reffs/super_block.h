@@ -198,8 +198,6 @@ struct super_block {
 	 * that as CRC32, the only algorithm the server can compute
 	 * end-to-end today.  Set via probe sb-set-checksum-algorithm.
 	 *
-	 * Pending Change 6 step 6 from
-	 * ../flexfiles-v2/reffs-pending-changes.md.
 	 */
 	uint32_t sb_checksum_algorithm;
 
@@ -208,10 +206,9 @@ struct super_block {
 	 * sb has no other source (no ffv2_layouthint4 from the
 	 * client, no per-file override).  Set via TOML at boot
 	 * (root sb only, parsed by parse_one_export) or at runtime
-	 * via SB_SET_DEFAULT_CODING (step 7).  Zero-initialised
+	 * via SB_SET_DEFAULT_CODING.  Zero-initialised
 	 * means "no explicit default" -- LAYOUTGET falls back to
 	 * PASSTHROUGH with k = ss_layout_width (server-wide).
-	 * See .claude/design/per-export-default-coding.md.
 	 */
 	struct reffs_coding_spec sb_default_coding;
 
@@ -250,8 +247,7 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
  * Re-compose the SB's storage ops for a different data axis.
  * Used by the proxy-server subsystem to flip a freshly allocated
  * proxy SB from md=RAM,data=RAM to md=RAM,data=PROXY before any
- * dirent tree is created -- see PS Phase 3 in
- * .claude/design/proxy-server-phase3.md.
+ * dirent tree is created.
  *
  * The caller must hold the SB exclusively (no other thread observes
  * sb->sb_ops yet); the helper assumes single-owner semantics and
@@ -294,7 +290,6 @@ void super_block_drain(struct super_block *sb);
 
 /*
  * Superblock lifecycle state machine.
- * See .claude/design/multi-superblock.md for full state diagram.
  *
  * Returns 0 on success, -errno on invalid transition.
  */
@@ -348,7 +343,7 @@ void super_block_set_client_rules(struct super_block *sb,
  * Compatibility shim: synthesize a single "*" catch-all rule with the
  * given flavor list, root_squash=true, rw=true.  No new call sites --
  * kept only for the SB_SET_FLAVORS probe op.
- * NOT_NOW_BROWN_COW: remove after probe op SB_SET_CLIENT_RULES is wired in.
+ * This compatibility entry point remains for the legacy probe operation.
  */
 void super_block_set_flavors(struct super_block *sb,
 			     const enum reffs_auth_flavor *flavors,
@@ -364,14 +359,11 @@ void super_block_set_flavors(struct super_block *sb,
  *
  * A fully-zero spec (cs_encoding_type=0, cs_k=0, cs_m=0) is
  * accepted as the "clear / fall back to PASSTHROUGH with k =
- * ss_layout_width" sentinel.  See
- * .claude/design/per-export-default-coding.md "Coding spec
- * format" for the full invariant table.
+ * ss_layout_width" sentinel.
  *
- * The file-layout-single-DS cross-check (per
- * .claude/design/per-export-dstore.md) lives at the probe
- * server handler (step 7) where sb_layout_types context is
- * cleanly available; this setter is the lower-level invariant.
+ * The file-layout/single-data-server cross-check is performed by the
+ * probe handler, where the layout-type context is available; this
+ * setter enforces the lower-level encoding invariants.
  *
  * Returns 0 on success, -EINVAL on validation failure (sb
  * left unchanged).

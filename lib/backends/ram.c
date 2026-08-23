@@ -31,10 +31,9 @@
  * keys is operationally identical and trivial to manage.
  *
  * The entries are leaf nodes (no embedded refs to outside objects), so
- * lifecycle is creation-ref-only per .claude/patterns/ref-counting.md
- * Rule 6.  Iterators advance before put per
- * .claude/patterns/rcu-violations.md Pattern 7.  The dstore_index_iter
- * callback runs UNDER rcu_read_lock and therefore must be non-blocking.
+ * Entries are owned by the index until removal and are reclaimed through
+ * RCU.  Iterators advance before removing an entry, and callbacks run
+ * under rcu_read_lock and therefore must be non-blocking.
  */
 
 struct ram_sb_private {
@@ -155,10 +154,8 @@ static int ram_dstore_index_add(struct super_block *sb, uint32_t ds_id,
 		return -EEXIST;
 	}
 	/*
-	 * Cache `dstore->ds_instance_count` bumps deferred to slice C/D
-	 * caller -- the higher-level helper that owns the
-	 * placement-vs-index transaction will own the cache too.
-	 * See .claude/design/mirror-lifecycle.md "Hot-path cache".
+	 * Cache `dstore->ds_instance_count` updates are deferred to the
+	 * higher-level helper that owns the placement/index transaction.
 	 */
 	return 0;
 }

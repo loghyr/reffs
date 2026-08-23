@@ -403,10 +403,9 @@ int client_incarnation_add(const char *state_dir,
 			   const struct client_incarnation_record *crc)
 {
 	/*
-         * NOT_NOW_BROWN_COW: for now load all, append, rewrite.
-         * Replace with a smarter in-memory list once the protocol
-         * layer is stable.
-         */
+		 * Load the current records, append the new record, and rewrite the
+		 * file while holding the process-local lock.
+	 */
 	struct client_incarnation_record *recs;
 	size_t count = 0;
 	size_t max_recs = 65536; /* more than enough for a prototype */

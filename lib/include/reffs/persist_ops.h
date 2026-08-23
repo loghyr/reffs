@@ -54,7 +54,7 @@ struct persist_ops {
 				       size_t max_recs, size_t *count);
 
 	/*
-	 * Migration records (slice 6c-zz).  In-flight proxy migrations
+	 * Migration records.  In-flight proxy migrations
 	 * survive MDS restart so PROXY_DONE / PROXY_CANCEL on a
 	 * proxy_stateid minted before restart can still resolve to
 	 * the right record.  Save on create; remove on commit/abandon;

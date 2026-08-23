@@ -28,17 +28,10 @@
 
 #define SB_REGISTRY_MAGIC 0x53425247U /* "SBRG" */
 /*
- * Per project policy (CLAUDE.md "no persistent storage deployed"),
- * on-disk formats remain at version 1 with no migration code until
- * the first deployment with persistent data ships.  A structural
- * change to a persisted layout (e.g., SB_REGISTRY_MAX_DSTORES
- * growing from 16 to 1024, which shifted sizeof(struct
- * sb_registry_entry) by 4 KiB per entry) does NOT bump this
- * constant; instead, sb_registry_load's length check
- * (n != entries_sz at line 294) catches the mismatch and returns
- * -EINVAL, forcing the operator to regenerate rather than
- * deserializing into corrupt state.  When persistent storage
- * ships, replace this comment with actual versioning.
+ * The on-disk format is versioned.  The loader validates the version and
+ * exact entry payload size before deserializing a registry snapshot;
+ * incompatible files are rejected rather than interpreted as another
+ * layout.
  */
 #define SB_REGISTRY_VERSION 1
 #define SB_REGISTRY_FILE "superblocks.registry"
@@ -106,13 +99,10 @@ struct sb_registry_entry {
 	 * Zero-initialised entries (legacy / never-set) load as
 	 * reffs_coding_spec_is_unset() == true and the LAYOUTGET
 	 * dispatch routes to the ss_layout_width PASSTHROUGH
-	 * fallback.  Step 4 of
-	 * .claude/design/per-export-default-coding.md.
+	 * fallback.
 	 *
-	 * Stored as a fixed-size struct (uint32 + 2x uint16 = 8
-	 * bytes) so the entry's binary layout stays stable for
-	 * round-trip persistence; no version bump needed per
-	 * CLAUDE.md "Deployment Status" no-deployed-storage rule.
+	 * Stored as a fixed-size struct (uint32 + 2x uint16 = 8 bytes) so the
+	 * entry's binary layout stays stable for round-trip persistence.
 	 */
 	struct reffs_coding_spec sre_default_coding;
 	char sre_path[SB_REGISTRY_MAX_PATH];

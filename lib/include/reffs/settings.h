@@ -124,8 +124,7 @@ struct reffs_export_config {
 	 * Per-export default encoding for LAYOUTGET.  Parsed from TOML
 	 * `default_coding = "rs:K+M"` etc.  Zero-initialised means
 	 * no explicit default -- LAYOUTGET falls back to PASSTHROUGH
-	 * with k = ss_layout_width (server-wide).  See
-	 * .claude/design/per-export-default-coding.md.
+	 * with k = ss_layout_width (server-wide).
 	 */
 	struct reffs_coding_spec default_coding;
 };
@@ -149,7 +148,7 @@ struct reffs_data_server_config {
 	char path[REFFS_CONFIG_MAX_PATH]; /* export path on the DS */
 	enum reffs_ds_protocol protocol; /* default: nfsv3 */
 	/*
-	 * Trust-stateid slice 1.5: opt-in tight-coupling override
+	 * Optional tight-coupling override
 	 * for NFSv3 dstores.  The NFSv3 vtable defaults
 	 * ds_tight_coupled = false because a generic NFSv3 server
 	 * cannot enforce a trust table.  When the operator KNOWS
@@ -180,9 +179,8 @@ struct reffs_data_server_config {
  *
  * `address`, `mds_port`, `mds_probe` describe the upstream MDS the
  * proxy-server forwards to.  They are parsed here but not yet
- * consulted at runtime -- the MDS-client session opens in a later
- * Phase 2 slice.  `address == ""` marks the upstream as unconfigured;
- * reffsd currently tolerates that and still opens the listener.
+ * consulted at runtime.  `address == ""` marks the upstream as
+ * unconfigured; reffsd tolerates that and still opens the listener.
  */
 /*
  * tls_mode controls how the PS-MDS session brings TLS up
@@ -227,7 +225,7 @@ struct reffs_proxy_mds_config {
 	/*
 	 * Explicit opt-out of MDS server-cert verification.  Required
 	 * when tls_cert/tls_key are set but tls_ca is empty (the
-	 * smoke / self-signed-MDS topology used by slice plan-1-tls.c).
+	 * smoke and self-signed-MDS deployments).
 	 * Default false: cert-without-CA without this flag is rejected
 	 * at parse time so a missing tls_ca line in a production config
 	 * cannot silently downgrade to "TLS without identity check".
@@ -238,10 +236,10 @@ struct reffs_proxy_mds_config {
 /*
  * MDS-only.  Each [[allowed_ps]] block names a single Proxy Server
  * identity permitted to send PROXY_REGISTRATION.  An entry sets
- * EXACTLY one of `principal` (RPCSEC_GSS path, slice 6b-i) or
- * `tls_cert_fingerprint` (mTLS path, slice 6b-iv) -- empty string
+ * exactly one of `principal` (RPCSEC_GSS) or
+ * `tls_cert_fingerprint` (mTLS); an empty string
  * means "not set".  The default-deny model means an empty allowlist
- * rejects every registration -- see proxy-server-phase6b.md.
+ * rejects every registration.
  */
 struct reffs_allowed_ps_config {
 	char principal[REFFS_CONFIG_MAX_PRINCIPAL];
@@ -270,7 +268,7 @@ struct reffs_config {
 	 * server-side TLS context goes from SSL_VERIFY_NONE to
 	 * SSL_VERIFY_PEER | FAIL_IF_NO_PEER_CERT so the per-connection
 	 * peer-cert fingerprint becomes available for the MDS
-	 * PROXY_REGISTRATION allowlist (slice plan-1-tls.c, #139).
+	 * PROXY_REGISTRATION allowlist.
 	 * Empty string preserves the historical TLS-server-only
 	 * behaviour for clients that don't present a cert.
 	 */
@@ -282,7 +280,7 @@ struct reffs_config {
 	 * ports via rpcbind.  Set to false for NFSv4-only deployments
 	 * and for soak/CI runs where the ~22 rpcbind round-trips at
 	 * startup cause readiness-race flakes.  Default true preserves
-	 * upgrade compatibility -- see .claude/design/no-rpcbind.md.
+	 * upgrade compatibility.
 	 */
 	bool register_with_rpcbind;
 	unsigned int workers;
