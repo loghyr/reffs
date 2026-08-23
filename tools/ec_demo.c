@@ -25,12 +25,8 @@
  * TRACE to a separate trace file).  We deliberately do not use them
  * here; ec_demo's stderr is the user's tty.
  *
- * NOT_NOW_BROWN_COW: if benchmark introspection ever wants per-op
- * timing inside ec_demo, add a -v / -q flag and route the new lines
- * through TRACE() with a dedicated category, leaving the existing
- * fprintf progress messages intact.  Plan A follow-up #5 was filed
- * against this question and explicitly closed (Tier 5 cleanup pass)
- * with "no change" -- the current posture is correct for a demo CLI.
+ * User-facing progress messages remain on stderr; trace output is
+ * reserved for protocol and diagnostic events.
  */
 
 #include <ctype.h>
@@ -124,8 +120,7 @@ static enum ec_sec_flavor g_sec = EC_SEC_SYS;
  * Target Kerberos service principal name override.  When NULL,
  * the krb5 library defaults to nfs/<server-fqdn>@<REALM>.  When
  * non-NULL, passed verbatim to authgss_create_default.  Set by
- * --spn for the krb5 stress reproducer (see
- * .claude/design/krb5-stress-multi-xprt.md).
+ * --spn for the Kerberos stress reproducer.
  */
 static const char *g_spn;
 
@@ -359,7 +354,7 @@ static int session_open(struct mds_session *ms, const char *mds_host)
 
 /* ------------------------------------------------------------------ */
 /* burst -- N parallel-handshake stress for the krb5 multi-mount       */
-/* reproducer (see .claude/design/krb5-stress-multi-xprt.md).          */
+/* reproducer.                                                        */
 /* ------------------------------------------------------------------ */
 
 struct burst_worker_args {
@@ -667,8 +662,7 @@ static int cmd_write(const char *mds_host, const char *nfs_file,
 
 	if (range_mode) {
 		/*
-		 * Partial-range mode (Track 1b, see
-		 * .claude/design/chunk-collision-t1b.md): write
+		 * Partial-range mode: write
 		 * data[0..range_length) into the MDS file at
 		 * [range_offset, range_offset+range_length).
 		 * `--length 0` means "use the whole input file".
@@ -770,7 +764,7 @@ static int cmd_read(const char *mds_host, const char *nfs_file,
  * shard i lost); the encoding decodes the missing shards from peers
  * and the new OP_CHUNK_WRITE_REPAIR / CHUNK_REPAIRED wire ops write
  * them back to their DSes + clear the MDS-side FFV2_DS_FLAGS_REPAIR
- * flag.  ec-repair slice 3.
+ * flag.
  */
 static int cmd_repair(const char *mds_host, const char *nfs_file, int k, int m,
 		      size_t file_len, enum ec_encoding_type encoding_type,
@@ -1321,14 +1315,14 @@ static int cmd_bigfile(const char *mds_host, const char *nfs_file,
 	int ret;
 
 	/*
-	 * Slice 3 of the Macklem-hint extension: package the two CLI
+	 * Package the two CLI
 	 * hint values plus ec_demo's existing K/M geometry into an
 	 * ffv2_layouthint4 and pass it to the initial mds_file_open
 	 * so it rides OPEN(CREATE).cva_attrs as FATTR4_LAYOUT_HINT.
 	 * NULL means "no hint" -- preserved by passing NULL below when
 	 * both CLI hints are zero.  Re-opens after the write use NULL
 	 * unconditionally (the file already exists; the MDS SHOULD
-	 * ignore the hint on grown files per slice-2 design).
+	 * ignore the hint on grown files).
 	 */
 	ffv2_encoding_type4 supported[1] = { FFV2_ENCODING_RS_VANDERMONDE };
 	ffv2_layouthint4 layouthint = {
@@ -1659,14 +1653,14 @@ static void usage(void)
 		"                   sees them as independent clients.\n"
 		"                   Default: unset (kernel-assigned source).\n"
 		"  --stripe-unit-hint BYTES\n"
-		"                   Macklem-hint extension (slice 3): preferred\n"
+		"                   Layout-hint extension: preferred\n"
 		"                   stripe unit in bytes for the next OPEN(CREATE).\n"
 		"                   Carried in FATTR4_LAYOUT_HINT createattrs as\n"
 		"                   ffv2lh_stripe_unit.  MDS validates 0 or\n"
 		"                   [4096, 8 MiB].  Currently honoured by `bigfile'\n"
 		"                   only.  Default: 0 (no hint).\n"
 		"  --expected-size-hint BYTES\n"
-		"                   Macklem-hint extension (slice 3): hint at the\n"
+		"                   Layout-hint extension: hint at the\n"
 		"                   file's eventual size.  Carried in\n"
 		"                   FATTR4_LAYOUT_HINT createattrs as\n"
 		"                   ffv2lh_expected_file_size.  Any uint64.\n"
@@ -1736,8 +1730,7 @@ static struct option long_options[] = {
 	 */
 	{ "source-ip", required_argument, NULL, 258 },
 	/*
-	 * Macklem-hint extension slice 3
-	 * (.claude/design/layouthint-ec-demo-cli.md).  Both flags
+	 * Layout-hint extension.  Both flags
 	 * are advisory hints carried in OPEN(CREATE).cva_attrs as
 	 * FATTR4_LAYOUT_HINT; the MDS validates and TRACE's them.
 	 * Accept bare bytes only (KB/MB/GB suffix parsing deferred).
@@ -2042,7 +2035,7 @@ int main(int argc, char *argv[])
 			 * --stripe-unit-hint BYTES: ffv2lh_stripe_unit in
 			 * the FATTR4_LAYOUT_HINT createattrs.  The MDS
 			 * validates 0 (no hint) or [4096, 8 MiB] per
-			 * slice-2 of the Macklem-hint extension.
+			 * the layout-hint extension.
 			 */
 			stripe_unit_hint = (uint32_t)strtoul(optarg, NULL, 0);
 			break;
