@@ -658,12 +658,11 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	 * leaving ns_cb_fd at -1 (the nfs4_session_alloc default) tells
 	 * the cb.c dispatch path "no back channel for this session" --
 	 * every cb sender already guards on ns_cb_fd < 0.  Setting
-	 * ns_cb_fd unconditionally was Stage 3 / INV-6's actual root
+	 * ns_cb_fd unconditionally was the root
 	 * cause: callbacks landed on a PS forward-channel connection
 	 * the PS never advertised, the PS mds_tls_xprt read them as
 	 * replies, every subsequent reply-slot drifted by one and the
-	 * session was unrecoverable (run 9 timeline in
-	 * `.claude/design/experiments.md`).
+	 * session was unrecoverable.
 	 *
 	 * ns_cb_program is saved regardless -- it is harmless metadata,
 	 * only consumed by the cb.c senders (all of which already gate
@@ -1071,9 +1070,7 @@ uint32_t nfs4_op_destroy_clientid(struct compound *compound)
 	 * the call returns) without the kernel-retry penalty.  The
 	 * client just asked us to forget the clientid; honouring that
 	 * by also forgetting its dependent state is the more useful
-	 * answer than CLIENTID_BUSY-and-spin.  See
-	 * .claude/patterns/nfs4-protocol.md "DESTROY_CLIENTID
-	 * idempotent semantics".
+	 * answer than CLIENTID_BUSY-and-spin.
 	 */
 	nfs4_client_expire(ss, nc);
 	nc = NULL;

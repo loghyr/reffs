@@ -86,7 +86,7 @@ void nfs4_client_put(struct nfs4_client *nc)
  * for the first in-memory client (other than `self`) holding the
  * registered-PS privilege with a matching GSS principal.
  *
- * Used by the slice 6b-iii squat-guard: a second PROXY_REGISTRATION
+ * Used by the squat guard: a second PROXY_REGISTRATION
  * from a different session (different clientid) but the same
  * principal is either a renewal (same prr_registration_id) or a
  * squat (different id).  The handler decides which based on the

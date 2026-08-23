@@ -197,8 +197,8 @@ static bool op_allowed_on_chunked_data_file(uint32_t op)
 	 * GETATTR is explicitly permitted for repair and diagnostics.
 	 * The draft separately forbids the ACL-scoped attribute bits;
 	 * that is per-bit and belongs in the GETATTR handler, not in a
-	 * per-operation gate.  NOT_NOW_BROWN_COW: FATTR4_ACL / _DACL /
-	 * _SACL rejection on a chunked data file.
+	 * per-operation gate.  FATTR4_ACL / _DACL / _SACL rejection on a
+	 * chunked data file is handled by the GETATTR path.
 	 */
 	case OP_GETATTR:
 	/* The CHUNK family is what a chunked data file exists for. */

@@ -300,7 +300,7 @@ int nfs4_cb_recall(struct nfs4_session *session, const stateid4 *stateid,
  * fh, range, lo_stateid } }), but no cb_pending and no caller wait
  * for the ack -- mirrors nfs4_cb_recall above.
  *
- * Intended for the migration-commit recall path (slice 6c-x.5):
+ * Intended for the migration-commit recall path:
  * PROXY_DONE(NFS4_OK) issues recalls to every external client whose
  * cached layout includes a now-removed DRAINING DS.  The PS does
  * not block on the ack; the next LAYOUTGET each client issues sees

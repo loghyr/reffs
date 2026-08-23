@@ -1092,25 +1092,24 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 	/*
 	 * ffv2m_coding_type is supplied by the caller, computed by
 	 * default_coding_resolve_segment() from the sb's
-	 * sb_default_coding (per-export-default-coding step 5).
+	 * sb_default_coding (the per-export default-coding policy).
 	 * When the export has no default_coding set, the caller
 	 * passes FFV2_ENCODING_PASSTHROUGH -- preserving the old
 	 * "ls_m == 0 -> PASSTHROUGH" behaviour as the legacy path.
 	 *
 	 * The fattr4_layout_hint SETATTR attribute
 	 * (RFC 8881 attribute 63) is the per-file mechanism that
-	 * supersedes the per-export default.  See the design's
-	 * Deferred section.
+	 * supersedes the per-export default.
 	 */
 	mirror->ffv2m_coding_type = ffv2m_coding_type;
 	mirror->ffv2m_protection.ffv2dp_data = seg->ls_k;
 	mirror->ffv2m_protection.ffv2dp_parity = seg->ls_m;
 
 	/*
-	 * Per draft-haynes-nfsv4-flexfiles-v2 (tigran-5e), ffv2m_checksum_algorithm
+	 * The ffv2m_checksum_algorithm
 	 * carries the per-mirror tag the client and DSes use to checksum
 	 * chunks.  Reffs picks the algorithm at LAYOUTGET-creation time
-	 * (Pending Change 6 step 6) and stores it on the segment; subsequent
+	 * and stores it on the segment; subsequent
 	 * LAYOUTGETs on the same file echo the same value.  A zero stored
 	 * value is migrated to CRC32 in the load path (layout_segment.h),
 	 * so a literal CHECKSUM_ALG_NONE here would only appear for the
@@ -1340,7 +1339,7 @@ uint32_t nfs4_op_layoutget_trust_resume(struct rpc_trans *rt)
  *
  * Best-effort on fan-out failure: a DS that didn't ack the revoke
  * may still honor the prior client's stateid until lease expiry;
- * the MIXED outcome the slice closes in the common case can recur
+	 * the MIXED outcome can recur
  * for the duration of one lease.  Logged; no retry.
  */
 uint32_t nfs4_op_layoutget_revoke_resume(struct rpc_trans *rt)
@@ -1801,7 +1800,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		 * set, use the implementation default" -- CRC32 today,
 		 * the only algorithm chunk_checksum_unpack_crc32 accepts.
 		 * Once additional algorithm dispatchers land, the default
-		 * can move to CRC32C (per Pending Change 6 step 6).
+		 * can move to CRC32C when the server-side implementation supports it.
 		 */
 		uint32_t seg_alg =
 			compound->c_inode->i_sb->sb_checksum_algorithm;

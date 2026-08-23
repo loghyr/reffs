@@ -142,7 +142,6 @@ static struct compound *compound_alloc(struct rpc_trans *rt)
 	}
 
 	/*
-	 * Slice plan-A.i: production wiring of c_gss_principal.
 	 * On RPCSEC_GSS-authenticated compounds, look up the GSS
 	 * context and copy the display-name principal into the
 	 * compound's owned buffer.  c_gss_principal stays NULL on
@@ -160,7 +159,6 @@ static struct compound *compound_alloc(struct rpc_trans *rt)
 	}
 
 	/*
-	 * Slice plan-A.ii: production wiring of c_tls_fingerprint.
 	 * On TLS-protected connections that presented a peer cert,
 	 * compute the SHA-256 fingerprint and copy it into the
 	 * compound's owned buffer.  c_tls_fingerprint stays NULL on
