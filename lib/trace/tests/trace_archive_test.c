@@ -21,6 +21,7 @@
 #endif
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -105,6 +106,57 @@ START_TEST(test_prune_under_cap_keeps_all)
 
 	ck_assert(file_exists("reffsd-20260727-010000.log.zst"));
 	ck_assert(file_exists("reffsd-20260727-020000.log.zst"));
+}
+END_TEST
+
+/*
+ * A full filesystem must not make every subsequent trace event retry the
+ * same failed flush.  Linux's /dev/full provides a deterministic write
+ * failure without requiring a separate mounted filesystem.
+ */
+START_TEST(test_trace_disables_after_flush_failure)
+{
+#ifdef __linux__
+	char stderr_path[512];
+	char output[1024] = { 0 };
+	int saved_stderr;
+	int stderr_fd;
+	int output_fd;
+	ssize_t nread;
+	char *diagnostic;
+
+	snprintf(stderr_path, sizeof(stderr_path), "%s/stderr.log", g_dir);
+	output_fd = open(stderr_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	ck_assert_int_ge(output_fd, 0);
+	saved_stderr = dup(STDERR_FILENO);
+	ck_assert_int_ge(saved_stderr, 0);
+	ck_assert_int_eq(dup2(output_fd, STDERR_FILENO), STDERR_FILENO);
+	close(output_fd);
+
+	reffs_trace_init("/dev/full");
+	reffs_trace_event(REFFS_TRACE_CAT_IO, "trace_test", __LINE__,
+			  "first event");
+	reffs_trace_event(REFFS_TRACE_CAT_IO, "trace_test", __LINE__,
+			  "second event");
+	reffs_trace_close();
+
+	ck_assert_int_eq(dup2(saved_stderr, STDERR_FILENO), STDERR_FILENO);
+	close(saved_stderr);
+
+	stderr_fd = open(stderr_path, O_RDONLY);
+	ck_assert_int_ge(stderr_fd, 0);
+	nread = read(stderr_fd, output, sizeof(output) - 1);
+	ck_assert_int_ge(nread, 0);
+	close(stderr_fd);
+	output[nread] = '\0';
+
+	diagnostic = strstr(output, "Trace disabled after write failure:");
+	ck_assert_ptr_nonnull(diagnostic);
+	ck_assert_ptr_null(
+		strstr(diagnostic + 1, "Trace disabled after write failure:"));
+#else
+	/* /dev/full is Linux-specific; the archive tests cover all other hosts. */
+#endif
 }
 END_TEST
 
@@ -247,6 +299,7 @@ static Suite *trace_archive_suite(void)
 	tcase_add_test(tc, test_prune_zero_cap_disables);
 	tcase_add_test(tc, test_prune_null_path_is_noop);
 	tcase_add_test(tc, test_prune_relative_path_uses_cwd);
+	tcase_add_test(tc, test_trace_disables_after_flush_failure);
 	suite_add_tcase(s, tc);
 	return s;
 }
