@@ -5,13 +5,13 @@
  * setattr_layouthint_test -- SETATTR(layout_hint) validation surface.
  *
  * Exercises nfs4_layouthint_validate() directly without the SETATTR
- * compound plumbing.  Covers slice 2 of the Macklem-hint extension
- * per .claude/design/layouthint-mds-hook.md: validate-and-accept
+ * compound plumbing.  Validates and accepts
  * the FFv2 layouthint, range-check ffv2lh_stripe_unit, reject
  * non-FFv2 layout types and malformed bodies.
  *
  * The hint is not stored on any inode or consumed at LAYOUTGET in
- * this slice -- those are deferred per the design doc.  These tests
+ * this helper.  Those operations are covered by higher-level tests;
+ * these tests
  * confirm the wire-level acceptance path.
  */
 

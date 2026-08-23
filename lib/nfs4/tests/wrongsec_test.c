@@ -171,8 +171,8 @@ static struct wrongsec_ctx *make_ctx(unsigned int nops, uint32_t flavor,
 
 /*
  * Same as make_ctx() but additionally attach a registered-PS client
- * (slice 6b-i grants nc_is_registered_ps via PROXY_REGISTRATION; here
- * we set the flag directly to test the slice 6b-ii bypass in
+ * (PROXY_REGISTRATION grants nc_is_registered_ps; here we set the
+ * flag directly to test the bypass in
  * isolation).
  */
 static struct wrongsec_ctx *
@@ -816,7 +816,7 @@ START_TEST(test_two_putfh_getattr_no_wrongsec)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* PS bypass tests (slice 6b-ii)                                       */
+/* PS bypass tests                                                       */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -843,7 +843,7 @@ START_TEST(test_unregistered_no_bypass_on_lookup)
 END_TEST
 
 /*
- * Slice 6b-ii: a registered PS bypasses the per-export flavor check
+ * A registered PS bypasses the per-export flavor check
  * on namespace-discovery ops.  Same compound as the baseline above
  * but with nc_is_registered_ps = true on the calling client -- LOOKUP
  * into /secure (AUTH_SYS-blocked) now succeeds, demonstrating the
