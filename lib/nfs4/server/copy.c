@@ -268,8 +268,9 @@ uint32_t nfs4_op_copy(struct compound *compound)
 					break; /* partial copy is success */
 				pthread_rwlock_unlock(
 					&compound->c_inode->i_db_rwlock);
-				*status = (errno == ENOSPC) ? NFS4ERR_NOSPC :
-							      NFS4ERR_IO;
+				*status = (errno == ENOSPC || errno == EDQUOT) ?
+						  NFS4ERR_NOSPC :
+						  NFS4ERR_IO;
 				goto out;
 			}
 			if (n == 0)
@@ -308,7 +309,9 @@ uint32_t nfs4_op_copy(struct compound *compound)
 				free(buf);
 				pthread_rwlock_unlock(
 					&compound->c_inode->i_db_rwlock);
-				*status = NFS4ERR_IO;
+				*status = (nw == -ENOSPC || nw == -EDQUOT) ?
+						  NFS4ERR_NOSPC :
+						  NFS4ERR_IO;
 				goto out;
 			}
 
