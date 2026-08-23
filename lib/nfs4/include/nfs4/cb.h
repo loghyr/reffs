@@ -168,7 +168,7 @@ int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
 /*
  * nfs4_cb_layoutrecall_fnf -- fire-and-forget variant of
  * nfs4_cb_layoutrecall_send.  Same wire shape, no caller wait for
- * the ack.  Used by the migration-commit path (slice 6c-x.5)
+ * the ack.  Used by the migration-commit path
  * which queues recalls to every external client whose cached
  * layout includes a now-removed DRAINING DS without blocking
  * PROXY_DONE on the responses.

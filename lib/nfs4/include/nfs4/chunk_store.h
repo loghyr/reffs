@@ -217,7 +217,7 @@ struct chunk_store {
 	uint64_t cs_high_water; /* highest offset written + 1 */
 	uint32_t cs_chunk_size; /* nominal chunk size (disk stride) */
 	/*
-	 * Pending Change 6 step 8: the file's checksum algorithm,
+	 * The file's checksum algorithm,
 	 * captured on first CHUNK_WRITE.  Subsequent CHUNK_WRITE /
 	 * CHUNK_WRITE_REPAIR with a wire cs_algorithm that does not
 	 * match this value are rejected with NFS4ERR_INVAL.  Zero

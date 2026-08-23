@@ -4,7 +4,7 @@
  */
 
 /*
- * proxy_stateid value primitives -- slice 6c-x.1.
+ * proxy_stateid value primitives.
  *
  * The proxy_stateid is a new server-issued stateid type the MDS
  * mints when accepting a PROXY_PROGRESS work assignment for a
@@ -27,9 +27,9 @@
  * NFS4ERR_STALE_STATEID without a hash probe.  Same trick as
  * clientid4 partitioning (RFC 8881 S2.4.1).
  *
- * Slice 6c-x.1 scope: just the value primitives (alloc, stale
+ * This header covers the value primitives (allocation and stale
  * detection).  The lookup table is part of the migration record
- * in slice 6c-x.2 (entries in the table ARE migration records,
+ * (entries in the table ARE migration records,
  * not separate proxy_stateid entries).
  */
 

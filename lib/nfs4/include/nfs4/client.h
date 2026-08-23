@@ -80,7 +80,7 @@ struct nfs4_client {
 	 */
 	char nc_ps_principal[REFFS_CONFIG_MAX_PRINCIPAL];
 	/*
-	 * Slice 6b-iv: TLS-fingerprint identity context.  Empty when
+	 * TLS-fingerprint identity context.  Empty when
 	 * the registration came in via GSS principal; non-empty when it
 	 * came in via mTLS client cert.  Squat-guard scans BOTH this
 	 * and nc_ps_principal so a TLS-authenticated PS gets the same

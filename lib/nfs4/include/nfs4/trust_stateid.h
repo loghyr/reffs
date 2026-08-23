@@ -93,7 +93,7 @@ struct trust_entry {
  * Outcome of validating one presented layout stateid against the
  * table.  Every consumer that gates I/O on a trust entry reports one
  * of these, so the counters describe the whole tight-coupling path
- * rather than a single caller's slice of it.
+ * rather than a single caller's portion of it.
  *
  * These exist because the path is otherwise invisible.  Nothing on
  * the success side of registration or validation is traced, so a

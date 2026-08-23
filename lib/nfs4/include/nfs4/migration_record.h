@@ -75,9 +75,8 @@ enum migration_phase {
  * shard position within one segment of i_layout_segments.  The
  * delta machinery is used by the LAYOUTGET view-build path (the
  * LAYOUTGET view-build path applies deltas to the base segments to
- * compute the during-migration view); this slice carries the deltas
- * as opaque payload on the record so 6c-x.4 has the array shape
- * already in hand.
+ * compute the during-migration view); the record carries the deltas
+ * as an opaque payload alongside the base layout.
  *
  * `ld_state` semantics:
  *   STABLE     -- unchanged baseline (deltas don't normally carry
@@ -89,9 +88,8 @@ enum migration_phase {
  *                 the matching DRAINING under omit-and-replace
  *   INTERPOSED -- slot whose visible endpoint is the PS, with the
  *                 PS internally fanning writes to one or more
- *                 target DSes.  Used by keep-and-shadow (deferred
- *                 to a future slice when PS-as-DS plumbing exists);
- *                 not emitted by 6c-x autopilot paths.
+ *                 target DSes.  Used by keep-and-shadow; not emitted
+ *                 by the current autopilot paths.
  */
 enum migration_instance_state {
 	MIGRATION_INSTANCE_STABLE = 0,
@@ -151,8 +149,7 @@ struct migration_record {
 	 * load on a different schedule).  Auth fallback at PROXY_DONE
 	 * / PROXY_CANCEL time uses (mr_sb_id, mr_ino) to match a
 	 * stateid against a record when c_curr_sb is NULL or has not
-	 * yet resolved through the in-memory pointer.  Slice 6c-zz
-	 * reviewer note W2.
+	 * yet resolved through the in-memory pointer.
 	 */
 	uint64_t mr_sb_id;
 
@@ -364,7 +361,7 @@ void migration_record_reaper_scan(uint64_t max_silence_ns,
 				  uint64_t now_mono_ns);
 
 /* ------------------------------------------------------------------ */
-/* Slice 6c-x.4: layout-build "during-migration view"                  */
+/* Layout-build "during-migration view"                               */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -386,7 +383,7 @@ void migration_record_reaper_scan(uint64_t max_silence_ns,
  * plumbing that is not implemented here.  An INTERPOSED
  * delta in the record is silently passed through as a STABLE-
  * equivalent (the base entry stays); record builders in this
- * slice MUST NOT emit INTERPOSED.
+ * record builder MUST NOT emit INTERPOSED.
  *
  * Out parameters (caller responsibilities):
  *   - `*out_view` is populated with the view's scalar fields and
@@ -414,7 +411,7 @@ int migration_apply_deltas_to_segment(const struct layout_segment *base_seg,
 void migration_release_view(struct layout_segment *view);
 
 /* ------------------------------------------------------------------ */
-/* Slice 6c-x.5: post-commit recall on DRAINING removal                */
+/* Post-commit recall on DRAINING removal                               */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -450,7 +447,7 @@ unsigned int migration_recall_layouts(struct inode *inode,
 				      struct server_state *ss);
 
 /* ------------------------------------------------------------------ */
-/* Slice 6c-zz: persistence + reload                                   */
+/* Persistence and reload                                               */
 /* ------------------------------------------------------------------ */
 
 /*

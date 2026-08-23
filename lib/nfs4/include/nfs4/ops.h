@@ -168,7 +168,7 @@ uint32_t nfs4_op_layoutget_trust_resume(struct rpc_trans *rt);
 
 /*
  * nfs4_op_layoutget_revoke_resume - fan-out resume for the trust-stateid
- * slice 1 conflict-recall path: REVOKE_STATEID for prior-client layout
+ * conflict-recall path: REVOKE_STATEID for prior-client layout
  * stateids has completed (or failed best-effort).  Re-invokes
  * nfs4_op_layoutget; the second pass sees an empty conflict set and
  * proceeds to the normal grant + TRUST_STATEID flow.
@@ -177,7 +177,7 @@ uint32_t nfs4_op_layoutget_revoke_resume(struct rpc_trans *rt);
 
 /*
  * nfs4_layoutget_check_conflicts - conflict-detection step for trust-
- * stateid slice 1.  Returns 1 if an async REVOKE_STATEID fan-out is
+ * stateid handling.  Returns 1 if an async REVOKE_STATEID fan-out is
  * in flight (caller returns NFS4_OP_FLAG_ASYNC), 0 if no conflict
  * (caller proceeds inline).  Exposed in this header so unit tests can
  * exercise the path without building a full LAYOUTGET compound.
