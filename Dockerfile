@@ -84,7 +84,7 @@ RUN pip3 install --no-cache-dir \
 
 # IOR + OpenMPI for chunk-collision Track 2 (see
 # deploy/benchmark/run_chunk_collision_track2.sh and
-# .claude/design/chunk-collision-track2.md).  N proxy servers act
+# the chunk-collision Track 2 test plan.  N proxy servers act
 # as N distinct clientids contending on one shared MDS file; IOR
 # -F 0 -W -R -C is the parallel writer/verifier and mpirun the
 # launcher.  OpenMPI is packaged; IOR (github.com/hpc/ior) is not,

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Mini-CA fixture for the slice plan-1-tls.c PS-MDS smoke (#139).
+# Mini-CA fixture for the PS-MDS mTLS smoke test.
 #
 # Generates a self-signed CA + a PS client cert signed by it, then
 # computes the SHA-256 fingerprint of the PS cert in the colon-

@@ -3,9 +3,7 @@
 #
 # Real-network EC benchmark: 1 MDS + 10 DSes published on
 # distinct host ports for cross-host reachability.  Used by
-# the 4-variant PS-encoder bench (see
-# .claude/design/ps-encoder-bench-4variant-realnet.md and
-# .claude/design/multi-host-bench-bringup.md).
+# the 4-variant PS-encoder bench.
 #
 # The only structural difference from docker-compose.yml is the
 # `ports:` block on every dsN service: each DS publishes 2049 on

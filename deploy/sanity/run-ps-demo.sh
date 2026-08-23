@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Cross-PS sanity demo: write a file via PS-A, read it back via PS-B,
-# byte-exact diff.  Skips /ffv2-mj because the underlying mojette-sys
-# CHUNK_READ failure (task #147) is unrelated to the proxy path.
+# byte-exact diff.  The proxy path is tested independently of the
+# Mojette-systematic CHUNK_READ path.
 #
-# Per .claude/design/proxy-server.md, the PS proxies LOOKUP / OPEN /
+# The PS proxies LOOKUP / OPEN /
 # READ / WRITE / GETATTR / CLOSE through to the upstream MDS, which
 # in turn issues the layout pointing at the DSes.  The 6-DS layout
 # is invariant under which PS the client mounted.  If both PSes can
@@ -106,7 +106,7 @@ run_one() {
 main() {
     echo "=== PS demo: write via $PS_A, read via $PS_B (payload=${PAYLOAD_SIZE} bytes) ==="
 
-    # Skip /ffv2-mj per task #147 (unrelated mojette-sys CHUNK_READ bug).
+    # The Mojette-systematic path is exercised by its dedicated tests.
     run_one /ffv1-csm     v1   put
     run_one /ffv1-stripes v1   write --encoding stripe      --k 6 --m 0
     run_one /ffv2-csm     v2   put

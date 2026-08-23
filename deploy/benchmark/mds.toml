@@ -23,7 +23,7 @@ state_file      = "/tmp/reffs_mds_state"
 # rather than letting reffsd derive server_lease_time(ss) / 3 with
 # a 30s floor -- the explicit number is the cadence the
 # chunk-collision Track 2 bench (deploy/benchmark/run_chunk_collision_track2.sh)
-# was validated against (see .claude/design/chunk-collision-track2.md).
+# was validated against.
 # 30s comfortably beats the 601s CONNECTION_TIMEOUT_SECONDS in
 # lib/io/conn_info while leaving headroom for backoff retries on a
 # wedged DS; lower values waste cycles, higher values can let the
@@ -36,7 +36,7 @@ path         = "/"
 layout_types = ["ffv1", "ffv2"]
 dstores      = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 # Per-export default erasure-coding policy
-# (.claude/design/per-export-default-coding.md step 10).  RS 4+2
+# RS 4+2
 # is the IETF 126 4-variant plan's default for variant d (PS does
 # EC against DSes); having it in the bench config means the MDS
 # issues k=4, m=2 geometry from LAYOUTGET without the client (or

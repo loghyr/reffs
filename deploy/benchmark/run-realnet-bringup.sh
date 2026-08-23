@@ -2,9 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# 3-host bringup for the PS-encoder 4-variant real-network bench
-# (.claude/design/ps-encoder-bench-4variant-realnet.md prereq #3,
-#  .claude/design/multi-host-bench-bringup.md for the slice plan).
+# 3-host bringup for the PS-encoder 4-variant real-network bench.
 #
 # Topology (defaults, all overridable via env):
 #

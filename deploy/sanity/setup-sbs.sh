@@ -3,8 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Provision the 5 sanity-test superblocks against a running MDS.
-# Per .claude/design/sb-registry-v3.md, [[export]] in TOML is
-# root-only since the registry-v3 work; non-root SBs must be
+# [[export]] in TOML is root-only; non-root SBs must be
 # created via the probe protocol after the MDS is up.
 #
 # For each SB:

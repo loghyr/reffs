@@ -10,7 +10,7 @@
 #   B "PS EC"      -- kernel NFSv4.2 mount of PS:4098 + fio
 #   C "MDS inband" -- kernel NFSv4.2 mount of MDS:2049 + fio (no EC)
 #
-# See .claude/design/ps-encoder-bench.md for the full design.
+# Runs the PS-versus-client encoding benchmark.
 #
 # Usage:
 #   sudo ./run_ps_vs_client_bench.sh \
@@ -34,7 +34,7 @@
 # pre-configure the MDS to issue --encoding for variant B's test
 # files.  Variant A passes --encoding directly to ec_demo.  This
 # harness does not orchestrate MDS encoding config; a probe-protocol
-# extension for that is NOT_NOW_BROWN_COW.
+# extension for that is not currently available.
 
 set -euo pipefail
 
@@ -269,7 +269,7 @@ mount_in_client() {
 # Timing model: wall-clock measured by date(1) around the fio
 # call, matching how variant A measures wall-clock around
 # ec_demo.  fio's internal lat_ns.mean is only the write()
-# syscall latency and excludes the close + (for PS Phase 4b)
+# syscall latency and excludes the close + (for PS)
 # the COMMIT round-trip that actually flushes the bytes -- the
 # smoke run on shadow 2026-06-02 showed 1 ms write timings via
 # that metric, which is meaningless.  --end_fsync=1 forces

@@ -15,7 +15,7 @@
 # implementation supports a single entry.
 #
 # See also: reffsd.toml (standalone), reffsd-mds.toml (MDS),
-# reffsd-ds.toml (DS), .claude/design/proxy-server.md
+# reffsd-ds.toml (DS), and the proxy-server documentation
 
 [server]
 # Native listener port.  The PS's proxy listener is configured in

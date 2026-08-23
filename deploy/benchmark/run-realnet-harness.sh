@@ -2,10 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# 4-variant realnet harness for the PS-encoder bench
-# (.claude/design/realnet-harness.md is the slice plan;
-#  .claude/design/ps-encoder-bench-4variant-realnet.md is the
-#  parent plan this slice unblocks at prereq #4).
+# 4-variant realnet harness for the PS-encoder bench.
 #
 # Drives the 3-host realnet topology (1 MDS on shadow, 1 PS on
 # adept, 1 client on dreamer) through the 4-variant cell matrix
@@ -183,8 +180,7 @@ emit_row() {
 # Set the MDS's per-export default coding via probe RPC.  Run
 # inside the bench MDS container -- the probe binary lives there
 # alongside python3/reply-xdr.  Reffs-probe.py takes the spec
-# as a single "encoding:K+M" string (.claude/design/per-export-
-# default-coding.md step 9 grammar).
+# as a single "encoding:K+M" string.
 PROBE_CMD="sudo docker exec reffs-bench-mds \
     /shared/build/scripts/reffs-probe.py \
     --host 127.0.0.1 --port 20490"

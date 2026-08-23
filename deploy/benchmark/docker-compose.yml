@@ -229,7 +229,7 @@ services:
   # chunk-collision Track 1 -- N concurrent ec_demo writers
   # against a single MDS file.  Distinct --id per writer so the
   # MDS sees N clientids contending.  Per
-  # .claude/design/chunk-collision-validation.md.
+  # the chunk-collision validation topology.
   bench-collision:
     container_name: reffs-bench-collision
     image: reffs-dev

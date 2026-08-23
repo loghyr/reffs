@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Example PS config for the slice plan-1-tls.c PS-MDS smoke (#139).
+# Example PS config for the PS-MDS mTLS smoke test.
 # Pairs with deploy/sanity/mds-tls.toml.  Pre-conditions:
 #   - run deploy/sanity/setup-mini-ca.sh first.
 #

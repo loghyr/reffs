@@ -10,8 +10,7 @@
 #
 # rpcbind is disabled (register_with_rpcbind = false): NFSv4.2 uses the
 # well-known port 2049 (RFC 8881 S1.5) and needs no portmapper.  This
-# also avoids the ~22 startup pmap round-trips.  See
-# .claude/design/no-rpcbind.md.
+# also avoids the ~22 startup pmap round-trips.
 #
 # Run it with:
 #   make -f Makefile.reffs run-mds-validate

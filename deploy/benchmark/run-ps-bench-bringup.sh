@@ -242,8 +242,8 @@ for r in $(seq 0 $((NPS - 1))); do
     echo "[bringup] PS $r started -> $name (listener 127.0.0.1:$((4098 + r)))"
     # Stagger PS startups.  Concurrent mTLS session establishment to
     # the MDS races and most sessions fail with EIO -- a real
-    # mds_session_create_tls concurrency bug that Track 2 surfaced
-    # (tracked as INV-5 in .claude/design/experiments.md).  A few
+    # mds_session_create_tls concurrency bug that Track 2 surfaced.
+    # A few
     # seconds between launches keeps each PS's STARTTLS handshake
     # clear of the others' until that bug is fixed.
     sleep 4

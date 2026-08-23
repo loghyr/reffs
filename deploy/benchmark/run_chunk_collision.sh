@@ -8,12 +8,10 @@
 #
 # Uses ec_demo write/verify (not put/check) because put/check are
 # the plain-mirrored subcommands and silently ignore --encoding; this
-# slice has to actually drive the RS / Mojette CHUNK paths to be
-# diagnostic of bug surfaces 2 and 7 in
-# .claude/design/chunk-collision-validation.md (CRC vs payload
-# divergence, encoding divergence under contention).
+# test has to actually drive the RS / Mojette CHUNK paths to expose
+# CRC/payload and encoding divergence under contention.
 #
-# Per .claude/design/chunk-collision-validation.md.  Runs against
+# Runs against
 # the deploy/benchmark/ topology (1 MDS + 10 DSes).  Each ec_demo
 # instance gets a unique --id so the MDS sees N distinct
 # clientids contending on the same file.
@@ -27,9 +25,7 @@
 #
 # --inv1-report: after the workload, query the per-sb chunk-activity
 # counters and print a quotable summary of the partial-stripe write
-# pattern the DSes saw.  Backs the INV-1 measurement promised on the
-# IETF nfsv4 WG list (Hellwig msg 5 + msg 9).  See
-# .claude/design/inv1-ds-instrumentation.md.
+# pattern the DSes saw.
 #
 # --ds-list: comma-separated probe hosts to sum INV-1 counters over.
 # CHUNK_WRITE lands on the DSes (not the MDS), so the MDS alone reads
@@ -204,7 +200,7 @@ echo "=== summary ==="
 echo "  iterations:    ${ITER}"
 echo "  corruptions:   ${corrupt}"
 
-# --- INV-1 report (.claude/design/inv1-ds-instrumentation.md) ---
+# --- partial-stripe write report ---
 # Quotable two-block summary of what the DSes actually saw during the
 # workload.  Answers Hellwig's partial-stripe-write question with
 # numbers pulled from the per-sb chunk-activity counters.

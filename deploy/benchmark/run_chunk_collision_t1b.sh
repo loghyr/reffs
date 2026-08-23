@@ -3,8 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Track 1b chunk-collision harness: partial-range writes via the
-# new ec_demo --offset / --length flags
-# (.claude/design/chunk-collision-t1b.md).  Targets four sub-cases
+# new ec_demo --offset / --length flags.  Targets four sub-cases
 # from the validation plan:
 #
 #   disjoint    -- 4 writers, non-overlapping stripe-aligned ranges.
@@ -145,7 +144,7 @@ STRIPE_DATA=$((K * SHARD_SIZE))
 # (OFFSET, LENGTH) tuples.  All four modes pre-fill the MDS file
 # to FILE_SIZE bytes with a full-file write before any range
 # writer runs -- the per-stripe RMW path is sparse-RMW-unfriendly
-# (NOT_NOW_BROWN_COW in ec_read_stripe_with_file).
+# (the sparse-RMW limitation in ec_read_stripe_with_file).
 case "${MODE}" in
 	disjoint)
 		N=4
@@ -504,7 +503,7 @@ else
 	# Informational modes: log the verify result without
 	# failing the harness.  The intent is to surface what
 	# happens under sub-stripe / sub-shard contention so the
-	# next slice can target the gap.
+# follow-up work can target the gap.
 	if [[ "${VERIFY_FAIL}" -eq 0 ]]; then
 		echo "PASS (informational): mode=${MODE} -- "
 		echo "  all ${N} writers' ranges verified clean even though"
@@ -514,6 +513,6 @@ else
 		echo "  lost bytes to last-FINALIZE-wins.  This is the chunk-"
 		echo "  collision surface this mode is designed to expose; the"
 		echo "  fix lives in the chunk-store sub-stripe atomicity work"
-		echo "  (NOT_NOW_BROWN_COW per chunk-collision-validation.md)."
+		echo "  (follow-up work is required)."
 	fi
 fi

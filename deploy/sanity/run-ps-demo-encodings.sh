@@ -5,7 +5,7 @@
 # Cross-PS multi-encoding demo: ec_demo writes a encoding-encoded file via
 # PS-A, ec_demo reads it via PS-B, byte-exact diff.  The PS forwards
 # LAYOUTGET / GETDEVICEINFO / LAYOUTRETURN to the upstream MDS
-# (task #150 layout passthrough); ec_demo dials the upstream DSes
+# (layout passthrough); ec_demo dials the upstream DSes
 # directly using deviceids in the forwarded layout.
 #
 # Encodings tested:
@@ -14,7 +14,7 @@
 #   /ffv2-csm/      v2 plain mirror via CHUNK ops
 #   /ffv2-rs/       v2 Reed-Solomon k=4 m=2
 #   /ffv2-mj/       v2 Mojette systematic k=4 m=2 (re-enabled
-#                   after task #147's variable-shard ds_stride
+#                   after the variable-shard ds_stride
 #                   ceiling-divide fix)
 #
 # Per-SB paths -- each encoding lands on its own SB so the matrix
@@ -23,8 +23,7 @@
 # configures each SB with the right layout-types / dstores /
 # stripe-unit before this script runs.  The mount-crossing path
 # itself is unit-pinned by lib/nfs4/ps/tests/ps_sb_alloc_test.c
-# test_lookup_mount_cross_without_root_binding (task #149's
-# regression test).
+# test_lookup_mount_cross_without_root_binding regression test).
 #
 # Usage: run-ps-demo-encodings.sh <ec_demo_path> <ps_a_host> <ps_b_host>
 
@@ -42,10 +41,9 @@ PAYLOAD="/tmp/encoding_payload.bin"
 
 # Mojette runs at the same 96 KiB payload as the other encodings by
 # routing through ec_demo --shard-size 24576 (k=4 -> 24 KiB per
-# data shard, one stripe per file).  See
-# .claude/design/mojette-24k-shards.md.  Slice A
-# (commit 258c88534693) parameterised shard_size in ec_pipeline
-# and pinned the FINALIZE math; this enables the previously-gated
+# data shard, one stripe per file).  The parameterised shard_size in
+# ec_pipeline enables this Mojette case in the cross-PS matrix and
+# keeps the FINALIZE math consistent;
 # 24 KiB Mojette case in the cross-PS matrix.
 MJ_SHARD_SIZE=$((24 * 1024))
 

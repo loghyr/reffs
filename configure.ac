@@ -133,7 +133,7 @@ AM_CONDITIONAL([HOST_FREEBSD], [test "x$host_is_freebsd" = "xyes"])
 AM_CONDITIONAL([HOST_DARWIN],  [test "x$host_is_darwin"  = "xyes"])
 
 # Per-arch SIMD gates for the vendored Linux md/raid6 library
-# (lib/ec/linux-md-raid/).  Slice 6.3 enables SSE2/AVX2/AVX-512 on
+# (lib/ec/linux-md-raid/).  The build enables SSE2/AVX2/AVX-512 on
 # x86_64 and NEON on aarch64; other arches stay portable-C only.
 # The sub-library's Makefile.am uses these conditionals to select
 # which SIMD .c files enter the build and to gate off the
@@ -147,14 +147,13 @@ AS_CASE([$host_cpu],
 AM_CONDITIONAL([HAVE_MD_X86_SIMD],  [test "x$have_md_x86_simd" = "xyes"])
 AM_CONDITIONAL([HAVE_MD_NEON_SIMD], [test "x$have_md_neon_simd" = "xyes"])
 
-# ISA-L erasure_code/ SIMD gate.  Slice 7.3 adds the AVX / AVX-2
+# ISA-L erasure_code/ SIMD gate.  The build adds the AVX / AVX-2
 # / AVX-512 (with GFNI variants) x86 SIMD sources; those are NASM
 # .asm files that need the NASM assembler to build.  When NASM is
 # absent OR host is not x86_64, the sub-library falls back to
-# portable-C only (Slice 7.1 baseline).  aarch64 NEON support in
+# portable-C only.  aarch64 NEON support in
 # ISA-L uses .S files (no NASM) but adds its own runtime
-# dispatcher; deferred to a follow-up sub-slice to keep this one
-# scoped to Christoph's flagged Intel GFNI target.
+# dispatcher; the portable fallback remains available on other hosts.
 AC_CHECK_PROG([NASM], [nasm], [nasm])
 have_isa_l_x86_simd=no
 AS_IF([test "x$have_md_x86_simd" = "xyes" && test "x$NASM" != "x"],

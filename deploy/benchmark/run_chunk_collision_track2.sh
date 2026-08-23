@@ -28,7 +28,7 @@
 # collision bug that lands rank A's writes in rank B's offsets
 # shows up as B's verify pass reading A's pattern.
 #
-# See .claude/design/chunk-collision-track2.md.
+# Runs the chunk-collision Track 2 benchmark.
 #
 # Usage:
 #   run_chunk_collision_track2.sh [--n N] [--reorder]
@@ -154,8 +154,7 @@ REORDER=__REORDER__
 # first run.  Without nfs-utils, util-linux mount(8) falls
 # through to fsconfig() with no remote-address translation and
 # the kernel rejects the mount as "mount program didn't pass
-# remote address".  NOT_NOW_BROWN_COW: fold both into Dockerfile
-# in a follow-up.
+# remote address".  Keep these host-specific mounts explicit for now.
 if ! command -v fio >/dev/null 2>&1 || \
    ! command -v mount.nfs >/dev/null 2>&1; then
 	echo "[t2] installing fio + nfs-utils in container..."
@@ -333,11 +332,10 @@ else
 fi
 
 # Criterion 4: zero CONN_CLOSING force-drain warnings.  Per
-# .claude/design/conn-info-closing-wedge.md (BLOCKER CLOSED): the
-# Slice 1 backstop is a safety net; any "stuck in CLOSING ...
+# The force-drain backstop is a safety net; any "stuck in CLOSING ...
 # force-draining" line emitted by lib/io/conn_info.c is the signal
 # that a genuine accept-CQE-completion leak (Bug A) has surfaced
-# and needs its own follow-up.  Slice 2's listener-exemption fix
+# and needs its own follow-up.  The listener-exemption behavior
 # means a clean run is reachable; if this criterion fails, capture
 # the warning lines (the "(counts: r=%d w=%d a=%d c=%d, ...)" block
 # pins the leaked counter) before tearing down the containers.

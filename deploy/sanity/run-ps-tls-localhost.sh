@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Single-host driver for the slice plan-1-tls.c PS-MDS smoke (#139).
+# Single-host driver for the PS-MDS mTLS smoke test.
 #
 # Spins up an MDS and a PS on localhost using the deploy/sanity/
 # {mds,ps}-tls.toml configs, with a freshly minted mini-CA and the

@@ -2,8 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# End-to-end PROXY_REGISTRATION-over-mTLS smoke (slice plan-1-tls.c,
-# task #139).
+# End-to-end PROXY_REGISTRATION-over-mTLS smoke test.
 #
 # Pre-conditions:
 #   - mini-CA materials in /tmp/reffs_ps_tls (run setup-mini-ca.sh
