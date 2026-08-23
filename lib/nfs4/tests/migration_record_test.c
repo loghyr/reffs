@@ -2,14 +2,14 @@
  * SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Slice 6c-x.2: migration_record table primitives.
+ * Migration record table primitives.
  *
  * Tests the dual-index cds_lfht (proxy_stateid.other + inode), the
- * Rule 6 ref-counted lifecycle, the create-time per-inode invariant,
+ * ref-counted lifecycle, the create-time per-inode invariant,
  * the phase-CAS commit/abandon transitions, and the lease-aware
- * reaper.  Phase transitions and per-instance delta application
- * driven by the actual PROXY_DONE / PROXY_CANCEL handlers land in
- * slice 6c-x.3; the LAYOUTGET view-build hook is in slice 6c-x.4.
+ * reaper.  Phase transitions and per-instance delta application are
+ * driven by the actual PROXY_DONE / PROXY_CANCEL handlers and the
+ * LAYOUTGET view-build path.
  */
 
 #ifdef HAVE_CONFIG_H

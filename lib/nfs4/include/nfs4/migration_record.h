@@ -4,31 +4,26 @@
  */
 
 /*
- * In-flight proxy migration record table -- slice 6c-x.2.
+ * In-flight proxy migration record table.
  *
  * The MDS records one migration_record per active PROXY_OP_MOVE /
  * PROXY_OP_REPAIR assignment delivered to a registered PS.  The
- * record is the persisted (in-memory only in slice 6c-x; on-disk
- * in slice 6c-zz) state that PROXY_DONE / PROXY_CANCEL act on, and
+ * record is the persisted state that PROXY_DONE / PROXY_CANCEL act on, and
  * that the LAYOUTGET view-build path consults to compute the
  * during-migration view of the file's layout.
  *
  * Two indices:
  *   1. by proxy_stateid.other[12] -- for PROXY_DONE / PROXY_CANCEL
- *      O(1) lookup from a PS-supplied proxy_stateid (slice 6c-x.3)
+ *      O(1) lookup from a PS-supplied proxy_stateid
  *   2. by inode pointer            -- for the LAYOUTGET view-build
- *      path (slice 6c-x.4) and the constraint that an inode has at
+ *      path and the constraint that an inode has at
  *      most one in-flight migration at a time
  *
- * Both indices are `cds_lfht`.  Rule 6 (patterns/ref-counting.md)
- * governs entry lifecycle, with the dual-index dance noted in the
- * design doc revision section "RCU + Rule 6 discipline for
- * migration_record table".
+ * Both indices are `cds_lfht`; entries are reference-counted and
+ * released through the table lifecycle helpers.
  *
- * Slice 6c-x.2 ships only the table primitives + reaper; per-instance
- * delta machinery is captured here as the `mr_deltas` field but
- * actual delta application is wired up in slice 6c-x.4 (LAYOUTGET
- * view-build) and 6c-x.5 (CB_LAYOUTRECALL on commit).
+ * The table also owns per-instance deltas used to build the
+ * during-migration layout view.
  */
 
 #ifndef _REFFS_NFS4_MIGRATION_RECORD_H
@@ -56,7 +51,7 @@
 #define MIGRATION_OWNER_REG_MAX 256
 
 /*
- * Migration phase.  Single-writer transitions during the slice's
+ * Migration phase.  Single-writer transitions during a record's
  * lifetime: PENDING -> IN_PROGRESS -> { COMMITTED, ABANDONED }.
  *
  * COMMITTED and ABANDONED are sticky terminal phases -- once entered,
@@ -64,7 +59,7 @@
  * A reader that holds a find ref past the phase transition can still
  * observe the final phase value before the RCU-deferred free.
  *
- * _Atomic because the LAYOUTGET view-build path (slice 6c-x.4) reads
+ * _Atomic because the LAYOUTGET view-build path reads
  * mr_phase concurrently with the DONE / CANCEL handlers and the
  * reaper.
  */
@@ -78,7 +73,7 @@ enum migration_phase {
 /*
  * Per-instance delta describing one transformation on one mirror /
  * shard position within one segment of i_layout_segments.  The
- * delta machinery itself is wired up in slice 6c-x.4 (the
+ * delta machinery is used by the LAYOUTGET view-build path (the
  * LAYOUTGET view-build path applies deltas to the base segments to
  * compute the during-migration view); this slice carries the deltas
  * as opaque payload on the record so 6c-x.4 has the array shape
@@ -120,17 +115,15 @@ struct migration_instance_delta {
 	/*
 	 * For INCOMING: the new layout_data_file the LAYOUTGET
 	 * view-build path inserts when computing the during-migration
-	 * view (slice 6c-x.4).  Built by the migration record's
-	 * creator (slice 6c-y autopilot).  Unused for DRAINING /
+	 * view.  Built by the migration record's creator.  Unused for DRAINING /
 	 * STABLE / INTERPOSED -- zero-init is fine.
 	 */
 	struct layout_data_file mid_replacement_file;
 };
 
 /*
- * Migration record.  Fields documented inline; see
- * .claude/design/proxy-server-phase6c-revision.md "Authorization"
- * and "State-machine completeness" for the normative contract.
+ * Migration record.  Fields document the authorization and
+ * state-machine invariants inline.
  */
 struct migration_record {
 	/*
@@ -168,7 +161,7 @@ struct migration_record {
 	 * order matches nfs4_client_registered_ps_identity in nfs4/client.h).
 	 * Bytes copied at register time; NOT a pointer to the client's
 	 * field, because the client may be reaped while the record is
-	 * still active (see slice 6c-x.0 review note N2).
+	 * still active.
 	 */
 	char mr_owner_reg[MIGRATION_OWNER_REG_MAX];
 	uint32_t mr_owner_reg_len; /* registration_id length; or strlen()
@@ -176,7 +169,7 @@ struct migration_record {
 
 	/*
 	 * Most recently issued seqid for this proxy_stateid.  Bumped
-	 * on every renewal (slice 6c-y / 6c-z); compared against the
+	 * on every renewal; compared against the
 	 * caller's pd_stateid.seqid in the PROXY_DONE / PROXY_CANCEL
 	 * priority-ordered authorization rule (-> NFS4ERR_OLD_STATEID
 	 * on mismatch, per RFC 8881 S8.2.4).
@@ -194,7 +187,7 @@ struct migration_record {
 	 * CLOCK_MONOTONIC ns of last PROXY_PROGRESS heartbeat from the
 	 * owning PS; the reaper uses this to detect lease expiry
 	 * (1.5x lease period of silence -> ABANDONED).  Two-clock
-	 * pattern from .claude/design/trust-stateid.md.  _Atomic so the
+	 * pattern used by the trust-stateid renewal path.  _Atomic so the
 	 * renewal path can update without locking.
 	 */
 	_Atomic uint64_t mr_last_progress_mono_ns;
@@ -237,9 +230,8 @@ void migration_record_fini(void);
  * migration record.
  *
  * Caller passes:
- *   - The proxy_stateid the MDS just minted (slice 6c-x.1 alloc
- *     primitives produce this; slice 6c-y's PROXY_PROGRESS reply
- *     builder threads it through).
+ *   - The proxy_stateid the MDS just minted and passes to the
+ *     assignment reply builder.
  *   - The inode the migration applies to (single record per inode;
  *     a second create that targets an inode with an active record
  *     returns -EBUSY without replacing the prior record).
@@ -302,8 +294,7 @@ void migration_record_unhash(struct migration_record *mr);
  * and signal the LAYOUTGET view-build path to flush the
  * during-migration view.  The caller (PROXY_DONE handler)
  * subsequently applies the deltas to the inode's i_layout_segments
- * (slice 6c-x.4) and issues CB_LAYOUTRECALL for affected clients
- * (slice 6c-x.5).
+ * and issues CB_LAYOUTRECALL for affected clients.
  *
  * Returns 0 on success, -EALREADY if the record is no longer in
  * a committable phase (already COMMITTED or ABANDONED).
@@ -344,7 +335,7 @@ struct migration_record *migration_record_find_by_stateid(const stateid4 *stid);
  * active migration.  Caller MUST drop via migration_record_put().
  *
  * Used by:
- *   - LAYOUTGET (slice 6c-x.4) to apply deltas before encoding
+ *   - LAYOUTGET to apply deltas before encoding
  *   - migration_record_create's invariant check (single in-flight
  *     migration per inode)
  */
@@ -392,7 +383,7 @@ void migration_record_reaper_scan(uint64_t max_silence_ns,
  * record carries a STABLE delta for the slot or not).
  *
  * INTERPOSED deltas are NOT consumed -- they require PS-as-DS
- * plumbing that is out of scope for slice 6c-x.  An INTERPOSED
+ * plumbing that is not implemented here.  An INTERPOSED
  * delta in the record is silently passed through as a STABLE-
  * equivalent (the base entry stays); record builders in this
  * slice MUST NOT emit INTERPOSED.

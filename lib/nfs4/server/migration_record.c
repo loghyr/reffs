@@ -4,7 +4,7 @@
  */
 
 /*
- * In-flight proxy migration record table -- slice 6c-x.2.
+ * In-flight proxy migration record table.
  *
  * Two-index cds_lfht (by proxy_stateid.other and by inode) with
  * Rule 6 ref-counted entries.  Modeled on lib/nfs4/server/
@@ -13,8 +13,7 @@
  *
  * Slice 6c-x.2 ships the table primitives + lease-expiry reaper.
  * The phase transitions and per-instance delta application that
- * PROXY_DONE / PROXY_CANCEL drive land in slice 6c-x.3; the
- * LAYOUTGET view-build hook lands in slice 6c-x.4.
+ * PROXY_DONE / PROXY_CANCEL and LAYOUTGET consume this table.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -727,8 +726,8 @@ int migration_record_from_persistent(
 	 * sb is NULL on the reload path -- the in-memory super_block
 	 * pointer cannot be reconstructed from disk.  PROXY_DONE /
 	 * PROXY_CANCEL handlers compare on (sb_id, ino) when
-	 * c_curr_sb is NULL anyway (slice 6c-x.3 priority-rule
-	 * step 5), so a NULL sb is benign at the auth layer.  A
+	 * c_curr_sb is NULL anyway, so a NULL sb is benign at the
+	 * authorization layer.  A
 	 * future refinement could re-resolve sb_id -> super_block
 	 * via super_block_find_for_listener after sb_registry_load
 	 * runs.
