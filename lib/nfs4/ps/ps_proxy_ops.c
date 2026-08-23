@@ -2246,7 +2246,7 @@ out:
 }
 
 /*
- * PS Phase 3: pipeline-driven read.
+ * Pipeline-driven read.
  *
  * Builds a struct mds_file from the caller-supplied upstream FH and
  * end-client open stateid, hands it to ec_read_encoding_with_file, and
@@ -2312,7 +2312,7 @@ int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
 	/*
 	 * Follow-up work: wire listener_id into
 	 * ps_proxy_pipeline_read so the per-mirror short-circuit can
-	 * also fire on the READ path.  Slice 5.2 ships the write-path
+	 * also fire on the READ path.  The write-path
 	 * dispatch; reads still take the RPC path on every mirror
 	 * regardless of co-residency.
 	 */
@@ -2363,11 +2363,11 @@ int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
 /* This is the WRITE entry point op handlers route to on proxy SBs.   */
 /* It does not call upstream; it appends client bytes to the          */
 /* per-(stateid, fh) write buffer on the listener.  The COMMIT-time   */
-/* flush through ec_write_encoding_with_file is slice 4a.2c.             */
+/* flush through ec_write_encoding_with_file is not yet wired.           */
 /* ------------------------------------------------------------------ */
 
 /*
- * Compose the per-listener write verifier (PS Phase 4b slice 4b.4).
+ * Compose the per-listener write verifier.
  *
  * The 4a helper that packed pls_boot_gen into 8 bytes is now folded
  * into ps_compose_write_verf in ps_write_buffer.c -- pass
@@ -2458,14 +2458,14 @@ static int pwb_ensure_capacity(struct ps_write_buffer *buf,
  * case the later stripe's verifier is the correct one to keep
  * (Risk #7 in proxy-server-phase4b.md).
  *
- * Shared by `ps_proxy_pipeline_commit` (slice 4b.5; the full or
+ * Shared by `ps_proxy_pipeline_commit` (the full or
  * range-bound dirty walk at COMMIT time) and
- * `ps_proxy_pipeline_write` (slice 4b.6; the FILE_SYNC4 / DATA_SYNC4
+ * `ps_proxy_pipeline_write` (the FILE_SYNC4 / DATA_SYNC4
  * inline flush over just the bytes this WRITE touched).
  *
  * `pls` is the owning listener (always non-NULL today; both
  * pipeline callers reach this helper only after a successful
- * ps_state_find).  Slice 4b.7 uses it to bump
+	 * ps_state_find).  The observability counters are updated around
  * pls_rmw_reads_total / pls_rmw_read_failures_total around the
  * RMW prefix CHUNK_READ -- relaxed atomics for the
  * ps-write-buffer-stats probe surface.
@@ -2545,7 +2545,7 @@ static int pwb_flush_range_locked(struct ps_write_buffer *buf,
 			cds_lfht_next(buf->pwb_dirty_ht, &iter);
 
 			/*
-			 * Range filter (slice 4b.5 + 4b.6): skip
+			 * Range filter: skip
 			 * stripes whose [base, base + stripe_size) does
 			 * not intersect [range_start, range_end).  count
 			 * == 0 is the "every dirty stripe" sentinel.
@@ -2593,7 +2593,7 @@ static int pwb_flush_range_locked(struct ps_write_buffer *buf,
 			}
 
 			/*
-			 * Slice 4b.7 observability: count the RMW prefix
+			 * Observability: count the RMW prefix
 			 * read attempt before we make the call, and the
 			 * failure on a non-zero return.  Both relaxed --
 			 * the probe reports a self-consistent snapshot, not
@@ -2696,7 +2696,7 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	int ret;
 
 	/*
-	 * Slice 4b.6 activates `stable` and `creds`: a WRITE with
+	 * A WRITE with `stable` and `creds`:
 	 * `stable != UNSTABLE4` triggers an inline flush of the
 	 * stripes this WRITE just touched, with `creds` threaded
 	 * through ec_*_stripe_with_file's LAYOUTGET / CHUNK_WRITE /
@@ -2708,7 +2708,7 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	 * 2 FILE_SYNC4.  The XDR decoder already rejects out-of-range
 	 * enum values on the wire, so this check is defence-in-depth
 	 * for the internal-caller path -- an op handler or future
-	 * slice that hands us an int instead of the decoded enum -- so
+	 * caller that hands us an int instead of the decoded enum -- so
 	 * the inline-flush branch only ever sees a recognised value.
 	 */
 	if (!ms || !upstream_fh || upstream_fh_len == 0 || !stateid_other ||
@@ -2817,7 +2817,7 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	buf->pwb_stateid_seqid = stateid_seqid;
 
 	/*
-	 * Per-stripe dirty marking (Phase 4b slice 4b.1).  Snapshot
+	 * Per-stripe dirty marking.  Snapshot
 	 * the buffer's EC geometry on first WRITE; subsequent WRITEs
 	 * reuse the snapshot.  Today the geometry is the same
 	 * compile-time constant the COMMIT-side encode uses
@@ -2838,16 +2838,16 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 		/*
 		 * set_geom may return -EINVAL on a true geometry
 		 * mismatch (geometry already set to different fields),
-		 * but for slice 4b.1 the geometry is a constant so this
+		 * but the geometry is a constant so this
 		 * cannot fail in practice.  Pin the contract with an
-		 * assertion that catches a future-slice regression.
+		 * assertion that catches a geometry regression.
 		 */
 		if (gret == 0)
 			(void)ps_write_buffer_mark_dirty(buf, offset, data_len);
 	}
 
 	/*
-	 * Slice 4b.6 inline flush.  If the client asked for FILE_SYNC4
+	 * Inline flush.  If the client asked for FILE_SYNC4
 	 * (2) or DATA_SYNC4 (1), walk the dirty stripes whose byte
 	 * ranges intersect this WRITE's [offset, offset + data_len)
 	 * and flush each one via the shared per-stripe helper.  We
@@ -2881,7 +2881,7 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	 * Snapshot the composed-verifier state under pwb_mutex BEFORE
 	 * we drop the find ref.  The UNSTABLE4 path leaves
 	 * pwb_mds_verf_set false; the inline-flush path above may
-	 * have just set it, which is the slice 4b.4 / 4b.6 verifier-
+	 * have just set it, which is the verifier
 	 * mix design's intended cross-WRITE state.
 	 */
 	bool snap_mds_set = buf->pwb_mds_verf_set;
@@ -2929,7 +2929,7 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 	if (upstream_fh_len > PS_MAX_FH_SIZE)
 		return -E2BIG;
 	/*
-	 * Slice 4b.5 range honouring promotes count to u64 to compute
+	 * Range handling promotes count to u64 to compute
 	 * `offset + count`.  Reject ranges that would wrap; without
 	 * this guard a malicious client could set offset near
 	 * UINT64_MAX and force `req_end` to zero, which would falsely
@@ -2983,7 +2983,7 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 	 * helper honours the range filter for count > 0; count == 0
 	 * is the RFC 8881 S18.3.4 "commit everything" sentinel.
 	 *
-	 * Slice 4b.6 extracted this walk into pwb_flush_range_locked
+	 * This walk is extracted into pwb_flush_range_locked
 	 * so the FILE_SYNC4 / DATA_SYNC4 inline flush in
 	 * ps_proxy_pipeline_write can share the same per-stripe
 	 * machinery -- including the captured MDS-verifier last-
@@ -3001,7 +3001,7 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 
 	if (ret == 0) {
 		/*
-		 * Slice 4b.5: drop the buffer only when no dirty
+		 * Drop the buffer only when no dirty
 		 * stripes remain (the full-flush case, identical to 4a's
 		 * success contract).  When the range filter left some
 		 * dirty stripes behind, release the find ref instead so
@@ -3107,8 +3107,7 @@ int ps_proxy_pipeline_close(struct mds_session *ms, const uint8_t *upstream_fh,
 	 * are lost but the upstream open stateid still gets released
 	 * by the caller's subsequent forward_close.  Bytes-loss path
 	 * is operator-visible via the close_flush_timeouts_total
-	 * counter the design's "ps-write-buffer-stats" probe op
-	 * exposes (slice 4a.4).
+	 * counter exposed by the ps-write-buffer-stats probe operation.
 	 */
 	ret = ec_write_encoding_with_file(ms, &mf, buf->pwb_data,
 					  buf->pwb_high_water, /* k */ 4,

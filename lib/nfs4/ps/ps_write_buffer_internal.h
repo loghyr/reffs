@@ -7,7 +7,7 @@
 #define PS_WRITE_BUFFER_INTERNAL_H
 
 /*
- * Whitebox surface for ps_write_buffer.c (PS Phase 4a).  Tests
+ * Whitebox surface for ps_write_buffer.c.  Tests
  * include this header to inspect / mutate buffer-table state
  * directly without going through the public surface.  The
  * Phase 4a pipeline shim (4a.2b) also includes this header for
@@ -37,7 +37,7 @@
 #define PS_STATEID_OTHER_SIZE 12
 
 /*
- * Per-stripe dirty-tracking entry (PS Phase 4b).  Lives in
+ * Per-stripe dirty-tracking entry.  Lives in
  * pwb_dirty_ht; one entry per stripe that has received any WRITE
  * bytes since the last successful flush.  Mutated and read under
  * pwb_mutex -- no concurrent access discipline beyond the buffer's
@@ -112,7 +112,7 @@ struct ps_write_buffer {
 	struct cds_lfht *pwb_dirty_ht;
 
 	/*
-	 * Composed-verifier state (PS Phase 4b slice 4b.4).  pwb_mds_verf
+	 * Composed-verifier state.  pwb_mds_verf
 	 * captures the most recent writeverf observed in a successful
 	 * per-stripe flush's CHUNK_COMMIT response (currently the first
 	 * mirror's ccr_writeverf -- a per-DS-boot-epoch token).
@@ -143,7 +143,7 @@ struct ps_write_buffer {
  *
  * A configurable write_buffer_max_bytes TOML field is deferred.  Today this
  * is a compile-time constant; the pipeline shim is structured so
- * a later slice can swap a per-listener `pls_write_buffer_max`
+ * a later implementation can swap a per-listener `pls_write_buffer_max`
  * field in without surface changes.
  */
 #define REFFS_PS_WRITE_BUFFER_MAX (1024UL * 1024UL * 1024UL)
@@ -184,7 +184,7 @@ extern _Atomic(uint64_t (*)(void)) ps_test_hook_clock_now_ns;
  * mutex is held.
  *
  * Whitebox-only: production code walks the dirty table via the
- * forthcoming flush iterator in slice 4b.2.  Tests use this for
+ * flush iterator.  Tests use this for
  * point-inspection of the bitmap state.
  */
 struct ps_dirty_stripe *
@@ -210,7 +210,7 @@ bool ps_dirty_stripe_shard_is_dirty(const struct ps_dirty_stripe *ds,
  * Remove a single stripe entry from the buffer's dirty hash
  * table.  No-op if `stripe_no` is not currently marked dirty.
  * Caller MUST hold buf->pwb_mutex; the helper is invoked by
- * ps_proxy_pipeline_commit (PS Phase 4b slice 4b.2) after a
+ * ps_proxy_pipeline_commit after a
  * successful per-stripe flush.
  *
  * The dirty table has no readers outside pwb_mutex (lookup_or_alloc
