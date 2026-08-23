@@ -16,10 +16,8 @@
  * GF(2^8).  Single-parity (m=1) is covered by XOR_PARITY (0x7),
  * whose wire format is identical to Linux md's P-only case.
  *
- * See ~/Documents/reffs-docs/ffv2-encoding-menu.md
- * FFV2_ENCODING_LINUX_MD_RAID for the MTI-candidate rationale and
- * the wire-compat verification owed against SnapRAID's first two
- * Cauchy rows.
+ * The encoding constant and its wire-compatibility requirements are
+ * defined by the FFv2 XDR registry and the vendored NOTICE files.
  */
 
 #include <errno.h>

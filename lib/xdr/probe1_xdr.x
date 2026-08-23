@@ -496,8 +496,8 @@ struct SB_SET_CHECKSUM_ALGORITHM1args {
  *   - pcs_k >= 1, pcs_k <= LAYOUT_SEG_MAX_FILES (32)
  *   - pcs_k + pcs_m <= LAYOUT_SEG_MAX_FILES
  *   - PASSTHROUGH iff pcs_m == 0 (setter invariant)
- *   - File-layout cross-check (plan-review B3): if the sb's
- *     sb_layout_types includes SB_LAYOUT_FILE, only PASSTHROUGH
+ *   - File-layout cross-check: if the sb's sb_layout_types includes
+ *     SB_LAYOUT_FILE, only PASSTHROUGH
  *     with pcs_m == 0 is accepted -- file layouts require a
  *     single DS per export.
  *

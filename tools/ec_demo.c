@@ -806,7 +806,7 @@ static int cmd_repair(const char *mds_host, const char *nfs_file, int k, int m,
 	} else {
 		/*
 		 * Single-line CSV-friendly output for the bench harness
-		 * (reffs-docs/ec-repair-bench-tier2.md columns).  All
+		 * benchmark report columns.  All
 		 * times in ms with 3 decimal digits; bytes_repaired and
 		 * shards_repaired as integers.
 		 */

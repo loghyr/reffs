@@ -19,9 +19,8 @@
  * polynomial choice.
  *
  * Storage: (k+1)/k * payload.  Fault tolerance: any single shard
- * loss.  See ~/Documents/reffs-docs/ffv2-encoding-menu.md
- * FFV2_ENCODING_XOR_PARITY (proposed 0x7) for the wire-encoding
- * design + MTI rationale.
+ * loss.  The wire encoding is identified by
+ * FFV2_ENCODING_XOR_PARITY (proposed 0x7).
  *
  * Caps: k in [1, 254] (m is always 1); k+m = k+1 <= 255 matches
  * the same conservative shard-count ceiling ec_rs uses.

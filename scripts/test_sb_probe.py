@@ -337,8 +337,8 @@ def test_sb_default_coding(client, sb_id):
     check(bad3 != 0,
           f"encoding_type=99 rejected (status={bad3}, want non-zero)")
 
-    # 6) Plan-review B3 cross-check: file-layout sb (SB_LAYOUT_FILE
-    #    = 1U << 0) must refuse any EC spec.  File layouts are
+    # 6) File-layout sb (SB_LAYOUT_FILE = 1U << 0) must refuse any
+    #    EC spec.  File layouts are
     #    single-DS per per-export-dstore.md, so an EC default would
     #    silently break LAYOUTGET.  Verify rs:4+2 and mojette-sys:8+2
     #    are both rejected with non-zero status; then verify

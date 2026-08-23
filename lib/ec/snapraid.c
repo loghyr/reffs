@@ -14,9 +14,8 @@
  * 0x11d -- the same field reffs's ec_rs uses -- and constructs an
  * Extended Cauchy matrix that reproduces the Linux md RAID-5 / RAID-6
  * coefficients in its first two rows.  See raid/raid.c's top-of-file
- * theory comment for the full construction, and
- * ~/Documents/reffs-docs/snapraid-evaluation.md for the license +
- * adoption rationale.
+ * theory comment for the full construction.  License and provenance
+ * details are recorded in snapraid-raid/NOTICE.md.
  *
  * The vendored library caps at 251 data shards + 6 parity shards.
  * We enforce these caps at create time.

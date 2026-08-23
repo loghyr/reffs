@@ -2253,8 +2253,8 @@ static int probe1_op_sb_set_default_coding(struct rpc_trans *rt)
 	};
 
 	/*
-	 * Plan-review B3 cross-check: file layouts require a single
-	 * DS per layout; an EC spec (m > 0) on a file-layout sb is a
+	 * File layouts require a single DS per layout; an EC spec
+	 * (m > 0) on a file-layout sb is a
 	 * silent breakage waiting to happen at LAYOUTGET time, so
 	 * refuse here at the admin boundary.  PASSTHROUGH + the unset
 	 * sentinel (all-zero) are both fine since both fall through

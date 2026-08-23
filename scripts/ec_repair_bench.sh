@@ -3,8 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # ec-repair bench harness -- drives the IETF 126 cells for the
-# "cost of collisions and repair" slide.  Companion to
-# reffs-docs/ec-repair-bench-tier2.md.
+# "cost of collisions and repair" measurements.
 #
 # For each cell (size x encoding x loss-pattern x iter): write a file
 # of `size` bytes through the encoding, then run `ec_demo repair` with

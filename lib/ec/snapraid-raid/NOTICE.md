@@ -132,7 +132,5 @@ Files in this directory that are NOT from upstream:
 
 ## Cross-references
 
-- `~/Documents/reffs-docs/snapraid-evaluation.md` — the
-  license + adoption evaluation that led to this vendor.
-- `~/Documents/reffs-docs/christoph.md` Ask 3 — the reference
-  Christoph named at 2026-07-22.
+- The upstream license and provenance are recorded above; the
+  vendored source is pinned to the commit listed in this file.

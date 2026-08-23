@@ -388,7 +388,7 @@ stop-benchmark:
 # /shared/build-noscalar-vec) and then runs the shards wrapper which
 # iterates over (shard size, SIMD/scalar) cells.
 # Results: logs/benchmark/larger-shards-<host>.csv
-# See reffs-docs/experiments/03-larger-shards.md.
+# See the larger-shard benchmark configuration under deploy/benchmark/.
 run-larger-shards: image
 	@mkdir -p $(BENCH_LOGS)
 	@echo "Building both reffs flavors (SIMD + noscalar-vec)..."

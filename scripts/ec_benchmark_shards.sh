@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Drives experiment 03-larger-shards (reffs-docs/experiments/).
+# Drives the larger-shard benchmark matrix.
 #
 # Wraps ec_benchmark.sh to run the SIMD-vs-scalar matrix at several
 # shard sizes and emit a single merged CSV.

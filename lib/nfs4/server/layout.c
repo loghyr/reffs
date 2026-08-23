@@ -967,7 +967,7 @@ _Static_assert(
  *   - File layouts: one FH per DS (no mirroring), target = nds.
  *   - Flex files with explicit default_coding: target = k + m
  *     -- the configured encoding geometry dictates how many DSes
- *     the layout needs (plan-review B2).
+ *     the layout needs.
  *   - Flex files with unset default_coding: legacy behaviour --
  *     target = ss_layout_width (server-wide knob), falling back
  *     to REFFS_LAYOUT_WIDTH_DEFAULT if zero.
@@ -991,7 +991,7 @@ uint32_t default_coding_resolve_target(const struct reffs_coding_spec *coding,
  * sb's default_coding and the runway-popped nfiles.
  *
  *   - Explicit default_coding: ls_k/ls_m come from the spec (NOT
- *     from nfiles -- plan-review B2 bug-fix).  If nfiles is short
+ *     from nfiles.  If nfiles is short
  *     of k+m, return -EAGAIN; the caller maps to
  *     NFS4ERR_LAYOUTUNAVAILABLE rather than silently emitting a
  *     degraded geometry.
@@ -1810,8 +1810,8 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 
 		/*
 		 * Resolve ls_k / ls_m / ffm_coding_type from the sb's
-		 * default_coding and the runway-popped nfiles (step 5
-		 * plan-review B2 fix): when default_coding is set, the
+		 * default_coding and the runway-popped nfiles: when
+		 * default_coding is set, the
 		 * encoding geometry comes from config, not from nfiles;
 		 * if nfiles is short of k+m, we surface
 		 * NFS4ERR_LAYOUTUNAVAILABLE rather than silently

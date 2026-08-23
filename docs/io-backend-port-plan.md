@@ -267,7 +267,7 @@ Linux/FreeBSD for bug triangulation.
 
 ---
 
-## Reviewer Findings (c-protocol-review-prompts)
+## Review Findings
 
 ### BLOCKER
 None.

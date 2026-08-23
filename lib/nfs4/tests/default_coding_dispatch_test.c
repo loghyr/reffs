@@ -12,9 +12,9 @@
  * default_coding_resolve_segment) directly, without spinning up
  * the full LAYOUTGET integration fixture (compound +
  * super_block + dstores + runway).  The helpers contain the
- * plan-review B2 fix -- "runway target drives k/m; reject
- * NFS4ERR_LAYOUTUNAVAILABLE on short runway instead of
- * silently degrading geometry" -- so unit-testing them in
+ * runway target drives k/m; reject NFS4ERR_LAYOUTUNAVAILABLE on a
+ * short runway instead of silently degrading geometry -- so
+ * unit-testing them in
  * isolation gives high-confidence coverage of the bug-fix
  * site.
  *
@@ -136,7 +136,7 @@ END_TEST
 /* ------------------------------------------------------------------ */
 
 /*
- * Plan-review B2 headline test: explicit RS(4,2), runway popped
+ * Explicit RS(4,2), runway popped
  * 6 files (k + m == 6 == target).  ls_k must be 4 from the
  * config, NOT 6 from nfiles.  Today's pre-fix code silently
  * set ls_k = nfiles, corrupting the encoding geometry.
@@ -185,7 +185,6 @@ START_TEST(test_segment_mojette_sys_8_2_default)
 END_TEST
 
 /*
- * Plan-review B2 / test_layoutget_insufficient_dstores:
  * default_coding wants k+m=6 but the runway popped only 5.
  * Resolve returns -EAGAIN, which the LAYOUTGET dispatch maps
  * to NFS4ERR_LAYOUTUNAVAILABLE.  Today's pre-fix code silently
@@ -320,7 +319,7 @@ END_TEST
 /*
  * The declared replica count wins over the runway count.  A surplus
  * runway must not silently widen the layout -- the same bug the
- * m > 0 path was fixed for in plan-review B2.
+ * m > 0 path was fixed for.
  */
 START_TEST(test_segment_replicated_ignores_surplus_runway)
 {

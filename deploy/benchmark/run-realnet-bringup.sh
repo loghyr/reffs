@@ -18,9 +18,9 @@
 #   3. Stamp toml  : substitute SHADOW_LAN_IP and the PS fingerprint
 #                    into the realnet tomls under $LOCAL_WORK/cfg.
 #   4. Push to shadow : git worktree at /tmp/reffs_realnet_repo
-#                       from ~/reffs-main (avoids the nightly's
-#                       worktree pollution per feedback_lab_use_
-#                       worktrees_not_rsync).  Rsync mTLS materials
+#                       from the canonical clone, keeping the
+#                       source checkout free of worktree pollution.
+#                       Rsync mTLS materials
 #                       + stamped tomls + the realnet compose file
 #                       to /tmp/reffs_realnet/.  Bring up the
 #                       docker-compose stack + MDS container.
@@ -48,11 +48,8 @@ SHADOW_HOST="${SHADOW_HOST:-shadow}"
 ADEPT_HOST="${ADEPT_HOST:-adept}"
 DREAMER_HOST="${DREAMER_HOST:-dreamer}"
 
-# Remote canonical reffs clone path.  On shadow + adept the user
-# uses ~/reffs as the canonical clone; the ~/reffs-main convention
-# (feedback_lab_use_worktrees_not_rsync.md) is garbo-only because
-# that's where the nightly's worktree lives.  Either way, we
-# `git worktree add` out to /tmp so we never pollute the source.
+# Remote canonical reffs clone path.  The worktree is kept separate
+# from the source checkout so the bring-up never pollutes it.
 REMOTE_CANONICAL="${REMOTE_CANONICAL:-/home/loghyr/reffs}"
 REMOTE_WORKTREE="${REMOTE_WORKTREE:-/tmp/reffs_realnet_repo}"
 REMOTE_WORK="${REMOTE_WORK:-/tmp/reffs_realnet}"

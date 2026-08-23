@@ -124,9 +124,8 @@ construction).
 
 These are NOT performance runs.  Container throughput numbers do
 not transfer; the output that matters is "zero verify mismatches"
-and "zero sanitizer errors."  Design:
-`.claude/design/chunk-collision-validation.md`; the index of all
-collision/investigation work is `.claude/design/experiments.md`.
+and "zero sanitizer errors."  The scripts and compose definitions
+in this directory are the executable specification for these runs.
 
 ### Track 1 -- multiple ec_demo instances
 
@@ -151,7 +150,8 @@ containers.  Each PS holds its own MDS-facing session, so N PSes =
 N distinct clientids on one shared MDS file -- the same contention
 surface as Track 1, exercised through the client-visible POSIX
 path (kernel NFS mount -> PS listener -> proxy data backend ->
-CHUNK ops).  Design: `.claude/design/chunk-collision-track2.md`.
+CHUNK ops).  The command-line options and topology are defined by
+`run_chunk_collision_track2.sh` and its compose configuration.
 
 ```bash
 cd deploy/benchmark

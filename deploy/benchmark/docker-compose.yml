@@ -251,7 +251,7 @@ services:
   # experiment 03 -- larger-shard SIMD-vs-scalar matrix.
   # Uses both /shared/build (SIMD) and /shared/build-noscalar-vec
   # (scalar-honest, no-vec compile flags on the encoding sources).
-  # See reffs-docs/experiments/03-larger-shards.md.
+  # See the larger-shard benchmark scripts in this directory.
   bench-shards:
     container_name: reffs-bench-shards
     image: reffs-dev

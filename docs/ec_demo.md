@@ -97,8 +97,8 @@ ec_demo setowner  --mds HOST --file NAME --input OWNER
 | `mojette-nonsys` | Mojette non-systematic (slow reconstruction, not recommended for reads) |
 | `stripe` | Plain stripe with no parity (`--m 0`); no reconstruction |
 
-Recommended for interactive workloads: `mojette-sys` with 8+2
-(see `.claude/goals.md` benchmark findings).
+Recommended for interactive workloads: `mojette-sys` with 8+2.
+See the reports under `deploy/benchmark/` for current measurements.
 
 ## Layout types
 
@@ -167,5 +167,3 @@ wait
 - `tools/ec_demo.c` — source
 - `lib/nfs4/client/` — client library (`mds_*`, `ec_*`, `ds_*` functions)
 - `docs/er_demo.md` — atomic file update tool using EXCHANGE_RANGE
-- `.claude/goals.md` — benchmark results and encoding comparison
-- `.claude/design/mds.md` — MDS architecture and Flex Files design

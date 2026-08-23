@@ -95,9 +95,8 @@ reviewer knows what to preserve.
 
 This file is currently a scoping placeholder.  Next slice: actual
 vendor of the portable-C sources + `pq.h` + wrapper.  See
-`~/Documents/reffs-docs/ffv2-encoding-menu.md`
-FFV2_ENCODING_LINUX_MD_RAID (proposed 0x8) for the menu-level
-scope and the follow-ups map.
+FFV2_ENCODING_LINUX_MD_RAID (proposed 0x8) in the FFv2 XDR
+registry for the menu-level scope and follow-ups.
 
 ## Cross-references
 
@@ -105,5 +104,5 @@ scope and the follow-ups map.
 - `~/linux/lib/raid6/test/Makefile` -- userspace-compile template
 - `lib/ec/snapraid-raid/NOTICE.md` -- the vendor-discipline
   template this file follows
-- `~/Documents/reffs-docs/ffv2-encoding-menu.md` -- menu entry
-  for LINUX_MD_RAID
+- FFV2_ENCODING_LINUX_MD_RAID -- the registry entry for this
+  encoding

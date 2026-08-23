@@ -712,8 +712,3 @@ axis-independent variation.
 
 - `docs/security-test-tools.md` — `nfs_krb5_test`, the single-client
   Kerberos tester this multi-client driver is built on.
-- `.claude/design/krb5-multiclient-test.md` — design rationale for
-  the forked driver.
-- `.claude/design/krb5-stress-multi-xprt.md` — design rationale for
-  `ec_demo burst` and the `--spn` / `--spn-list` / `--nsessions` /
-  `--nconnect` / `--ccache-dir` flag family.

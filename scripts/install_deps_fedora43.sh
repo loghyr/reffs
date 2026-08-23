@@ -5,10 +5,9 @@
 # install_deps_fedora43.sh -- Install all build / test dependencies
 # for reffs on Fedora 43.
 #
-# Lifted verbatim from the Fedora Dockerfile (the source of truth for
-# Fedora deps per CLAUDE.md "New library dependencies").  If you add
-# a PKG_CHECK_MODULES to configure.ac you MUST add the corresponding
-# `-devel` package here AND to Dockerfile.
+# Keep this list aligned with the Fedora container dependency set.  If
+# you add a PKG_CHECK_MODULES to configure.ac you MUST add the corresponding
+# `-devel` package here and to the container definition.
 #
 # Usage:
 #   scripts/install_deps_fedora43.sh

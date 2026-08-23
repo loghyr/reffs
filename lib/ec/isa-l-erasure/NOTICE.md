@@ -24,7 +24,7 @@ encoding menu.
 - Pinned commit: `8b7e3b28a2b7b816483d3f9e80162e11cebeaa70`
   (2026-07-22 `erasure_code: optimize SVE/SVE2 dot product...`)
 
-## What landed (Slice 7.1)
+## Portable-C subset
 
 **Portable-C only** -- 5 files, no NASM required:
 
@@ -44,7 +44,7 @@ encoding menu.
 - `include/erasure_code.h` -- the public API header.
 - `include/gf_vect_mul.h` -- dependency header.
 
-## What was deliberately NOT vendored (Slice 7.3 scope)
+## Deliberately not vendored
 
 - `erasure_code/ec_highlevel_func.c` -- x86 SIMD dispatch
   wrappers.  Redundant once `ec_base_aliases.c` is in the
@@ -55,8 +55,8 @@ encoding menu.
 - `erasure_code/aarch64/*.S` -- NEON / SVE sources.
 - Any NASM tooling requirement.
 
-Slice 7.3 will re-vendor the SIMD tree and add the
-`configure.ac` `AC_CHECK_PROG(NASM)` gate.  Design open --
+Future SIMD integration may re-vendor the SIMD tree and add the
+`configure.ac` `AC_CHECK_PROG(NASM)` gate.  The implementation choice is open --
 either drop the entire SIMD tree in one go and gate the whole
 build path on NASM, or land per-architecture (NEON first,
 since NASM is not required for aarch64 assembly).
@@ -70,10 +70,10 @@ since NASM is not required for aarch64 assembly).
   ISA-L's `gf_gen_rs_matrix` uses generator `2^(i*j)`,
   reffs's rs.c uses `2^(2^i * j)`.  ISA-L's
   `gf_gen_cauchy1_matrix` uses `1 / (i XOR j)` with a
-  different point-choice than SnapRAID.  Slice 7.2's tests
-  will verify this cross-check numerically.
+  different point-choice than SnapRAID.  The cross-check tests
+  verify this numerically.
 
-## Wrapper (Slice 7.2)
+## Reffs wrapper
 
 `lib/ec/isa_l.c` -- reffs's `ec_encoding` vtable over
 `ec_encode_data*` + `gf_gen_rs_matrix` + `gf_invert_matrix()`.
@@ -111,5 +111,4 @@ Bump the pinned SHA above and re-run `make check`.
   template
 - `lib/ec/linux-md-raid/NOTICE.md` -- portable-C-first
   vendor pattern (same rationale)
-- `~/Documents/reffs-docs/ffv2-encoding-menu.md`
-  FFV2_ENCODING_ISA_L_RS (proposed 0x9)
+- FFV2_ENCODING_ISA_L_RS (proposed 0x9) in the FFv2 XDR registry

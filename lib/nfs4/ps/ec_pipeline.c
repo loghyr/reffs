@@ -559,9 +559,8 @@ ec_create_encoding(int k, int m, enum ec_encoding_type encoding_type)
 		 * single-parity: k data + 1 XOR-parity shard.  No
 		 * field-polynomial dependency.  m is always 1 -- the
 		 * caller's m argument is ignored (see ec_xor_create).
-		 * See ~/Documents/reffs-docs/ffv2-encoding-menu.md
-		 * FFV2_ENCODING_XOR_PARITY (proposed 0x7) for the
-		 * MTI rationale.
+		 * The wire encoding is FFV2_ENCODING_XOR_PARITY
+		 * (proposed 0x7).
 		 */
 		return ec_xor_create(k);
 	case EC_ENCODING_LINUX_MD:

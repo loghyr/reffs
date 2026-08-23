@@ -68,7 +68,6 @@ group-translation.
 | `tools/ec_demo.c` | `--force-gd` CLI flag (parallel to `--force-scalar`). |
 | `scripts/ec_benchmark.sh` | `--force-gd` flag plumbing; new `inverse=peel\|gd` and `shard_size` CSV columns; `RUN_BASELINES` gating so plain/RS aren't re-run in gd-only phases. |
 | `scripts/ec_benchmark_full.sh` | Expanded from 4 phases (`{v1,v2} x {SIMD,scalar}`) to 8 (cross product with `{peel,gd}`). |
-| `.claude/goals.md` | Milestone entry under EC Demo Client. |
 
 `scripts/gen_benchmark_report.py` is **unchanged**: it is the
 hardcoded historical-snapshot report; the new `inverse` axis lives

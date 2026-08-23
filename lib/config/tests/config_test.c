@@ -777,8 +777,8 @@ END_TEST
 
 /*
  * k + m exceeds LAYOUT_SEG_MAX_FILES (32) -> spec stays zero.
- * Plan-review B1 corrected the cap from 16 to 32; this test
- * pins the right boundary.  Try k+m = 33 (one over the cap).
+ * The supported cap is 32; this test pins the right boundary.
+ * Try k+m = 33 (one over the cap).
  */
 START_TEST(test_config_default_coding_max_k_m)
 {

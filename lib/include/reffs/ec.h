@@ -146,8 +146,8 @@ struct ec_encoding *ec_mirror_create(int k);
  * Returns an initialized encoding, or NULL on failure.  The
  * caller must call ec_encoding_destroy() when done.
  *
- * See ~/Documents/reffs-docs/ffv2-encoding-menu.md
- * FFV2_ENCODING_XOR_PARITY (proposed 0x7).
+ * The wire encoding is identified by FFV2_ENCODING_XOR_PARITY
+ * (proposed 0x7).
  */
 struct ec_encoding *ec_xor_create(int k);
 
@@ -164,8 +164,8 @@ struct ec_encoding *ec_xor_create(int k);
  *
  * Returns an initialized encoding, or NULL on failure.
  *
- * See ~/Documents/reffs-docs/ffv2-encoding-menu.md
- * FFV2_ENCODING_LINUX_MD_RAID (proposed 0x8).
+ * The wire encoding is identified by FFV2_ENCODING_LINUX_MD_RAID
+ * (proposed 0x8).
  */
 struct ec_encoding *ec_linux_md_create(int k);
 
@@ -188,8 +188,7 @@ struct ec_encoding *ec_linux_md_create(int k);
  * split-table GF multiply this Cauchy construction relies on.
  * Retained here behind REFFS_ENABLE_PRIVATE_ENCODINGS (private-
  * range wire codepoint 0x8001) for bench and internal comparison
- * work.  See ~/Documents/reffs-docs/snapraid-evaluation.md and
- * lib/ec/snapraid-raid/NOTICE.md for the upstream pin.
+ * work.  See lib/ec/snapraid-raid/NOTICE.md for the upstream pin.
  */
 struct ec_encoding *ec_snapraid_create(int k, int m);
 
