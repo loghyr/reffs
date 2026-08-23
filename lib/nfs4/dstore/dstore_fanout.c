@@ -96,7 +96,7 @@ static void *fanout_thread(void *arg)
 
 	case FANOUT_REVOKE_STATEID:
 		/*
-		 * Trust-stateid slice 1 conflict-recall path: each slot
+		 * Conflict-recall path: each slot
 		 * carries the prior-client stateid this DS should drop
 		 * from its trust table.  N priors x M DSes are packed
 		 * into one fan-out so we only task_pause once.

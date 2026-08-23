@@ -553,8 +553,7 @@ static void *ds_renewal_thread_fn(void *arg __attribute__((unused)))
 		 * For MDS-to-DS we want the kick to actually wake -- it
 		 * is the W2 recovery channel called from send_and_check_ds
 		 * when a fan-out op observes a dead session, and the
-		 * bench evidence the keep-alive slice is validating
-		 * against is sensitive to recovery latency.
+		 * recovery latency is observable by keep-alive monitoring.
 		 */
 		pthread_mutex_lock(&s_renewal_mtx);
 		if (atomic_load_explicit(&s_renewal_running,

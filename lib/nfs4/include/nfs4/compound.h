@@ -94,7 +94,7 @@ struct compound {
 	const char *c_tls_fingerprint; /* NULL for non-TLS or no peer cert */
 	/*
 	 * Backing storage for c_tls_fingerprint in the production
-	 * path (slice plan-A.ii).  compound_alloc() calls
+	 * path.  compound_alloc() calls
 	 * io_conn_get_peer_cert_fingerprint(); on success it copies
 	 * the formatted hex into c_tls_fingerprint_buf and points
 	 * c_tls_fingerprint at the buffer.  Test mocks may bypass

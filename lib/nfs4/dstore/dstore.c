@@ -487,7 +487,7 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
 			      memory_order_relaxed);
 
 	/*
-	 * Trust-stateid slice 1.5: opt-in tight-coupling for NFSv3
+	 * Opt-in tight coupling for NFSv3
 	 * dstores known to be reffsd.  Set BEFORE the hash-table
 	 * publish so readers never see ds_tight_coupled=false on
 	 * a tight-coupled dstore.  Local dstores override below
@@ -736,7 +736,7 @@ uint32_t dstore_collect_available(struct dstore **out, uint32_t max)
 /*
  * dstore_collect_all -- gather refs to every dstore in the global
  * pool, regardless of mount / drain / reconnecting state.  Used by
- * the DSTORE_LIST probe op (mirror-lifecycle Slice B) to surface
+ * the DSTORE_LIST probe op to surface
  * the full operator dashboard.  Caller drops each ref via
  * dstore_put().
  */
