@@ -88,7 +88,7 @@ struct dstore {
 	 * The MDS acts as a plain NFSv4 client (USE_NON_PNFS) to the DS.
 	 * NULL when the dstore uses NFSv3 or local VFS.
 	 *
-	 * Synchronised by ds_v4_session_rwlock (keep-alive slice B1 fix):
+	 * Synchronised by ds_v4_session_rwlock:
 	 * - Readers (control-plane ops, InBand I/O, renewal tick) take
 	 *   the rdlock via dstore_session_borrow() and hold it across the
 	 *   RPC, then release via dstore_session_release().  This pins
@@ -98,7 +98,6 @@ struct dstore {
 	 *   OUTSIDE the wlock so a DESTROY_SESSION RPC does not block
 	 *   every borrower for RPC-timeout-many seconds.
 	 *
-	 * See .claude/design/mds-ds-session-keepalive.md "BLOCKER B1".
 	 * Mirrors the ps_listener_session_* pattern at
 	 * lib/nfs4/ps/ps_state.c.
 	 */
@@ -139,20 +138,19 @@ struct dstore {
 	bool ds_tight_coupled;
 
 	/*
-	 * Drain flag (mirror-lifecycle Slice B).  When true, LAYOUTGET /
+	 * Drain flag.  When true, LAYOUTGET /
 	 * runway-pop excludes this dstore from new placements.  Existing
 	 * instances on the dstore remain reachable until migrated off
 	 * (slice E autopilot) or the dstore is destroyed.
 	 *
 	 * Declared as a separate _Atomic bool rather than a bit in
 	 * ds_state because ds_state uses GCC __atomic_* builtins (a
-	 * grandfathered field per .claude/standards.md "Two atomic APIs
-	 * in use").  C11 _Atomic separate field is the right precedent
+	 * existing field uses GCC __atomic_* builtins).  C11 _Atomic
+	 * separate field is the right precedent
 	 * for fresh state -- "Do not add new GCC-builtin atomic fields."
 	 *
-	 * NOT_NOW_BROWN_COW: persist across reffsd restarts (today the
-	 * flag resets on boot).  See .claude/design/mirror-lifecycle.md
-	 * "Drain persistence".
+	 * The flag currently resets on boot; persistence is a future
+	 * storage change.
 	 */
 	_Atomic bool ds_drained;
 

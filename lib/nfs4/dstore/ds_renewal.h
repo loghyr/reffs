@@ -34,9 +34,8 @@ struct dstore;
  * sessions parks the pointer + reconnects with capped exponential
  * backoff (0s, 1s, 2s, 4s, 8s, 16s, 32s, 60s, 60s, ...).
  *
- * See .claude/design/mds-ds-session-keepalive.md for the full
- * design including the BLOCKER B1 rwlock fix that this thread
- * (and the call-site sweep in dstore_ops_nfsv4.c) depend on.
+ * The session borrow/replace locking used here is shared with the
+ * data-server operation call sites in dstore_ops_nfsv4.c.
  */
 
 /*

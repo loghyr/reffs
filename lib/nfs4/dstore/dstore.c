@@ -93,8 +93,7 @@ static void dstore_free_rcu(struct rcu_head *rcu)
 	 * itself is still installed.  ds_v4_session is now reliably
 	 * NULL'd by dstore_unload_all (calls ds_session_destroy on the
 	 * collect_all snapshot before dropping the hash ref), so the
-	 * pre-existing shutdown leak the original keep-alive slice
-	 * called out as NOT_NOW_BROWN_COW is closed; only the rwlock
+	 * pre-existing shutdown leak is closed; only the rwlock
 	 * teardown remains here.
 	 */
 	pthread_rwlock_destroy(&ds->ds_v4_session_rwlock);
@@ -507,8 +506,7 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
 	 * at this address:port" -- force the remote vtable and skip the
 	 * local-address heuristic, so a DS on a link-local or same-host
 	 * address (e.g. a knfsd instance) is contacted over the wire
-	 * rather than served from the local combined-mode VFS.  See
-	 * .claude/design/dstore-explicit-port.md.
+	 * rather than served from the local combined-mode VFS.
 	 */
 	bool force_remote = port > 0;
 
@@ -805,10 +803,8 @@ void dstore_unload_all(void)
 		 * (dstore_session_replace with old_session=NULL skips
 		 * the destroy block) so dstores that never created a
 		 * session (NFSv3, local, do_mount=false) take a fast
-		 * path here.  This call replaces the pre-existing
-		 * NOT_NOW_BROWN_COW in dstore_free_rcu's comment and
-		 * in ds_session_destroy's caller-side note: the v4
-		 * session is now reliably torn down at shutdown.
+		 * path here; the v4 session is now reliably torn down at
+		 * shutdown.
 		 */
 		ds_session_destroy(ds);
 

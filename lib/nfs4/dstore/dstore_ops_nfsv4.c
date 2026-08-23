@@ -64,12 +64,11 @@ static int add_seq_putfh(struct mds_compound *mc, struct mds_session *ms,
  * send_and_check_ds -- send a compound on a borrowed session,
  * classify the reply, surface dead-session via *dead_out.
  *
- * Keep-alive slice rewrite:
- *
- *   OLD behavior (BADSESSION on SEQUENCE -> inline ds_session_destroy
+ * The previous behavior (BADSESSION on SEQUENCE -> inline
+ * ds_session_destroy
  *   + ds_session_create + retry) was a band-aid for the 601s idle
  *   timeout that the keep-alive thread now fixes at the source.  It
- *   also could not coexist with the BLOCKER B1 rwlock pattern:
+ *   also could not coexist with the session rwlock:
  *   inline ds_session_create needs the wrlock (via
  *   dstore_session_replace) while the caller of this helper is
  *   already holding the rdlock (via dstore_session_borrow), which
@@ -633,7 +632,7 @@ static int nfsv4_fence(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 	 * For NFSv4, we set the owner/owner_group attrs as numeric strings.
 	 *
 	 * For now, just update the ldf in-memory -- the DS doesn't enforce
-	 * fencing for AUTH_SYS.  NOT_NOW_BROWN_COW: actual SETATTR(owner).
+	 * fencing for AUTH_SYS.  A future implementation must issue SETATTR.
 	 */
 	uint32_t new_uid = ldf->ldf_uid + 1;
 

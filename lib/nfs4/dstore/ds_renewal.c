@@ -122,9 +122,8 @@ static int ds_nfsv3_renewal_one(struct dstore *ds)
 	 * libtirpc declares xdr_void as `bool_t xdr_void(void)` but
 	 * xdrproc_t expects `bool_t (*)(XDR *, ...)` -- a strict
 	 * function-pointer-type mismatch that Fedora's clang flags
-	 * under -Werror,-Wcast-function-type-mismatch.  Per
-	 * .claude/standards.md "XDR Proc Indirection and UBSan
-	 * Suppression", cast through `(xdrproc_t)(void *)` to bypass.
+	 * under -Werror,-Wcast-function-type-mismatch, so cast through
+	 * `(xdrproc_t)(void *)` to match libtirpc's own call sites.
 	 * libtirpc itself uses this idiom at every xdr_void call.
 	 */
 	rpc_stat = clnt_call(ds->ds_clnt, NFSPROC3_NULL,
@@ -276,8 +275,7 @@ static void renewal_tick_one_nfsv3(struct dstore *ds,
  * Called from the renewal tick, which is off the request path and
  * already the place that repairs a dstore's connection.  Only the
  * never-built case is handled here: replenishing a pool drained by
- * LAYOUTGETs is the separate background-replenisher item in
- * .claude/design/mds.md.
+ * LAYOUTGETs is handled by a separate background replenisher.
  */
 static void runway_ensure(struct dstore *ds)
 {

@@ -15,7 +15,6 @@
  * for session management and compound building.
  *
  * Session is single-slot (serializes all operations to a DS).
- * NOT_NOW_BROWN_COW: multi-slot for concurrent InBand I/O.
  */
 
 #include <errno.h>
@@ -246,9 +245,8 @@ void ds_session_destroy(struct dstore *ds)
 /*
  * The borrow / release / replace pattern closes a pre-existing latent
  * UAF window where dstore_ops_nfsv4 callers dereferenced
- * ds->ds_v4_session without synchronisation against reconnect.  See
- * .claude/design/mds-ds-session-keepalive.md "BLOCKER B1" and the
- * mirror implementation at lib/nfs4/ps/ps_state.c:507-607 -- the
+ * ds->ds_v4_session without synchronisation against reconnect.  The
+ * mirror implementation at lib/nfs4/ps/ps_state.c:507-607 has the
  * shape is identical; we replicate it (rather than share code) because
  * the dstore has no listener-id indirection (callers already hold the
  * struct dstore *) and the gate condition is "pointer non-NULL",

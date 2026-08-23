@@ -42,8 +42,7 @@ extern const struct dstore_ops dstore_ops_local;
  *     immediate_stop, kick_during_running).
  *
  *   - Borrow / release / replace (test_session_borrow_release_replace_cycle):
- *     BLOCKER B1 surface from the keep-alive slice; idempotent
- *     replace(NULL).
+ *     idempotent replace(NULL).
  *
  *   - Tick decision tree (whitebox via internal header):
  *       * test_tick_local_skip                 -- local dstore takes
@@ -58,12 +57,11 @@ extern const struct dstore_ops dstore_ops_local;
  *
  *   The "active RPC" branches (live SEQUENCE renewal, dead-session
  *   reconnect, NFSv3 NULL fail -> dstore_reconnect, backoff
- *   schedule advance after a failed connect) are NOT_NOW_BROWN_COW
- *   here -- they require either a mock CLIENT* / mock
+ *   schedule advance after a failed connect) require either a mock
+ *   CLIENT* / mock
  *   mds_session_create or a real DS fixture.  The chunk-collision
- *   Track 2 bench (deploy/benchmark/run_chunk_collision_track2.sh)
- *   exercises them end-to-end and is the canonical signal until a
- *   mocked fixture lands.
+ *   external integration coverage; this unit suite exercises the
+ *   state transitions that do not require a live DS.
  */
 
 /*
@@ -208,11 +206,11 @@ START_TEST(test_renewal_kick_null_safe)
 END_TEST
 
 /*
- * Borrow/release/replace are the BLOCKER B1 surface that the
- * keep-alive slice closed.  This test exercises the publicly-
+ * Borrow/release/replace are the keep-alive synchronization surface.
+ * This test exercises the publicly-
  * visible accessor contract: borrow + replace + re-borrow.  The
- * full quiesce-in-flight regression test is NOT_NOW_BROWN_COW
- * (needs a real session pointer; here we use NULL session as the
+ * Full quiesce-in-flight coverage needs a real session pointer; here
+ * we use NULL session as the
  * publish value to exercise the swap shape without RPC).
  */
 START_TEST(test_session_borrow_release_replace_cycle)
