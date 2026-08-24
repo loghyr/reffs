@@ -23,6 +23,10 @@ int main(void)
 	static const uint8_t other_token[CHUNK_TAKEOVER_REPLAY_TOKEN_ID_LEN] = {
 		15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
 	};
+	static const uint8_t renewal_token[CHUNK_TAKEOVER_REPLAY_TOKEN_ID_LEN] = {
+		0xf0, 0xe1, 0xd2, 0xc3, 0xb4, 0xa5, 0x96, 0x87,
+		0x78, 0x69, 0x5a, 0x4b, 0x3c, 0x2d, 0x1e, 0x0f,
+	};
 	struct chunk_mds_epoch initial = {
 		.epoch = 7,
 		.expires_at_ns = 1000,
@@ -51,6 +55,23 @@ int main(void)
 	/* A lost response is recovered without another epoch mutation. */
 	assert(chunk_takeover_transition_apply(state_dir, &transition, 101) ==
 	       0);
+
+	/* A new proof may renew the currently active incarnation. */
+	transition.token_id = renewal_token;
+	transition.token_expires_at = 120;
+	transition.expected_prior_epoch = 8;
+	transition.new_epoch = 8;
+	transition.new_expires_at_ns = 4000;
+	transition.issuer_clientid = 44;
+	assert(chunk_takeover_transition_apply(state_dir, &transition, 101) ==
+	       0);
+	assert(chunk_mds_epoch_load(state_dir, &current) == 0);
+	assert(current.epoch == 8 && current.expires_at_ns == 4000 &&
+	       current.issuer_clientid == 44);
+
+	/* Reuse of the first token for a new advance is rejected. */
+	transition.token_id = token_id;
+	transition.token_expires_at = 110;
 	transition.expected_prior_epoch = 8;
 	transition.new_epoch = 9;
 	transition.new_expires_at_ns = 3000;
