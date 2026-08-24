@@ -53,10 +53,22 @@ int main(void)
 	assert(chunk_takeover_replay_claim(state_dir, 1, "other@REALM",
 					   token_id, 150, 112) == 0);
 
+	/* Reserved header fields are part of the fail-closed format. */
+	assert(snprintf(path, sizeof(path), "%s/chunk_takeover_replay",
+			state_dir) < (int)sizeof(path));
+	fd = open(path, O_RDWR);
+	assert(fd >= 0);
+	assert(lseek(fd, 12, SEEK_SET) == 12);
+	assert(write(fd, "\1\0\0\0", 4) == 4);
+	assert(close(fd) == 0);
+	assert(chunk_takeover_replay_claim(state_dir, 3, "mds@REALM",
+					   other_token, 160, 112) < 0);
+	assert(unlink(path) == 0);
+
 	/* A malformed persisted record fails closed. */
 	assert(snprintf(path, sizeof(path), "%s/chunk_takeover_replay",
 			state_dir) < (int)sizeof(path));
-	fd = open(path, O_WRONLY | O_TRUNC);
+	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
 	assert(fd >= 0);
 	assert(write(fd, "bad", 3) == 3);
 	assert(close(fd) == 0);
