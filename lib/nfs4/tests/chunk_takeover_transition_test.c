@@ -224,6 +224,13 @@ int main(void)
 	/* A lost response is recovered without another epoch mutation. */
 	assert(chunk_takeover_transition_apply(state_dir, &transition, 101) ==
 	       0);
+	/* The derived monotonic deadline is not part of request identity. */
+	transition.new_expires_at_ns = 3001;
+	assert(chunk_takeover_transition_apply(state_dir, &transition, 101) ==
+	       0);
+	assert(chunk_mds_epoch_load(state_dir, &current) == 0);
+	assert(current.expires_at_ns == 2000);
+	transition.new_expires_at_ns = 2000;
 
 	/* A different token is not a byte-identical cache-miss reissue. */
 	assert(snprintf(replay_path, sizeof(replay_path),
