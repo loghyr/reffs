@@ -199,7 +199,7 @@ int chunk_takeover_transition_apply(const char *state_dir,
 	char journal_path[512], lock_path[520];
 	struct takeover_journal journal;
 	struct chunk_mds_epoch epoch;
-	bool journal_present, journal_aborted = false, resuming;
+	bool journal_present, journal_aborted = false, replay_seen, resuming;
 	int lock_fd, ret;
 
 	if (!t || !t->profile || !t->principal || !t->principal[0] ||
@@ -217,9 +217,6 @@ int chunk_takeover_transition_apply(const char *state_dir,
 		close(lock_fd);
 		return ret;
 	}
-	ret = chunk_mds_epoch_load(state_dir, &epoch);
-	if (ret)
-		goto out;
 	ret = journal_load(journal_path, &journal, &journal_present);
 	if (ret)
 		goto out;
@@ -235,14 +232,27 @@ int chunk_takeover_transition_apply(const char *state_dir,
 		ret = -EBUSY;
 		goto out;
 	}
+	ret = chunk_takeover_replay_contains(state_dir, t->profile,
+					     t->principal, t->token_id, now_sec,
+					     &replay_seen);
+	if (ret)
+		goto out;
+	ret = chunk_mds_epoch_load(state_dir, &epoch);
+	if (ret)
+		goto out;
+	if (journal_aborted) {
+		ret = -EALREADY;
+		goto out;
+	}
+	if (replay_seen && !journal_present) {
+		if (t->new_epoch > t->expected_prior_epoch &&
+		    epoch.epoch == t->new_epoch)
+			ret = 0;
+		else
+			ret = -EALREADY;
+		goto out;
+	}
 	if (epoch.epoch > t->expected_prior_epoch) {
-		if (journal_aborted) {
-			ret = (t->new_epoch > t->expected_prior_epoch &&
-			       epoch.epoch == t->new_epoch) ?
-				      -EALREADY :
-				      -ESTALE;
-			goto out;
-		}
 		if (t->new_epoch > t->expected_prior_epoch &&
 		    epoch.epoch == t->new_epoch) {
 			ret = journal_remove(journal_path);
@@ -262,9 +272,12 @@ int chunk_takeover_transition_apply(const char *state_dir,
 			goto out;
 	}
 	resuming = journal_present;
-	ret = chunk_takeover_replay_claim(state_dir, t->profile, t->principal,
-					  t->token_id, t->token_expires_at,
-					  now_sec);
+	if (!replay_seen)
+		ret = chunk_takeover_replay_claim(state_dir, t->profile,
+						  t->principal, t->token_id,
+						  t->token_expires_at, now_sec);
+	else
+		ret = 0;
 	if (ret == -EALREADY && !resuming) {
 		journal.reserved = CHUNK_TAKEOVER_JOURNAL_ABORTED;
 		if (journal_save(journal_path, &journal))

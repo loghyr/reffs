@@ -6,6 +6,7 @@
 #ifndef NFS4_CHUNK_TAKEOVER_REPLAY_H
 #define NFS4_CHUNK_TAKEOVER_REPLAY_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "reffs/settings.h"
@@ -23,5 +24,11 @@ int chunk_takeover_replay_claim(
 	const char *state_dir, uint32_t profile, const char *principal,
 	const uint8_t token_id[CHUNK_TAKEOVER_REPLAY_TOKEN_ID_LEN],
 	uint64_t expires_at, uint64_t now_sec);
+
+/* Check token presence without consuming or extending its replay lifetime. */
+int chunk_takeover_replay_contains(
+	const char *state_dir, uint32_t profile, const char *principal,
+	const uint8_t token_id[CHUNK_TAKEOVER_REPLAY_TOKEN_ID_LEN],
+	uint64_t now_sec, bool *seen);
 
 #endif /* NFS4_CHUNK_TAKEOVER_REPLAY_H */

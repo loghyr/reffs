@@ -79,6 +79,13 @@ int main(void)
 	assert(chunk_takeover_transition_apply(state_dir, &transition, 101) ==
 	       -EALREADY);
 
+	/* Replay classification precedes a stale-epoch result. */
+	transition.expected_prior_epoch = 7;
+	transition.new_epoch = 9;
+	transition.token_id = token_id;
+	assert(chunk_takeover_transition_apply(state_dir, &transition, 101) ==
+	       -EALREADY);
+
 	transition.expected_prior_epoch = 7;
 	transition.new_epoch = 9;
 	transition.token_id = other_token;
