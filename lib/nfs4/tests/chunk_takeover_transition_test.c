@@ -7,12 +7,93 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 #include "nfs4/chunk_epoch.h"
 #include "nfs4/chunk_takeover_transition.h"
+
+struct transition_worker {
+	const char *state_dir;
+	struct chunk_takeover_transition transition;
+	int result;
+};
+
+static void *run_transition(void *arg)
+{
+	struct transition_worker *worker = arg;
+
+	worker->result = chunk_takeover_transition_apply(
+		worker->state_dir, &worker->transition, 100);
+	return NULL;
+}
+
+static void test_concurrent_winner(void)
+{
+	char state_dir[] = "/tmp/reffs-takeover-transition-concurrent-XXXXXX";
+	static const uint8_t token_a[CHUNK_TAKEOVER_REPLAY_TOKEN_ID_LEN] = {
+		0xa0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+	};
+	static const uint8_t token_b[CHUNK_TAKEOVER_REPLAY_TOKEN_ID_LEN] = {
+		0xb0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+	};
+	struct chunk_mds_epoch initial = {
+		.epoch = 7,
+		.expires_at_ns = 1000,
+		.issuer_clientid = 11,
+	};
+	struct chunk_mds_epoch current;
+	struct transition_worker workers[2] = {
+		{
+			.transition = {
+				.profile = 1,
+				.principal = "mds@REALM",
+				.token_id = token_a,
+				.token_expires_at = 110,
+				.expected_prior_epoch = 7,
+				.new_epoch = 8,
+				.new_expires_at_ns = 2000,
+				.issuer_clientid = 22,
+			},
+		},
+		{
+			.transition = {
+				.profile = 1,
+				.principal = "mds@REALM",
+				.token_id = token_b,
+				.token_expires_at = 110,
+				.expected_prior_epoch = 7,
+				.new_epoch = 9,
+				.new_expires_at_ns = 3000,
+				.issuer_clientid = 33,
+			},
+		},
+	};
+	pthread_t threads[2];
+	unsigned int winners = 0;
+	unsigned int losers = 0;
+
+	assert(mkdtemp(state_dir));
+	assert(chunk_mds_epoch_persist(state_dir, &initial) == 0);
+	for (size_t i = 0; i < 2; i++) {
+		workers[i].state_dir = state_dir;
+		assert(pthread_create(&threads[i], NULL, run_transition,
+				      &workers[i]) == 0);
+	}
+	for (size_t i = 0; i < 2; i++) {
+		assert(pthread_join(threads[i], NULL) == 0);
+		if (workers[i].result == 0)
+			winners++;
+		else if (workers[i].result == -ESTALE)
+			losers++;
+	}
+	assert(winners == 1);
+	assert(losers == 1);
+	assert(chunk_mds_epoch_load(state_dir, &current) == 0);
+	assert(current.epoch == 8 || current.epoch == 9);
+}
 
 int main(void)
 {
@@ -43,6 +124,8 @@ int main(void)
 		.new_expires_at_ns = 2000,
 		.issuer_clientid = 22,
 	};
+
+	test_concurrent_winner();
 
 	assert(mkdtemp(state_dir));
 	assert(chunk_mds_epoch_persist(state_dir, &initial) == 0);
