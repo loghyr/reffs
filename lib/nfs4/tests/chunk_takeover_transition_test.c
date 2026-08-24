@@ -9,7 +9,9 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "nfs4/chunk_epoch.h"
@@ -95,6 +97,47 @@ static void test_concurrent_winner(void)
 	assert(current.epoch == 8 || current.epoch == 9);
 }
 
+static void test_persistence_failure_recovery(void)
+{
+	char state_dir[] = "/tmp/reffs-takeover-transition-persist-XXXXXX";
+	char temp_path[512];
+	static const uint8_t token_id[CHUNK_TAKEOVER_REPLAY_TOKEN_ID_LEN] = {
+		0xc0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+	};
+	struct chunk_mds_epoch initial = {
+		.epoch = 20,
+		.expires_at_ns = 1000,
+		.issuer_clientid = 11,
+	};
+	struct chunk_mds_epoch current;
+	struct chunk_takeover_transition transition = {
+		.profile = 1,
+		.principal = "mds@REALM",
+		.token_id = token_id,
+		.token_expires_at = 110,
+		.expected_prior_epoch = 20,
+		.new_epoch = 21,
+		.new_expires_at_ns = 2000,
+		.issuer_clientid = 22,
+	};
+
+	assert(mkdtemp(state_dir));
+	assert(chunk_mds_epoch_persist(state_dir, &initial) == 0);
+	assert(snprintf(temp_path, sizeof(temp_path), "%s/chunk_mds_epoch.tmp",
+			state_dir) < (int)sizeof(temp_path));
+	assert(mkdir(temp_path, 0700) == 0);
+	assert(chunk_takeover_transition_apply(state_dir, &transition, 100) <
+	       0);
+	assert(chunk_mds_epoch_load(state_dir, &current) == 0);
+	assert(current.epoch == initial.epoch);
+	assert(access(temp_path, F_OK) == 0);
+	assert(rmdir(temp_path) == 0);
+	assert(chunk_takeover_transition_apply(state_dir, &transition, 101) ==
+	       0);
+	assert(chunk_mds_epoch_load(state_dir, &current) == 0);
+	assert(current.epoch == transition.new_epoch);
+}
+
 int main(void)
 {
 	char state_dir[] = "/tmp/reffs-takeover-transition-XXXXXX";
@@ -126,6 +169,7 @@ int main(void)
 	};
 
 	test_concurrent_winner();
+	test_persistence_failure_recovery();
 
 	assert(mkdtemp(state_dir));
 	assert(chunk_mds_epoch_persist(state_dir, &initial) == 0);
