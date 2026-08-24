@@ -9,6 +9,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "nfsv42_xdr.h"
+
 #define CHUNK_TAKEOVER_ED25519_PUBLIC_KEY_LEN 32
 #define CHUNK_TAKEOVER_TOKEN_ID_LEN 16
 #define CHUNK_TAKEOVER_ED25519_SIGNATURE_LEN 64
@@ -37,5 +39,19 @@ int chunk_takeover_verify_proof(const uint8_t *proof, size_t proof_len,
 				uint64_t expected_epoch,
 				const struct chunk_takeover_policy *policy,
 				struct chunk_takeover_claim *claim);
+
+struct nfs4_client;
+struct server_state;
+
+/*
+ * Authenticate and apply one CHUNK_ESCROW_TAKEOVER request.  The caller
+ * supplies the already decoded operation arguments and the authenticated
+ * session identity; replay and epoch state are updated only after all
+ * authorization and proof checks succeed.
+ */
+nfsstat4 chunk_takeover_execute(const struct server_state *server,
+				const struct nfs4_client *client,
+				const char *principal,
+				const CHUNK_ESCROW_TAKEOVER4args *args);
 
 #endif /* NFS4_CHUNK_TAKEOVER_H */

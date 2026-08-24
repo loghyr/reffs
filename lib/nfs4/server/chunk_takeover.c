@@ -15,7 +15,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "reffs/server.h"
+#include "reffs/time.h"
+#include "nfs4/client.h"
 #include "nfs4/chunk_takeover.h"
+#include "nfs4/chunk_takeover_transition.h"
 
 #define COSE_HEADER_ALG 1
 #define COSE_HEADER_KID 4
@@ -392,4 +396,75 @@ int chunk_takeover_verify_proof(const uint8_t *proof, size_t proof_len,
 	EVP_PKEY_free(key);
 	free(sig_structure);
 	return ret;
+}
+
+static nfsstat4 chunk_takeover_proof_error(int error)
+{
+	/* The XDR envelope is valid, but the signed proof is not admissible. */
+	return error == -EPROTO || error == -EINVAL ? NFS4ERR_BADXDR :
+						      NFS4ERR_ACCESS;
+}
+
+nfsstat4 chunk_takeover_execute(const struct server_state *server,
+				const struct nfs4_client *client,
+				const char *principal,
+				const CHUNK_ESCROW_TAKEOVER4args *args)
+{
+	struct chunk_takeover_policy policy;
+	struct chunk_takeover_claim claim;
+	struct chunk_takeover_transition transition;
+	uint64_t now_sec, expires_at_ns;
+	int ret;
+
+	if (!client || !(client->nc_exchgid_flags & EXCHGID4_FLAG_USE_PNFS_MDS))
+		return NFS4ERR_PERM;
+	if (!principal || !principal[0])
+		return NFS4ERR_ACCESS;
+	if (!args)
+		return NFS4ERR_BADXDR;
+	if (args->ceta_proof_profile != PROOF_PROFILE_HA_AUTHORITY_ED25519)
+		return NFS4ERR_NOTSUPP;
+	if (!server || !server->ss_chunk_takeover_configured)
+		return NFS4ERR_NOTSUPP;
+	if (strcmp(principal, server->ss_chunk_takeover_principal) != 0)
+		return NFS4ERR_ACCESS;
+	if (args->ceta_new_epoch < args->ceta_expected_prior_epoch)
+		return NFS4ERR_INVAL;
+
+	now_sec = reffs_now_ns() / 1000000000ULL;
+	policy = (struct chunk_takeover_policy){
+		.public_key = server->ss_chunk_takeover_public_key,
+		.principal = principal,
+		.scope = server->ss_chunk_takeover_scope,
+		.now_sec = now_sec,
+		.skew_sec = server->ss_chunk_takeover_skew_sec,
+	};
+	ret = chunk_takeover_verify_proof(
+		(const uint8_t *)args->ceta_proof_data.ceta_proof_data_val,
+		args->ceta_proof_data.ceta_proof_data_len, args->ceta_new_epoch,
+		&policy, &claim);
+	if (ret)
+		return chunk_takeover_proof_error(ret);
+	if (claim.expires_at > UINT64_MAX / 1000000000ULL)
+		return NFS4ERR_ACCESS;
+	expires_at_ns = claim.expires_at * 1000000000ULL;
+	transition = (struct chunk_takeover_transition){
+		.profile = args->ceta_proof_profile,
+		.principal = principal,
+		.token_id = claim.token_id,
+		.token_expires_at = claim.expires_at,
+		.expected_prior_epoch = args->ceta_expected_prior_epoch,
+		.new_epoch = args->ceta_new_epoch,
+		.new_expires_at_ns = expires_at_ns,
+		.issuer_clientid = client->nc_client.c_id,
+	};
+	ret = chunk_takeover_transition_apply(server->ss_state_dir, &transition,
+					      now_sec);
+	if (!ret)
+		return NFS4_OK;
+	if (ret == -ESTALE)
+		return NFS4ERR_STALE_MDS_EPOCH;
+	if (ret == -EINVAL)
+		return NFS4ERR_INVAL;
+	return NFS4ERR_SERVERFAULT;
 }
