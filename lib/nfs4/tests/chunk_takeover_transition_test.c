@@ -195,6 +195,13 @@ int main(void)
 	assert(chunk_mds_epoch_load(state_dir, &current) == 0);
 	assert(current.epoch == 8 && current.expires_at_ns == 4000 &&
 	       current.issuer_clientid == 44);
+	/* A lost renewal response is also idempotent after journal cleanup. */
+	assert(chunk_takeover_transition_apply(state_dir, &transition, 101) ==
+	       0);
+	transition.issuer_clientid = 45;
+	assert(chunk_takeover_transition_apply(state_dir, &transition, 101) ==
+	       -EALREADY);
+	transition.issuer_clientid = 44;
 
 	/* Reuse of the first token for a new advance is rejected. */
 	transition.token_id = token_id;
