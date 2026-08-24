@@ -8,6 +8,7 @@
 #endif
 
 #include <stdio.h>
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -91,6 +92,33 @@ static enum reffs_auth_flavor parse_flavor(const char *s)
 	return 0;
 }
 
+static bool hex_string_valid(const char *s, size_t len)
+{
+	if (strlen(s) != len)
+		return false;
+	for (size_t i = 0; i < len; i++) {
+		if (!isxdigit((unsigned char)s[i]))
+			return false;
+	}
+	return true;
+}
+
+static int
+validate_chunk_takeover_config(const struct reffs_chunk_takeover_config *cfg)
+{
+	bool configured = cfg->ed25519_public_key_hex[0] != '\0' ||
+			  cfg->principal[0] != '\0' || cfg->scope[0] != '\0';
+
+	if (!configured)
+		return 0;
+	if (!hex_string_valid(cfg->ed25519_public_key_hex,
+			      REFFS_CHUNK_TAKEOVER_PUBLIC_KEY_HEX_LEN) ||
+	    cfg->principal[0] == '\0' || cfg->scope[0] == '\0' ||
+	    cfg->skew_tolerance_sec > 86400)
+		return -EINVAL;
+	return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
@@ -116,6 +144,7 @@ void reffs_config_defaults(struct reffs_config *cfg)
 	cfg->minor_versions[1] = 2;
 	cfg->n_minor_versions = 2;
 	cfg->grace_period = 45;
+	cfg->chunk_takeover.skew_tolerance_sec = 10;
 	cfg->test_chunk_write_delay_count = 0;
 	cfg->test_chunk_finalize_delay_count = 0;
 	cfg->test_chunk_commit_delay_count = 0;
@@ -659,6 +688,44 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 	tbl = toml_table_in(root, "server");
 	if (tbl)
 		parse_server(cfg, tbl);
+
+	tbl = toml_table_in(root, "chunk_takeover");
+	if (tbl) {
+		toml_datum_t d;
+
+		d = toml_string_in(tbl, "ed25519_public_key_hex");
+		if (d.ok) {
+			strncpy(cfg->chunk_takeover.ed25519_public_key_hex,
+				d.u.s,
+				sizeof(cfg->chunk_takeover
+					       .ed25519_public_key_hex) -
+					1);
+			free(d.u.s);
+		}
+		d = toml_string_in(tbl, "principal");
+		if (d.ok) {
+			strncpy(cfg->chunk_takeover.principal, d.u.s,
+				sizeof(cfg->chunk_takeover.principal) - 1);
+			free(d.u.s);
+		}
+		d = toml_string_in(tbl, "scope");
+		if (d.ok) {
+			strncpy(cfg->chunk_takeover.scope, d.u.s,
+				sizeof(cfg->chunk_takeover.scope) - 1);
+			free(d.u.s);
+		}
+		d = toml_int_in(tbl, "skew_tolerance_sec");
+		if (d.ok)
+			cfg->chunk_takeover.skew_tolerance_sec =
+				d.u.i < 0 ? UINT64_MAX : (uint64_t)d.u.i;
+	}
+	if (validate_chunk_takeover_config(&cfg->chunk_takeover) != 0) {
+		LOG("config: [chunk_takeover] requires a 64-digit hexadecimal "
+		    "Ed25519 key, principal, and scope; skew_tolerance_sec "
+		    "must be at most 86400");
+		toml_free(root);
+		return -EINVAL;
+	}
 
 	tbl = toml_table_in(root, "backend");
 	if (tbl)

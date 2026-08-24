@@ -27,6 +27,7 @@
 #define REFFS_CONFIG_MAX_PROXY_MDS 8
 #define REFFS_CONFIG_MAX_ALLOWED_PS 8
 #define REFFS_CONFIG_MAX_PRINCIPAL 256
+#define REFFS_CHUNK_TAKEOVER_PUBLIC_KEY_HEX_LEN 64
 /*
  * Room for a SHA-256 fingerprint formatted as colon-separated hex
  * (32 bytes * 2 + 31 colons = 95 chars, +NUL).  128 leaves headroom
@@ -246,6 +247,20 @@ struct reffs_allowed_ps_config {
 	char tls_cert_fingerprint[REFFS_CONFIG_MAX_TLS_FINGERPRINT];
 };
 
+/*
+ * DS-side trust configuration for the mandatory CHUNK_ESCROW_TAKEOVER
+ * proof profile.  The public key is kept as deployment-provided hex until
+ * server startup converts it to the verifier's fixed-size byte array.
+ * An empty key disables takeover; the operation remains fail-closed until
+ * the replay and epoch-transition state is also available.
+ */
+struct reffs_chunk_takeover_config {
+	char ed25519_public_key_hex[REFFS_CHUNK_TAKEOVER_PUBLIC_KEY_HEX_LEN + 1];
+	char principal[REFFS_CONFIG_MAX_PRINCIPAL];
+	char scope[REFFS_CONFIG_MAX_HOST];
+	uint64_t skew_tolerance_sec;
+};
+
 struct reffs_config {
 	/* [server] */
 	uint16_t port;
@@ -350,6 +365,9 @@ struct reffs_config {
 	/* [[allowed_ps]] -- MDS-side allowlist for PROXY_REGISTRATION */
 	struct reffs_allowed_ps_config allowed_ps[REFFS_CONFIG_MAX_ALLOWED_PS];
 	unsigned int nallowed_ps;
+
+	/* [chunk_takeover] -- DS-side proof verification configuration */
+	struct reffs_chunk_takeover_config chunk_takeover;
 
 	/*
 	 * [mds] -- MDS-side tuning that does not belong in [server]

@@ -1349,6 +1349,46 @@ START_TEST(test_load_allowed_ps_none)
 }
 END_TEST
 
+START_TEST(test_load_chunk_takeover_config)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml(
+		"[chunk_takeover]\n"
+		"ed25519_public_key_hex = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\n"
+		"principal = \"mds/one@REALM\"\n"
+		"scope = \"ds-a\"\n"
+		"skew_tolerance_sec = 30\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_str_eq(
+		cfg.chunk_takeover.ed25519_public_key_hex,
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+	ck_assert_str_eq(cfg.chunk_takeover.principal, "mds/one@REALM");
+	ck_assert_str_eq(cfg.chunk_takeover.scope, "ds-a");
+	ck_assert_uint_eq(cfg.chunk_takeover.skew_tolerance_sec, 30);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_chunk_takeover_config_rejects_partial)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[chunk_takeover]\n"
+				"principal = \"mds/one@REALM\"\n");
+	ck_assert_ptr_nonnull(path);
+	ck_assert_int_eq(reffs_config_load(&cfg, path), -EINVAL);
+	unlink(path);
+	free(path);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* load -- bad file path                                                */
 /* ------------------------------------------------------------------ */
@@ -1463,6 +1503,9 @@ Suite *config_suite(void)
 	tcase_add_test(tc_load, test_load_allowed_ps_multiple);
 	tcase_add_test(tc_load, test_load_allowed_ps_tls_cert_fingerprint);
 	tcase_add_test(tc_load, test_load_allowed_ps_none);
+	tcase_add_test(tc_load, test_load_chunk_takeover_config);
+	tcase_add_test(tc_load,
+		       test_load_chunk_takeover_config_rejects_partial);
 	tcase_add_test(tc_load, test_load_missing_file);
 	suite_add_tcase(s, tc_load);
 
