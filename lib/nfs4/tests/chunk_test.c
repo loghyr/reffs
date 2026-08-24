@@ -1899,6 +1899,66 @@ START_TEST(test_chunk_escrow_takeover_rejects_bad_proof)
 }
 END_TEST
 
+START_TEST(test_chunk_escrow_takeover_authorization_precedes_profile)
+{
+	struct server_state *ss = server_state_find();
+	struct cm_ctx *cm = cm_alloc(1);
+	CHUNK_ESCROW_TAKEOVER4args *args;
+	CHUNK_ESCROW_TAKEOVER4res *res;
+	bool configured;
+	char saved_principal[REFFS_CONFIG_MAX_PRINCIPAL];
+
+	ck_assert_ptr_nonnull(ss);
+	configured = ss->ss_chunk_takeover_configured;
+	memcpy(saved_principal, ss->ss_chunk_takeover_principal,
+	       sizeof(saved_principal));
+	ss->ss_chunk_takeover_configured = true;
+	strncpy(ss->ss_chunk_takeover_principal, "mds@REALM",
+		sizeof(ss->ss_chunk_takeover_principal) - 1);
+	ss->ss_chunk_takeover_principal[sizeof(ss->ss_chunk_takeover_principal) -
+					1] = '\0';
+	server_state_put(ss);
+
+	cm->compound->c_gss_principal = "untrusted@REALM";
+	cm_set_op(cm, 0, OP_CHUNK_ESCROW_TAKEOVER);
+	args = &cm->compound->c_args->argarray.argarray_val[0]
+			.nfs_argop4_u.opchunk_escrow_takeover;
+	args->ceta_proof_profile = 0xffff;
+	res = &cm->compound->c_res->resarray.resarray_val[0]
+		       .nfs_resop4_u.opchunk_escrow_takeover;
+	nfs4_op_chunk_escrow_takeover(cm->compound);
+	ck_assert_int_eq(res->cetar_status, NFS4ERR_PERM);
+
+	cm_reset_slot(cm, 0);
+	cm->compound->c_nfs4_client->nc_exchgid_flags =
+		EXCHGID4_FLAG_USE_PNFS_MDS;
+	cm->compound->c_gss_principal = "untrusted@REALM";
+	cm_set_op(cm, 0, OP_CHUNK_ESCROW_TAKEOVER);
+	args = &cm->compound->c_args->argarray.argarray_val[0]
+			.nfs_argop4_u.opchunk_escrow_takeover;
+	args->ceta_proof_profile = 0xffff;
+	nfs4_op_chunk_escrow_takeover(cm->compound);
+	ck_assert_int_eq(res->cetar_status, NFS4ERR_ACCESS);
+
+	cm_reset_slot(cm, 0);
+	cm->compound->c_gss_principal = "mds@REALM";
+	cm_set_op(cm, 0, OP_CHUNK_ESCROW_TAKEOVER);
+	args = &cm->compound->c_args->argarray.argarray_val[0]
+			.nfs_argop4_u.opchunk_escrow_takeover;
+	args->ceta_proof_profile = 0xffff;
+	nfs4_op_chunk_escrow_takeover(cm->compound);
+	ck_assert_int_eq(res->cetar_status, NFS4ERR_NOTSUPP);
+
+	ss = server_state_find();
+	ck_assert_ptr_nonnull(ss);
+	ss->ss_chunk_takeover_configured = configured;
+	memcpy(ss->ss_chunk_takeover_principal, saved_principal,
+	       sizeof(saved_principal));
+	server_state_put(ss);
+	cm_free(cm);
+}
+END_TEST
+
 START_TEST(test_chunk_escrow_takeover_advances_and_reissues)
 {
 	static const uint8_t public_key[] = {
@@ -4428,6 +4488,9 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_chunk_escrow_rejects_stale_epoch);
 	tcase_add_test(tc_h, test_chunk_escrow_takeover_remains_disabled);
 	tcase_add_test(tc_h, test_chunk_escrow_takeover_rejects_bad_proof);
+	tcase_add_test(
+		tc_h,
+		test_chunk_escrow_takeover_authorization_precedes_profile);
 	tcase_add_test(tc_h, test_chunk_escrow_takeover_advances_and_reissues);
 	tcase_add_test(tc_h,
 		       test_chunk_escrow_install_conflict_is_all_or_nothing);
