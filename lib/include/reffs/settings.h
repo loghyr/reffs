@@ -28,6 +28,7 @@
 #define REFFS_CONFIG_MAX_ALLOWED_PS 8
 #define REFFS_CONFIG_MAX_PRINCIPAL 256
 #define REFFS_CHUNK_TAKEOVER_PUBLIC_KEY_HEX_LEN 64
+#define REFFS_CHUNK_TAKEOVER_PUBLIC_KEY_LEN 32
 /*
  * Room for a SHA-256 fingerprint formatted as colon-separated hex
  * (32 bytes * 2 + 31 colons = 95 chars, +NUL).  128 leaves headroom
@@ -406,6 +407,10 @@ void reffs_config_defaults(struct reffs_config *cfg);
  * Returns 0 on success, -1 on parse/IO error (error logged via LOG()).
  */
 int reffs_config_load(struct reffs_config *cfg, const char *path);
+
+/* Decode a validated 64-character Ed25519 public-key hex string. */
+int reffs_chunk_takeover_public_key_decode(
+	const char *hex, uint8_t out[REFFS_CHUNK_TAKEOVER_PUBLIC_KEY_LEN]);
 
 /* Human-readable role name, e.g. "ds_erasure". */
 const char *reffs_role_str(enum reffs_role role);

@@ -137,6 +137,13 @@ struct server_state {
 	/* NFSv4 owner string domain (e.g., "EXAMPLE.COM"). */
 	char ss_nfs4_domain[256];
 
+	/* Validated DS-side CHUNK_ESCROW_TAKEOVER trust configuration. */
+	bool ss_chunk_takeover_configured;
+	uint8_t ss_chunk_takeover_public_key[REFFS_CHUNK_TAKEOVER_PUBLIC_KEY_LEN];
+	char ss_chunk_takeover_principal[REFFS_CONFIG_MAX_PRINCIPAL];
+	char ss_chunk_takeover_scope[REFFS_CONFIG_MAX_HOST];
+	uint64_t ss_chunk_takeover_skew_sec;
+
 	/* Export security flavors -- copied from first export at boot. */
 	enum reffs_auth_flavor ss_flavors[REFFS_CONFIG_MAX_FLAVORS];
 	unsigned int ss_nflavors;

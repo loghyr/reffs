@@ -1369,9 +1369,24 @@ START_TEST(test_load_chunk_takeover_config)
 	ck_assert_str_eq(cfg.chunk_takeover.principal, "mds/one@REALM");
 	ck_assert_str_eq(cfg.chunk_takeover.scope, "ds-a");
 	ck_assert_uint_eq(cfg.chunk_takeover.skew_tolerance_sec, 30);
+	uint8_t key[REFFS_CHUNK_TAKEOVER_PUBLIC_KEY_LEN];
+	ck_assert_int_eq(reffs_chunk_takeover_public_key_decode(
+				 cfg.chunk_takeover.ed25519_public_key_hex,
+				 key),
+			 0);
+	ck_assert_uint_eq(key[0], 0x01);
+	ck_assert_uint_eq(key[31], 0xef);
 
 	unlink(path);
 	free(path);
+}
+END_TEST
+
+START_TEST(test_chunk_takeover_public_key_decode_rejects_bad_hex)
+{
+	uint8_t key[REFFS_CHUNK_TAKEOVER_PUBLIC_KEY_LEN];
+	ck_assert_int_eq(reffs_chunk_takeover_public_key_decode("00", key),
+			 -EINVAL);
 }
 END_TEST
 
@@ -1506,6 +1521,8 @@ Suite *config_suite(void)
 	tcase_add_test(tc_load, test_load_chunk_takeover_config);
 	tcase_add_test(tc_load,
 		       test_load_chunk_takeover_config_rejects_partial);
+	tcase_add_test(tc_load,
+		       test_chunk_takeover_public_key_decode_rejects_bad_hex);
 	tcase_add_test(tc_load, test_load_missing_file);
 	suite_add_tcase(s, tc_load);
 
