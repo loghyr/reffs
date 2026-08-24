@@ -117,11 +117,11 @@ static void journal_from_transition(struct takeover_journal *journal,
 static bool journal_matches(const struct takeover_journal *journal,
 			    const struct chunk_takeover_transition *t)
 {
+	/* The monotonic deadline is recomputed from live clocks on reissue. */
 	return journal->profile == t->profile &&
 	       journal->token_expires_at == t->token_expires_at &&
 	       journal->expected_prior_epoch == t->expected_prior_epoch &&
 	       journal->new_epoch == t->new_epoch &&
-	       journal->new_expires_at_ns == t->new_expires_at_ns &&
 	       journal->issuer_clientid == t->issuer_clientid &&
 	       strcmp(journal->principal, t->principal) == 0 &&
 	       memcmp(journal->token_id, t->token_id,
@@ -255,7 +255,6 @@ int chunk_takeover_transition_apply(const char *state_dir,
 	}
 	if (journal_completed && journal_present) {
 		if (epoch.epoch == t->new_epoch &&
-		    epoch.expires_at_ns == t->new_expires_at_ns &&
 		    epoch.issuer_clientid == t->issuer_clientid)
 			ret = 0;
 		else
