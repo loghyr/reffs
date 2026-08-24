@@ -138,6 +138,46 @@ static void test_persistence_failure_recovery(void)
 	assert(current.epoch == transition.new_epoch);
 }
 
+static void test_malformed_journal_fails_closed(void)
+{
+	char state_dir[] = "/tmp/reffs-takeover-transition-journal-XXXXXX";
+	char journal_path[512];
+	static const uint8_t token_id[CHUNK_TAKEOVER_REPLAY_TOKEN_ID_LEN] = {
+		0xd0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+	};
+	struct chunk_mds_epoch initial = {
+		.epoch = 30,
+		.expires_at_ns = 1000,
+		.issuer_clientid = 11,
+	};
+	struct chunk_mds_epoch current;
+	struct chunk_takeover_transition transition = {
+		.profile = 1,
+		.principal = "mds@REALM",
+		.token_id = token_id,
+		.token_expires_at = 110,
+		.expected_prior_epoch = 30,
+		.new_epoch = 31,
+		.new_expires_at_ns = 2000,
+		.issuer_clientid = 22,
+	};
+	FILE *journal;
+
+	assert(mkdtemp(state_dir));
+	assert(chunk_mds_epoch_persist(state_dir, &initial) == 0);
+	assert(snprintf(journal_path, sizeof(journal_path),
+			"%s/chunk_takeover_journal",
+			state_dir) < (int)sizeof(journal_path));
+	journal = fopen(journal_path, "w");
+	assert(journal != NULL);
+	assert(fputs("old prototype state", journal) >= 0);
+	assert(fclose(journal) == 0);
+	assert(chunk_takeover_transition_apply(state_dir, &transition, 100) <
+	       0);
+	assert(chunk_mds_epoch_load(state_dir, &current) == 0);
+	assert(current.epoch == initial.epoch);
+}
+
 int main(void)
 {
 	char state_dir[] = "/tmp/reffs-takeover-transition-XXXXXX";
@@ -170,6 +210,7 @@ int main(void)
 
 	test_concurrent_winner();
 	test_persistence_failure_recovery();
+	test_malformed_journal_fails_closed();
 
 	assert(mkdtemp(state_dir));
 	assert(chunk_mds_epoch_persist(state_dir, &initial) == 0);
