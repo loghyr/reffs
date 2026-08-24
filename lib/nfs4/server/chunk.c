@@ -43,6 +43,7 @@
 #include "nfs4/chunk_checksum.h"
 #include "nfs4/chunk_epoch.h"
 #include "nfs4/chunk_store.h"
+#include "nfs4/chunk_takeover.h"
 #include "nfs4/client.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
@@ -3279,8 +3280,12 @@ uint32_t nfs4_op_chunk_escrow_takeover(struct compound *compound)
 	CHUNK_ESCROW_TAKEOVER4res *res =
 		NFS4_OP_RES_SETUP(compound, opchunk_escrow_takeover);
 	nfsstat4 *status = &res->cetar_status;
+	CHUNK_ESCROW_TAKEOVER4args *args =
+		NFS4_OP_ARG_SETUP(compound, opchunk_escrow_takeover);
 
-	*status = NFS4ERR_NOTSUPP;
+	*status = chunk_takeover_execute(compound->c_server_state,
+					 compound->c_nfs4_client,
+					 compound->c_gss_principal, args);
 
 	return 0;
 }

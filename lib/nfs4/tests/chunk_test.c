@@ -48,6 +48,7 @@
 #include "nfs4/chunk_checksum.h"
 #include "nfs4/chunk_epoch.h"
 #include "nfs4/chunk_store.h"
+#include "nfs4/chunk_takeover.h"
 #include "nfs4/client.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
@@ -1839,6 +1840,61 @@ START_TEST(test_attr90_mds_setattr_on_empty_accepted)
 	ck_assert_int_eq(run_setattr(cm), NFS4_OK);
 	ck_assert_int_eq(inode_chunked_state(g_inode), INODE_CHUNKED_NO);
 
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_chunk_escrow_takeover_rejects_bad_proof)
+{
+	struct server_state *ss = server_state_find();
+	struct cm_ctx *cm = cm_alloc(1);
+	CHUNK_ESCROW_TAKEOVER4args *args;
+	CHUNK_ESCROW_TAKEOVER4res *res;
+	bool configured;
+	uint8_t public_key[REFFS_CHUNK_TAKEOVER_PUBLIC_KEY_LEN];
+	char saved_principal[REFFS_CONFIG_MAX_PRINCIPAL];
+	char saved_scope[REFFS_CONFIG_MAX_HOST];
+	uint64_t skew_sec;
+
+	ck_assert_ptr_nonnull(ss);
+	configured = ss->ss_chunk_takeover_configured;
+	memcpy(public_key, ss->ss_chunk_takeover_public_key,
+	       sizeof(public_key));
+	memcpy(saved_principal, ss->ss_chunk_takeover_principal,
+	       sizeof(saved_principal));
+	memcpy(saved_scope, ss->ss_chunk_takeover_scope, sizeof(saved_scope));
+	skew_sec = ss->ss_chunk_takeover_skew_sec;
+	ss->ss_chunk_takeover_configured = true;
+	memset(ss->ss_chunk_takeover_public_key, 0,
+	       sizeof(ss->ss_chunk_takeover_public_key));
+	strncpy(ss->ss_chunk_takeover_principal, "mds@REALM",
+		sizeof(ss->ss_chunk_takeover_principal) - 1);
+	strncpy(ss->ss_chunk_takeover_scope, "ds.test",
+		sizeof(ss->ss_chunk_takeover_scope) - 1);
+	ss->ss_chunk_takeover_skew_sec = 5;
+
+	cm->compound->c_nfs4_client->nc_exchgid_flags =
+		EXCHGID4_FLAG_USE_PNFS_MDS;
+	cm->compound->c_gss_principal = "mds@REALM";
+	cm_set_op(cm, 0, OP_CHUNK_ESCROW_TAKEOVER);
+	args = &cm->compound->c_args->argarray.argarray_val[0]
+			.nfs_argop4_u.opchunk_escrow_takeover;
+	args->ceta_expected_prior_epoch = 1;
+	args->ceta_new_epoch = 2;
+	args->ceta_proof_profile = PROOF_PROFILE_HA_AUTHORITY_ED25519;
+	res = &cm->compound->c_res->resarray.resarray_val[0]
+		       .nfs_resop4_u.opchunk_escrow_takeover;
+	nfs4_op_chunk_escrow_takeover(cm->compound);
+	ck_assert_int_eq(res->cetar_status, NFS4ERR_BADXDR);
+
+	ss->ss_chunk_takeover_configured = configured;
+	memcpy(ss->ss_chunk_takeover_public_key, public_key,
+	       sizeof(public_key));
+	memcpy(ss->ss_chunk_takeover_principal, saved_principal,
+	       sizeof(saved_principal));
+	memcpy(ss->ss_chunk_takeover_scope, saved_scope, sizeof(saved_scope));
+	ss->ss_chunk_takeover_skew_sec = skew_sec;
+	server_state_put(ss);
 	cm_free(cm);
 }
 END_TEST
@@ -4082,6 +4138,7 @@ START_TEST(test_chunk_escrow_takeover_remains_disabled)
 	mark_chunked(g_inode, INODE_CHUNKED_YES);
 	cm->compound->c_nfs4_client->nc_exchgid_flags =
 		EXCHGID4_FLAG_USE_PNFS_MDS;
+	cm->compound->c_gss_principal = "mds@REALM";
 	cm_set_op(cm, 0, OP_CHUNK_ESCROW_TAKEOVER);
 	args = &cm->compound->c_args->argarray.argarray_val[0]
 			.nfs_argop4_u.opchunk_escrow_takeover;
@@ -4256,6 +4313,7 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_chunk_escrow_enumerate_probe);
 	tcase_add_test(tc_h, test_chunk_escrow_rejects_stale_epoch);
 	tcase_add_test(tc_h, test_chunk_escrow_takeover_remains_disabled);
+	tcase_add_test(tc_h, test_chunk_escrow_takeover_rejects_bad_proof);
 	tcase_add_test(tc_h,
 		       test_chunk_escrow_install_conflict_is_all_or_nothing);
 	suite_add_tcase(s, tc_h);
