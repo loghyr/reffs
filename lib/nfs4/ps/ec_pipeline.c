@@ -1312,7 +1312,8 @@ retry_stripe:
 			ret = ds_chunk_finalize(ctx.ctx_ds_sess[i], em->em_fh,
 						em->em_fh_len, 0, total_blocks,
 						ctx.ctx_cohort_id,
-						em->em_client_id, 0);
+						em->em_client_id, 0,
+						&ctx.ctx_layout.el_stateid);
 		}
 		for (int i = 0; i < k + m && ret == 0; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
@@ -1320,7 +1321,8 @@ retry_stripe:
 			ret = ds_chunk_commit(ctx.ctx_ds_sess[i], em->em_fh,
 					      em->em_fh_len, 0, total_blocks,
 					      ctx.ctx_cohort_id,
-					      em->em_client_id, 0, NULL);
+					      em->em_client_id, 0,
+					      &ctx.ctx_layout.el_stateid, NULL);
 		}
 	}
 
@@ -1667,7 +1669,8 @@ retry_stripe:
 						blocks_per_stripe,
 						ctx.ctx_cohort_id,
 						em->em_client_id,
-						(uint32_t)base_block);
+						(uint32_t)base_block,
+						&ctx.ctx_layout.el_stateid);
 		}
 		for (int i = 0; i < k + m && ret == 0; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
@@ -1688,6 +1691,7 @@ retry_stripe:
 				base_block, blocks_per_stripe,
 				ctx.ctx_cohort_id, em->em_client_id,
 				(uint32_t)base_block,
+				&ctx.ctx_layout.el_stateid,
 				captured_verf ? NULL : first_verf);
 			if (ret == 0 && !captured_verf)
 				captured_verf = true;
@@ -2843,7 +2847,8 @@ int ec_repair_encoding(struct mds_session *ms, const char *path, int k, int m,
 
 		ret = ds_chunk_finalize(ctx.ctx_ds_sess[i], em->em_fh,
 					em->em_fh_len, 0, total_blocks,
-					ctx.ctx_cohort_id, em->em_client_id, 0);
+					ctx.ctx_cohort_id, em->em_client_id, 0,
+					&ctx.ctx_layout.el_stateid);
 	}
 	stats.total_finalize_ns += repair_now_ns() - t_fin;
 	if (ret)
@@ -2859,7 +2864,7 @@ int ec_repair_encoding(struct mds_session *ms, const char *path, int k, int m,
 		ret = ds_chunk_commit(ctx.ctx_ds_sess[i], em->em_fh,
 				      em->em_fh_len, 0, total_blocks,
 				      ctx.ctx_cohort_id, em->em_client_id, 0,
-				      NULL);
+				      &ctx.ctx_layout.el_stateid, NULL);
 	}
 	stats.total_commit_ns += repair_now_ns() - t_cmt;
 	if (ret)

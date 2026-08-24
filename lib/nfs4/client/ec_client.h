@@ -830,7 +830,7 @@ int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
 		      uint32_t fh_len, uint64_t block_offset, uint32_t count,
 		      uint64_t cohort_id, uint32_t layout_client_id,
-		      uint32_t owner_id);
+		      uint32_t owner_id, const stateid4 *stateid);
 
 /*
  * ds_chunk_commit -- CHUNK_COMMIT on a data server.
@@ -846,7 +846,7 @@ int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
 int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		    uint64_t block_offset, uint32_t count, uint64_t cohort_id,
 		    uint32_t layout_client_id, uint32_t owner_id,
-		    uint8_t writeverf_out[8]);
+		    const stateid4 *stateid, uint8_t writeverf_out[8]);
 
 /* ------------------------------------------------------------------ */
 /* Plain I/O -- write/read through layout, no erasure coding            */

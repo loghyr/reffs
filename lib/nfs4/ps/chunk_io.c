@@ -692,7 +692,7 @@ out:
 int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
 		      uint32_t fh_len, uint64_t block_offset, uint32_t count,
 		      uint64_t cohort_id, uint32_t layout_client_id,
-		      uint32_t owner_id)
+		      uint32_t owner_id, const stateid4 *stateid)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -722,11 +722,11 @@ int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
 
 	CHUNK_FINALIZE4args *cfa = &slot->nfs_argop4_u.opchunk_finalize;
 
-	/*
-	 * The slot is zero-initialised here, so the current PS path sends
-	 * the anonymous stateid.  The caller's layout stateid must be
-	 * threaded through before enabling DS trust enforcement.
-	 */
+	if (!stateid) {
+		ret = -EINVAL;
+		goto out;
+	}
+	memcpy(&cfa->cfa_stateid, stateid, sizeof(*stateid));
 	cfa->cfa_offset = block_offset;
 	cfa->cfa_count = count;
 	cfa->cfa_chunks.cfa_chunks_len = count;
@@ -784,7 +784,7 @@ out:
 int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		    uint64_t block_offset, uint32_t count, uint64_t cohort_id,
 		    uint32_t layout_client_id, uint32_t owner_id,
-		    uint8_t writeverf_out[8])
+		    const stateid4 *stateid, uint8_t writeverf_out[8])
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -814,11 +814,11 @@ int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 
 	CHUNK_COMMIT4args *cca = &slot->nfs_argop4_u.opchunk_commit;
 
-	/*
-	 * As with CHUNK_FINALIZE, the current PS path sends the
-	 * zero-initialized stateid until DS trust-stateid plumbing is
-	 * connected end to end.
-	 */
+	if (!stateid) {
+		ret = -EINVAL;
+		goto out;
+	}
+	memcpy(&cca->cca_stateid, stateid, sizeof(*stateid));
 	cca->cca_offset = block_offset;
 	cca->cca_count = count;
 	cca->cca_chunks.cca_chunks_len = count;
