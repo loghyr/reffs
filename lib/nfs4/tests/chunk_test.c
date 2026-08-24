@@ -1899,6 +1899,120 @@ START_TEST(test_chunk_escrow_takeover_rejects_bad_proof)
 }
 END_TEST
 
+START_TEST(test_chunk_escrow_takeover_advances_and_reissues)
+{
+	static const uint8_t public_key[] = {
+		0xa6, 0xc8, 0x0e, 0x39, 0x79, 0x69, 0x5b, 0x47,
+		0x25, 0x35, 0xfe, 0x64, 0x07, 0x25, 0x68, 0x73,
+		0xe4, 0xd0, 0x80, 0xbe, 0x85, 0xf2, 0x1d, 0x48,
+		0xab, 0x37, 0x36, 0xc7, 0x25, 0x28, 0x3f, 0x83,
+	};
+	static const uint8_t proof[] = {
+		0x84, 0x43, 0xa1, 0x01, 0x27, 0xa0, 0x58, 0x37, 0xa6, 0x01,
+		0x69, 0x6d, 0x64, 0x73, 0x40, 0x52, 0x45, 0x41, 0x4c, 0x4d,
+		0x02, 0x08, 0x03, 0x67, 0x64, 0x73, 0x2e, 0x74, 0x65, 0x73,
+		0x74, 0x04, 0xc1, 0x1a, 0x65, 0x53, 0xf1, 0x00, 0x05, 0xc1,
+		0x1a, 0xf4, 0x86, 0x57, 0x00, 0x06, 0x50, 0x00, 0x01, 0x02,
+		0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+		0x0d, 0x0e, 0x0f, 0x58, 0x40, 0x69, 0xc8, 0x19, 0x8c, 0xb1,
+		0x21, 0xfe, 0xab, 0x3b, 0xae, 0xf3, 0x7b, 0x10, 0x8f, 0x5f,
+		0xe6, 0x17, 0xe5, 0x33, 0x47, 0xc1, 0xdc, 0xbc, 0x38, 0x87,
+		0x2d, 0xc6, 0xfa, 0xe2, 0x58, 0xc7, 0xf6, 0x12, 0xd4, 0x7e,
+		0xe8, 0xcc, 0x33, 0x33, 0x0e, 0x80, 0xb1, 0xc7, 0xc8, 0x1b,
+		0xa1, 0x92, 0xa2, 0x3a, 0xcd, 0x71, 0x9f, 0xe6, 0xc9, 0xb8,
+		0x79, 0x88, 0x72, 0x99, 0xfc, 0x2a, 0x83, 0x07, 0x0f,
+	};
+	struct server_state *ss = server_state_find();
+	struct chunk_mds_epoch before = {
+		.epoch = 7,
+		.expires_at_ns = reffs_now_ns() + 60000000000ULL,
+		.issuer_clientid = 0x1234,
+	};
+	struct chunk_mds_epoch after;
+	struct cm_ctx *cm = cm_alloc(1);
+	CHUNK_ESCROW_TAKEOVER4args *args;
+	CHUNK_ESCROW_TAKEOVER4res *res;
+	struct chunk_takeover_policy policy;
+	struct chunk_takeover_claim claim;
+	struct timespec wall_time;
+	bool configured;
+	uint8_t saved_key[REFFS_CHUNK_TAKEOVER_PUBLIC_KEY_LEN];
+	char saved_principal[REFFS_CONFIG_MAX_PRINCIPAL];
+	char saved_scope[REFFS_CONFIG_MAX_HOST];
+	uint64_t saved_skew;
+
+	ck_assert_ptr_nonnull(ss);
+	ck_assert_int_eq(chunk_mds_epoch_persist(ss->ss_state_dir, &before), 0);
+	configured = ss->ss_chunk_takeover_configured;
+	memcpy(saved_key, ss->ss_chunk_takeover_public_key, sizeof(saved_key));
+	memcpy(saved_principal, ss->ss_chunk_takeover_principal,
+	       sizeof(saved_principal));
+	memcpy(saved_scope, ss->ss_chunk_takeover_scope, sizeof(saved_scope));
+	saved_skew = ss->ss_chunk_takeover_skew_sec;
+	ss->ss_chunk_takeover_configured = true;
+	memcpy(ss->ss_chunk_takeover_public_key, public_key,
+	       sizeof(public_key));
+	strncpy(ss->ss_chunk_takeover_principal, "mds@REALM",
+		sizeof(ss->ss_chunk_takeover_principal) - 1);
+	strncpy(ss->ss_chunk_takeover_scope, "ds.test",
+		sizeof(ss->ss_chunk_takeover_scope) - 1);
+	ss->ss_chunk_takeover_skew_sec = 10;
+	ck_assert_int_eq(clock_gettime(CLOCK_REALTIME, &wall_time), 0);
+	policy = (struct chunk_takeover_policy){
+		.public_key = public_key,
+		.principal = "mds@REALM",
+		.scope = "ds.test",
+		.now_sec = (uint64_t)wall_time.tv_sec,
+		.skew_sec = 10,
+	};
+	ck_assert_int_eq(chunk_takeover_verify_proof(proof, sizeof(proof), 8,
+						     &policy, &claim),
+			 0);
+
+	cm->compound->c_nfs4_client->nc_exchgid_flags =
+		EXCHGID4_FLAG_USE_PNFS_MDS;
+	cm->compound->c_gss_principal = "mds@REALM";
+	cm_set_op(cm, 0, OP_CHUNK_ESCROW_TAKEOVER);
+	args = &cm->compound->c_args->argarray.argarray_val[0]
+			.nfs_argop4_u.opchunk_escrow_takeover;
+	args->ceta_expected_prior_epoch = 7;
+	args->ceta_new_epoch = 8;
+	args->ceta_proof_profile = PROOF_PROFILE_HA_AUTHORITY_ED25519;
+	args->ceta_proof_data.ceta_proof_data_val = (char *)proof;
+	args->ceta_proof_data.ceta_proof_data_len = sizeof(proof);
+	res = &cm->compound->c_res->resarray.resarray_val[0]
+		       .nfs_resop4_u.opchunk_escrow_takeover;
+	nfs4_op_chunk_escrow_takeover(cm->compound);
+	ck_assert_int_eq(res->cetar_status, NFS4_OK);
+	ck_assert_int_eq(chunk_mds_epoch_load(ss->ss_state_dir, &after), 0);
+	ck_assert_uint_eq(after.epoch, 8);
+	ck_assert_uint_eq(after.issuer_clientid,
+			  cm->compound->c_nfs4_client->nc_client.c_id);
+
+	/* A byte-identical reissue is postcondition-equivalent success. */
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_ESCROW_TAKEOVER);
+	args = &cm->compound->c_args->argarray.argarray_val[0]
+			.nfs_argop4_u.opchunk_escrow_takeover;
+	args->ceta_expected_prior_epoch = 7;
+	args->ceta_new_epoch = 8;
+	args->ceta_proof_profile = PROOF_PROFILE_HA_AUTHORITY_ED25519;
+	args->ceta_proof_data.ceta_proof_data_val = (char *)proof;
+	args->ceta_proof_data.ceta_proof_data_len = sizeof(proof);
+	nfs4_op_chunk_escrow_takeover(cm->compound);
+	ck_assert_int_eq(res->cetar_status, NFS4_OK);
+
+	ss->ss_chunk_takeover_configured = configured;
+	memcpy(ss->ss_chunk_takeover_public_key, saved_key, sizeof(saved_key));
+	memcpy(ss->ss_chunk_takeover_principal, saved_principal,
+	       sizeof(saved_principal));
+	memcpy(ss->ss_chunk_takeover_scope, saved_scope, sizeof(saved_scope));
+	ss->ss_chunk_takeover_skew_sec = saved_skew;
+	server_state_put(ss);
+	cm_free(cm);
+}
+END_TEST
+
 START_TEST(test_attr90_mds_setattr_on_nonempty_rejected)
 {
 	static char buf[CHUNK_SZ];
@@ -4314,6 +4428,7 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_chunk_escrow_rejects_stale_epoch);
 	tcase_add_test(tc_h, test_chunk_escrow_takeover_remains_disabled);
 	tcase_add_test(tc_h, test_chunk_escrow_takeover_rejects_bad_proof);
+	tcase_add_test(tc_h, test_chunk_escrow_takeover_advances_and_reissues);
 	tcase_add_test(tc_h,
 		       test_chunk_escrow_install_conflict_is_all_or_nothing);
 	suite_add_tcase(s, tc_h);
