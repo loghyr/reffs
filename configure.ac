@@ -703,7 +703,7 @@ AC_SUBST([HDR_HISTOGRAM_LIBS])
 # Check for OpenSSL.  3-arg form — PKG_CHECK_MODULES's default
 # "Package requirements not met" error is clear enough; the 4-arg
 # form with a custom error action trips autoconf 2.73's strict mode.
-PKG_CHECK_MODULES([OPENSSL], [openssl >= 1.0.2])
+PKG_CHECK_MODULES([OPENSSL], [openssl >= 1.1.1])
 
 # Add OpenSSL flags to CFLAGS and LDFLAGS
 AC_SUBST([OPENSSL_CFLAGS])
