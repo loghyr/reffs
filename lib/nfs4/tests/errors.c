@@ -54,6 +54,31 @@ START_TEST(test_error6)
 			 false);
 }
 
+START_TEST(test_chunk_escrow_error_matrix)
+{
+	static const enum nfs_opnum4 ops[] = {
+		OP_CHUNK_ESCROW_INSTALL,
+		OP_CHUNK_ESCROW_RELEASE,
+		OP_CHUNK_ESCROW_ENUMERATE,
+		OP_CHUNK_ESCROW_TAKEOVER,
+	};
+	static const enum nfsstat4 common[] = {
+		NFS4ERR_ACCESS,		 NFS4ERR_BADXDR, NFS4ERR_INVAL,
+		NFS4ERR_NOTSUPP,	 NFS4ERR_PERM,	 NFS4ERR_SERVERFAULT,
+		NFS4ERR_STALE_MDS_EPOCH,
+	};
+
+	for (size_t i = 0; i < sizeof(ops) / sizeof(ops[0]); i++)
+		for (size_t j = 0; j < sizeof(common) / sizeof(common[0]); j++)
+			ck_assert(nfs4_error_valid_for_op(ops[i], common[j]));
+	ck_assert(nfs4_error_valid_for_op(OP_CHUNK_ESCROW_INSTALL,
+					  NFS4ERR_CHUNK_LOCKED));
+	ck_assert(nfs4_error_valid_for_op(OP_CHUNK_ESCROW_RELEASE,
+					  NFS4ERR_STALE_ESCROW));
+	ck_assert(!nfs4_error_valid_for_op(OP_CHUNK_ESCROW_TAKEOVER,
+					   NFS4ERR_STALE_ESCROW));
+}
+
 Suite *error_suite(void)
 {
 	Suite *s;
@@ -70,6 +95,7 @@ Suite *error_suite(void)
 	tcase_add_test(tc_core, test_error4);
 	tcase_add_test(tc_core, test_error5);
 	tcase_add_test(tc_core, test_error6);
+	tcase_add_test(tc_core, test_chunk_escrow_error_matrix);
 	suite_add_tcase(s, tc_core);
 
 	return s;
