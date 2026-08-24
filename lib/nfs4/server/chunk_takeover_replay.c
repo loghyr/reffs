@@ -109,7 +109,7 @@ static int replay_load(const char *path, struct replay_entry **entries,
 	ret = read_full(fd, &header, sizeof(header));
 	if (ret || header.magic != CHUNK_TAKEOVER_REPLAY_MAGIC ||
 	    header.version != CHUNK_TAKEOVER_REPLAY_VERSION ||
-	    header.count > CHUNK_TAKEOVER_REPLAY_MAX) {
+	    header.reserved || header.count > CHUNK_TAKEOVER_REPLAY_MAX) {
 		close(fd);
 		return ret ? ret : -EPROTO;
 	}
@@ -132,7 +132,7 @@ static int replay_load(const char *path, struct replay_entry **entries,
 		ret = -errno;
 	if (!ret) {
 		for (uint32_t i = 0; i < header.count; i++) {
-			if (!loaded[i].profile ||
+			if (!loaded[i].profile || loaded[i].reserved ||
 			    !memchr(loaded[i].principal, '\0',
 				    sizeof(loaded[i].principal))) {
 				ret = -EPROTO;
