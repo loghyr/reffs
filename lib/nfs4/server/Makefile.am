@@ -22,6 +22,7 @@ libreffs_nfs4_server_la_SOURCES = \
 	chunk.c \
 	chunk_takeover.c \
 	chunk_takeover_replay.c \
+	chunk_takeover_transition.c \
 	chunk_store.c \
 	copy.c \
 	delegation.c \

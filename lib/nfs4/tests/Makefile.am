@@ -201,6 +201,7 @@ TESTS = \
 	chunk_repair_test \
 	chunk_takeover_proof_test \
 	chunk_takeover_replay_test \
+	chunk_takeover_transition_test \
 	compound_async \
 	default_coding_dispatch_test \
 	delegation_lifecycle \
