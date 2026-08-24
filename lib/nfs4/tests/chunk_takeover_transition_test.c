@@ -191,6 +191,7 @@ int main(void)
 		0xf0, 0xe1, 0xd2, 0xc3, 0xb4, 0xa5, 0x96, 0x87,
 		0x78, 0x69, 0x5a, 0x4b, 0x3c, 0x2d, 0x1e, 0x0f,
 	};
+	char replay_path[512];
 	struct chunk_mds_epoch initial = {
 		.epoch = 7,
 		.expires_at_ns = 1000,
@@ -223,6 +224,22 @@ int main(void)
 	/* A lost response is recovered without another epoch mutation. */
 	assert(chunk_takeover_transition_apply(state_dir, &transition, 101) ==
 	       0);
+
+	/* A different token is not a byte-identical cache-miss reissue. */
+	assert(snprintf(replay_path, sizeof(replay_path),
+			"%s/chunk_takeover_replay",
+			state_dir) < (int)sizeof(replay_path));
+	assert(unlink(replay_path) == 0);
+	transition.token_id = other_token;
+	assert(chunk_takeover_transition_apply(state_dir, &transition, 101) ==
+	       -ESTALE);
+	transition.token_id = token_id;
+	assert(chunk_takeover_transition_apply(state_dir, &transition, 101) ==
+	       0);
+	assert(chunk_takeover_replay_claim(
+		       state_dir, transition.profile, transition.principal,
+		       transition.token_id, transition.token_expires_at,
+		       101) == 0);
 
 	/* A new proof may renew the currently active incarnation. */
 	transition.token_id = renewal_token;
