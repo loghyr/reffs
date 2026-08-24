@@ -100,6 +100,9 @@ int main(void)
 	       0);
 	assert(claim.epoch == 7 && claim.issued_at == 100 &&
 	       claim.expires_at == 110);
+	policy.now_sec = 111;
+	assert(chunk_takeover_verify_proof(proof, off, 7, &policy, &claim) < 0);
+	policy.now_sec = 105;
 	proof[off - 1] ^= 1;
 	assert(chunk_takeover_verify_proof(proof, off, 7, &policy, &claim) < 0);
 	puts("takeover proof vector: PASS");
