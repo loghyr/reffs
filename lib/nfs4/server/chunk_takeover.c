@@ -25,6 +25,7 @@
 #define COSE_HEADER_KID 4
 #define COSE_ALG_ED25519 8 /* CBOR negative integer -1-n, n=7 below. */
 #define COSE_LABEL_MAX 64
+#define COSE_SIG_CONTEXT "Signature1"
 
 struct cbor_cursor {
 	const uint8_t *p;
@@ -237,27 +238,34 @@ static int cose_sig_structure(const uint8_t *protected, size_t protected_len,
 			      const uint8_t *payload, size_t payload_len,
 			      uint8_t **out, size_t *out_len)
 {
-	uint8_t *buf = malloc(8 + 9 + protected_len + payload_len + 16);
+	const size_t context_len = sizeof(COSE_SIG_CONTEXT) - 1;
+	uint8_t *buf =
+		malloc(8 + context_len + protected_len + payload_len + 16);
 	size_t off = 0;
 
 	if (!buf)
 		return -ENOMEM;
-	if (cbor_put_head(buf, 8 + 9 + protected_len + payload_len + 16, &off,
-			  4, 4) ||
-	    cbor_put_head(buf, 8 + 9 + protected_len + payload_len + 16, &off,
-			  3, 9))
+	if (cbor_put_head(buf,
+			  8 + context_len + protected_len + payload_len + 16,
+			  &off, 4, 4) ||
+	    cbor_put_head(buf,
+			  8 + context_len + protected_len + payload_len + 16,
+			  &off, 3, context_len))
 		goto too_big;
-	memcpy(buf + off, "Signature1", 9);
-	off += 9;
-	if (cbor_put_head(buf, 8 + 9 + protected_len + payload_len + 16, &off,
-			  2, protected_len))
+	memcpy(buf + off, COSE_SIG_CONTEXT, context_len);
+	off += context_len;
+	if (cbor_put_head(buf,
+			  8 + context_len + protected_len + payload_len + 16,
+			  &off, 2, protected_len))
 		goto too_big;
 	memcpy(buf + off, protected, protected_len);
 	off += protected_len;
-	if (cbor_put_head(buf, 8 + 9 + protected_len + payload_len + 16, &off,
-			  2, 0) ||
-	    cbor_put_head(buf, 8 + 9 + protected_len + payload_len + 16, &off,
-			  2, payload_len))
+	if (cbor_put_head(buf,
+			  8 + context_len + protected_len + payload_len + 16,
+			  &off, 2, 0) ||
+	    cbor_put_head(buf,
+			  8 + context_len + protected_len + payload_len + 16,
+			  &off, 2, payload_len))
 		goto too_big;
 	memcpy(buf + off, payload, payload_len);
 	off += payload_len;
@@ -414,6 +422,7 @@ nfsstat4 chunk_takeover_execute(const struct server_state *server,
 	struct chunk_takeover_claim claim;
 	struct chunk_takeover_transition transition;
 	uint64_t now_sec, expires_at_ns;
+	struct timespec wall_time;
 	int ret;
 
 	if (!client || !(client->nc_exchgid_flags & EXCHGID4_FLAG_USE_PNFS_MDS))
@@ -431,7 +440,9 @@ nfsstat4 chunk_takeover_execute(const struct server_state *server,
 	if (args->ceta_new_epoch < args->ceta_expected_prior_epoch)
 		return NFS4ERR_INVAL;
 
-	now_sec = reffs_now_ns() / 1000000000ULL;
+	if (clock_gettime(CLOCK_REALTIME, &wall_time) != 0)
+		return NFS4ERR_SERVERFAULT;
+	now_sec = (uint64_t)wall_time.tv_sec;
 	policy = (struct chunk_takeover_policy){
 		.public_key = server->ss_chunk_takeover_public_key,
 		.principal = principal,
