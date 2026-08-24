@@ -431,12 +431,12 @@ nfsstat4 chunk_takeover_execute(const struct server_state *server,
 		return NFS4ERR_ACCESS;
 	if (!args)
 		return NFS4ERR_BADXDR;
-	if (args->ceta_proof_profile != PROOF_PROFILE_HA_AUTHORITY_ED25519)
-		return NFS4ERR_NOTSUPP;
 	if (!server || !server->ss_chunk_takeover_configured)
 		return NFS4ERR_NOTSUPP;
 	if (strcmp(principal, server->ss_chunk_takeover_principal) != 0)
 		return NFS4ERR_ACCESS;
+	if (args->ceta_proof_profile != PROOF_PROFILE_HA_AUTHORITY_ED25519)
+		return NFS4ERR_NOTSUPP;
 	if (args->ceta_new_epoch < args->ceta_expected_prior_epoch)
 		return NFS4ERR_INVAL;
 
