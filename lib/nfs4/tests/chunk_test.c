@@ -2048,6 +2048,10 @@ START_TEST(test_chunk_escrow_takeover_advances_and_reissues)
 	ck_assert_uint_eq(after.epoch, 8);
 	ck_assert_uint_eq(after.issuer_clientid,
 			  cm->compound->c_nfs4_client->nc_client.c_id);
+	/* The proof uses wall-clock seconds; the epoch uses monotonic ns. */
+	ck_assert_uint_gt(after.expires_at_ns, reffs_now_ns());
+	ck_assert_uint_lt(after.expires_at_ns,
+			  claim.expires_at * UINT64_C(1000000000));
 
 	/* A byte-identical reissue is postcondition-equivalent success. */
 	cm_reset_slot(cm, 0);

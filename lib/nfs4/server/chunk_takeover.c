@@ -413,6 +413,42 @@ static nfsstat4 chunk_takeover_proof_error(int error)
 						      NFS4ERR_ACCESS;
 }
 
+static int chunk_takeover_expiry_deadline(uint64_t expires_at,
+					  uint64_t *deadline_ns)
+{
+	struct timespec wall_time, monotonic_time;
+	uint64_t wall_ns, monotonic_ns, expiry_ns, remaining_ns;
+
+	if (clock_gettime(CLOCK_REALTIME, &wall_time) != 0 ||
+	    clock_gettime(CLOCK_MONOTONIC, &monotonic_time) != 0)
+		return -EIO;
+	if (wall_time.tv_sec < 0 || monotonic_time.tv_sec < 0 ||
+	    wall_time.tv_nsec < 0 || wall_time.tv_nsec >= 1000000000L ||
+	    monotonic_time.tv_nsec < 0 ||
+	    monotonic_time.tv_nsec >= 1000000000L ||
+	    expires_at > UINT64_MAX / 1000000000ULL)
+		return -EINVAL;
+	if ((uint64_t)wall_time.tv_sec >
+		    (UINT64_MAX - (uint64_t)wall_time.tv_nsec) /
+			    1000000000ULL ||
+	    (uint64_t)monotonic_time.tv_sec >
+		    (UINT64_MAX - (uint64_t)monotonic_time.tv_nsec) /
+			    1000000000ULL)
+		return -ERANGE;
+	wall_ns = (uint64_t)wall_time.tv_sec * 1000000000ULL +
+		  (uint64_t)wall_time.tv_nsec;
+	monotonic_ns = (uint64_t)monotonic_time.tv_sec * 1000000000ULL +
+		       (uint64_t)monotonic_time.tv_nsec;
+	expiry_ns = expires_at * 1000000000ULL;
+	if (expiry_ns <= wall_ns)
+		return -EACCES;
+	remaining_ns = expiry_ns - wall_ns;
+	if (monotonic_ns > UINT64_MAX - remaining_ns)
+		return -ERANGE;
+	*deadline_ns = monotonic_ns + remaining_ns;
+	return 0;
+}
+
 nfsstat4 chunk_takeover_execute(const struct server_state *server,
 				const struct nfs4_client *client,
 				const char *principal,
@@ -456,9 +492,11 @@ nfsstat4 chunk_takeover_execute(const struct server_state *server,
 		&policy, &claim);
 	if (ret)
 		return chunk_takeover_proof_error(ret);
-	if (claim.expires_at > UINT64_MAX / 1000000000ULL)
+	ret = chunk_takeover_expiry_deadline(claim.expires_at, &expires_at_ns);
+	if (ret == -EACCES || ret == -EINVAL)
 		return NFS4ERR_ACCESS;
-	expires_at_ns = claim.expires_at * 1000000000ULL;
+	if (ret)
+		return NFS4ERR_SERVERFAULT;
 	transition = (struct chunk_takeover_transition){
 		.profile = args->ceta_proof_profile,
 		.principal = principal,
