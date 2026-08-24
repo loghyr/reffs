@@ -30,6 +30,17 @@ int main(void)
 	assert(mkdtemp(state_dir));
 	assert(chunk_takeover_replay_claim(state_dir, 1, "mds@REALM", token_id,
 					   110, 100) == 0);
+	{
+		bool seen;
+		assert(chunk_takeover_replay_contains(state_dir, 1, "mds@REALM",
+						      token_id, 100,
+						      &seen) == 0);
+		assert(seen);
+		assert(chunk_takeover_replay_contains(state_dir, 1, "mds@REALM",
+						      other_token, 100,
+						      &seen) == 0);
+		assert(!seen);
+	}
 	assert(chunk_takeover_replay_claim(state_dir, 1, "mds@REALM", token_id,
 					   110, 100) == -EALREADY);
 	assert(chunk_takeover_replay_claim(state_dir, 1, "mds@REALM",

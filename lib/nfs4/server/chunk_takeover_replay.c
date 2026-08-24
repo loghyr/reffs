@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -181,6 +182,51 @@ static int replay_save(const char *path, const struct replay_entry *entries,
 		return ret;
 	}
 	return 0;
+}
+
+int chunk_takeover_replay_contains(
+	const char *state_dir, uint32_t profile, const char *principal,
+	const uint8_t token_id[CHUNK_TAKEOVER_REPLAY_TOKEN_ID_LEN],
+	uint64_t now_sec, bool *seen)
+{
+	char path[512], lock_path[520];
+	struct replay_entry *entries = NULL;
+	uint32_t count = 0;
+	int lock_fd, ret;
+
+	if (!seen)
+		return -EINVAL;
+	*seen = false;
+	if (replay_paths(path, sizeof(path), lock_path, sizeof(lock_path),
+			 state_dir) ||
+	    !profile || !principal || !principal[0] ||
+	    strlen(principal) >= REFFS_CONFIG_MAX_PRINCIPAL || !token_id)
+		return -EINVAL;
+	lock_fd = open(lock_path, O_RDWR | O_CREAT, 0600);
+	if (lock_fd < 0)
+		return -errno;
+	if (flock(lock_fd, LOCK_SH)) {
+		ret = -errno;
+		close(lock_fd);
+		return ret;
+	}
+	ret = replay_load(path, &entries, &count);
+	if (!ret)
+		for (uint32_t i = 0; i < count; i++)
+			if (entries[i].expires_at > now_sec &&
+			    entries[i].profile == profile &&
+			    strcmp(entries[i].principal, principal) == 0 &&
+			    memcmp(entries[i].token_id, token_id,
+				   CHUNK_TAKEOVER_REPLAY_TOKEN_ID_LEN) == 0) {
+				*seen = true;
+				break;
+			}
+	free(entries);
+	if (flock(lock_fd, LOCK_UN) && !ret)
+		ret = -errno;
+	if (close(lock_fd) && !ret)
+		ret = -errno;
+	return ret;
 }
 
 int chunk_takeover_replay_claim(
