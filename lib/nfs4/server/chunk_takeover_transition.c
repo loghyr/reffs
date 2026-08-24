@@ -24,6 +24,7 @@
 #define CHUNK_TAKEOVER_JOURNAL_VERSION 1
 #define CHUNK_TAKEOVER_JOURNAL_PENDING 0
 #define CHUNK_TAKEOVER_JOURNAL_ABORTED 1
+#define CHUNK_TAKEOVER_JOURNAL_COMPLETED 2
 
 struct takeover_journal {
 	uint32_t magic;
@@ -149,7 +150,7 @@ static int journal_load(const char *path, struct takeover_journal *journal,
 		return ret;
 	if (journal->magic != CHUNK_TAKEOVER_JOURNAL_MAGIC ||
 	    journal->version != CHUNK_TAKEOVER_JOURNAL_VERSION ||
-	    journal->reserved > CHUNK_TAKEOVER_JOURNAL_ABORTED ||
+	    journal->reserved > CHUNK_TAKEOVER_JOURNAL_COMPLETED ||
 	    !journal->profile ||
 	    !memchr(journal->principal, '\0', sizeof(journal->principal)))
 		return -EPROTO;
@@ -199,7 +200,8 @@ int chunk_takeover_transition_apply(const char *state_dir,
 	char journal_path[512], lock_path[520];
 	struct takeover_journal journal;
 	struct chunk_mds_epoch epoch;
-	bool journal_present, journal_aborted = false, replay_seen, resuming;
+	bool journal_present, journal_aborted = false;
+	bool journal_completed = false, replay_seen, resuming;
 	int lock_fd, ret;
 
 	if (!t || !t->profile || !t->principal || !t->principal[0] ||
@@ -228,7 +230,14 @@ int chunk_takeover_transition_apply(const char *state_dir,
 		journal_present = false;
 		journal_aborted = true;
 	}
-	if (journal_present && !journal_matches(&journal, t)) {
+	if (journal_present &&
+	    journal.reserved == CHUNK_TAKEOVER_JOURNAL_COMPLETED) {
+		journal_completed = true;
+		if (!journal_matches(&journal, t))
+			journal_present = false;
+	}
+	if (journal_present && !journal_completed &&
+	    !journal_matches(&journal, t)) {
 		ret = -EBUSY;
 		goto out;
 	}
@@ -244,6 +253,15 @@ int chunk_takeover_transition_apply(const char *state_dir,
 		ret = -EALREADY;
 		goto out;
 	}
+	if (journal_completed && journal_present) {
+		if (epoch.epoch == t->new_epoch &&
+		    epoch.expires_at_ns == t->new_expires_at_ns &&
+		    epoch.issuer_clientid == t->issuer_clientid)
+			ret = 0;
+		else
+			ret = -EIO;
+		goto out;
+	}
 	if (replay_seen && !journal_present) {
 		if (epoch.epoch == t->new_epoch &&
 		    epoch.expires_at_ns == t->new_expires_at_ns &&
@@ -256,7 +274,12 @@ int chunk_takeover_transition_apply(const char *state_dir,
 	if (epoch.epoch > t->expected_prior_epoch) {
 		if (t->new_epoch > t->expected_prior_epoch &&
 		    epoch.epoch == t->new_epoch) {
-			ret = journal_remove(journal_path);
+			if (!journal_present) {
+				ret = -ESTALE;
+				goto out;
+			}
+			journal.reserved = CHUNK_TAKEOVER_JOURNAL_COMPLETED;
+			ret = journal_save(journal_path, &journal);
 			goto out;
 		}
 		ret = -ESTALE;
@@ -291,8 +314,10 @@ int chunk_takeover_transition_apply(const char *state_dir,
 	epoch.expires_at_ns = t->new_expires_at_ns;
 	epoch.issuer_clientid = t->issuer_clientid;
 	ret = chunk_mds_epoch_persist(state_dir, &epoch);
-	if (!ret)
-		ret = journal_remove(journal_path);
+	if (!ret) {
+		journal.reserved = CHUNK_TAKEOVER_JOURNAL_COMPLETED;
+		ret = journal_save(journal_path, &journal);
+	}
 out:
 	if (flock(lock_fd, LOCK_UN) && !ret)
 		ret = -errno;
