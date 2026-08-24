@@ -192,6 +192,7 @@ int main(void)
 		0x78, 0x69, 0x5a, 0x4b, 0x3c, 0x2d, 0x1e, 0x0f,
 	};
 	char replay_path[512];
+	char journal_path[512];
 	struct chunk_mds_epoch initial = {
 		.epoch = 7,
 		.expires_at_ns = 1000,
@@ -247,6 +248,15 @@ int main(void)
 		       state_dir, transition.profile, transition.principal,
 		       transition.token_id, transition.token_expires_at,
 		       101) == 0);
+	/* Cache-hit recovery also ignores the derived monotonic deadline. */
+	assert(snprintf(journal_path, sizeof(journal_path),
+			"%s/chunk_takeover_journal",
+			state_dir) < (int)sizeof(journal_path));
+	assert(unlink(journal_path) == 0);
+	transition.new_expires_at_ns = 3002;
+	assert(chunk_takeover_transition_apply(state_dir, &transition, 101) ==
+	       0);
+	transition.new_expires_at_ns = 2000;
 
 	/* A new proof may renew the currently active incarnation. */
 	transition.token_id = renewal_token;

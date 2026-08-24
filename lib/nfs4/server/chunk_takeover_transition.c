@@ -263,7 +263,6 @@ int chunk_takeover_transition_apply(const char *state_dir,
 	}
 	if (replay_seen && !journal_present) {
 		if (epoch.epoch == t->new_epoch &&
-		    epoch.expires_at_ns == t->new_expires_at_ns &&
 		    epoch.issuer_clientid == t->issuer_clientid)
 			ret = 0;
 		else
