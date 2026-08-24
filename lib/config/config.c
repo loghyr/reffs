@@ -103,6 +103,27 @@ static bool hex_string_valid(const char *s, size_t len)
 	return true;
 }
 
+static unsigned int hex_digit(unsigned char c)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	return c - 'A' + 10;
+}
+
+int reffs_chunk_takeover_public_key_decode(
+	const char *hex, uint8_t out[REFFS_CHUNK_TAKEOVER_PUBLIC_KEY_LEN])
+{
+	if (!hex || !out ||
+	    !hex_string_valid(hex, REFFS_CHUNK_TAKEOVER_PUBLIC_KEY_HEX_LEN))
+		return -EINVAL;
+	for (size_t i = 0; i < REFFS_CHUNK_TAKEOVER_PUBLIC_KEY_LEN; i++)
+		out[i] = (uint8_t)((hex_digit((unsigned char)hex[2 * i]) << 4) |
+				   hex_digit((unsigned char)hex[2 * i + 1]));
+	return 0;
+}
+
 static int
 validate_chunk_takeover_config(const struct reffs_chunk_takeover_config *cfg)
 {

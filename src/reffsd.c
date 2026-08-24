@@ -457,6 +457,23 @@ int main(int argc, char *argv[])
 			      memory_order_relaxed);
 	strncpy(ss->ss_nfs4_domain, cfg.nfs4_domain,
 		sizeof(ss->ss_nfs4_domain) - 1);
+	if (cfg.chunk_takeover.ed25519_public_key_hex[0] != '\0') {
+		if (reffs_chunk_takeover_public_key_decode(
+			    cfg.chunk_takeover.ed25519_public_key_hex,
+			    ss->ss_chunk_takeover_public_key) != 0) {
+			LOG("invalid [chunk_takeover] Ed25519 public key");
+			exit_code = 1;
+			goto out;
+		}
+		strncpy(ss->ss_chunk_takeover_principal,
+			cfg.chunk_takeover.principal,
+			sizeof(ss->ss_chunk_takeover_principal) - 1);
+		strncpy(ss->ss_chunk_takeover_scope, cfg.chunk_takeover.scope,
+			sizeof(ss->ss_chunk_takeover_scope) - 1);
+		ss->ss_chunk_takeover_skew_sec =
+			cfg.chunk_takeover.skew_tolerance_sec;
+		ss->ss_chunk_takeover_configured = true;
+	}
 
 	/*
 	 * Populate the global server_state flavor list from the first export's
