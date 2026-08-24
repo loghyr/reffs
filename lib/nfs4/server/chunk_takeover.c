@@ -464,6 +464,8 @@ nfsstat4 chunk_takeover_execute(const struct server_state *server,
 		return NFS4_OK;
 	if (ret == -ESTALE)
 		return NFS4ERR_STALE_MDS_EPOCH;
+	if (ret == -EALREADY)
+		return NFS4ERR_ACCESS;
 	if (ret == -EINVAL)
 		return NFS4ERR_INVAL;
 	return NFS4ERR_SERVERFAULT;
