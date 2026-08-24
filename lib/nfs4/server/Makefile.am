@@ -8,6 +8,7 @@ AM_CFLAGS = -Im4 -I.			\
 	-I$(top_srcdir)/lib/nfs4/dstore \
 	-I$(top_srcdir)/lib/nfs4/ps	\
 	-I$(top_builddir)/lib/xdr	\
+	$(OPENSSL_CFLAGS) \
 	$(TIRPC_CFLAGS)
 
 lib_LTLIBRARIES = libreffs_nfs4_server.la
@@ -19,6 +20,7 @@ libreffs_nfs4_server_la_SOURCES = \
 	client_persist.c \
 	compound.c \
 	chunk.c \
+	chunk_takeover.c \
 	chunk_store.c \
 	copy.c \
 	delegation.c \
@@ -52,4 +54,5 @@ libreffs_nfs4_server_la_SOURCES = \
 # copies (ASAN also flags it as an ODR violation under -fsanitize=address).
 libreffs_nfs4_server_la_LIBADD = \
 	$(top_builddir)/lib/nfs4/dstore/libreffs_dstore.la \
-	$(top_builddir)/lib/nfs4/common/libreffs_nfs4_common.la
+	$(top_builddir)/lib/nfs4/common/libreffs_nfs4_common.la \
+	$(OPENSSL_LIBS)

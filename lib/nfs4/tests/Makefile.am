@@ -200,6 +200,7 @@ TESTS = \
 	chunk_checksum_test \
 	chunk_test \
 	chunk_repair_test \
+	chunk_takeover_proof_test \
 	compound_async \
 	default_coding_dispatch_test \
 	delegation_lifecycle \
