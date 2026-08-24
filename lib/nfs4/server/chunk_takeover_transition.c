@@ -122,7 +122,6 @@ static bool journal_matches(const struct takeover_journal *journal,
 	       journal->token_expires_at == t->token_expires_at &&
 	       journal->expected_prior_epoch == t->expected_prior_epoch &&
 	       journal->new_epoch == t->new_epoch &&
-	       journal->issuer_clientid == t->issuer_clientid &&
 	       strcmp(journal->principal, t->principal) == 0 &&
 	       memcmp(journal->token_id, t->token_id,
 		      CHUNK_TAKEOVER_REPLAY_TOKEN_ID_LEN) == 0;
@@ -254,16 +253,14 @@ int chunk_takeover_transition_apply(const char *state_dir,
 		goto out;
 	}
 	if (journal_completed && journal_present) {
-		if (epoch.epoch == t->new_epoch &&
-		    epoch.issuer_clientid == t->issuer_clientid)
+		if (epoch.epoch == t->new_epoch)
 			ret = 0;
 		else
 			ret = -EIO;
 		goto out;
 	}
 	if (replay_seen && !journal_present) {
-		if (epoch.epoch == t->new_epoch &&
-		    epoch.issuer_clientid == t->issuer_clientid)
+		if (epoch.epoch == t->new_epoch)
 			ret = 0;
 		else
 			ret = -EALREADY;

@@ -232,6 +232,13 @@ int main(void)
 	assert(chunk_mds_epoch_load(state_dir, &current) == 0);
 	assert(current.expires_at_ns == 2000);
 	transition.new_expires_at_ns = 2000;
+	/* A lost response may be reissued on a new control session. */
+	transition.issuer_clientid = 99;
+	assert(chunk_takeover_transition_apply(state_dir, &transition, 101) ==
+	       0);
+	assert(chunk_mds_epoch_load(state_dir, &current) == 0);
+	assert(current.issuer_clientid == 22);
+	transition.issuer_clientid = 22;
 
 	/* A different token is not a byte-identical cache-miss reissue. */
 	assert(snprintf(replay_path, sizeof(replay_path),
@@ -275,7 +282,9 @@ int main(void)
 	       0);
 	transition.issuer_clientid = 45;
 	assert(chunk_takeover_transition_apply(state_dir, &transition, 101) ==
-	       -EALREADY);
+	       0);
+	assert(chunk_mds_epoch_load(state_dir, &current) == 0);
+	assert(current.issuer_clientid == 44);
 	transition.issuer_clientid = 44;
 
 	/* Reuse of the first token for a new advance is rejected. */
