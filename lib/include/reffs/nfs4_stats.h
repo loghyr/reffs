@@ -25,11 +25,10 @@
  * generated nfsv42_xdr.h (e.g. backends, utils).
  *
  * OP_MAX is defined in nfsv42_names.h as (highest op code + 1).
- * Highest assigned op is OP_EXCHANGE_RANGE = 100 (renumbered from 96
- * to make room for CHUNK_ESCROW at 92-95), so
- * OP_MAX is currently 101.  We use 108 for a small margin.  A
- * _Static_assert in ops.c enforces that OP_MAX never exceeds this
- * value.
+ * Highest assigned op is OP_CHUNK_LOCK_DESIGNATE = 101, after
+ * OP_EXCHANGE_RANGE = 100, so OP_MAX is currently 102.  We use 108
+ * for a small margin; ops.c has a _Static_assert that OP_MAX never
+ * exceeds this value.
  */
 #define REFFS_NFS4_OP_MAX 108
 

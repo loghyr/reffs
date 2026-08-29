@@ -102,6 +102,7 @@ uint32_t nfs4_op_chunk_error(struct compound *compound);
 uint32_t nfs4_op_chunk_finalize(struct compound *compound);
 uint32_t nfs4_op_chunk_header_read(struct compound *compound);
 uint32_t nfs4_op_chunk_lock(struct compound *compound);
+uint32_t nfs4_op_chunk_lock_designate(struct compound *compound);
 uint32_t nfs4_op_chunk_read(struct compound *compound);
 uint32_t nfs4_op_chunk_repaired(struct compound *compound);
 uint32_t nfs4_op_chunk_rollback(struct compound *compound);

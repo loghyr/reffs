@@ -30,6 +30,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "reffs/inode.h"
@@ -159,6 +160,164 @@ bool chunk_store_has_escrow(const struct chunk_store *cs, uint64_t offset,
 			return true;
 	}
 	return false;
+}
+
+static bool designation_valid(const struct chunk_designation *designation)
+{
+	return designation && designation->cd_count != 0 &&
+	       designation->cd_offset <= UINT64_MAX - designation->cd_count &&
+	       designation->cd_expire_nseconds < 1000000000u &&
+	       designation->cd_token_len > 0 &&
+	       designation->cd_token_len <= CHUNK_DESIGNATION_TOKEN_MAX;
+}
+
+static bool designation_ranges_overlap(const struct chunk_designation *a,
+				       const struct chunk_designation *b)
+{
+	uint64_t a_end = a->cd_offset + a->cd_count;
+	uint64_t b_end = b->cd_offset + b->cd_count;
+
+	return a->cd_offset < b_end && b->cd_offset < a_end;
+}
+
+static bool designation_token_equal(const struct chunk_designation *a,
+				    const struct chunk_designation *b)
+{
+	return a->cd_token_len == b->cd_token_len &&
+	       memcmp(a->cd_token, b->cd_token, a->cd_token_len) == 0;
+}
+
+static bool designation_equal(const struct chunk_designation *a,
+			      const struct chunk_designation *b)
+{
+	return memcmp(a->cd_predecessor_stateid, b->cd_predecessor_stateid,
+		      sizeof(a->cd_predecessor_stateid)) == 0 &&
+	       memcmp(a->cd_successor_stateid, b->cd_successor_stateid,
+		      sizeof(a->cd_successor_stateid)) == 0 &&
+	       a->cd_predecessor_cohort_id == b->cd_predecessor_cohort_id &&
+	       a->cd_predecessor_client_id == b->cd_predecessor_client_id &&
+	       a->cd_predecessor_owner_id == b->cd_predecessor_owner_id &&
+	       a->cd_successor_cohort_id == b->cd_successor_cohort_id &&
+	       a->cd_successor_client_id == b->cd_successor_client_id &&
+	       a->cd_successor_owner_id == b->cd_successor_owner_id &&
+	       a->cd_offset == b->cd_offset && a->cd_count == b->cd_count &&
+	       a->cd_issuer_clientid == b->cd_issuer_clientid &&
+	       a->cd_expire_seconds == b->cd_expire_seconds &&
+	       a->cd_expire_nseconds == b->cd_expire_nseconds &&
+	       designation_token_equal(a, b);
+}
+
+int chunk_store_designate(struct chunk_store *cs,
+			  const struct chunk_designation *designation)
+{
+	if (!cs || !designation_valid(designation))
+		return -EINVAL;
+
+	for (uint32_t i = 0; i < cs->cs_ndesignations; i++) {
+		struct chunk_designation *existing = &cs->cs_designations[i];
+
+		if (designation_equal(existing, designation))
+			return 0;
+		if (designation_token_equal(existing, designation) ||
+		    designation_ranges_overlap(existing, designation))
+			return -EEXIST;
+	}
+
+	if (cs->cs_ndesignations == CHUNK_STORE_MAX_DESIGNATIONS)
+		return -E2BIG;
+	if (cs->cs_ndesignations == cs->cs_designation_cap) {
+		uint32_t cap =
+			cs->cs_designation_cap ? cs->cs_designation_cap * 2 : 8;
+		struct chunk_designation *new_designations;
+
+		if (cap > CHUNK_STORE_MAX_DESIGNATIONS)
+			cap = CHUNK_STORE_MAX_DESIGNATIONS;
+		new_designations =
+			realloc(cs->cs_designations,
+				(size_t)cap * sizeof(*new_designations));
+		if (!new_designations)
+			return -ENOMEM;
+		cs->cs_designations = new_designations;
+		cs->cs_designation_cap = cap;
+	}
+
+	cs->cs_designations[cs->cs_ndesignations++] = *designation;
+	cs->cs_dirty = true;
+	return 0;
+}
+
+int chunk_store_undesignate(struct chunk_store *cs,
+			    const struct chunk_designation *designation)
+{
+	if (!cs || !designation)
+		return -EINVAL;
+	for (uint32_t i = 0; i < cs->cs_ndesignations; i++) {
+		if (!designation_equal(&cs->cs_designations[i], designation))
+			continue;
+		if (i + 1 < cs->cs_ndesignations)
+			memmove(&cs->cs_designations[i],
+				&cs->cs_designations[i + 1],
+				(size_t)(cs->cs_ndesignations - i - 1) *
+					sizeof(*cs->cs_designations));
+		cs->cs_ndesignations--;
+		cs->cs_dirty = true;
+		return 0;
+	}
+	return -ENOENT;
+}
+
+const struct chunk_designation *chunk_store_find_designation(
+	const struct chunk_store *cs, uint64_t offset, uint32_t count,
+	uint64_t successor_cohort_id, uint32_t successor_client_id,
+	uint32_t successor_owner_id,
+	const uint8_t successor_stateid[CHUNK_LOCK_STATEID_SIZE])
+{
+	if (!cs || !successor_stateid)
+		return NULL;
+	for (uint32_t i = 0; i < cs->cs_ndesignations; i++) {
+		const struct chunk_designation *d = &cs->cs_designations[i];
+
+		if (d->cd_offset != offset || d->cd_count != count ||
+		    d->cd_successor_cohort_id != successor_cohort_id ||
+		    d->cd_successor_client_id != successor_client_id ||
+		    d->cd_successor_owner_id != successor_owner_id ||
+		    memcmp(d->cd_successor_stateid, successor_stateid,
+			   CHUNK_LOCK_STATEID_SIZE) != 0)
+			continue;
+		return d;
+	}
+	return NULL;
+}
+
+unsigned int chunk_store_prune_expired_designations(struct chunk_store *cs)
+{
+	struct timespec now;
+	unsigned int removed = 0;
+
+	if (!cs || clock_gettime(CLOCK_REALTIME, &now) != 0)
+		return 0;
+
+	for (uint32_t i = 0; i < cs->cs_ndesignations;) {
+		struct chunk_designation *designation = &cs->cs_designations[i];
+		bool expired = designation->cd_expire_seconds < now.tv_sec ||
+			       (designation->cd_expire_seconds == now.tv_sec &&
+				designation->cd_expire_nseconds <=
+					(uint32_t)now.tv_nsec);
+
+		if (!expired) {
+			i++;
+			continue;
+		}
+		if (i + 1 < cs->cs_ndesignations)
+			memmove(designation, designation + 1,
+				(size_t)(cs->cs_ndesignations - i - 1) *
+					sizeof(*designation));
+		cs->cs_ndesignations--;
+		cs->cs_dirty = true;
+		removed++;
+	}
+
+	return removed;
 }
 
 /* ------------------------------------------------------------------ */
@@ -343,6 +502,59 @@ static void disk_to_block(const struct chunk_block_disk *dsk,
 	       sizeof(blk->cb_lock_stateid));
 	memcpy(blk->cb_lock_escrow_id, dsk->cbd_lock_escrow_id,
 	       sizeof(blk->cb_lock_escrow_id));
+}
+
+static void designation_to_disk(const struct chunk_designation *designation,
+				struct chunk_designation_disk *dsk)
+{
+	memset(dsk, 0, sizeof(*dsk));
+	memcpy(dsk->cdd_predecessor_stateid,
+	       designation->cd_predecessor_stateid,
+	       sizeof(dsk->cdd_predecessor_stateid));
+	memcpy(dsk->cdd_successor_stateid, designation->cd_successor_stateid,
+	       sizeof(dsk->cdd_successor_stateid));
+	dsk->cdd_predecessor_cohort_id = designation->cd_predecessor_cohort_id;
+	dsk->cdd_predecessor_client_id = designation->cd_predecessor_client_id;
+	dsk->cdd_predecessor_owner_id = designation->cd_predecessor_owner_id;
+	dsk->cdd_successor_cohort_id = designation->cd_successor_cohort_id;
+	dsk->cdd_successor_client_id = designation->cd_successor_client_id;
+	dsk->cdd_successor_owner_id = designation->cd_successor_owner_id;
+	dsk->cdd_offset = designation->cd_offset;
+	dsk->cdd_count = designation->cd_count;
+	dsk->cdd_issuer_clientid = designation->cd_issuer_clientid;
+	dsk->cdd_expire_seconds = designation->cd_expire_seconds;
+	dsk->cdd_expire_nseconds = designation->cd_expire_nseconds;
+	dsk->cdd_token_len = designation->cd_token_len;
+	memcpy(dsk->cdd_token, designation->cd_token, sizeof(dsk->cdd_token));
+}
+
+static bool designation_disk_to_memory(const struct chunk_designation_disk *dsk,
+				       struct chunk_designation *designation)
+{
+	memset(designation, 0, sizeof(*designation));
+	memcpy(designation->cd_predecessor_stateid,
+	       dsk->cdd_predecessor_stateid,
+	       sizeof(designation->cd_predecessor_stateid));
+	memcpy(designation->cd_successor_stateid, dsk->cdd_successor_stateid,
+	       sizeof(designation->cd_successor_stateid));
+	designation->cd_predecessor_cohort_id = dsk->cdd_predecessor_cohort_id;
+	designation->cd_predecessor_client_id = dsk->cdd_predecessor_client_id;
+	designation->cd_predecessor_owner_id = dsk->cdd_predecessor_owner_id;
+	designation->cd_successor_cohort_id = dsk->cdd_successor_cohort_id;
+	designation->cd_successor_client_id = dsk->cdd_successor_client_id;
+	designation->cd_successor_owner_id = dsk->cdd_successor_owner_id;
+	designation->cd_offset = dsk->cdd_offset;
+	designation->cd_count = dsk->cdd_count;
+	designation->cd_issuer_clientid = dsk->cdd_issuer_clientid;
+	designation->cd_expire_seconds = dsk->cdd_expire_seconds;
+	designation->cd_expire_nseconds = dsk->cdd_expire_nseconds;
+	if (dsk->cdd_token_len == 0 ||
+	    dsk->cdd_token_len > CHUNK_DESIGNATION_TOKEN_MAX)
+		return false;
+	designation->cd_token_len = dsk->cdd_token_len;
+	memcpy(designation->cd_token, dsk->cdd_token,
+	       sizeof(designation->cd_token));
+	return designation_valid(designation);
 }
 
 /* ------------------------------------------------------------------ */
@@ -628,6 +840,9 @@ int chunk_store_persist(struct chunk_store *cs, const char *state_dir,
 		.csh_escrow_count = cs->cs_nescrows,
 		.csh_escrow_record_size =
 			sizeof(struct chunk_escrow_range_disk),
+		.csh_designation_count = cs->cs_ndesignations,
+		.csh_designation_record_size =
+			sizeof(struct chunk_designation_disk),
 	};
 	ssize_t n = write(fd, &hdr, sizeof(hdr));
 
@@ -659,6 +874,18 @@ int chunk_store_persist(struct chunk_store *cs, const char *state_dir,
 		if (n != (ssize_t)sizeof(dsk)) {
 			LOG("chunk_store_persist: escrow range %u write: %m",
 			    i);
+			ret = n < 0 ? -errno : -EIO;
+			goto err_close;
+		}
+	}
+
+	for (uint32_t i = 0; i < cs->cs_ndesignations; i++) {
+		struct chunk_designation_disk dsk;
+
+		designation_to_disk(&cs->cs_designations[i], &dsk);
+		n = write(fd, &dsk, sizeof(dsk));
+		if (n != (ssize_t)sizeof(dsk)) {
+			LOG("chunk_store_persist: designation %u write: %m", i);
 			ret = n < 0 ? -errno : -EIO;
 			goto err_close;
 		}
@@ -710,7 +937,10 @@ struct chunk_store *chunk_store_load(const char *state_dir, uint64_t inode_ino)
 	    hdr.csh_nblocks > CHUNK_STORE_MAX_BLOCKS ||
 	    hdr.csh_escrow_count > CHUNK_STORE_MAX_ESCROWS ||
 	    hdr.csh_escrow_record_size !=
-		    sizeof(struct chunk_escrow_range_disk)) {
+		    sizeof(struct chunk_escrow_range_disk) ||
+	    hdr.csh_designation_count > CHUNK_STORE_MAX_DESIGNATIONS ||
+	    hdr.csh_designation_record_size !=
+		    sizeof(struct chunk_designation_disk)) {
 		TRACE("chunk_store_load: bad header for ino %" PRIu64,
 		      inode_ino);
 		close(fd);
@@ -748,6 +978,17 @@ struct chunk_store *chunk_store_load(const char *state_dir, uint64_t inode_ino)
 		cs->cs_escrows =
 			calloc(cs->cs_escrow_cap, sizeof(*cs->cs_escrows));
 		if (!cs->cs_escrows) {
+			chunk_store_destroy(cs);
+			close(fd);
+			return NULL;
+		}
+	}
+	cs->cs_ndesignations = hdr.csh_designation_count;
+	cs->cs_designation_cap = hdr.csh_designation_count;
+	if (cs->cs_designation_cap) {
+		cs->cs_designations = calloc(cs->cs_designation_cap,
+					     sizeof(*cs->cs_designations));
+		if (!cs->cs_designations) {
 			chunk_store_destroy(cs);
 			close(fd);
 			return NULL;
@@ -792,6 +1033,20 @@ struct chunk_store *chunk_store_load(const char *state_dir, uint64_t inode_ino)
 		}
 	}
 
+	for (uint32_t i = 0; i < cs->cs_ndesignations; i++) {
+		struct chunk_designation_disk dsk;
+
+		n = read(fd, &dsk, sizeof(dsk));
+		if (n != (ssize_t)sizeof(dsk) ||
+		    !designation_disk_to_memory(&dsk,
+						&cs->cs_designations[i])) {
+			TRACE("chunk_store_load: invalid designation %u", i);
+			chunk_store_destroy(cs);
+			close(fd);
+			return NULL;
+		}
+	}
+
 	close(fd);
 	cs->cs_dirty = false;
 	return cs;
@@ -807,6 +1062,10 @@ void chunk_store_clear(struct chunk_store *cs)
 	cs->cs_escrows = NULL;
 	cs->cs_nescrows = 0;
 	cs->cs_escrow_cap = 0;
+	free(cs->cs_designations);
+	cs->cs_designations = NULL;
+	cs->cs_ndesignations = 0;
+	cs->cs_designation_cap = 0;
 	cs->cs_high_water = 0;
 	cs->cs_chunk_size = 0;
 	cs->cs_checksum_algorithm = 0;
@@ -819,6 +1078,7 @@ void chunk_store_destroy(struct chunk_store *cs)
 		return;
 	free(cs->cs_blocks);
 	free(cs->cs_escrows);
+	free(cs->cs_designations);
 	free(cs);
 }
 

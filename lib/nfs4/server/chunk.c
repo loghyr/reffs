@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include <zlib.h>
 
@@ -1802,12 +1803,8 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
 		return 0;
 	}
 	if (flags != 0) {
-		if (flags & CHUNK_LOCK_FLAGS_TAKEOVER) {
-			/* Live-client designation is not implemented yet. */
-			*status = NFS4ERR_NOTSUPP;
-			return 0;
-		}
-		if (chunk_escrow_id_is_zero(
+		if (!(flags & CHUNK_LOCK_FLAGS_TAKEOVER) &&
+		    chunk_escrow_id_is_zero(
 			    args->cla_adopt.chunk_lock_adopt4_u.cla_escrow_id)) {
 			*status = NFS4ERR_INVAL;
 			return 0;
@@ -1838,6 +1835,122 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
 		free(saved);
 		free(created);
 		*status = NFS4ERR_SERVERFAULT;
+		return 0;
+	}
+	if (flags & CHUNK_LOCK_FLAGS_TAKEOVER) {
+		const struct chunk_designation *found;
+		struct chunk_designation designation;
+		struct timespec now;
+
+		found = chunk_store_find_designation(
+			cs, args->cla_offset, args->cla_count,
+			args->cla_owner.co_cohort_id,
+			args->cla_owner.co_client_id, args->cla_owner.co_id,
+			stateid);
+		if (!found) {
+			bool already_transferred = true;
+
+			/* A lost reply must not turn a completed takeover into ACCESS. */
+			for (uint32_t i = 0; i < args->cla_count; i++) {
+				struct chunk_block *blk =
+					chunk_store_lookup_any(
+						cs, args->cla_offset + i);
+
+				if (!blk ||
+				    !(blk->cb_flags & CHUNK_BLOCK_LOCKED) ||
+				    !(blk->cb_lock_flags &
+				      CHUNK_LOCK_FLAGS_TAKEOVER) ||
+				    !chunk_lock_owner_values_equal(
+					    blk, args->cla_owner.co_cohort_id,
+					    args->cla_owner.co_client_id,
+					    args->cla_owner.co_id) ||
+				    !chunk_lock_stateid_equal(
+					    blk, &args->cla_stateid) ||
+				    !chunk_lock_range_equal(blk,
+							    args->cla_offset,
+							    args->cla_count)) {
+					already_transferred = false;
+					break;
+				}
+			}
+			*status = already_transferred ? NFS4_OK :
+							NFS4ERR_ACCESS;
+			goto takeover_cleanup;
+		}
+		designation = *found;
+		if (clock_gettime(CLOCK_REALTIME, &now) != 0 ||
+		    designation.cd_expire_seconds < now.tv_sec ||
+		    (designation.cd_expire_seconds == now.tv_sec &&
+		     designation.cd_expire_nseconds <= (uint32_t)now.tv_nsec)) {
+			*status = NFS4ERR_ACCESS;
+			goto takeover_cleanup;
+		}
+
+		for (uint32_t i = 0; i < args->cla_count; i++) {
+			struct chunk_block *blk = chunk_store_lookup_any(
+				cs, args->cla_offset + i);
+
+			if (!blk || !(blk->cb_flags & CHUNK_BLOCK_LOCKED) ||
+			    (blk->cb_flags & CHUNK_BLOCK_ESCROW) ||
+			    !chunk_lock_owner_values_equal(
+				    blk, designation.cd_predecessor_cohort_id,
+				    designation.cd_predecessor_client_id,
+				    designation.cd_predecessor_owner_id) ||
+			    memcmp(blk->cb_lock_stateid,
+				   designation.cd_predecessor_stateid,
+				   CHUNK_LOCK_STATEID_SIZE) != 0 ||
+			    !chunk_lock_range_equal(blk, args->cla_offset,
+						    args->cla_count)) {
+				*status = NFS4ERR_ACCESS;
+				goto takeover_cleanup;
+			}
+			saved[i] = *blk;
+		}
+
+		for (uint32_t i = 0; i < args->cla_count; i++) {
+			struct chunk_block *blk = chunk_store_lookup_any(
+				cs, args->cla_offset + i);
+
+			blk->cb_lock_cohort_id = args->cla_owner.co_cohort_id;
+			blk->cb_lock_client_id = args->cla_owner.co_client_id;
+			blk->cb_lock_owner_id = args->cla_owner.co_id;
+			blk->cb_lock_flags = CHUNK_LOCK_FLAGS_TAKEOVER;
+			memcpy(blk->cb_lock_stateid, stateid, sizeof(stateid));
+			memset(blk->cb_lock_escrow_id, 0,
+			       sizeof(blk->cb_lock_escrow_id));
+			blk->cb_writer_clientid =
+				nfs4_client_to_client(compound->c_nfs4_client)
+					->c_id;
+			cs->cs_dirty = true;
+		}
+
+		if (chunk_store_undesignate(cs, &designation) != 0) {
+			for (uint32_t i = 0; i < args->cla_count; i++)
+				*chunk_store_lookup_any(
+					cs, args->cla_offset + i) = saved[i];
+			cs->cs_dirty = true;
+			*status = NFS4ERR_SERVERFAULT;
+			goto takeover_cleanup;
+		}
+		if (chunk_test_persist_failure(compound->c_server_state) ||
+		    chunk_store_persist(cs,
+					compound->c_server_state->ss_state_dir,
+					compound->c_inode->i_ino) != 0) {
+			for (uint32_t i = 0; i < args->cla_count; i++)
+				*chunk_store_lookup_any(
+					cs, args->cla_offset + i) = saved[i];
+			cs->cs_dirty = true;
+			/* The designation was removed in-memory before persistence. */
+			(void)chunk_store_designate(cs, &designation);
+			*status = NFS4ERR_SERVERFAULT;
+			goto takeover_cleanup;
+		}
+		*status = NFS4_OK;
+
+takeover_cleanup:
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		free(saved);
+		free(created);
 		return 0;
 	}
 	if ((flags & CHUNK_LOCK_FLAGS_ADOPT) &&
@@ -1980,6 +2093,138 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
 
 	*status = NFS4_OK;
 
+	return 0;
+}
+
+uint32_t nfs4_op_chunk_lock_designate(struct compound *compound)
+{
+	CHUNK_LOCK_DESIGNATE4args *args =
+		NFS4_OP_ARG_SETUP(compound, opchunk_lock_designate);
+	CHUNK_LOCK_DESIGNATE4res *res =
+		NFS4_OP_RES_SETUP(compound, opchunk_lock_designate);
+	struct chunk_designation designation;
+	struct chunk_store *cs;
+	uint64_t issuer;
+	struct timespec now;
+	int ret;
+
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
+		res->cldr_status = NFS4ERR_NOFILEHANDLE;
+		return 0;
+	}
+	if (!chunk_mds_control_session(compound)) {
+		res->cldr_status = NFS4ERR_PERM;
+		return 0;
+	}
+	if (!compound->c_inode || !S_ISREG(compound->c_inode->i_mode)) {
+		res->cldr_status = NFS4ERR_INVAL;
+		return 0;
+	}
+	if (chunk_op_on_non_chunked(compound) ||
+	    chunk_lifecycle_check_range(args->clda_offset, args->clda_count) !=
+		    NFS4_OK ||
+	    args->clda_token.clda_token_len == 0 ||
+	    args->clda_token.clda_token_len > CHUNK_DESIGNATION_TOKEN_MAX ||
+	    args->clda_expire.nseconds >= 1000000000u ||
+	    stateid4_is_special(&args->clda_predecessor_stateid) ||
+	    stateid4_is_special(&args->clda_successor_stateid) ||
+	    chunk_cid_is_reserved(args->clda_predecessor.co_client_id) ||
+	    chunk_cid_is_reserved(args->clda_successor.co_client_id) ||
+	    (args->clda_predecessor.co_cohort_id ==
+		     args->clda_successor.co_cohort_id &&
+	     args->clda_predecessor.co_client_id ==
+		     args->clda_successor.co_client_id &&
+	     args->clda_predecessor.co_id == args->clda_successor.co_id)) {
+		res->cldr_status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	if (!compound->c_nfs4_client) {
+		res->cldr_status = NFS4ERR_PERM;
+		return 0;
+	}
+	issuer = nfs4_client_to_client(compound->c_nfs4_client)->c_id;
+	if (args->clda_issuer_clientid != issuer) {
+		res->cldr_status = NFS4ERR_ACCESS;
+		return 0;
+	}
+	if (clock_gettime(CLOCK_REALTIME, &now) != 0 ||
+	    args->clda_expire.seconds < now.tv_sec ||
+	    (args->clda_expire.seconds == now.tv_sec &&
+	     args->clda_expire.nseconds <= (uint32_t)now.tv_nsec)) {
+		res->cldr_status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	memset(&designation, 0, sizeof(designation));
+	chunk_lock_pack_stateid(designation.cd_predecessor_stateid,
+				&args->clda_predecessor_stateid);
+	chunk_lock_pack_stateid(designation.cd_successor_stateid,
+				&args->clda_successor_stateid);
+	designation.cd_predecessor_cohort_id =
+		args->clda_predecessor.co_cohort_id;
+	designation.cd_predecessor_client_id =
+		args->clda_predecessor.co_client_id;
+	designation.cd_predecessor_owner_id = args->clda_predecessor.co_id;
+	designation.cd_successor_cohort_id = args->clda_successor.co_cohort_id;
+	designation.cd_successor_client_id = args->clda_successor.co_client_id;
+	designation.cd_successor_owner_id = args->clda_successor.co_id;
+	designation.cd_offset = args->clda_offset;
+	designation.cd_count = args->clda_count;
+	designation.cd_issuer_clientid = args->clda_issuer_clientid;
+	designation.cd_expire_seconds = args->clda_expire.seconds;
+	designation.cd_expire_nseconds = args->clda_expire.nseconds;
+	designation.cd_token_len = args->clda_token.clda_token_len;
+	memcpy(designation.cd_token, args->clda_token.clda_token_val,
+	       designation.cd_token_len);
+
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	cs = chunk_store_get(compound->c_inode,
+			     compound->c_server_state->ss_state_dir);
+	if (!cs) {
+		res->cldr_status = NFS4ERR_SERVERFAULT;
+		goto out_unlock;
+	}
+	if (chunk_store_prune_expired_designations(cs) != 0 &&
+	    chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
+				compound->c_inode->i_ino) != 0) {
+		res->cldr_status = NFS4ERR_SERVERFAULT;
+		goto out_unlock;
+	}
+	for (uint32_t i = 0; i < designation.cd_count; i++) {
+		struct chunk_block *blk =
+			chunk_store_lookup_any(cs, designation.cd_offset + i);
+
+		if (!blk || !(blk->cb_flags & CHUNK_BLOCK_LOCKED) ||
+		    !chunk_lock_owner_values_equal(
+			    blk, designation.cd_predecessor_cohort_id,
+			    designation.cd_predecessor_client_id,
+			    designation.cd_predecessor_owner_id) ||
+		    !chunk_lock_stateid_equal(
+			    blk, &args->clda_predecessor_stateid)) {
+			res->cldr_status = NFS4ERR_ACCESS;
+			goto out_unlock;
+		}
+	}
+	ret = chunk_store_designate(cs, &designation);
+	if (ret == -EEXIST) {
+		res->cldr_status = NFS4ERR_INVAL;
+		goto out_unlock;
+	}
+	if (ret != 0) {
+		res->cldr_status = NFS4ERR_SERVERFAULT;
+		goto out_unlock;
+	}
+	if (chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
+				compound->c_inode->i_ino) != 0) {
+		chunk_store_undesignate(cs, &designation);
+		res->cldr_status = NFS4ERR_SERVERFAULT;
+		goto out_unlock;
+	}
+	res->cldr_status = NFS4_OK;
+
+out_unlock:
+	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 	return 0;
 }
 

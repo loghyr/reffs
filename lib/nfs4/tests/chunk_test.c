@@ -27,6 +27,7 @@
 #endif
 
 #include <netinet/in.h>
+#include <rpc/xdr.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -426,6 +427,31 @@ static void set_chunk_lock_args(struct cm_ctx *cm, uint64_t offset,
 		.co_id = owner,
 	};
 	args->cla_adopt.cla_adopt = adopt;
+}
+
+static void set_chunk_lock_designate_args(struct cm_ctx *cm, uint64_t offset,
+					  uint32_t count,
+					  const chunk_owner4 *predecessor,
+					  const chunk_owner4 *successor,
+					  const uint8_t *token,
+					  uint32_t token_len)
+{
+	CHUNK_LOCK_DESIGNATE4args *args;
+
+	cm_set_op(cm, 0, OP_CHUNK_LOCK_DESIGNATE);
+	args = &cm->compound->c_args->argarray.argarray_val[0]
+			.nfs_argop4_u.opchunk_lock_designate;
+	args->clda_predecessor_stateid = cm->chunk_stateid;
+	args->clda_successor_stateid = cm->chunk_stateid;
+	args->clda_predecessor = *predecessor;
+	args->clda_successor = *successor;
+	args->clda_offset = offset;
+	args->clda_count = count;
+	args->clda_issuer_clientid = cm->nc->nc_client.c_id;
+	args->clda_expire.seconds = (int64_t)time(NULL) + 60;
+	args->clda_expire.nseconds = 0;
+	args->clda_token.clda_token_len = token_len;
+	args->clda_token.clda_token_val = (char *)token;
 }
 
 static void set_chunk_unlock_args(struct cm_ctx *cm, uint64_t offset,
@@ -3789,7 +3815,7 @@ START_TEST(test_chunk_lock_conflict_reports_holder)
 }
 END_TEST
 
-START_TEST(test_chunk_lock_takeover_is_not_supported)
+START_TEST(test_chunk_lock_takeover_requires_designation)
 {
 	struct cm_ctx *cm = cm_alloc(1);
 
@@ -3800,9 +3826,311 @@ START_TEST(test_chunk_lock_takeover_is_not_supported)
 	nfs4_op_chunk_lock(cm->compound);
 	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
 				 .nfs_resop4_u.opchunk_lock.clr_status,
-			 NFS4ERR_NOTSUPP);
+			 NFS4ERR_ACCESS);
 
 	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_chunk_lock_takeover_consumes_designation)
+{
+	static const uint8_t token[] = { 0x64, 0x65, 0x73, 0x67 };
+	const chunk_owner4 predecessor = {
+		.co_cohort_id = 0x100,
+		.co_client_id = 0xBEEF,
+		.co_id = 1,
+	};
+	const chunk_owner4 successor = {
+		.co_cohort_id = 0x200,
+		.co_client_id = 0xCAFE,
+		.co_id = 2,
+	};
+	struct cm_ctx *cm = cm_alloc(1);
+	struct chunk_block *blk;
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+	set_chunk_lock_args(cm, 0, 1, predecessor.co_cohort_id,
+			    predecessor.co_client_id, predecessor.co_id, 0,
+			    false);
+	nfs4_op_chunk_lock(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_lock.clr_status,
+			 NFS4_OK);
+
+	cm_reset_slot(cm, 0);
+	cm->compound->c_nfs4_client->nc_exchgid_flags =
+		EXCHGID4_FLAG_USE_PNFS_MDS;
+	set_chunk_lock_designate_args(cm, 0, 1, &predecessor, &successor, token,
+				      sizeof(token));
+	nfs4_op_chunk_lock_designate(cm->compound);
+	ck_assert_int_eq(
+		cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opchunk_lock_designate.cldr_status,
+		NFS4_OK);
+	ck_assert_uint_eq(g_inode->i_chunk_store->cs_ndesignations, 1);
+
+	cm_reset_slot(cm, 0);
+	set_chunk_lock_args(cm, 0, 1, successor.co_cohort_id,
+			    successor.co_client_id, successor.co_id,
+			    CHUNK_LOCK_FLAGS_TAKEOVER, false);
+	nfs4_op_chunk_lock(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_lock.clr_status,
+			 NFS4_OK);
+	blk = chunk_store_lookup_any(g_inode->i_chunk_store, 0);
+	ck_assert_ptr_nonnull(blk);
+	ck_assert_uint_eq(blk->cb_lock_cohort_id, successor.co_cohort_id);
+	ck_assert_uint_eq(blk->cb_lock_client_id, successor.co_client_id);
+	ck_assert_uint_eq(blk->cb_lock_owner_id, successor.co_id);
+	ck_assert_uint_eq(g_inode->i_chunk_store->cs_ndesignations, 0);
+
+	/* A retransmitted TAKEOVER is the successful operation's replay. */
+	cm_reset_slot(cm, 0);
+	set_chunk_lock_args(cm, 0, 1, successor.co_cohort_id,
+			    successor.co_client_id, successor.co_id,
+			    CHUNK_LOCK_FLAGS_TAKEOVER, false);
+	nfs4_op_chunk_lock(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_lock.clr_status,
+			 NFS4_OK);
+
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_chunk_lock_takeover_rolls_back_on_persist_failure)
+{
+	static const uint8_t token[] = { 0x72, 0x6f, 0x6c };
+	const chunk_owner4 predecessor = {
+		.co_cohort_id = 0x300,
+		.co_client_id = 0xBEEF,
+		.co_id = 3,
+	};
+	const chunk_owner4 successor = {
+		.co_cohort_id = 0x400,
+		.co_client_id = 0xCAFE,
+		.co_id = 4,
+	};
+	struct server_state *ss;
+	struct cm_ctx *cm = cm_alloc(1);
+	struct chunk_block *blk;
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+	set_chunk_lock_args(cm, 0, 1, predecessor.co_cohort_id,
+			    predecessor.co_client_id, predecessor.co_id, 0,
+			    false);
+	nfs4_op_chunk_lock(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_lock.clr_status,
+			 NFS4_OK);
+
+	cm_reset_slot(cm, 0);
+	cm->compound->c_nfs4_client->nc_exchgid_flags =
+		EXCHGID4_FLAG_USE_PNFS_MDS;
+	set_chunk_lock_designate_args(cm, 0, 1, &predecessor, &successor, token,
+				      sizeof(token));
+	nfs4_op_chunk_lock_designate(cm->compound);
+	ck_assert_int_eq(
+		cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opchunk_lock_designate.cldr_status,
+		NFS4_OK);
+
+	cm_reset_slot(cm, 0);
+	set_chunk_lock_args(cm, 0, 1, successor.co_cohort_id,
+			    successor.co_client_id, successor.co_id,
+			    CHUNK_LOCK_FLAGS_TAKEOVER, false);
+	ss = server_state_find();
+	ck_assert_ptr_nonnull(ss);
+	atomic_store(&ss->ss_test_chunk_persist_fail_count, 1);
+	server_state_put(ss);
+	nfs4_op_chunk_lock(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_lock.clr_status,
+			 NFS4ERR_SERVERFAULT);
+	blk = chunk_store_lookup_any(g_inode->i_chunk_store, 0);
+	ck_assert_ptr_nonnull(blk);
+	ck_assert_uint_eq(blk->cb_lock_cohort_id, predecessor.co_cohort_id);
+	ck_assert_uint_eq(g_inode->i_chunk_store->cs_ndesignations, 1);
+
+	cm_reset_slot(cm, 0);
+	set_chunk_lock_args(cm, 0, 1, successor.co_cohort_id,
+			    successor.co_client_id, successor.co_id,
+			    CHUNK_LOCK_FLAGS_TAKEOVER, false);
+	nfs4_op_chunk_lock(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_lock.clr_status,
+			 NFS4_OK);
+	ck_assert_uint_eq(g_inode->i_chunk_store->cs_ndesignations, 0);
+
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_chunk_lock_designate_requires_mds_session)
+{
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	mark_chunked(g_inode, INODE_CHUNKED_YES);
+	ck_assert_int_eq(dispatch_one(cm, OP_CHUNK_LOCK_DESIGNATE),
+			 NFS4ERR_PERM);
+
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_chunk_designation_persists_and_replays)
+{
+	struct server_state *ss = server_state_find();
+	struct chunk_designation designation = { 0 };
+	struct chunk_store *cs;
+	struct chunk_store *old;
+	struct chunk_store *reloaded;
+	struct chunk_designation replay;
+
+	designation.cd_offset = 32;
+	designation.cd_count = 2;
+	designation.cd_issuer_clientid = 0x12345678;
+	designation.cd_expire_seconds = INT64_MAX;
+	designation.cd_token_len = 4;
+	memcpy(designation.cd_token, "desg", designation.cd_token_len);
+	designation.cd_predecessor_cohort_id = 0x1111;
+	designation.cd_predecessor_client_id = 0x2222;
+	designation.cd_predecessor_owner_id = 0x3333;
+	designation.cd_successor_cohort_id = 0x4444;
+	designation.cd_successor_client_id = 0x5555;
+	designation.cd_successor_owner_id = 0x6666;
+	memset(designation.cd_predecessor_stateid, 0xA1,
+	       sizeof(designation.cd_predecessor_stateid));
+	memset(designation.cd_successor_stateid, 0xB2,
+	       sizeof(designation.cd_successor_stateid));
+	replay = designation;
+	memset(replay.cd_token + replay.cd_token_len, 0xCC,
+	       sizeof(replay.cd_token) - replay.cd_token_len);
+
+	pthread_mutex_lock(&g_inode->i_attr_mutex);
+	cs = chunk_store_get(g_inode, ss->ss_state_dir);
+	ck_assert_ptr_nonnull(cs);
+	ck_assert_int_eq(chunk_store_designate(cs, &designation), 0);
+	ck_assert_int_eq(chunk_store_designate(cs, &replay), 0);
+	ck_assert_uint_eq(cs->cs_ndesignations, 1);
+	ck_assert_int_eq(
+		chunk_store_persist(cs, ss->ss_state_dir, g_inode->i_ino), 0);
+	old = g_inode->i_chunk_store;
+	g_inode->i_chunk_store = NULL;
+	chunk_store_destroy(old);
+	reloaded = chunk_store_get(g_inode, ss->ss_state_dir);
+	ck_assert_ptr_nonnull(reloaded);
+	ck_assert_uint_eq(reloaded->cs_ndesignations, 1);
+	ck_assert_mem_eq(&reloaded->cs_designations[0], &designation,
+			 sizeof(designation));
+	pthread_mutex_unlock(&g_inode->i_attr_mutex);
+	server_state_put(ss);
+}
+END_TEST
+
+START_TEST(test_chunk_designation_expiry_allows_replacement)
+{
+	struct chunk_designation expired = { 0 };
+	struct chunk_designation replacement;
+	struct chunk_store *cs;
+	struct server_state *ss = server_state_find();
+
+	expired.cd_offset = 48;
+	expired.cd_count = 1;
+	expired.cd_expire_seconds = 1;
+	expired.cd_token_len = 1;
+	expired.cd_token[0] = 0x01;
+	replacement = expired;
+	replacement.cd_expire_seconds = INT64_MAX;
+	replacement.cd_token[0] = 0x02;
+
+	pthread_mutex_lock(&g_inode->i_attr_mutex);
+	cs = chunk_store_get(g_inode, ss->ss_state_dir);
+	ck_assert_ptr_nonnull(cs);
+	ck_assert_int_eq(chunk_store_designate(cs, &expired), 0);
+	ck_assert_uint_eq(chunk_store_prune_expired_designations(cs), 1);
+	ck_assert_int_eq(chunk_store_designate(cs, &replacement), 0);
+	ck_assert_uint_eq(cs->cs_ndesignations, 1);
+	pthread_mutex_unlock(&g_inode->i_attr_mutex);
+
+	server_state_put(ss);
+}
+END_TEST
+
+START_TEST(test_chunk_lock_designate_xdr_roundtrip)
+{
+	static const uint8_t token[] = { 0x01, 0x02, 0x03 };
+	CHUNK_LOCK_DESIGNATE4args *in_args;
+	CHUNK_LOCK_DESIGNATE4args *out_args;
+	CHUNK_LOCK_DESIGNATE4res *in_res;
+	CHUNK_LOCK_DESIGNATE4res *out_res;
+	nfs_argop4 in_arg = { 0 };
+	nfs_argop4 out_arg = { 0 };
+	nfs_resop4 in_resop = { 0 };
+	nfs_resop4 out_resop = { 0 };
+	uint8_t buf[1024];
+	XDR xdrs;
+	u_int len;
+
+	in_arg.argop = OP_CHUNK_LOCK_DESIGNATE;
+	in_args = &in_arg.nfs_argop4_u.opchunk_lock_designate;
+	in_args->clda_predecessor_stateid.seqid = 7;
+	in_args->clda_predecessor_stateid.other[0] = 0xA1;
+	in_args->clda_successor_stateid.seqid = 8;
+	in_args->clda_successor_stateid.other[0] = 0xB2;
+	in_args->clda_predecessor = (chunk_owner4){
+		.co_cohort_id = 0x1111,
+		.co_client_id = 0x2222,
+		.co_id = 0x3333,
+	};
+	in_args->clda_successor = (chunk_owner4){
+		.co_cohort_id = 0x4444,
+		.co_client_id = 0x5555,
+		.co_id = 0x6666,
+	};
+	in_args->clda_offset = 12;
+	in_args->clda_count = 3;
+	in_args->clda_issuer_clientid = 0x7777;
+	in_args->clda_expire.seconds = 123456;
+	in_args->clda_expire.nseconds = 789;
+	in_args->clda_token.clda_token_len = sizeof(token);
+	in_args->clda_token.clda_token_val = (char *)token;
+
+	xdrmem_create(&xdrs, (char *)buf, sizeof(buf), XDR_ENCODE);
+	ck_assert(xdr_nfs_argop4(&xdrs, &in_arg));
+	len = xdr_getpos(&xdrs);
+	xdr_destroy(&xdrs);
+
+	xdrmem_create(&xdrs, (char *)buf, len, XDR_DECODE);
+	ck_assert(xdr_nfs_argop4(&xdrs, &out_arg));
+	xdr_destroy(&xdrs);
+	out_args = &out_arg.nfs_argop4_u.opchunk_lock_designate;
+	ck_assert_int_eq(out_arg.argop, OP_CHUNK_LOCK_DESIGNATE);
+	ck_assert_uint_eq(out_args->clda_offset, in_args->clda_offset);
+	ck_assert_uint_eq(out_args->clda_count, in_args->clda_count);
+	ck_assert_uint_eq(out_args->clda_issuer_clientid,
+			  in_args->clda_issuer_clientid);
+	ck_assert_mem_eq(out_args->clda_token.clda_token_val, token,
+			 sizeof(token));
+	xdr_free((xdrproc_t)xdr_nfs_argop4, (char *)&out_arg);
+
+	in_resop.resop = OP_CHUNK_LOCK_DESIGNATE;
+	in_res = &in_resop.nfs_resop4_u.opchunk_lock_designate;
+	in_res->cldr_status = NFS4_OK;
+	xdrmem_create(&xdrs, (char *)buf, sizeof(buf), XDR_ENCODE);
+	ck_assert(xdr_nfs_resop4(&xdrs, &in_resop));
+	len = xdr_getpos(&xdrs);
+	xdr_destroy(&xdrs);
+	xdrmem_create(&xdrs, (char *)buf, len, XDR_DECODE);
+	ck_assert(xdr_nfs_resop4(&xdrs, &out_resop));
+	xdr_destroy(&xdrs);
+	out_res = &out_resop.nfs_resop4_u.opchunk_lock_designate;
+	ck_assert_int_eq(out_resop.resop, OP_CHUNK_LOCK_DESIGNATE);
+	ck_assert_int_eq(out_res->cldr_status, NFS4_OK);
+	xdr_free((xdrproc_t)xdr_nfs_resop4, (char *)&out_resop);
 }
 END_TEST
 
@@ -4481,7 +4809,14 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_h, test_chunk_write_still_works_through_dispatch);
 	tcase_add_test(tc_h, test_chunk_lock_and_unlock_empty_range);
 	tcase_add_test(tc_h, test_chunk_lock_conflict_reports_holder);
-	tcase_add_test(tc_h, test_chunk_lock_takeover_is_not_supported);
+	tcase_add_test(tc_h, test_chunk_lock_takeover_requires_designation);
+	tcase_add_test(tc_h, test_chunk_lock_takeover_consumes_designation);
+	tcase_add_test(tc_h,
+		       test_chunk_lock_takeover_rolls_back_on_persist_failure);
+	tcase_add_test(tc_h, test_chunk_lock_designate_requires_mds_session);
+	tcase_add_test(tc_h, test_chunk_designation_persists_and_replays);
+	tcase_add_test(tc_h, test_chunk_designation_expiry_allows_replacement);
+	tcase_add_test(tc_h, test_chunk_lock_designate_xdr_roundtrip);
 	tcase_add_test(tc_h, test_chunk_mds_epoch_persistence_roundtrip);
 	tcase_add_test(tc_h, test_chunk_escrow_install_and_release);
 	tcase_add_test(tc_h, test_chunk_escrow_release_rejects_stale_id);

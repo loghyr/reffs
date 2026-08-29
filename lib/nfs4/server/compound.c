@@ -260,7 +260,7 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 		    op != OP_DESTROY_CLIENTID) {
 			nfs_resop4 *resop = &res->resarray.resarray_val[0];
 
-			if (op < OP_ACCESS || op > OP_CHUNK_WRITE_REPAIR) {
+			if (op < OP_ACCESS || op >= OP_MAX) {
 				resop->resop = OP_ILLEGAL;
 				resop->nfs_resop4_u.opillegal.status =
 					NFS4ERR_OP_ILLEGAL;

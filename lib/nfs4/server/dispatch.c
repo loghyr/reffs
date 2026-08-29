@@ -130,6 +130,7 @@ nfs4_op_cb op_table[OP_MAX] = {
 	[OP_CHUNK_FINALIZE] = nfs4_op_chunk_finalize,
 	[OP_CHUNK_HEADER_READ] = nfs4_op_chunk_header_read,
 	[OP_CHUNK_LOCK] = nfs4_op_chunk_lock,
+	[OP_CHUNK_LOCK_DESIGNATE] = nfs4_op_chunk_lock_designate,
 	[OP_CHUNK_READ] = nfs4_op_chunk_read,
 	[OP_CHUNK_REPAIRED] = nfs4_op_chunk_repaired,
 	[OP_CHUNK_ROLLBACK] = nfs4_op_chunk_rollback,
@@ -210,6 +211,7 @@ static bool op_allowed_on_chunked_data_file(uint32_t op)
 	case OP_CHUNK_ROLLBACK:
 	case OP_CHUNK_HEADER_READ:
 	case OP_CHUNK_LOCK:
+	case OP_CHUNK_LOCK_DESIGNATE:
 	case OP_CHUNK_UNLOCK:
 	case OP_CHUNK_ERROR:
 	case OP_CHUNK_REPAIRED:

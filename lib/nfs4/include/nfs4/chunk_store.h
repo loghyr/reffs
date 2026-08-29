@@ -59,6 +59,8 @@ enum chunk_state {
 /* Persistent lock identity fields reserved for the CHUNK_LOCK seam. */
 #define CHUNK_LOCK_STATEID_SIZE 16
 #define CHUNK_LOCK_ESCROW_ID_SIZE 16
+#define CHUNK_DESIGNATION_TOKEN_MAX 256
+#define CHUNK_STORE_MAX_DESIGNATIONS 256
 
 /*
  * CHUNK_VALUE_MAX is sized for the largest supported checksum (SHA512,
@@ -132,7 +134,7 @@ struct chunk_block {
  */
 
 #define CHUNK_STORE_MAGIC 0x434B5354 /* "CKST" */
-#define CHUNK_STORE_VERSION 3
+#define CHUNK_STORE_VERSION 4
 #define CHUNK_STORE_MAX_ESCROWS 4096
 
 struct chunk_escrow_range {
@@ -151,6 +153,8 @@ struct chunk_store_header {
 	uint32_t csh_checksum_algorithm;
 	uint32_t csh_escrow_count;
 	uint32_t csh_escrow_record_size;
+	uint32_t csh_designation_count;
+	uint32_t csh_designation_record_size;
 };
 
 struct chunk_escrow_range_disk {
@@ -158,6 +162,44 @@ struct chunk_escrow_range_disk {
 	uint32_t cerd_count;
 	uint32_t cerd_pad;
 	uint8_t cerd_id[CHUNK_LOCK_ESCROW_ID_SIZE];
+};
+
+/* A range-bound authorization for a live-client lock transfer. */
+struct chunk_designation {
+	uint8_t cd_predecessor_stateid[CHUNK_LOCK_STATEID_SIZE];
+	uint8_t cd_successor_stateid[CHUNK_LOCK_STATEID_SIZE];
+	uint64_t cd_predecessor_cohort_id;
+	uint32_t cd_predecessor_client_id;
+	uint32_t cd_predecessor_owner_id;
+	uint64_t cd_successor_cohort_id;
+	uint32_t cd_successor_client_id;
+	uint32_t cd_successor_owner_id;
+	uint64_t cd_offset;
+	uint32_t cd_count;
+	uint64_t cd_issuer_clientid;
+	int64_t cd_expire_seconds;
+	uint32_t cd_expire_nseconds;
+	uint32_t cd_token_len;
+	uint8_t cd_token[CHUNK_DESIGNATION_TOKEN_MAX];
+};
+
+struct chunk_designation_disk {
+	uint8_t cdd_predecessor_stateid[CHUNK_LOCK_STATEID_SIZE];
+	uint8_t cdd_successor_stateid[CHUNK_LOCK_STATEID_SIZE];
+	uint64_t cdd_predecessor_cohort_id;
+	uint32_t cdd_predecessor_client_id;
+	uint32_t cdd_predecessor_owner_id;
+	uint64_t cdd_successor_cohort_id;
+	uint32_t cdd_successor_client_id;
+	uint32_t cdd_successor_owner_id;
+	uint64_t cdd_offset;
+	uint32_t cdd_count;
+	uint32_t cdd_pad0;
+	uint64_t cdd_issuer_clientid;
+	int64_t cdd_expire_seconds;
+	uint32_t cdd_expire_nseconds;
+	uint32_t cdd_token_len;
+	uint8_t cdd_token[CHUNK_DESIGNATION_TOKEN_MAX];
 };
 
 struct chunk_block_disk {
@@ -206,6 +248,9 @@ static_assert(sizeof(struct chunk_block_disk) == 184,
 static_assert(sizeof(struct chunk_escrow_range_disk) == 32,
 	      "chunk_escrow_range_disk size changed -- update the store "
 	      "version before changing the persisted range index");
+static_assert(sizeof(struct chunk_designation_disk) == 360,
+	      "chunk_designation_disk size changed -- update the store "
+	      "version before changing designation persistence");
 
 /*
  * In-memory chunk store for an inode.  Grows on demand as blocks
@@ -230,6 +275,9 @@ struct chunk_store {
 	struct chunk_escrow_range *cs_escrows;
 	uint32_t cs_nescrows;
 	uint32_t cs_escrow_cap;
+	struct chunk_designation *cs_designations;
+	uint32_t cs_ndesignations;
+	uint32_t cs_designation_cap;
 	bool cs_dirty; /* needs persistence */
 };
 
@@ -278,6 +326,24 @@ int chunk_store_refresh_escrows(struct chunk_store *cs);
 /* Return true when the refreshed index contains this exact escrow range. */
 bool chunk_store_has_escrow(const struct chunk_store *cs, uint64_t offset,
 			    uint32_t count, const void *id);
+
+/* Install or replay a range-bound live-client designation. */
+int chunk_store_designate(struct chunk_store *cs,
+			  const struct chunk_designation *designation);
+
+/* Remove a designation after a failed durable install. */
+int chunk_store_undesignate(struct chunk_store *cs,
+			    const struct chunk_designation *designation);
+
+/* Find a designation for an exact successor range and stateid. */
+const struct chunk_designation *chunk_store_find_designation(
+	const struct chunk_store *cs, uint64_t offset, uint32_t count,
+	uint64_t successor_cohort_id, uint32_t successor_client_id,
+	uint32_t successor_owner_id,
+	const uint8_t successor_stateid[CHUNK_LOCK_STATEID_SIZE]);
+
+/* Remove expired designations; callers hold the inode attribute lock. */
+unsigned int chunk_store_prune_expired_designations(struct chunk_store *cs);
 
 /*
  * chunk_store_transition -- move blocks from one state to another.

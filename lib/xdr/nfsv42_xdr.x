@@ -1549,6 +1549,12 @@ enum nfs_opnum4 {
 % */
  OP_EXCHANGE_RANGE      = 100,
 
+%/*
+% * CHUNK_LOCK_DESIGNATE carries durable authorization for a live-client
+% * lock transfer.  Op number 101 is provisional pending IANA assignment.
+% */
+ OP_CHUNK_LOCK_DESIGNATE = 101,
+
  OP_ILLEGAL             = 10044
 };
 
@@ -3637,6 +3643,30 @@ struct CHUNK_LOCK4args {
     chunk_lock_adopt4   cla_adopt;
 };
 
+/*
+ * A designation binds one live lock transfer to a file, range,
+ * predecessor, and successor.  The operation is sent on the data-server
+ * control session with CURRENT_FH set to the data-server filehandle.
+ */
+const CHUNK_LOCK_DESIGNATION_TOKEN_MAX4 = 256;
+
+struct CHUNK_LOCK_DESIGNATE4args {
+    /* CURRENT_FH: data-server file */
+    stateid4            clda_predecessor_stateid;
+    stateid4            clda_successor_stateid;
+    chunk_owner4        clda_predecessor;
+    chunk_owner4        clda_successor;
+    offset4             clda_offset;
+    count4              clda_count;
+    clientid4           clda_issuer_clientid;
+    nfstime4            clda_expire;
+    opaque              clda_token<CHUNK_LOCK_DESIGNATION_TOKEN_MAX4>;
+};
+
+struct CHUNK_LOCK_DESIGNATE4res {
+    nfsstat4            cldr_status;
+};
+
 union CHUNK_LOCK4res switch (nfsstat4 clr_status) {
     case NFS4_OK:
         void;
@@ -4283,6 +4313,8 @@ union nfs_argop4 switch (nfs_opnum4 argop) {
  case OP_CHUNK_UNLOCK: CHUNK_UNLOCK4args opchunk_unlock;
  case OP_CHUNK_WRITE: CHUNK_WRITE4args opchunk_write;
  case OP_CHUNK_WRITE_REPAIR: CHUNK_WRITE_REPAIR4args opchunk_write_repair;
+ case OP_CHUNK_LOCK_DESIGNATE:
+     CHUNK_LOCK_DESIGNATE4args opchunk_lock_designate;
  case OP_EXCHANGE_RANGE: EXCHANGE_RANGE4args opexchange_range;
  case OP_TRUST_STATEID: TRUST_STATEID4args optrust_stateid;
  case OP_REVOKE_STATEID: REVOKE_STATEID4args oprevoke_stateid;
@@ -4453,6 +4485,8 @@ union nfs_resop4 switch (nfs_opnum4 resop) {
  case OP_CHUNK_UNLOCK: CHUNK_UNLOCK4res opchunk_unlock;
  case OP_CHUNK_WRITE: CHUNK_WRITE4res opchunk_write;
  case OP_CHUNK_WRITE_REPAIR: CHUNK_WRITE_REPAIR4res opchunk_write_repair;
+ case OP_CHUNK_LOCK_DESIGNATE:
+     CHUNK_LOCK_DESIGNATE4res opchunk_lock_designate;
  case OP_EXCHANGE_RANGE: EXCHANGE_RANGE4res opexchange_range;
  case OP_TRUST_STATEID: TRUST_STATEID4res optrust_stateid;
  case OP_REVOKE_STATEID: REVOKE_STATEID4res oprevoke_stateid;
