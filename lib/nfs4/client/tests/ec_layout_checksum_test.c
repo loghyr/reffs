@@ -81,10 +81,9 @@ START_TEST(test_validate_all_none)
 }
 END_TEST
 
-START_TEST(test_validate_first_mirror_unsupported)
+START_TEST(test_validate_first_mirror_unknown)
 {
-	struct ec_layout *layout =
-		make_layout(CHECKSUM_ALG_SHA256, CHECKSUM_ALG_CRC32);
+	struct ec_layout *layout = make_layout(99, CHECKSUM_ALG_CRC32);
 
 	ck_assert_ptr_nonnull(layout);
 	uint32_t bad = 0xFF;
@@ -95,10 +94,9 @@ START_TEST(test_validate_first_mirror_unsupported)
 }
 END_TEST
 
-START_TEST(test_validate_second_mirror_unsupported)
+START_TEST(test_validate_second_mirror_unknown)
 {
-	struct ec_layout *layout =
-		make_layout(CHECKSUM_ALG_CRC32, CHECKSUM_ALG_BLAKE3);
+	struct ec_layout *layout = make_layout(CHECKSUM_ALG_CRC32, 99);
 
 	ck_assert_ptr_nonnull(layout);
 	uint32_t bad = 0xFF;
@@ -112,15 +110,14 @@ END_TEST
 START_TEST(test_validate_all_algorithms)
 {
 	/*
-	 * Pin the exact set the client accepts.  When a new
-	 * dispatcher lands (e.g., CRC32C), this test will fail and
-	 * force the supported-set table in mds_layout.c to be
-	 * updated in lock-step.
+	 * Pin the initial checksum registry as the exact set the common
+	 * dispatcher accepts.  Unregistered values stay fail-closed.
 	 */
-	const uint32_t expect_ok[] = { CHECKSUM_ALG_NONE, CHECKSUM_ALG_CRC32 };
-	const uint32_t expect_unsupp[] = {
+	const uint32_t expect_ok[] = {
+		CHECKSUM_ALG_NONE,   CHECKSUM_ALG_CRC32,
 		CHECKSUM_ALG_CRC32C, CHECKSUM_ALG_FLETCHER4,
-		CHECKSUM_ALG_SHA256, CHECKSUM_ALG_SHA512, CHECKSUM_ALG_BLAKE3
+		CHECKSUM_ALG_SHA256, CHECKSUM_ALG_SHA512,
+		CHECKSUM_ALG_BLAKE3
 	};
 
 	for (size_t i = 0; i < sizeof(expect_ok) / sizeof(expect_ok[0]); i++) {
@@ -128,16 +125,6 @@ START_TEST(test_validate_all_algorithms)
 			make_layout(expect_ok[i], expect_ok[i]);
 
 		ck_assert_int_eq(ec_layout_validate_checksums(layout, NULL), 0);
-		free_layout(layout);
-	}
-
-	for (size_t i = 0; i < sizeof(expect_unsupp) / sizeof(expect_unsupp[0]);
-	     i++) {
-		struct ec_layout *layout =
-			make_layout(expect_unsupp[i], CHECKSUM_ALG_CRC32);
-
-		ck_assert_int_eq(ec_layout_validate_checksums(layout, NULL),
-				 -ENOTSUP);
 		free_layout(layout);
 	}
 }
@@ -161,8 +148,8 @@ static Suite *ec_layout_checksum_suite(void)
 
 	tcase_add_test(tc, test_validate_all_crc32);
 	tcase_add_test(tc, test_validate_all_none);
-	tcase_add_test(tc, test_validate_first_mirror_unsupported);
-	tcase_add_test(tc, test_validate_second_mirror_unsupported);
+	tcase_add_test(tc, test_validate_first_mirror_unknown);
+	tcase_add_test(tc, test_validate_second_mirror_unknown);
 	tcase_add_test(tc, test_validate_all_algorithms);
 	tcase_add_test(tc, test_validate_null_layout);
 	suite_add_tcase(s, tc);

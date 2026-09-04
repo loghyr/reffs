@@ -400,7 +400,7 @@ int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
 		ret = ds_chunk_write(ctx->ctx_ds_sess[mirror_idx], em->em_fh,
 				     em->em_fh_len, block_offset, chunk_sz, src,
 				     wsz, cohort_id, owner_id, em->em_client_id,
-				     stid, guard);
+				     em->em_checksum_algorithm, stid, guard);
 		if (ret != -ESTALE)
 			return ret;
 
@@ -478,8 +478,8 @@ int ec_chunk_read(struct ec_context *ctx, int mirror_idx, uint64_t block_offset,
 
 		ret = ds_chunk_read(ctx->ctx_ds_sess[mirror_idx], em->em_fh,
 				    em->em_fh_len, block_offset, nblk, shard,
-				    rd_chunk_sz, nread, stid, out_owners,
-				    out_guards);
+				    rd_chunk_sz, em->em_checksum_algorithm,
+				    nread, stid, out_owners, out_guards);
 		if (ret != -ESTALE && ret != -EAGAIN)
 			return ret;
 
@@ -2814,7 +2814,8 @@ int ec_repair_encoding(struct mds_session *ms, const char *path, int k, int m,
 				ctx.ctx_ds_sess[i], em->em_fh, em->em_fh_len,
 				blk_off, rd_chunk_sz, shards[i], rsz,
 				ctx.ctx_cohort_id, (uint32_t)blk_off,
-				em->em_client_id, &ctx.ctx_layout.el_stateid);
+				em->em_client_id, em->em_checksum_algorithm,
+				&ctx.ctx_layout.el_stateid);
 			if (ret)
 				break;
 			stats.shards_repaired++;

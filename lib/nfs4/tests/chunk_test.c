@@ -830,6 +830,78 @@ START_TEST(test_chunk_write_valid_crc)
 }
 END_TEST
 
+static void set_write_args_raw_checksum(struct cm_ctx *cm, char *buf,
+					uint32_t buf_len, uint32_t chunk_size,
+					uint64_t offset, uint32_t algo,
+					const uint8_t *value,
+					uint32_t value_len);
+
+/*
+ * Every data-bearing algorithm registered by Flex Files v2 must pass
+ * through the production CHUNK_WRITE validation and storage path.  Clear
+ * the store between algorithms so each iteration establishes a fresh
+ * per-file checksum policy without repeating the expensive server fixture.
+ */
+START_TEST(test_chunk_write_registered_algorithm)
+{
+	static const uint32_t algorithms[] = {
+		CHECKSUM_ALG_CRC32,	CHECKSUM_ALG_CRC32C,
+		CHECKSUM_ALG_FLETCHER4, CHECKSUM_ALG_SHA256,
+		CHECKSUM_ALG_SHA512,	CHECKSUM_ALG_BLAKE3,
+	};
+	char buf[CHUNK_SZ];
+	struct cm_ctx *cm = cm_alloc(1);
+
+	for (size_t i = 0; i < sizeof(buf); i++)
+		buf[i] = (char)(i * 37U + 11U);
+	cm_set_inode(cm, g_inode);
+	for (size_t i = 0; i < sizeof(algorithms) / sizeof(algorithms[0]);
+	     i++) {
+		checksum4 checksum = { 0 };
+		checksum4 stored;
+		struct chunk_block *blk;
+		uint32_t algorithm = algorithms[i];
+
+		cm_reset_slot(cm, 0);
+		ck_assert_int_eq(chunk_checksum_pack_data(&checksum, algorithm,
+							  (const uint8_t *)buf,
+							  sizeof(buf)),
+				 0);
+		set_write_args_raw_checksum(
+			cm, buf, sizeof(buf), sizeof(buf), 0, algorithm,
+			(const uint8_t *)checksum.cs_value.cs_value_val,
+			checksum.cs_value.cs_value_len);
+		nfs4_op_chunk_write(cm->compound);
+
+		CHUNK_WRITE4res *res =
+			&cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_write;
+
+		ck_assert_int_eq(res->cwr_status, NFS4_OK);
+		blk = chunk_store_lookup(g_inode->i_chunk_store, 0);
+		ck_assert_ptr_nonnull(blk);
+		ck_assert_uint_eq(blk->cb_checksum_algorithm, algorithm);
+		ck_assert_uint_eq(blk->cb_checksum_len,
+				  checksum.cs_value.cs_value_len);
+		stored.cs_algorithm = blk->cb_checksum_algorithm;
+		stored.cs_value.cs_value_len = blk->cb_checksum_len;
+		stored.cs_value.cs_value_val = (char *)blk->cb_checksum_value;
+		ck_assert_int_eq(chunk_checksum_verify(&stored,
+						       (const uint8_t *)buf,
+						       sizeof(buf)),
+				 0);
+
+		free(checksum.cs_value.cs_value_val);
+		free_write_args(cm);
+		free_write_res(cm);
+		pthread_mutex_lock(&g_inode->i_attr_mutex);
+		chunk_store_clear(g_inode->i_chunk_store);
+		pthread_mutex_unlock(&g_inode->i_attr_mutex);
+	}
+	cm_free(cm);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Server-side algorithm enforcement                                    */
 /* ------------------------------------------------------------------ */
@@ -4172,6 +4244,7 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_b, test_chunk_write_multi_block);
 	tcase_add_test(tc_b, test_chunk_write_updates_inode_size);
 	tcase_add_test(tc_b, test_chunk_write_valid_crc);
+	tcase_add_test(tc_b, test_chunk_write_registered_algorithm);
 	tcase_add_test(tc_b, test_chunk_write_unknown_algorithm_rejected);
 	tcase_add_test(tc_b, test_chunk_write_wrong_length_rejected);
 	tcase_add_test(tc_b, test_chunk_write_per_file_algorithm_consistency);

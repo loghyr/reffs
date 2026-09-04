@@ -600,7 +600,7 @@ struct ec_mirror {
 	bool em_tight_coupled; /* DS supports TRUST_STATEID */
 	/*
 	 * Per-mirror checksum algorithm from the layout
-	 * (ffm_checksum_algorithm).  Used to dispatch CRC computation
+	 * (ffm_checksum_algorithm).  Used to dispatch checksum computation
 	 * on CHUNK_WRITE and verification on CHUNK_READ; the supported-
 	 * set check happens inside mds_layout_get so callers never see
 	 * a layout this client can't compute against.
@@ -746,7 +746,8 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		   uint64_t block_offset, uint32_t chunk_size,
 		   const uint8_t *data, uint32_t data_len, uint64_t cohort_id,
 		   uint32_t owner_id, uint32_t layout_client_id,
-		   const stateid4 *stateid, const chunk_guard4 *guard);
+		   uint32_t checksum_algorithm, const stateid4 *stateid,
+		   const chunk_guard4 *guard);
 
 /*
  * ds_chunk_write_repair -- OP_CHUNK_WRITE_REPAIR to a data server.
@@ -759,7 +760,7 @@ int ds_chunk_write_repair(struct mds_session *ds, const uint8_t *fh,
 			  uint32_t chunk_size, const uint8_t *data,
 			  uint32_t data_len, uint64_t cohort_id,
 			  uint32_t owner_id, uint32_t layout_client_id,
-			  const stateid4 *stateid);
+			  uint32_t checksum_algorithm, const stateid4 *stateid);
 
 /*
  * mds_chunk_repaired -- OP_CHUNK_REPAIRED to the MDS.
@@ -821,7 +822,8 @@ struct ec_repair_stats {
  */
 int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		  uint64_t block_offset, uint32_t count, uint8_t *out_data,
-		  uint32_t chunk_size, uint32_t *nread, const stateid4 *stateid,
+		  uint32_t chunk_size, uint32_t checksum_algorithm,
+		  uint32_t *nread, const stateid4 *stateid,
 		  chunk_owner4 *out_owners, chunk_guard4 *out_guards);
 
 /*

@@ -197,6 +197,7 @@ proxy_stateid_test_LDADD = \
 TESTS = \
 	bitmap \
 	cb_pending \
+	chunk_checksum_test \
 	chunk_test \
 	chunk_repair_test \
 	compound_async \
@@ -221,4 +222,3 @@ TESTS = \
 	task_state \
 	trust_stateid_test \
 	wrongsec_test
-

@@ -904,6 +904,7 @@ AC_CONFIG_FILES([
 	LICENSES/Makefile
 	third_party/Makefile
 	third_party/tomlc99/Makefile
+	third_party/blake3/Makefile
 	lib/Makefile
 	lib/config/Makefile
 	lib/config/tests/Makefile

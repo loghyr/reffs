@@ -1797,10 +1797,9 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		 * Build the layout segment.  The per-SB
 		 * sb_checksum_algorithm is the configured policy for new
 		 * layouts on this export; a zero value means "no policy
-		 * set, use the implementation default" -- CRC32 today,
-		 * the only algorithm chunk_checksum_unpack_crc32 accepts.
-		 * Once additional algorithm dispatchers land, the default
-		 * can move to CRC32C when the server-side implementation supports it.
+		 * set, use the implementation default" -- CRC32 today.
+		 * All values in the initial registry are implemented; changing
+		 * the default remains a separate deployment-policy decision.
 		 */
 		uint32_t seg_alg =
 			compound->c_inode->i_sb->sb_checksum_algorithm;

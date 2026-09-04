@@ -26,6 +26,9 @@ libreffs_nfs4_ps_la_SOURCES = \
 	ps_state.c \
 	ps_write_buffer.c
 
+libreffs_nfs4_ps_la_LIBADD = \
+	$(top_builddir)/lib/nfs4/common/libreffs_nfs4_common.la
+
 # ps_sb_alloc.c and ps_shortcircuit.c need lib/fs symbols
 # (super_block_alloc, mkdir_p_for_listener, super_block_find,
 # inode_find, data_block_*).  Keeping them in their own convenience

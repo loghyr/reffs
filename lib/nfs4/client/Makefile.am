@@ -24,6 +24,7 @@ libreffs_nfs4_client_la_SOURCES = \
 # (the TLS transport implementation).
 libreffs_nfs4_client_la_LIBADD = \
 	$(top_builddir)/lib/tls/libreffs_tls.la \
+	$(top_builddir)/lib/nfs4/common/libreffs_nfs4_common.la \
 	$(OPENSSL_LIBS)
 
 SUBDIRS = tests

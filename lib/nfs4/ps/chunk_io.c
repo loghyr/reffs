@@ -20,8 +20,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <zlib.h>
-
 #include "nfsv42_xdr.h"
 #include "ec_client.h"
 #include "nfs4/chunk_checksum.h"
@@ -107,7 +105,8 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		   uint64_t block_offset, uint32_t chunk_size,
 		   const uint8_t *data, uint32_t data_len, uint64_t cohort_id,
 		   uint32_t owner_id, uint32_t layout_client_id,
-		   const stateid4 *stateid, const chunk_guard4 *guard)
+		   uint32_t checksum_algorithm, const stateid4 *stateid,
+		   const chunk_guard4 *guard)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -179,7 +178,7 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	cwa->cwa_chunk_size = chunk_size;
 
 	/*
-	 * Compute CRC32 per chunk and wrap each in a checksum4.  The
+	 * Compute the layout-selected checksum per chunk.  The
 	 * last chunk may be shorter than chunk_size when data_len is
 	 * not a multiple (Mojette parity projections produce variable-
 	 * sized shards).
@@ -207,15 +206,12 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 
 		if (i == nchunks - 1 && data_len % chunk_size != 0)
 			clen = data_len % chunk_size;
-		uint32_t crc = (uint32_t)crc32(
-			0L, data + (size_t)i * chunk_size, (uInt)clen);
-
-		if (chunk_checksum_pack_crc32(
-			    &cwa->cwa_checksums.cwa_checksums_val[i], crc) <
-		    0) {
-			ret = -ENOMEM;
+		ret = chunk_checksum_pack_data(
+			&cwa->cwa_checksums.cwa_checksums_val[i],
+			checksum_algorithm, data + (size_t)i * chunk_size,
+			clen);
+		if (ret)
 			goto out_crc;
-		}
 	}
 
 	cwa->cwa_chunks.cwa_chunks_len = data_len;
@@ -332,7 +328,7 @@ int ds_chunk_write_repair(struct mds_session *ds, const uint8_t *fh,
 			  uint32_t chunk_size, const uint8_t *data,
 			  uint32_t data_len, uint64_t cohort_id,
 			  uint32_t owner_id, uint32_t layout_client_id,
-			  const stateid4 *stateid)
+			  uint32_t checksum_algorithm, const stateid4 *stateid)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -409,15 +405,12 @@ int ds_chunk_write_repair(struct mds_session *ds, const uint8_t *fh,
 
 		if (i == nchunks - 1 && data_len % chunk_size != 0)
 			clen = data_len % chunk_size;
-		uint32_t crc = (uint32_t)crc32(
-			0L, data + (size_t)i * chunk_size, (uInt)clen);
-
-		if (chunk_checksum_pack_crc32(
-			    &cwra->cwra_checksums.cwra_checksums_val[i], crc) <
-		    0) {
-			ret = -ENOMEM;
+		ret = chunk_checksum_pack_data(
+			&cwra->cwra_checksums.cwra_checksums_val[i],
+			checksum_algorithm, data + (size_t)i * chunk_size,
+			clen);
+		if (ret)
 			goto out_crc;
-		}
 	}
 
 	cwra->cwra_chunks.cwra_chunks_len = data_len;
@@ -482,7 +475,8 @@ out:
 
 int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		  uint64_t block_offset, uint32_t count, uint8_t *out_data,
-		  uint32_t chunk_size, uint32_t *nread, const stateid4 *stateid,
+		  uint32_t chunk_size, uint32_t checksum_algorithm,
+		  uint32_t *nread, const stateid4 *stateid,
 		  chunk_owner4 *out_owners, chunk_guard4 *out_guards)
 {
 	struct mds_compound mc;
@@ -639,36 +633,28 @@ int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		 * Verify the server-supplied checksum against the received
 		 * data.  Detects network corruption on the read path.
 		 *
-		 * Only CHECKSUM_ALG_CRC32 is implemented; other algorithms
-		 * (or a malformed entry) are skipped after a warning -- the
-		 * data is still delivered, but unverified.  The MDS-side
-		 * ffm_checksum_algorithm assignment plus client-side
-		 * LAYOUTGET check should keep the wire to algorithms we can
-		 * compute, so hitting this skip path is an anomaly worth
-		 * surfacing.
+		 * The response tag must match the layout that authorized this
+		 * I/O.  Unknown, malformed, and mismatched values all fail closed.
 		 */
-		uint32_t server_crc;
-
-		if (chunk_checksum_unpack_crc32(&rc->cr_checksum,
-						&server_crc) != NFS4_OK) {
+		if (rc->cr_checksum.cs_algorithm != checksum_algorithm) {
 			fprintf(stderr,
 				"ds_chunk_read: block %u checksum algorithm "
-				"%u not supported; skipping verification\n",
-				i, (unsigned)rc->cr_checksum.cs_algorithm);
-		} else if (server_crc != 0) {
-			uint32_t wire_crc = (uint32_t)crc32(
-				0L, (const Bytef *)rc->cr_chunk.cr_chunk_val,
-				(uInt)copy);
-
-			if (wire_crc != server_crc) {
-				fprintf(stderr,
-					"ds_chunk_read: CRC mismatch "
-					"block %u: server 0x%08x "
-					"wire 0x%08x\n",
-					i, server_crc, wire_crc);
-				ret = -EIO;
-				goto out;
-			}
+				"%u does not match layout algorithm %u\n",
+				i, (unsigned)rc->cr_checksum.cs_algorithm,
+				(unsigned)checksum_algorithm);
+			ret = -EIO;
+			goto out;
+		}
+		if (chunk_checksum_verify(
+			    &rc->cr_checksum,
+			    (const uint8_t *)rc->cr_chunk.cr_chunk_val,
+			    copy) != 0) {
+			fprintf(stderr,
+				"ds_chunk_read: checksum mismatch block %u "
+				"algorithm %u\n",
+				i, (unsigned)checksum_algorithm);
+			ret = -EIO;
+			goto out;
 		}
 	}
 

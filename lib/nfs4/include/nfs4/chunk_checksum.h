@@ -5,14 +5,8 @@
  * Helpers for the wire checksum4 type carried by CHUNK_WRITE,
  * CHUNK_WRITE_REPAIR, and CHUNK_READ.
  *
- * The implementation currently supports CHECKSUM_ALG_CRC32 only.
- * Other algorithms are defined in the IANA registry but not yet
- * computed; emitters use CRC32 and validators reject anything else
- * with NFS4ERR_INVAL.
- *
- * Wire byte order for cs_value is big-endian (network byte order),
- * consistent with XDR conventions.  For CRC32 the value is exactly
- * 4 octets.
+ * Integer results use network byte order.  Hash results use their
+ * algorithm-defined byte sequence.
  */
 
 #ifndef _REFFS_NFS4_CHUNK_CHECKSUM_H
@@ -88,7 +82,7 @@ static inline int chunk_checksum_expected_len(uint32_t algorithm)
 	case CHECKSUM_ALG_CRC32C:
 		return 4;
 	case CHECKSUM_ALG_FLETCHER4:
-		return 8;
+		return 32;
 	case CHECKSUM_ALG_SHA256:
 		return 32;
 	case CHECKSUM_ALG_SHA512:
@@ -99,6 +93,17 @@ static inline int chunk_checksum_expected_len(uint32_t algorithm)
 		return -1;
 	}
 }
+
+bool chunk_checksum_supported(uint32_t algorithm);
+
+int chunk_checksum_compute(uint32_t algorithm, const uint8_t *data, size_t len,
+			   uint8_t *value, uint32_t *value_len);
+
+int chunk_checksum_pack_data(checksum4 *out, uint32_t algorithm,
+			     const uint8_t *data, size_t len);
+
+int chunk_checksum_verify(const checksum4 *checksum, const uint8_t *data,
+			  size_t len);
 
 /*
  * Encode an arbitrary algorithm + raw value bytes into a checksum4.

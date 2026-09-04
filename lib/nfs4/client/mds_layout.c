@@ -25,6 +25,7 @@
 
 #include "nfsv42_xdr.h"
 #include "ec_client.h"
+#include "nfs4/chunk_checksum.h"
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -64,26 +65,10 @@ static uint32_t parse_owner_id(const char *str, uint32_t len)
  * Enumerate which CHECKSUM_ALG_* values this
  * client knows how to compute end-to-end.
  *
- * Today only CRC32 has a working dispatcher
- * (lib/nfs4/include/nfs4/chunk_checksum.h chunk_checksum_pack_crc32 /
- * chunk_checksum_unpack_crc32).  CRC32C and the hash algorithms are
- * defined in the IANA registry but not yet implemented; a layout that
- * declares any of them must be returned to the MDS with
- * NFS4ERR_LAYOUT_CHECKSUM_NOT_SUPPORTED so the MDS can either reissue
- * with an algorithm the client supports or surface the policy
- * mismatch to the operator.
+ * Keep layout acceptance tied to the common computation dispatcher.
+ * This prevents the client from accepting an algorithm that its CHUNK
+ * I/O path cannot verify.
  */
-static bool layout_checksum_supported(uint32_t alg)
-{
-	switch (alg) {
-	case CHECKSUM_ALG_NONE: /* server has no policy; client computes nothing */
-	case CHECKSUM_ALG_CRC32:
-		return true;
-	default:
-		return false;
-	}
-}
-
 int ec_layout_validate_checksums(const struct ec_layout *layout,
 				 uint32_t *bad_mirror_out)
 {
@@ -92,7 +77,7 @@ int ec_layout_validate_checksums(const struct ec_layout *layout,
 	for (uint32_t i = 0; i < layout->el_nmirrors; i++) {
 		uint32_t alg = layout->el_mirrors[i].em_checksum_algorithm;
 
-		if (!layout_checksum_supported(alg)) {
+		if (!chunk_checksum_supported(alg)) {
 			if (bad_mirror_out)
 				*bad_mirror_out = i;
 			return -ENOTSUP;
