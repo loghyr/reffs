@@ -12,9 +12,11 @@ AM_CFLAGS = -I$(srcdir)
 noinst_LTLIBRARIES = libd1store.la
 libd1store_la_SOURCES = \
 	d1_codec.c \
-	d1_digest.c
+	d1_digest.c \
+	d1_envelope.c
 
 noinst_HEADERS = \
 	d1_codec.h \
 	d1_digest.h \
+	d1_envelope.h \
 	d1_types.h
