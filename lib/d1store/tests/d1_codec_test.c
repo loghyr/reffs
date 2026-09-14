@@ -338,9 +338,23 @@ static void test_round_trip(void)
 		      d1_dec_opt_u64(&c, &present, &opt),
 	      "round trip decode");
 	check(d1_dec_finished(&c), "round trip consumed everything");
-	check(memcmp(&obj, &obj2, sizeof(obj)) == 0, "objkey survives");
-	check(memcmp(&key, &key2, sizeof(key)) == 0, "opkey survives");
-	check(memcmp(&owner, &owner2, sizeof(owner)) == 0, "owner survives");
+	/*
+	 * Compared field by field.  These structures have padding the
+	 * encoding never carries, so comparing their storage would compare
+	 * bytes no encoder wrote and no decoder set.
+	 */
+	check(memcmp(obj.export_uuid.bytes, obj2.export_uuid.bytes,
+		     D1_UUID_BYTES) == 0 &&
+		      memcmp(obj.object_uuid.bytes, obj2.object_uuid.bytes,
+			     D1_UUID_BYTES) == 0,
+	      "objkey survives");
+	check(memcmp(key.origin.bytes, key2.origin.bytes, D1_UUID_BYTES) == 0 &&
+		      key.sequence == key2.sequence &&
+		      key.ordinal == key2.ordinal,
+	      "opkey survives");
+	check(owner.cohort == owner2.cohort && owner.writer == owner2.writer &&
+		      owner.co_id == owner2.co_id,
+	      "owner survives");
 	check(guard2.never_written && guard2.generation == 0,
 	      "never-written guard survives");
 	check(sum2.alg == sum.alg && sum2.len == sum.len &&
