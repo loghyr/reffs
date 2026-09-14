@@ -31,4 +31,8 @@ rpc_xdr_const.py rpc_xdr_type.py rpc_xdr_pack.py: $(top_srcdir)/lib/xdr/rpc_xdr.
 
 reffsdir = ${pythondir}/reffs
 
-all: reffs_echo_xdr_const.py rpc_xdr_const.py probe1_xdr_const.py
+# all-local, not all: overriding automake's own `all` target detaches
+# this directory from the rules automake hangs off it -- in particular
+# `check-am: all-am`, so `make check` without a prior `make` left the
+# generated package missing and anything importing it failed.
+all-local: reffs_echo_xdr_const.py rpc_xdr_const.py probe1_xdr_const.py
