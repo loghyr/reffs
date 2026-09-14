@@ -2,6 +2,9 @@ __pycache__/
 xdrgen.py
 parser.out
 parsetab.py
+probe1_xdr_const.py
+probe1_xdr_pack.py
+probe1_xdr_type.py
 reffs_echo_xdr_const.py
 reffs_echo_xdr_pack.py
 reffs_echo_xdr_type.py
