@@ -12,6 +12,7 @@ SUBDIRS =		\
 	include		\
 	trace		\
 	backends	\
+	d1store		\
 	utils		\
 	config		\
 	ec		\
