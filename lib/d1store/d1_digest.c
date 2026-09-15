@@ -10,6 +10,10 @@
  * are covered by known-answer tests beside this file.
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include <string.h>
 
 #include "d1_digest.h"

@@ -5,6 +5,10 @@
  * D1 storage model: the canonical encoding, as described by its header.
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include <string.h>
 
 #include "d1_codec.h"
