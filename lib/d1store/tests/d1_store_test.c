@@ -459,7 +459,11 @@ static void test_phase_order(void)
 	d1_store_free(s);
 }
 
-/* An operation this slice does not implement mutates nothing. */
+/*
+ * Repair, error marking and unlocking are not this slice's.  They are
+ * refused twice over: the canonical form cannot express them at all,
+ * and the reducer refuses them even when handed one directly.
+ */
 static void test_unsupported(void)
 {
 	struct d1_uuid store_uuid;
@@ -474,12 +478,28 @@ static void test_unsupported(void)
 		return;
 	admission = d1_fixture_admit(s, &object, 11, D1_RIGHT_WRITE);
 
-	env_init(&env, s, admission, D1_OP_LEASE_REAP);
-	env.body.control.count = 1;
-	env.body.control.txns[0] = 1;
-	check(d1_store_apply(s, &env, &res) == D1_UNSUPPORTED,
-	      "an unimplemented operation says so");
-	check(res.count == 0, "and answers no entries");
+	{
+		static const uint32_t unimplemented[] = {
+			D1_OP_MARK_ERROR,     D1_OP_BEGIN_REPAIR,
+			D1_OP_PREPARE_REPAIR, D1_OP_FINALIZE_REPAIR,
+			D1_OP_COMMIT_REPAIR,  D1_OP_ABORT_REPAIR,
+			D1_OP_CLEAR_ERROR,    D1_OP_UNLOCK,
+		};
+		uint8_t buf[512];
+		unsigned int i;
+
+		for (i = 0; i < sizeof(unimplemented) / sizeof(*unimplemented);
+		     i++) {
+			env_init(&env, s, admission, unimplemented[i]);
+			check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+			      "the canonical form cannot express it");
+			check(d1_store_apply(s, &env, &res) == D1_UNSUPPORTED,
+			      "and the reducer says it does not implement it");
+			check(res.count == 0, "and answers no entries");
+			check(d1_store_eof(s, &object) == 0,
+			      "and mutates nothing");
+		}
+	}
 
 	d1_store_free(s);
 }
@@ -1401,6 +1421,195 @@ static void test_replay_refuses_a_foreign_log(void)
 	d1_store_free(a);
 }
 
+/* recovery_admit: one admission takes over from another. */
+static void test_recovery_admit(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	static uint8_t data[16];
+	d1_id_t control, old, fresh;
+
+	memset(data, 0x61, sizeof(data));
+	fill_uuid(&store_uuid, 0xdd);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	control = d1_fixture_admit(s, &object, 11, D1_RIGHT_CONTROL);
+	old = d1_fixture_admit(s, &object, 11,
+			       D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	fresh = d1_fixture_admit(s, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	d1_store_verifier(s, verifier);
+
+	/* The old admission works until it is superseded. */
+	env_init(&env, s, old, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(s, &env, &res);
+	check(res.entries[0].status == D1_OK, "the old admission can write");
+
+	env_init(&env, s, control, D1_OP_RECOVERY_ADMIT);
+	env.body.control.old_admission = old;
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = fresh;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "recovery admits the new admission");
+	check(res.count == 1, "and answers once for the whole operation");
+	check(memcmp(res.entries[0].verifier, verifier, sizeof(verifier)) == 0,
+	      "and returns the verifier as it now stands");
+
+	/* The superseded admission is finished. */
+	env_init(&env, s, old, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(s, &env, &res);
+	check(res.entries[0].status == D1_STALE_AUTH,
+	      "the superseded admission cannot write");
+	check(res.entries[0].disposition == D1_UNRECORDED,
+	      "and leaves no receipt behind");
+
+	/* The new one can. */
+	env_init(&env, s, fresh, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 3, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(s, &env, &res);
+	check(res.entries[0].status == D1_OK, "the new admission can");
+
+	/* A read epoch the store has never reached is not a recovery. */
+	env_init(&env, s, control, D1_OP_RECOVERY_ADMIT);
+	env.body.control.old_admission = fresh;
+	env.body.control.read_epoch_present = true;
+	env.body.control.read_epoch = 1000000;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_INVALID,
+	      "an epoch from the future is refused");
+
+	/* An admission nobody issued cannot be recovered from. */
+	env_init(&env, s, control, D1_OP_RECOVERY_ADMIT);
+	env.body.control.old_admission = 9999;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "an unknown admission is refused");
+
+	d1_store_free(s);
+}
+
+/* lease_reap: cancelling the work of an owner that is gone. */
+static void test_lease_reap(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_guard before, after;
+	static uint8_t data[24];
+	d1_id_t control, writer, other, txn_a, txn_b, committed, visible;
+
+	memset(data, 0x71, sizeof(data));
+	fill_uuid(&store_uuid, 0xee);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	control = d1_fixture_admit(s, &object, 11, D1_RIGHT_CONTROL);
+	writer = d1_fixture_admit(s, &object, 11,
+				  D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	other = d1_fixture_admit(s, &object, 12, D1_RIGHT_WRITE);
+
+	/* Two prepared transactions on different chunks. */
+	env_init(&env, s, writer, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(s, &env, &res);
+	txn_a = res.entries[0].txn;
+	env_init(&env, s, writer, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(s, &env, &res);
+	txn_b = res.entries[0].txn;
+	check(txn_a != 0 && txn_b != 0, "two transactions are prepared");
+	d1_store_guard(s, &object, 0, &before);
+
+	/* One committed transaction, which a reap may not touch. */
+	committed = 0;
+	check(commit_chunk(s, writer, 4, 3, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   &committed) != 0,
+	      "a third chunk is committed");
+
+	/*
+	 * A reap naming one member it may not touch cancels none of them:
+	 * every member is validated before any is cancelled.
+	 */
+	env_init(&env, s, control, D1_OP_LEASE_REAP);
+	env.body.control.old_admission = writer;
+	env.body.control.count = 2;
+	env.body.control.txns[0] = txn_a;
+	env.body.control.txns[1] = committed;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_BAD_PHASE,
+	      "a committed member is refused");
+	check(d1_store_visible(s, &object, 4, &visible),
+	      "and the committed chunk is untouched");
+
+	env_init(&env, s, control, D1_OP_LEASE_REAP);
+	env.body.control.old_admission = writer;
+	env.body.control.count = 1;
+	env.body.control.txns[0] = txn_a;
+	/* The first chunk's transaction is still there to reap. */
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the surviving member was not cancelled by the refusal");
+	check(res.entries[0].phase == D1_PHASE_ROLLED_BACK,
+	      "the reaped transaction is ROLLED_BACK");
+
+	/* The chunk is free again, at the next generation, not the old one. */
+	check(d1_store_guard(s, &object, 0, &after) &&
+		      after.generation == before.generation,
+	      "the reap did not move the guard back");
+	env_init(&env, s, writer, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 4, data, sizeof(data),
+		    true, &after);
+	d1_store_apply(s, &env, &res);
+	check(res.entries[0].status == D1_OK,
+	      "and the chunk takes a new transaction");
+
+	/* A reap may only cancel what its own admission prepared. */
+	env_init(&env, s, control, D1_OP_LEASE_REAP);
+	env.body.control.old_admission = other;
+	env.body.control.count = 1;
+	env.body.control.txns[0] = txn_b;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OWNER_CONFLICT,
+	      "another admission's transaction is not this reap's to cancel");
+
+	/* Reaping needs the control right, not the write right. */
+	env_init(&env, s, writer, D1_OP_LEASE_REAP);
+	env.body.control.old_admission = writer;
+	env.body.control.count = 1;
+	env.body.control.txns[0] = txn_b;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "a writer cannot reap");
+
+	d1_store_free(s);
+}
+
 int main(void)
 {
 	fill_uuid(&object.export_uuid, 0x30);
@@ -1424,6 +1633,8 @@ int main(void)
 	test_crash_loses_only_the_torn_record();
 	test_append_fault_is_unrecorded();
 	test_replay_refuses_a_foreign_log();
+	test_recovery_admit();
+	test_lease_reap();
 	test_unsupported();
 
 	if (failures) {

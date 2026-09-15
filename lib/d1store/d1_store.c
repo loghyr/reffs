@@ -1044,6 +1044,109 @@ static bool d1_verifier_matches(const struct d1_store *s,
 	return memcmp(want, given, D1_VERIFIER_BYTES) == 0;
 }
 
+/*
+ * The two ordinary control operations of this slice.
+ *
+ * Both act on a whole operation rather than on entries: their
+ * disposition is the operation's, because there is nothing useful to
+ * say about half a recovery or half a reap.
+ *
+ * recovery_admit supersedes one admission with another and answers the
+ * verifier as it now stands, so a caller that has been away can tell
+ * whether the store it is talking to is the store it left.
+ *
+ * lease_reap cancels transactions whose owner is gone.  It is an
+ * ordinary entry point, so it refuses to touch a repair member: those
+ * advance only through whole-cohort entry points, and letting a lease
+ * sweep take one would break that atomicity from the side.
+ */
+static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
+			      struct d1_admission *a,
+			      struct d1_entry_result *res)
+{
+	const struct d1_control_batch *cb = &env->body.control;
+	struct d1_object *o = d1_object_find(s, &env->object);
+	struct d1_admission *old, *fresh;
+	uint32_t i;
+
+	if (cb->count > D1_BATCH_ENTRIES_MAX)
+		return D1_INVALID;
+
+	if (env->op == D1_OP_RECOVERY_ADMIT) {
+		if (cb->count != 0)
+			return D1_INVALID;
+		old = d1_admission_find(s, cb->old_admission);
+		if (!old || memcmp(&old->object, &env->object,
+				   sizeof(old->object)) != 0)
+			return D1_STALE_AUTH;
+		if (cb->new_admission_present) {
+			fresh = d1_admission_find(s, cb->new_admission);
+			if (!fresh || fresh->revoked || fresh->expired)
+				return D1_STALE_AUTH;
+			if (memcmp(&fresh->object, &env->object,
+				   sizeof(fresh->object)) != 0)
+				return D1_STALE_AUTH;
+			if (fresh->id == old->id)
+				return D1_INVALID;
+			/*
+			 * The old admission is finished the moment a new one
+			 * takes over, whatever state it was in.
+			 */
+			old->revoked = true;
+		}
+		/* A read epoch the store has never reached is not a replay. */
+		if (cb->read_epoch_present && cb->read_epoch > s->index_epoch)
+			return D1_INVALID;
+		d1_store_verifier(s, res->verifier);
+		return D1_OK;
+	}
+
+	/* lease_reap */
+	if (cb->count == 0)
+		return D1_INVALID;
+	if (!o)
+		return D1_INVALID;
+	if (cb->new_admission_present || cb->read_epoch_present)
+		return D1_INVALID;
+	old = d1_admission_find(s, cb->old_admission);
+	if (!old ||
+	    memcmp(&old->object, &env->object, sizeof(old->object)) != 0)
+		return D1_STALE_AUTH;
+
+	/*
+	 * Every named member is validated before any of them is cancelled,
+	 * so a reap that names one member it may not touch changes nothing
+	 * at all.
+	 */
+	for (i = 0; i < cb->count; i++) {
+		struct d1_txn *t = d1_txn_find(s, cb->txns[i]);
+
+		if (!t || t->object != d1_object_slot(s, o))
+			return D1_INVALID;
+		if (t->mode != D1_MODE_ORDINARY)
+			return D1_INVALID;
+		if (t->phase != D1_PHASE_PREPARED &&
+		    t->phase != D1_PHASE_FINALIZED)
+			return D1_BAD_PHASE;
+		if (t->admission != old->id)
+			return D1_OWNER_CONFLICT;
+	}
+	for (i = 0; i < cb->count; i++) {
+		struct d1_txn *t = d1_txn_find(s, cb->txns[i]);
+		struct d1_chunk *chunk = &o->chunks[t->index];
+
+		if (chunk->pending_present && chunk->pending == t->id) {
+			chunk->pending_present = false;
+			chunk->pending = 0;
+		}
+		t->phase = D1_PHASE_ROLLED_BACK;
+	}
+	(void)a;
+	res->phase = D1_PHASE_ROLLED_BACK;
+	d1_store_verifier(s, res->verifier);
+	return D1_OK;
+}
+
 /* Defined with the rest of the journal, below. */
 static bool d1_journal_intent(struct d1_store *s, const struct d1_envelope *env,
 			      const struct d1_admission *a);
@@ -1068,10 +1171,15 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	case D1_OP_ROLLBACK_BATCH:
 		need = D1_RIGHT_WRITE;
 		break;
+	case D1_OP_RECOVERY_ADMIT:
+	case D1_OP_LEASE_REAP:
+		need = D1_RIGHT_CONTROL;
+		break;
 	default:
 		/*
-		 * Rollback, recovery and reaping arrive with the rest of this
-		 * slice; repair never does.  Either way nothing is mutated.
+		 * Actor-driven repair, mixed rollback and clearing an error
+		 * episode are not this slice's, and say so rather than doing
+		 * part of the job.
 		 */
 		out->count = 0;
 		return D1_UNSUPPORTED;
@@ -1087,6 +1195,11 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		break;
 	case D1_OP_ROLLBACK_BATCH:
 		count = env->body.rollback.count;
+		break;
+	case D1_OP_RECOVERY_ADMIT:
+	case D1_OP_LEASE_REAP:
+		/* A control operation answers once, for the whole of it. */
+		count = 1;
 		break;
 	default:
 		count = env->body.lifecycle.count;
@@ -1166,6 +1279,10 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 				status = d1_do_rollback_entry(
 					s, env, &env->body.rollback.entries[i],
 					a, res);
+			} else if (env->op == D1_OP_RECOVERY_ADMIT ||
+				   env->op == D1_OP_LEASE_REAP) {
+				status = d1_do_control(s, env, a, res);
+				out->disposition = res->disposition;
 			} else {
 				if (!d1_verifier_matches(
 					    s,
