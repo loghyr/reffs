@@ -325,7 +325,7 @@ static void test_faults_leave_no_residue(void)
 	before_durable = j.durable;
 	before_lsn = j.next_lsn;
 
-	j.fail_next_append = true;
+	j.fail_append_in = 1u;
 	check(!d1_journal_append(&j, D1_REC_ENTRY, body_abc, sizeof(body_abc)),
 	      "an armed append fault refuses the append");
 	check(j.len == before_len, "the log is byte for byte unchanged");

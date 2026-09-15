@@ -477,7 +477,8 @@ static void test_unsupported(void)
 	struct d1_store *s;
 	struct d1_envelope env;
 	struct d1_result res;
-	d1_id_t admission;
+	struct d1_guard guard;
+	d1_id_t admission, visible;
 
 	fill_uuid(&store_uuid, 0xe0);
 	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -503,7 +504,10 @@ static void test_unsupported(void)
 			check(d1_store_apply(s, &env, &res) == D1_UNSUPPORTED,
 			      "and the reducer says it does not implement it");
 			check(res.count == 0, "and answers no entries");
-			check(d1_store_eof(s, &object) == 0,
+			check(d1_store_eof(s, &object) == 0 &&
+				      !d1_store_visible(s, &object, 0,
+							&visible) &&
+				      !d1_store_guard(s, &object, 0, &guard),
 			      "and mutates nothing");
 		}
 	}
@@ -647,6 +651,12 @@ static void test_private_rollback(void)
 		      after.generation == before.generation &&
 		      !after.never_written,
 	      "the generation does not go back");
+	/*
+	 * That monotonicity is this model's policy, not a claim about the
+	 * wire: draft lines 8549--8553 read differently, and D4 has to
+	 * settle the difference before wire integration rather than
+	 * inherit this fixture.
+	 */
 
 	/* The pending slot is free again, for a new owner. */
 	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
@@ -1455,7 +1465,6 @@ static d1_id_t drive_history(struct d1_store *s, d1_id_t admission)
 	if (!commit_chunk(s, admission, 3, 3, big, sizeof(big), &guard, v3,
 			  &txn4))
 		return 0;
-	custody = d1_fixture_custody(s, 0);
 	/* Custody is issued over whatever is visible on chunk 3 now. */
 	{
 		d1_id_t visible = 0;
@@ -1716,6 +1725,79 @@ static void test_append_fault_is_unrecorded(void)
 }
 
 /*
+ * A batch interrupted in the middle keeps what it already did.
+ *
+ * Section 8: results for entries up to the interruption are retained,
+ * an exact retry reconstructs those and evaluates the rest, and
+ * successful siblings are not rolled back.
+ */
+static void test_interrupted_batch_retry(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result first, retry;
+	static uint8_t data[16];
+	d1_id_t admission, visible;
+	unsigned int i;
+
+	memset(data, 0xa7, sizeof(data));
+	fill_uuid(&store_uuid, 0x15);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 3;
+	env.body.write.stability = D1_DATA_SYNC;
+	env.body.write.activate = true;
+	for (i = 0; i < 3; i++)
+		write_entry(&env.body.write.entries[i], i, 11, i + 1u, data,
+			    sizeof(data), true,
+			    &(struct d1_guard){ .never_written = true });
+
+	/* The second member's event is the one that cannot be written. */
+	d1_fixture_fail_append_in(s, 2);
+	check(d1_store_apply(s, &env, &first) == D1_OK,
+	      "the batch runs to the end");
+	check(first.entries[0].status == D1_OK &&
+		      first.entries[0].disposition == D1_COMPLETED,
+	      "the first member completed");
+	check(first.entries[1].disposition == D1_UNRECORDED,
+	      "the second member is UNRECORDED");
+	check(first.entries[2].status == D1_OK &&
+		      first.entries[2].disposition == D1_COMPLETED,
+	      "and the third completed once the fault was spent");
+	check(d1_store_visible(s, &object, 0, &visible), "chunk 0 is visible");
+	check(!d1_store_visible(s, &object, 1, &visible),
+	      "chunk 1 is not, because its event never happened");
+	check(d1_store_visible(s, &object, 2, &visible), "chunk 2 is");
+
+	/*
+	 * The exact retry returns the recorded results for the members
+	 * that completed and evaluates the one that did not.  Successful
+	 * siblings are not rolled back and not executed again.
+	 */
+	check(d1_store_apply(s, &env, &retry) == D1_OK, "the exact retry runs");
+	check(retry.entries[0].status == D1_OK &&
+		      retry.entries[0].version == first.entries[0].version &&
+		      retry.entries[0].txn == first.entries[0].txn,
+	      "the first member returns its recorded result");
+	check(retry.entries[2].version == first.entries[2].version,
+	      "and so does the third");
+	check(retry.entries[1].status == D1_OK &&
+		      retry.entries[1].disposition == D1_COMPLETED,
+	      "and the interrupted member executes now");
+	check(d1_store_visible(s, &object, 1, &visible),
+	      "so chunk 1 becomes visible");
+
+	d1_store_free(s);
+}
+
+/*
  * An inability to reserve a receipt is UNRECORDED with no state change.
  * The old behaviour published the write and then told the caller
  * nothing had been recorded, which no retry could repair.
@@ -1942,6 +2024,101 @@ static void test_reopen_fences_and_repeats(void)
 
 	d1_store_free(b);
 	d1_store_free(a);
+}
+
+/*
+ * I2: a forced index fault after a durable COMMIT.
+ *
+ * The event is durable, so the COMMIT receipt stands.  What must not
+ * happen is a read serving the predecessor against that receipt.  The
+ * store switches to the durable reducer state before it unlocks, and
+ * the materialized pointer it left behind is checked separately, so a
+ * read that consulted it would be caught.
+ */
+static void test_index_fault_serves_the_overlay(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
+	struct d1_guard guard;
+	static uint8_t first[32];
+	static uint8_t second[32];
+	uint8_t got[32];
+	uint32_t got_len;
+	d1_id_t admission, v1, v2, seen, stale;
+
+	memset(first, 0x31, sizeof(first));
+	memset(second, 0x32, sizeof(second));
+	fill_uuid(&store_uuid, 0x14);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+
+	v1 = commit_chunk(s, admission, 0, 1, first, sizeof(first),
+			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+	check(v1 != 0, "the first version commits");
+	check(!d1_store_overlay_active(s),
+	      "and the store is not on the overlay");
+
+	d1_store_guard(s, &object, 0, &guard);
+	d1_fixture_fail_next_index(s);
+	v2 = commit_chunk(s, admission, 0, 2, second, sizeof(second), &guard,
+			  v1, NULL);
+	check(v2 != 0 && v2 != v1,
+	      "the replacement commits despite the index fault");
+	check(d1_store_overlay_active(s),
+	      "and the store switched to the overlay");
+
+	/* The materialized pointer was left behind, on purpose. */
+	check(d1_store_materialized(s, &object, 0, &stale) && stale == v1,
+	      "the materialized index still names the predecessor");
+
+	/* No read may serve it. */
+	check(d1_store_visible(s, &object, 0, &seen) && seen == v2,
+	      "but what is visible is the committed version");
+	ordinary_sel(&sel);
+	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
+			   &view) == D1_OK,
+	      "a view opens after the fault");
+	check(d1_view_version(view, 0, &seen) && seen == v2,
+	      "and selects the committed version, not the predecessor");
+	check(d1_view_read(view, 0, got, sizeof(got), &got_len) == D1_OK &&
+		      memcmp(got, second, sizeof(second)) == 0,
+	      "and reads its bytes");
+	d1_view_close(s, view);
+
+	/* A rebuild from the log produces the same state, without the fault. */
+	{
+		struct d1_store *rebuilt;
+		const uint8_t *log;
+		size_t len;
+
+		log = d1_store_journal(s, &len);
+		rebuilt =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (rebuilt) {
+			check(d1_store_replay(rebuilt, log, len) == D1_OK,
+			      "the log replays");
+			check(!d1_store_overlay_active(rebuilt),
+			      "and the fault did not replay with it");
+			check(d1_store_visible(rebuilt, &object, 0, &seen) &&
+				      seen == v2,
+			      "and the rebuilt store sees the committed "
+			      "version");
+			check(d1_store_materialized(rebuilt, &object, 0,
+						    &stale) &&
+				      stale == v2,
+			      "with its materialized index in agreement");
+			d1_store_free(rebuilt);
+		}
+	}
+
+	d1_store_free(s);
 }
 
 /*
@@ -2521,9 +2698,11 @@ int main(void)
 	test_replay_reproduces_the_store();
 	test_crash_loses_only_the_torn_record();
 	test_append_fault_is_unrecorded();
+	test_interrupted_batch_retry();
 	test_receipt_exhaustion_changes_nothing();
 	test_exact_retry_survives_revocation();
 	test_reopen_fences_and_repeats();
+	test_index_fault_serves_the_overlay();
 	test_custody_and_release_replay();
 	test_replay_refuses_a_foreign_log();
 	test_recovery_admit();

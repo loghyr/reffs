@@ -47,7 +47,12 @@ struct d1_journal {
 	 * something that happened to this run, not a fact about the stored
 	 * data, so it can neither replay nor survive.
 	 */
-	bool fail_next_append;
+	/*
+	 * Zero is disarmed; n means the nth append from now fails.  A
+	 * count rather than a flag so a test can aim at one member of a
+	 * batch instead of only at its first.
+	 */
+	uint32_t fail_append_in;
 	bool fail_next_flush;
 };
 

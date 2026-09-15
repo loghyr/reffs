@@ -14,6 +14,18 @@
  * ones: a store holds a few objects, each object a few chunks, and the
  * tables below are sized for the oracles.  Exhaustion refuses an
  * operation; it never silently discards replay protection.
+ *
+ * Every version reserves its payload inline at the maximum chunk size,
+ * so an open store is a few hundred megabytes of mostly untouched
+ * address space.  That is deliberate for a model with fixed tables and
+ * no allocator of its own, and it is why physical reclamation is a
+ * declared no-op: bytes are retained conservatively for the life of the
+ * store.  It bounds how large a fixture can be, and nothing else.
+ *
+ * These sources carry no HAVE_CONFIG_H preamble, unlike most of the
+ * repository's library code.  The model depends on nothing the build
+ * configures: it is C11 and the C library, built here only so the
+ * repository's check gate runs its tests.
  */
 
 #ifndef REFFS_D1_STORE_H
@@ -259,6 +271,32 @@ void d1_fixture_fail_next_append(struct d1_store *s);
 /* Fixture fault control: refuse the next flush, so an appended record is
  * never claimed durable.  Also unjournalled and also disabled during
  * recovery. */
+/*
+ * The same, aimed: the nth append from now fails.  A batch writes one
+ * event per member, so this can interrupt a batch in the middle rather
+ * than only at its first member.
+ */
+void d1_fixture_fail_append_in(struct d1_store *s, uint32_t n);
+
 void d1_fixture_fail_next_flush(struct d1_store *s);
+
+/*
+ * Fixture fault control: force the next publication to leave the
+ * materialized index behind.  The event is already durable, so the
+ * COMMIT receipt stands; reads switch to the durable reducer state --
+ * the WAL-backed overlay -- before the lock is released, and never
+ * serve the old pointer.  Unjournalled, and disabled during recovery.
+ */
+void d1_fixture_fail_next_index(struct d1_store *s);
+
+/* Whether an index fault has put this store on the overlay. */
+bool d1_store_overlay_active(const struct d1_store *s);
+
+/*
+ * What the materialized index still says, so a test can prove a read
+ * did not consult it.  There is no production use for this.
+ */
+bool d1_store_materialized(struct d1_store *s, const struct d1_objkey *object,
+			   uint64_t index, d1_id_t *version);
 
 #endif /* REFFS_D1_STORE_H */

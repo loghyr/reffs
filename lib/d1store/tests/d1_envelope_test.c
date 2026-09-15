@@ -78,12 +78,6 @@ static void make_write(struct d1_envelope *env)
 static void test_golden_write_envelope(void)
 {
 	/*
-	 * The golden bytes, field by field.  The CRC32C of the payload
-	 * is 0xaed87dd1, from a separate implementation of the same
-	 * reflected polynomial that also reproduces the standard check
-	 * value 0xe3069283 for "123456789".
-	 */
-	/*
 	 * The golden bytes, group by group.  The CRC32C of the payload
 	 * is 0xaed87dd1, from a separate implementation of the same
 	 * reflected polynomial that also reproduces the standard check

@@ -63,9 +63,10 @@ bool d1_journal_append(struct d1_journal *j, uint32_t type, const uint8_t *body,
 	 * An armed fault is consumed whether or not the append would have
 	 * succeeded, so one arm cannot be observed as two failures.
 	 */
-	if (j->fail_next_append) {
-		j->fail_next_append = false;
-		return false;
+	if (j->fail_append_in) {
+		j->fail_append_in--;
+		if (!j->fail_append_in)
+			return false;
 	}
 	if (type < D1_REC_START || type > D1_REC_COHORT)
 		return false;

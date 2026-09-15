@@ -77,8 +77,17 @@ struct d1_chunk {
 	struct d1_guard guard;
 	bool pending_present;
 	d1_id_t pending;
+	/* The reducer's state: what the durable events say is visible. */
 	bool visible_present;
 	d1_id_t visible;
+	/*
+	 * The materialized index, which an injected fault can leave
+	 * behind.  Reads never consult it while the overlay is active; it
+	 * exists so a test can prove they did not.
+	 */
+	bool materialized_present;
+	d1_id_t materialized;
+	bool index_stale;
 };
 
 struct d1_object {
@@ -198,6 +207,15 @@ struct d1_store {
 	uint8_t *record;
 	size_t record_cap;
 
+	/*
+	 * Set when an injected index fault has left a materialized pointer
+	 * behind.  Reads are served from the durable reducer state -- the
+	 * WAL-backed overlay -- from that moment, never from the old
+	 * pointer, and the switch happens before the lock is released.
+	 */
+	bool overlay_active;
+	bool fail_next_index;
+
 	struct d1_journal journal;
 	/* The last LSN a rebuild consumed, so a reopen continues from it. */
 	uint64_t replayed_lsn;
@@ -312,7 +330,15 @@ void d1_fixture_fail_next_append(struct d1_store *s)
 	pthread_mutex_lock(&s->lock);
 	/* Faults are disabled throughout recovery, by construction. */
 	if (!s->replaying)
-		s->journal.fail_next_append = true;
+		s->journal.fail_append_in = 1u;
+	pthread_mutex_unlock(&s->lock);
+}
+
+void d1_fixture_fail_append_in(struct d1_store *s, uint32_t n)
+{
+	pthread_mutex_lock(&s->lock);
+	if (!s->replaying)
+		s->journal.fail_append_in = n;
 	pthread_mutex_unlock(&s->lock);
 }
 
@@ -466,16 +492,48 @@ static struct d1_owner_assoc *d1_owner_add(struct d1_store *s,
 	return NULL;
 }
 
+/*
+ * Publish a new visible version for one chunk.
+ *
+ * The reducer's state always moves.  The materialized index moves with
+ * it unless a fault is armed, in which case it is left behind and the
+ * store switches to serving reads from the reducer state before the
+ * lock is released.  No read ever serves the old pointer against a new
+ * successful COMMIT receipt.
+ */
+static void d1_publish_visible(struct d1_store *s, struct d1_chunk *c,
+			       d1_id_t version)
+{
+	c->visible_present = true;
+	c->visible = version;
+	if (s->fail_next_index && !s->replaying) {
+		s->fail_next_index = false;
+		c->index_stale = true;
+		s->overlay_active = true;
+		return;
+	}
+	c->materialized_present = true;
+	c->materialized = version;
+}
+
+/* What a read sees: the reducer state, never a stale materialized one. */
+static bool d1_chunk_visible(const struct d1_chunk *c, d1_id_t *version)
+{
+	if (!c->visible_present)
+		return false;
+	*version = c->visible;
+	return true;
+}
+
 static bool d1_visible_locked(struct d1_store *s,
 			      const struct d1_objkey *object, uint64_t index,
 			      d1_id_t *version)
 {
 	const struct d1_object *o = d1_object_find(s, object);
 
-	if (!o || index >= D1_MAX_CHUNKS || !o->chunks[index].visible_present)
+	if (!o || index >= D1_MAX_CHUNKS)
 		return false;
-	*version = o->chunks[index].visible;
-	return true;
+	return d1_chunk_visible(&o->chunks[index], version);
 }
 
 static bool d1_guard_locked(struct d1_store *s, const struct d1_objkey *object,
@@ -857,8 +915,7 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 	if (activate) {
 		/* One event: owner, payload, extent, guard and receipt. */
 		txn->phase = D1_PHASE_COMMITTED;
-		chunk->visible_present = true;
-		chunk->visible = ver->id;
+		d1_publish_visible(s, chunk, ver->id);
 		s->index_epoch++;
 	} else {
 		txn->phase = D1_PHASE_PREPARED;
@@ -951,8 +1008,7 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 	d1_undo_txn(u, txn);
 	d1_undo_chunk(u, chunk);
 	txn->phase = D1_PHASE_COMMITTED;
-	chunk->visible_present = true;
-	chunk->visible = ver->id;
+	d1_publish_visible(s, chunk, ver->id);
 	chunk->pending_present = false;
 	chunk->pending = 0;
 	s->index_epoch++;
@@ -1107,7 +1163,7 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 	/* Payload and extent are restored in the one transition. */
 	d1_undo_chunk(u, chunk);
 	d1_undo_txn(u, txn);
-	chunk->visible = pred->id;
+	d1_publish_visible(s, chunk, pred->id);
 	txn->phase = D1_PHASE_ROLLED_BACK;
 	s->index_epoch++;
 	res->version = pred->id;
@@ -2088,6 +2144,40 @@ static bool d1_release_locked(struct d1_store *s, d1_id_t version)
 	}
 	v->released = true;
 	return true;
+}
+
+void d1_fixture_fail_next_index(struct d1_store *s)
+{
+	pthread_mutex_lock(&s->lock);
+	if (!s->replaying)
+		s->fail_next_index = true;
+	pthread_mutex_unlock(&s->lock);
+}
+
+bool d1_store_overlay_active(const struct d1_store *s)
+{
+	return s->overlay_active;
+}
+
+/*
+ * What the materialized index still says, for a test to prove that a
+ * read did not consult it.  There is no production use for this.
+ */
+bool d1_store_materialized(struct d1_store *s, const struct d1_objkey *object,
+			   uint64_t index, d1_id_t *version)
+{
+	struct d1_object *o;
+	bool found = false;
+
+	pthread_mutex_lock(&s->lock);
+	o = d1_object_find(s, object);
+	if (o && index < D1_MAX_CHUNKS &&
+	    o->chunks[index].materialized_present) {
+		*version = o->chunks[index].materialized;
+		found = true;
+	}
+	pthread_mutex_unlock(&s->lock);
+	return found;
 }
 
 /* Write one fixture control event.  Called with the lock held. */
