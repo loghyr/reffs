@@ -3000,6 +3000,8 @@ static uint32_t d1_start_append(struct d1_store *s)
 uint32_t d1_store_journal_enable(struct d1_store *s)
 {
 	uint32_t status = D1_OK;
+	uint32_t arm_append;
+	bool arm_flush;
 
 	pthread_mutex_lock(&s->lock);
 	/*
@@ -3013,10 +3015,23 @@ uint32_t d1_store_journal_enable(struct d1_store *s)
 		status = D1_INVALID;
 		goto out;
 	}
+	/*
+	 * A fresh journal is a new buffer, not a new run.  The fault the
+	 * caller armed describes this process, and on a store that has
+	 * never logged anything the next append and the next flush are
+	 * the START's own.  Initialization zeroes the whole structure, so
+	 * the arms used to be erased between being set and being reached,
+	 * which quietly made the one pre-frontier failure this model has
+	 * -- a START that never becomes durable -- impossible to ask for.
+	 */
+	arm_append = s->journal.fail_append_in;
+	arm_flush = s->journal.fail_next_flush;
 	if (!d1_journal_init(&s->journal, &s->uuid)) {
 		status = D1_NOSPC;
 		goto out;
 	}
+	s->journal.fail_append_in = arm_append;
+	s->journal.fail_next_flush = arm_flush;
 	status = d1_start_append(s);
 	if (status != D1_OK) {
 		d1_journal_fini(&s->journal);

@@ -313,12 +313,15 @@ void d1_view_close(struct d1_store *s, struct d1_view *v);
  * The START record does NOT carry the geometry.  Chunk size and maximum
  * file size are trusted configuration supplied by the caller to
  * d1_store_open, and this log neither records nor checks them.
- * Reconstruction is deterministic only when the target is opened with
- * the same geometry the logged store used: the reduced results compare
- * equal either way, but quantities derived from geometry -- a private
- * OWNER view's captured EOF, for one -- follow the target's numbers,
- * not the log's.  Binding geometry to storage identity belongs to a
- * persistent backend, and is not done here.
+ * Identical geometry is therefore a precondition on the caller, not
+ * something reconstruction can verify.  A mismatch is caught only
+ * incidentally: a logged result whose value happens to depend on the
+ * chunk size -- a resulting EOF, most often -- will not compare equal
+ * on a target of another size, and the rebuild fails closed.  A history
+ * whose logged results do not depend on it replays without complaint
+ * and then derives different geometry-dependent quantities, such as a
+ * private OWNER view's captured EOF.  Binding geometry to storage
+ * identity belongs to a persistent backend, and is not done here.
  */
 uint32_t d1_store_journal_enable(struct d1_store *s);
 
@@ -377,12 +380,15 @@ uint32_t d1_store_reopen(struct d1_store *s, const uint8_t *log,
  * journalled, it does not survive a rebuild or a reopen, and it cannot
  * be armed during one -- so it can neither replay nor outlive the run
  * that armed it.
+ *
+ * "Next" includes the START that d1_store_journal_enable writes: an arm
+ * set before the journal exists survives its creation, because the
+ * fault belongs to the run and not to the buffer.  That is the only way
+ * to ask for the one failure that happens before the log has a
+ * frontier at all.
  */
 void d1_fixture_fail_next_append(struct d1_store *s);
 
-/* Fixture fault control: refuse the next flush, so an appended record is
- * never claimed durable.  Also unjournalled and also disabled during
- * recovery. */
 /*
  * The same, aimed: the nth append from now fails.  A batch writes one
  * event per member, so this can interrupt a batch in the middle rather
@@ -390,6 +396,11 @@ void d1_fixture_fail_next_append(struct d1_store *s);
  */
 void d1_fixture_fail_append_in(struct d1_store *s, uint32_t n);
 
+/*
+ * Fixture fault control: refuse the next flush, so an appended record is
+ * never claimed durable.  Also unjournalled, also disabled during
+ * recovery, and it reaches an enable's START on the same terms.
+ */
 void d1_fixture_fail_next_flush(struct d1_store *s);
 
 /*

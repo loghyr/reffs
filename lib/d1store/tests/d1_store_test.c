@@ -3872,8 +3872,9 @@ static void test_owner_vector_is_validated_whole(void)
 	struct d1_view *view = NULL;
 	struct d1_guard guard;
 	static uint8_t data[32];
-	d1_id_t admission, v1, t1, t2, custody;
-	unsigned int pass;
+	struct d1_view *held[D1_MAX_VIEWS];
+	d1_id_t admission, v1, t1, t2;
+	unsigned int pass, n;
 
 	memset(data, 0x3a, sizeof(data));
 	fill_uuid(&store_uuid, 0x56);
@@ -3953,11 +3954,21 @@ static void test_owner_vector_is_validated_whole(void)
 		view = NULL;
 
 		/*
-		 * A refused vector leaves no pins: the version it would have
-		 * pinned is still releasable once nothing else holds it.
+		 * A refused vector leaves nothing behind.  Pin counts are
+		 * not publicly observable, so what is asserted here is what
+		 * is: every view slot is still free, which a view leaked by
+		 * a refusal would have taken.  The no-pin half holds by
+		 * construction -- d1_view_open takes no slot and pins
+		 * nothing until d1_owner_resolve has accepted the whole
+		 * vector -- and is stated rather than claimed as tested.
 		 */
-		custody = d1_fixture_custody(s, v1);
-		check(custody != 0, "custody is available");
+		for (n = 0; n < D1_MAX_VIEWS; n++)
+			if (d1_view_open(s, &object, admission, &sel, 0,
+					 CHUNK_BYTES, &held[n]) != D1_OK)
+				break;
+		check(n == D1_MAX_VIEWS, "every view slot is still free");
+		while (n--)
+			d1_view_close(s, held[n]);
 	}
 
 	d1_store_free(s);
@@ -4284,8 +4295,25 @@ static void test_recovery_clears_fault_arms(void)
 			check(d1_store_visible(target, &object, 2, &seen),
 			      "and it published");
 		} else {
+			/*
+			 * The arm fires on a publication, not on the rebuild,
+			 * so reading the flag after the rebuild is not an
+			 * oracle for it.  The first eligible operation
+			 * afterwards is -- and after a read-only rebuild the
+			 * log's own handle is the one that can make it.
+			 */
 			check(!d1_store_overlay_active(target),
 			      "and the arm did not survive the rebuild");
+			check(commit_chunk(target, admission, 2, 9, data,
+					   sizeof(data),
+					   &(struct d1_guard){ .never_written =
+								       true },
+					   0, NULL) != 0,
+			      "the first commit after it succeeds");
+			check(!d1_store_overlay_active(target),
+			      "with no index fault firing");
+			check(d1_store_visible(target, &object, 2, &seen),
+			      "and it published");
 		}
 
 		d1_store_free(target);
@@ -5218,6 +5246,334 @@ static void test_caller_binding_is_settled_first(void)
 	d1_store_free(s);
 }
 
+/* Big-endian stores, the framing section 9 fixes. */
+static void put_be16(uint8_t *p, uint16_t v)
+{
+	p[0] = (uint8_t)(v >> 8);
+	p[1] = (uint8_t)v;
+}
+
+/* Frame one record around a body the fixture built itself. */
+static size_t frame_record(uint8_t *dst, uint32_t type,
+			   const struct d1_uuid *uuid, uint64_t lsn,
+			   uint64_t incarnation, const uint8_t *body,
+			   uint32_t blen)
+{
+	uint32_t total =
+		D1_JOURNAL_HEADER_BYTES + blen + D1_JOURNAL_TRAILER_BYTES;
+
+	memset(dst, 0, total);
+	put_be32(dst + 0, D1_JOURNAL_MAGIC);
+	put_be16(dst + 4, (uint16_t)D1_JOURNAL_FORMAT);
+	put_be16(dst + 6, (uint16_t)type);
+	put_be32(dst + 8, D1_JOURNAL_HEADER_BYTES);
+	put_be32(dst + 12, total);
+	put_be32(dst + 16, ~total);
+	memcpy(dst + 20, uuid->bytes, D1_UUID_BYTES);
+	put_be64(dst + 36, lsn);
+	put_be64(dst + 44, incarnation);
+	memcpy(dst + D1_JOURNAL_HEADER_BYTES, body, blen);
+	put_be32(dst + total - D1_JOURNAL_TRAILER_BYTES,
+		 d1_crc32c(dst, total - D1_JOURNAL_TRAILER_BYTES));
+	return total;
+}
+
+/* The pieces of an ENTRY record's body. */
+struct entry_parts {
+	const uint8_t *env;
+	uint32_t env_len;
+	uint32_t ordinal;
+	const uint8_t *digest;
+	const uint8_t *result;
+	uint32_t result_len;
+};
+
+static void split_entry(struct entry_parts *p, const uint8_t *record)
+{
+	const uint8_t *b = record + D1_JOURNAL_HEADER_BYTES;
+
+	p->env_len = get_be32(b);
+	p->env = b + 4;
+	p->ordinal = get_be32(p->env + p->env_len);
+	p->digest = p->env + p->env_len + 4;
+	p->result_len = get_be32(p->digest + D1_DIGEST_BYTES);
+	p->result = p->digest + D1_DIGEST_BYTES + 4;
+}
+
+/* body := bytes(envelope) u32(ordinal) raw(digest) bytes(result) */
+static uint32_t entry_body(uint8_t *out, const uint8_t *env_bytes,
+			   uint32_t env_len, uint32_t ordinal,
+			   const uint8_t *digest, const uint8_t *res_bytes,
+			   uint32_t res_len)
+{
+	uint32_t at = 0;
+
+	put_be32(out + at, env_len);
+	at += 4;
+	memcpy(out + at, env_bytes, env_len);
+	at += env_len;
+	put_be32(out + at, ordinal);
+	at += 4;
+	memcpy(out + at, digest, D1_DIGEST_BYTES);
+	at += D1_DIGEST_BYTES;
+	put_be32(out + at, res_len);
+	at += 4;
+	memcpy(out + at, res_bytes, res_len);
+	return at + res_len;
+}
+
+/* body := u32(kind) bytes(request) bytes(result) */
+static uint32_t control_body(uint8_t *out, uint32_t kind, const uint8_t *req,
+			     uint32_t req_len, const uint8_t *res_bytes,
+			     uint32_t res_len)
+{
+	uint32_t at = 0;
+
+	put_be32(out + at, kind);
+	at += 4;
+	put_be32(out + at, req_len);
+	at += 4;
+	memcpy(out + at, req, req_len);
+	at += req_len;
+	put_be32(out + at, res_len);
+	at += 4;
+	memcpy(out + at, res_bytes, res_len);
+	return at + res_len;
+}
+
+/*
+ * The result the reducer computes for a member it refuses before the
+ * handler touches anything: the epoch, EOF and verifier the store is
+ * already at, and the refusal.  The epoch and EOF are taken from the
+ * record before it rather than assumed.
+ */
+static void refusal_result(struct d1_complete_result *r,
+			   const struct d1_complete_result *base,
+			   const struct d1_opkey *key, uint32_t status)
+{
+	memset(r, 0, sizeof(*r));
+	r->key = *key;
+	r->index_epoch = base->index_epoch;
+	r->eof = base->eof;
+	r->disposition = D1_COMPLETED;
+	r->entry.status = status;
+	r->entry.stability = D1_FILE_SYNC;
+	r->entry.disposition = D1_COMPLETED;
+	memcpy(r->entry.verifier, base->entry.verifier, D1_VERIFIER_BYTES);
+}
+
+/*
+ * A record's category has to agree with what it carries.
+ *
+ * An ENTRY is one member of an ordinary batch: a control operation in
+ * one, or an ordinal past the body's own member count, names something
+ * the live encoder cannot produce.  So does a CONTROL record carrying
+ * an ordinary operation.  Each of these is built with the logged result
+ * the reducer would actually compute for it, so that what refuses the
+ * record is the category check and not a later disagreement.
+ */
+static void test_records_must_name_what_they_carry(void)
+{
+	static const char *const what[] = {
+		"an ENTRY carrying a control operation is refused",
+		"an ENTRY ordinal past its body's members is refused",
+		"a CONTROL record carrying an ordinary operation is refused",
+	};
+	unsigned int pass;
+
+	for (pass = 0; pass < 3; pass++) {
+		struct d1_uuid store_uuid;
+		struct d1_store *live, *target;
+		struct d1_envelope env, crafted;
+		struct d1_complete_result base, made;
+		struct entry_parts parts;
+		struct d1_result res;
+		static uint8_t copy[65536];
+		static uint8_t scratch[65536];
+		static uint8_t body[8192];
+		static uint8_t bytes[4096];
+		static uint8_t result[512];
+		static uint8_t data[16];
+		uint8_t digest[D1_DIGEST_BYTES];
+		const uint8_t *log;
+		size_t len, at[8], used, env_len, res_len;
+		unsigned int records;
+		uint32_t blen;
+		d1_id_t admission;
+
+		memset(data, 0x6a, sizeof(data));
+		fill_uuid(&store_uuid, (uint8_t)(0x6b + pass));
+		live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!live)
+			return;
+		d1_store_journal_enable(live);
+		admission = d1_fixture_admit(live, &object, 11,
+					     D1_RIGHT_WRITE |
+						     D1_RIGHT_SINGLE_WRITER);
+		env_init(&env, live, admission, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], 0, 11, 1, data,
+			    sizeof(data), true,
+			    &(struct d1_guard){ .never_written = true });
+		check(d1_store_apply(live, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "a one-member batch to build on");
+		log = d1_store_journal(live, &len);
+		records = index_log(log, len, at, 8);
+		check(records == 3 && len <= sizeof(copy),
+		      "logged as a START, a control and one entry");
+		if (records != 3 || len > sizeof(copy)) {
+			d1_store_free(live);
+			return;
+		}
+		split_entry(&parts, log + at[2]);
+		check(d1_complete_result_decode(parts.result, parts.result_len,
+						&base),
+		      "and its recorded result decodes");
+
+		if (pass == 0) {
+			/* A control operation inside an ENTRY. */
+			env_init(&crafted, live, admission, D1_OP_LEASE_REAP);
+			crafted.body.control.count = 1;
+			crafted.body.control.txns[0] = res.entries[0].txn;
+			crafted.body.control.old_admission = admission;
+			/*
+			 * The reducer would run it as an ordinary member:
+			 * a reap needs CONTROL rights this handle has not
+			 * got, which is a recorded refusal.
+			 */
+			refusal_result(&made, &base, &crafted.key,
+				       D1_STALE_AUTH);
+		} else if (pass == 1) {
+			/* One member, and a record claiming a second. */
+			crafted = env;
+			/*
+			 * Member 1 of a one-member body decodes as zero, and
+			 * a zero-length payload is malformed.
+			 */
+			refusal_result(&made, &base, &crafted.key, D1_INVALID);
+		} else {
+			/* An ordinary operation inside a CONTROL record. */
+			env_init(&crafted, live, admission, D1_OP_WRITE_BATCH);
+			crafted.body.write.count = 1;
+			crafted.body.write.stability = D1_FILE_SYNC;
+			write_entry(&crafted.body.write.entries[0], 1, 11, 2,
+				    data, sizeof(data), true,
+				    &(struct d1_guard){ .never_written =
+								true });
+			refusal_result(&made, &base, &crafted.key,
+				       D1_STALE_AUTH);
+		}
+
+		env_len = d1_envelope_encode(&crafted, bytes, sizeof(bytes));
+		res_len = d1_complete_result_encode(&made, result,
+						    sizeof(result));
+		check(env_len && res_len, "the crafted record encodes");
+		check(d1_envelope_digest(&crafted, scratch, sizeof(scratch),
+					 digest),
+		      "and carries the digest the store will recompute");
+		if (!env_len || !res_len) {
+			d1_store_free(live);
+			return;
+		}
+		if (pass == 2)
+			blen = control_body(body, D1_CTL_ENVELOPE, bytes,
+					    (uint32_t)env_len, result,
+					    (uint32_t)res_len);
+		else
+			blen = entry_body(body, bytes, (uint32_t)env_len,
+					  pass == 1 ? 1u : 0u, digest, result,
+					  (uint32_t)res_len);
+
+		memcpy(copy, log, len);
+		used = len;
+		used += frame_record(copy + used,
+				     pass == 2 ? D1_REC_CONTROL : D1_REC_ENTRY,
+				     &store_uuid, 4, 1, body, blen);
+
+		target =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (target) {
+			check(d1_store_replay(target, copy, used) == D1_INVALID,
+			      what[pass]);
+			d1_store_free(target);
+		}
+		target =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (target) {
+			check(d1_store_replay(target, log, len) == D1_OK,
+			      "while the log as written still rebuilds");
+			check(states_agree(live, target),
+			      "into the same store");
+			d1_store_free(target);
+		}
+		d1_store_free(live);
+	}
+}
+
+/*
+ * The one failure that happens before the log has a frontier: the START
+ * that opens it.
+ *
+ * The fault controls say they refuse the next append and the next
+ * flush.  On a store that has never logged anything those are the
+ * START's own, so arming one before journalling exists has to reach it.
+ */
+static void test_start_can_fail_to_become_durable(void)
+{
+	static const bool flush_case[] = { false, true };
+	unsigned int pass;
+
+	for (pass = 0; pass < 2; pass++) {
+		struct d1_uuid store_uuid;
+		struct d1_store *s, *rebuilt;
+		const uint8_t *log;
+		size_t len;
+		static uint8_t data[16];
+		d1_id_t admission, seen;
+
+		memset(data, 0x6e, sizeof(data));
+		fill_uuid(&store_uuid, (uint8_t)(0x6f + pass));
+		s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!s)
+			return;
+		if (flush_case[pass])
+			d1_fixture_fail_next_flush(s);
+		else
+			d1_fixture_fail_next_append(s);
+		check(d1_store_journal_enable(s) == D1_IO,
+		      flush_case[pass] ?
+			      "a START that cannot be flushed fails the enable" :
+			      "a START that cannot be appended fails the enable");
+		(void)d1_store_journal(s, &len);
+		check(len == 0, "with nothing claimed durable");
+		check(!d1_store_visible(s, &object, 0, &seen),
+		      "and the store untouched");
+
+		/* The arm is spent, so the store can still start logging. */
+		check(d1_store_journal_enable(s) == D1_OK,
+		      "and a second attempt opens the log");
+		admission = d1_fixture_admit(s, &object, 11,
+					     D1_RIGHT_WRITE |
+						     D1_RIGHT_SINGLE_WRITER);
+		check(commit_chunk(s, admission, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   0, NULL) != 0,
+		      "which then records ordinary work");
+		log = d1_store_journal(s, &len);
+		rebuilt =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (rebuilt) {
+			check(d1_store_replay(rebuilt, log, len) == D1_OK,
+			      "and the log it wrote rebuilds");
+			check(states_agree(s, rebuilt), "into the same store");
+			d1_store_free(rebuilt);
+		}
+		d1_store_free(s);
+	}
+}
+
 int main(void)
 {
 	fill_uuid(&object.export_uuid, 0x30);
@@ -5273,6 +5629,8 @@ int main(void)
 	test_recovery_clears_fault_arms();
 	test_concurrent_callers_cannot_splice_a_key();
 	test_replay_refuses_a_spliced_key();
+	test_records_must_name_what_they_carry();
+	test_start_can_fail_to_become_durable();
 	test_caller_binding_is_settled_first();
 	test_control_envelopes_replay();
 	test_custody_and_release_replay();
