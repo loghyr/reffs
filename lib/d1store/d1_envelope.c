@@ -296,6 +296,16 @@ static bool d1_validate_lifecycle(const struct d1_lifecycle_batch *l)
 			return false;
 		if (!d1_writer_ok(e->owner.writer))
 			return false;
+		/*
+		 * A typed ID of zero is the absent one, so an option that
+		 * says it is present and carries zero is not a canonical
+		 * request -- the same rule a rollback entry's options are
+		 * already held to, and the same reason: two encodings of
+		 * "no predecessor" would be two requests that mean one
+		 * thing, and one of them would reach the reducer.
+		 */
+		if (e->predecessor_present && e->predecessor == 0)
+			return false;
 		for (j = 0; j < i; j++)
 			if (l->entries[j].index == e->index ||
 			    l->entries[j].txn == e->txn)

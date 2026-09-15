@@ -1456,8 +1456,14 @@ static void test_failed_replay_poisons_the_handle(void)
 	for (i = 0; i < D1_VERIFIER_BYTES; i++)
 		zero = zero && verifier[i] == 0;
 	check(zero, "a zero verifier");
+	/*
+	 * The gate on d1_store_journal is not what this observes: a replay
+	 * target owns no journal of its own, so the length is zero with
+	 * the gate and without it.  The line records the state, and the
+	 * matrix says the gate has no killing test.
+	 */
 	(void)d1_store_journal(bad, &badlen);
-	check(badlen == 0, "and no journal bytes");
+	check(badlen == 0, "and no journal bytes, gate or no gate");
 
 	check(d1_store_close(bad) == D1_OK, "but it still closes");
 	check(d1_store_destroy(bad) == D1_OK, "and is destroyed");
@@ -4332,6 +4338,11 @@ static void test_unused_key_is_not_bound(void)
 }
 
 /* Fault arms do not survive a reconstruction or a reopen. */
+static void note_hook_fired(void *arg)
+{
+	*(bool *)arg = true;
+}
+
 static void test_recovery_clears_fault_arms(void)
 {
 	static const bool use_reopen[] = { false, true };
@@ -4343,6 +4354,7 @@ static void test_recovery_clears_fault_arms(void)
 		const uint8_t *log;
 		size_t len, before, after;
 		static uint8_t data[8];
+		bool hook_fired = false;
 		d1_id_t admission, fresh, seen;
 
 		memset(data, 0x40, sizeof(data));
@@ -4370,6 +4382,8 @@ static void test_recovery_clears_fault_arms(void)
 		d1_fixture_fail_next_index(target);
 		d1_fixture_fail_next_append(target);
 		d1_fixture_fail_next_flush(target);
+		d1_fixture_before_member(target, 0, note_hook_fired,
+					 &hook_fired);
 
 		if (use_reopen[pass])
 			check(d1_store_reopen(target, log, len) == D1_OK,
@@ -4421,6 +4435,8 @@ static void test_recovery_clears_fault_arms(void)
 			check(d1_store_visible(target, &object, 2, &seen),
 			      "and it published");
 		}
+		check(!hook_fired,
+		      "and the member hook set before it never ran");
 
 		d1_store_free(target);
 		d1_store_free(live);
@@ -5176,7 +5192,8 @@ static void test_replay_refuses_a_spliced_key(void)
 		const uint8_t *log, *log_b = NULL;
 		size_t len, len_b = 0, at[16], at_b[16], used = 0;
 		unsigned int records, records_b = 0, i;
-		d1_id_t admission;
+		const uint32_t rights = D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER;
+		d1_id_t admission, second;
 
 		memset(mine, 0x64, sizeof(mine));
 		memset(theirs, 0x65, sizeof(theirs));
@@ -5225,10 +5242,8 @@ static void test_replay_refuses_a_spliced_key(void)
 				return;
 			}
 			d1_store_journal_enable(other);
-			check(d1_fixture_admit(other, &object, 11,
-					       D1_RIGHT_WRITE |
-						       D1_RIGHT_SINGLE_WRITER) ==
-				      admission,
+			second = d1_fixture_admit(other, &object, 11, rights);
+			check(second == admission,
 			      "the second store admits the same handle");
 			changed = env;
 			write_entry(&changed.body.write.entries[1], 1, 11, 2,
@@ -6017,6 +6032,347 @@ static void test_a_batch_stops_at_its_first_unrecorded_member(void)
 	d1_store_free(live);
 }
 
+static uint16_t get_be16(const uint8_t *p)
+{
+	return (uint16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
+}
+
+/* The pieces of a CONTROL record's body. */
+struct control_parts {
+	uint32_t kind;
+	const uint8_t *request;
+	uint32_t request_len;
+	const uint8_t *result;
+	uint32_t result_len;
+};
+
+static void split_control(struct control_parts *p, const uint8_t *record)
+{
+	const uint8_t *b = record + D1_JOURNAL_HEADER_BYTES;
+
+	p->kind = get_be32(b);
+	p->request_len = get_be32(b + 4);
+	p->request = b + 8;
+	p->result_len = get_be32(p->request + p->request_len);
+	p->result = p->request + p->request_len + 4;
+}
+
+/* Which record is the fixture control of @kind, or -1. */
+static int find_control(const uint8_t *log, const size_t *at,
+			unsigned int records, uint32_t kind)
+{
+	unsigned int i;
+
+	for (i = 0; i < records; i++) {
+		const uint8_t *r = log + at[i];
+
+		if (get_be16(r + 6) == D1_REC_CONTROL &&
+		    get_be32(r + D1_JOURNAL_HEADER_BYTES) == kind)
+			return (int)i;
+	}
+	return -1;
+}
+
+/* A copy of @log with record @which replaced by @rec. */
+static size_t splice_record(uint8_t *dst, const uint8_t *log, size_t len,
+			    const size_t *at, unsigned int which,
+			    const uint8_t *rec, size_t rec_len)
+{
+	size_t head = at[which];
+	size_t tail = head + record_bytes(log + head);
+
+	memcpy(dst, log, head);
+	memcpy(dst + head, rec, rec_len);
+	memcpy(dst + head + rec_len, log + tail, len - tail);
+	return head + rec_len + (len - tail);
+}
+
+/*
+ * A fixture control record is the whole request, not the one field the
+ * replay dispatcher needs.
+ *
+ * The codec carries only the fields each kind uses, so a decode already
+ * puts the canonical zero in the rest.  The object is the exception: it
+ * is on the wire for every kind, and for three of them it is derived
+ * rather than requested, so a record can carry one thing and mean
+ * another.  Replay dispatched on the handle alone and would transition
+ * it against an object the request does not name.  Every negative here
+ * keeps the logged result exactly as written, so what refuses it is the
+ * canonical form and not the result comparison.
+ */
+static void test_fixture_control_records_are_canonical(void)
+{
+	static const char *const what[] = {
+		"a REVOKE naming an object its handle does not hold is refused",
+		"a CUSTODY carrying an object its writer zeroes is refused",
+		"a REVOKE of no handle at all carrying an object is refused",
+	};
+	static const uint32_t kinds[] = { D1_CTL_REVOKE, D1_CTL_CUSTODY,
+					  D1_CTL_REVOKE };
+	unsigned int pass;
+
+	for (pass = 0; pass < 3; pass++) {
+		struct d1_uuid store_uuid;
+		struct d1_store *live, *target;
+		struct d1_control_request request;
+		struct control_parts parts;
+		struct d1_envelope env;
+		struct d1_result res;
+		static uint8_t copy[65536];
+		static uint8_t record[4096];
+		static uint8_t body[2048];
+		static uint8_t bytes[1024];
+		static uint8_t data[16];
+		const uint8_t *log;
+		size_t len, at[16], used, req_len;
+		unsigned int records;
+		uint32_t blen;
+		int which;
+		d1_id_t admission, version;
+
+		memset(data, 0x78, sizeof(data));
+		fill_uuid(&store_uuid, (uint8_t)(0x78 + pass));
+		live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!live)
+			return;
+		d1_store_journal_enable(live);
+		admission = d1_fixture_admit(live, &object, 11,
+					     D1_RIGHT_WRITE |
+						     D1_RIGHT_SINGLE_WRITER);
+		env_init(&env, live, admission, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], 0, 11, 1, data,
+			    sizeof(data), true,
+			    &(struct d1_guard){ .never_written = true });
+		check(d1_store_apply(live, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "a version for custody to name");
+		version = res.entries[0].version;
+		if (pass == 2) {
+			/*
+			 * A revoke of a handle the store never issued is
+			 * logged too, with the zero object the writer had
+			 * nothing to fill it from.
+			 */
+			d1_fixture_revoke(live, admission + 50u);
+		} else {
+			check(d1_fixture_custody(live, version) != 0,
+			      "custody is issued and logged");
+			d1_fixture_revoke(live, admission);
+		}
+
+		log = d1_store_journal(live, &len);
+		records = index_log(log, len, at, 16);
+		which = find_control(log, at, records, kinds[pass]);
+		check(which >= 0, "the record it wrote is in the log");
+		check(len + 4096u <= sizeof(copy), "and the log fits a copy");
+		if (which < 0 || len + 4096u > sizeof(copy)) {
+			d1_store_free(live);
+			return;
+		}
+		split_control(&parts, log + at[which]);
+		check(d1_control_request_decode(parts.request,
+						parts.request_len, &request) &&
+			      request.kind == kinds[pass],
+		      "and its request decodes as the kind it claims");
+
+		/* The record put back untouched is still the log as written. */
+		blen = control_body(body, parts.kind, parts.request,
+				    parts.request_len, parts.result,
+				    parts.result_len);
+		used = splice_record(
+			copy, log, len, at, (unsigned int)which, record,
+			frame_record(record, D1_REC_CONTROL, &store_uuid,
+				     (uint64_t)which + 1u, 1, body, blen));
+		target =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (target) {
+			check(d1_store_replay(target, copy, used) == D1_OK,
+			      "the record reframed unchanged still replays");
+			check(states_agree(live, target),
+			      "into the same store");
+			d1_store_free(target);
+		}
+
+		/* And now one field the live writer would never have set. */
+		if (pass == 0)
+			request.object.object_uuid.bytes[0] ^= 0xffu;
+		else
+			request.object = object;
+		req_len = d1_control_request_encode(&request, bytes,
+						    sizeof(bytes));
+		check(req_len != 0, "the altered request encodes");
+		if (!req_len) {
+			d1_store_free(live);
+			return;
+		}
+		blen = control_body(body, parts.kind, bytes, (uint32_t)req_len,
+				    parts.result, parts.result_len);
+		used = splice_record(
+			copy, log, len, at, (unsigned int)which, record,
+			frame_record(record, D1_REC_CONTROL, &store_uuid,
+				     (uint64_t)which + 1u, 1, body, blen));
+		target =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (target) {
+			check(d1_store_replay(target, copy, used) == D1_INVALID,
+			      what[pass]);
+			d1_store_free(target);
+		}
+		d1_store_free(live);
+	}
+}
+
+/*
+ * A typed ID of zero is the absent one.
+ *
+ * So an option that says it is present and carries zero is two
+ * encodings of one request, and the rollback body has always refused
+ * it.  The lifecycle body has the same option and did not, which let a
+ * malformed request reach the reducer and be answered with a recorded
+ * semantic refusal.
+ *
+ * The record leg is coverage rather than an oracle: the decoder refuses
+ * the bytes, so putting the check back is what the four direct legs
+ * above it detect.
+ */
+static void test_lifecycle_options_are_canonical(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *target;
+	struct d1_envelope env, decoded;
+	struct d1_complete_result base, made;
+	struct entry_parts parts;
+	struct d1_result res;
+	static uint8_t data[16];
+	static uint8_t copy[65536];
+	static uint8_t body[8192];
+	static uint8_t bytes[4096];
+	static uint8_t other[4096];
+	static uint8_t result[512];
+	static uint8_t scratch[65536];
+	uint8_t digest[D1_DIGEST_BYTES];
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	const uint8_t *log;
+	size_t len, at[16], used, env_len, other_len, res_len, i;
+	size_t first = 0, last = 0;
+	unsigned int records;
+	uint32_t blen;
+	d1_id_t admission, txn;
+
+	memset(data, 0x7c, sizeof(data));
+	fill_uuid(&store_uuid, 0x7c);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	d1_store_verifier(live, verifier);
+	admission = d1_fixture_admit(live, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	env_init(&env, live, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a prepared version to finalize");
+	txn = res.entries[0].txn;
+
+	env_init(&env, live, admission, D1_OP_FINALIZE_BATCH);
+	env.body.lifecycle.range_begin = 0;
+	env.body.lifecycle.range_end = 1;
+	env.body.lifecycle.count = 1;
+	env.body.lifecycle.entries[0].index = 0;
+	env.body.lifecycle.entries[0].owner.cohort = 1;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = 1;
+	env.body.lifecycle.entries[0].txn = txn;
+	env.body.lifecycle.entries[0].predecessor_present = true;
+	env.body.lifecycle.entries[0].predecessor = 0;
+	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+	check(!d1_envelope_validate(&env),
+	      "a present predecessor of zero is not a canonical request");
+	check(d1_store_apply(live, &env, &res) == D1_INVALID,
+	      "and the call is refused before anything reads the body");
+	check(d1_envelope_encode(&env, bytes, sizeof(bytes)) == 0,
+	      "and the encoder will not write one");
+
+	/*
+	 * Two canonical encodings that differ only in the ID say where the
+	 * ID is, without this test knowing the layout.  Both values are
+	 * small, so zeroing the bytes that differ zeroes the whole ID and
+	 * leaves the present flag exactly where it was.
+	 */
+	env.body.lifecycle.entries[0].predecessor = 0x5a5au;
+	env_len = d1_envelope_encode(&env, bytes, sizeof(bytes));
+	env.body.lifecycle.entries[0].predecessor = 0xa5a5u;
+	other_len = d1_envelope_encode(&env, other, sizeof(other));
+	check(env_len != 0 && env_len == other_len,
+	      "two canonical forms of it encode to one length");
+	if (!env_len || env_len != other_len) {
+		d1_store_free(live);
+		return;
+	}
+	for (i = 0; i < env_len; i++) {
+		if (bytes[i] == other[i])
+			continue;
+		if (!last)
+			first = i;
+		last = i;
+	}
+	check(last != 0 && last + 1u - first <= 8u,
+	      "and differ in nothing but that ID");
+	check(d1_envelope_decode(bytes, env_len, &decoded),
+	      "the canonical encoding decodes");
+	for (i = first; i <= last; i++)
+		bytes[i] = 0;
+	check(!d1_envelope_decode(bytes, env_len, &decoded),
+	      "and the same bytes with the ID zeroed do not");
+
+	/* A record carrying them is refused before the reducer runs. */
+	log = d1_store_journal(live, &len);
+	records = index_log(log, len, at, 16);
+	check(records >= 3 && len + 4096u <= sizeof(copy),
+	      "the log holds the write, and fits a copy");
+	if (records < 3 || len + 4096u > sizeof(copy)) {
+		d1_store_free(live);
+		return;
+	}
+	split_entry(&parts, log + at[records - 1]);
+	check(d1_complete_result_decode(parts.result, parts.result_len, &base),
+	      "and its recorded result decodes");
+	env.body.lifecycle.entries[0].predecessor = 0x5a5au;
+	check(d1_envelope_digest(&env, scratch, sizeof(scratch), digest),
+	      "the canonical form digests");
+	crafted_result(&made, &env.key, D1_STALE_AUTH, D1_UNRECORDED, verifier);
+	res_len = d1_complete_result_encode(&made, result, sizeof(result));
+	if (!res_len) {
+		d1_store_free(live);
+		return;
+	}
+	blen = entry_body(body, bytes, (uint32_t)env_len, 0, digest, result,
+			  (uint32_t)res_len);
+	memcpy(copy, log, len);
+	used = len + frame_record(copy + len, D1_REC_ENTRY, &store_uuid,
+				  (uint64_t)records + 1u, 1, body, blen);
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, copy, used) == D1_INVALID,
+		      "a record carrying a present zero ID is refused");
+		d1_store_free(target);
+	}
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, log, len) == D1_OK,
+		      "while the log as written still rebuilds");
+		check(states_agree(live, target), "into the same store");
+		d1_store_free(target);
+	}
+	d1_store_free(live);
+}
+
 /*
  * The one failure that happens before the log has a frontier: the START
  * that opens it.
@@ -6047,10 +6403,12 @@ static void test_start_can_fail_to_become_durable(void)
 			d1_fixture_fail_next_flush(s);
 		else
 			d1_fixture_fail_next_append(s);
-		check(d1_store_journal_enable(s) == D1_IO,
-		      flush_case[pass] ?
-			      "a START that cannot be flushed fails the enable" :
-			      "a START that cannot be appended fails the enable");
+		if (flush_case[pass])
+			check(d1_store_journal_enable(s) == D1_IO,
+			      "a START that cannot be flushed fails");
+		else
+			check(d1_store_journal_enable(s) == D1_IO,
+			      "a START that cannot be appended fails");
 		(void)d1_store_journal(s, &len);
 		check(len == 0, "with nothing claimed durable");
 		check(!d1_store_visible(s, &object, 0, &seen),
@@ -6139,6 +6497,8 @@ int main(void)
 	test_replay_requires_the_record_to_have_happened();
 	test_replay_refuses_a_record_that_found_no_room();
 	test_a_batch_stops_at_its_first_unrecorded_member();
+	test_fixture_control_records_are_canonical();
+	test_lifecycle_options_are_canonical();
 	test_start_can_fail_to_become_durable();
 	test_caller_binding_is_settled_first();
 	test_control_envelopes_replay();

@@ -3289,6 +3289,51 @@ static uint32_t d1_replay_entry(struct d1_store *s, const uint8_t *body,
 	return D1_OK;
 }
 
+/*
+ * Whether a fixture control record is one a live writer could have
+ * built.
+ *
+ * The request codec carries only the fields its kind uses -- the
+ * authority for ADMIT, the handle for REVOKE and EXPIRE, the version
+ * for CUSTODY and RELEASE -- so a decoded request has the canonical
+ * zero in every field its kind does not carry, whatever the bytes say.
+ * One field is on the wire for every kind: the object.  And for three
+ * of the five kinds it is not the request at all, it is derived, so a
+ * record can carry one thing and mean another.
+ *
+ * Replay dispatched on the handle alone and never looked, so a record
+ * whose object disagreed with its handle still revoked that handle:
+ * CRC-valid, result-equal, and a transition against an object the
+ * request does not name.  So the derived half is checked, before
+ * anything moves:
+ *
+ *   ADMIT    the object is the request.  Nothing to derive.
+ *   REVOKE,  the object is the one the located admission holds -- or
+ *   EXPIRE   the canonical zero, when there was no admission to take
+ *            it from, which is what the writer leaves in that case.
+ *   CUSTODY, the version is the request and the object is untouched,
+ *   RELEASE  so the canonical zero is the only object they carry.
+ */
+static bool d1_control_canonical(struct d1_store *s,
+				 const struct d1_control_request *r)
+{
+	const struct d1_admission *a;
+	struct d1_objkey no_object;
+
+	memset(&no_object, 0, sizeof(no_object));
+	switch (r->kind) {
+	case D1_CTL_ADMIT:
+		return true;
+	case D1_CTL_REVOKE:
+	case D1_CTL_EXPIRE:
+		a = d1_admission_find(s, r->admission);
+		return memcmp(&r->object, a ? &a->object : &no_object,
+			      sizeof(r->object)) == 0;
+	default:
+		return memcmp(&r->object, &no_object, sizeof(no_object)) == 0;
+	}
+}
+
 static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 				  uint32_t len)
 {
@@ -3352,6 +3397,9 @@ static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 		return D1_INVALID;
 	/* And the outer tag agrees with the schema it actually carries. */
 	if (request.kind != kind)
+		return D1_INVALID;
+	/* And every field of it is the one the live writer would have set. */
+	if (!d1_control_canonical(s, &request))
 		return D1_INVALID;
 	if (!d1_control_result_decode(result_bytes, result_len, &logged_ctl))
 		return D1_INVALID;
@@ -3438,6 +3486,9 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
 	s->overlay_active = false;
 	s->journal.fail_append_in = 0;
 	s->journal.fail_next_flush = false;
+	s->before_member = NULL;
+	s->before_member_arg = NULL;
+	s->before_member_ordinal = 0;
 	s->replaying = true;
 
 	d1_journal_cursor_init(&c, log, durable, &s->uuid);

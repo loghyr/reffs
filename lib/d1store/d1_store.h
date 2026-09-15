@@ -397,9 +397,9 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log,
  * would otherwise leave is a populated, mutable store that nothing is
  * recording and that can never be reconstructed into again.
  *
- * Fixture fault arms do not survive either path: reconstruction clears
- * them on entry, so the first operation after a rebuild or a reopen is
- * an ordinary one.
+ * No unjournalled fixture arm survives either path: reconstruction
+ * clears the fault arms and the member hook on entry, so the first
+ * operation after a rebuild or a reopen is an ordinary one.
  */
 uint32_t d1_store_reopen(struct d1_store *s, const uint8_t *log,
 			 size_t durable);
