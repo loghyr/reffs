@@ -734,22 +734,38 @@ static void test_rollback_predicates(void)
 			  &txn2);
 	check(v1 != 0 && v2 != 0, "a version is replaced");
 
-	/* A wrong expected predecessor is refused. */
+	/*
+	 * A wrong expected predecessor, reached with valid custody.  With
+	 * a bogus custody handle the call fails on custody first and never
+	 * reaches the comparison, which is how this row used to pass for
+	 * the wrong reason.
+	 */
+	custody = d1_fixture_custody(s, v2);
 	check(rollback_one(s, repair_adm, 0, 2, txn2,
 			   &(struct rollback_expect){ .custody_present = true,
-						      .custody = 999,
+						      .custody = custody,
 						      .visible_present = true,
 						      .visible = v2,
 						      .predecessor_present =
 							      true,
 						      .predecessor = 999999 },
-			   &entry) != D1_OK,
-	      "a wrong expected predecessor is refused");
+			   &entry) == D1_NO_PREDECESSOR,
+	      "a wrong expected predecessor answers NO_PREDECESSOR");
+	check(d1_store_visible(s, &object, 0, &visible) && visible == v2,
+	      "and changes nothing");
+
+	/* An absent expected predecessor, where one was recorded. */
+	check(rollback_one(s, repair_adm, 0, 2, txn2,
+			   &(struct rollback_expect){ .custody_present = true,
+						      .custody = custody,
+						      .visible_present = true,
+						      .visible = v2 },
+			   &entry) == D1_NO_PREDECESSOR,
+	      "an absent expected predecessor is a mismatch too");
 	check(d1_store_visible(s, &object, 0, &visible) && visible == v2,
 	      "and changes nothing");
 
 	/* An absent expected-visible option asserts nothing is there. */
-	custody = d1_fixture_custody(s, v2);
 	check(rollback_one(s, repair_adm, 0, 2, txn2,
 			   &(struct rollback_expect){ .custody_present = true,
 						      .custody = custody,
@@ -790,6 +806,27 @@ static void test_rollback_predicates(void)
 	d1_store_apply(s, &env, &res);
 	txn1 = res.entries[0].txn;
 	check(txn1 != 0, "a new private transaction is prepared");
+
+	/* The private path compares its expectations too. */
+	check(rollback_one(s, writer_adm, 0, 3, txn1,
+			   &(struct rollback_expect){ .visible_present = true,
+						      .visible = v1,
+						      .predecessor_present =
+							      true,
+						      .predecessor = 999999 },
+			   &entry) == D1_NO_PREDECESSOR,
+	      "a private rollback with a wrong predecessor is refused");
+	check(rollback_one(s, writer_adm, 0, 3, txn1,
+			   &(struct rollback_expect){ .visible_present = true,
+						      .visible = v1 },
+			   &entry) == D1_NO_PREDECESSOR,
+	      "and so is one that expects no predecessor where there is one");
+	check(rollback_one(s, writer_adm, 0, 3, txn1,
+			   &(struct rollback_expect){ .predecessor_present =
+							      true,
+						      .predecessor = v1 },
+			   &entry) == D1_OWNER_CONFLICT,
+	      "and one that expects nothing visible where something is");
 
 	check(rollback_one(s, repair_adm, 0, 3, txn1,
 			   &(struct rollback_expect){ .visible_present = true,
@@ -1126,6 +1163,158 @@ static void test_view_is_stable(void)
 	d1_view_close(s, after);
 	check(d1_store_close(s) == D1_OK,
 	      "and the close succeeds once nothing is outstanding");
+}
+
+/*
+ * Normal close refuses while a call is in flight, not only while a view
+ * is open.
+ *
+ * A batch releases the lock between members so the next one is
+ * revalidated against what the last one left.  A close that ran in that
+ * gap saw no views, freed the store, and left the caller to lock a
+ * destroyed mutex.  The model is single threaded, so the fixture pair
+ * holds exactly what a paused call holds.
+ */
+static void test_close_refuses_an_active_call(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
+	static uint8_t data[16];
+	d1_id_t admission;
+
+	memset(data, 0x5a, sizeof(data));
+	fill_uuid(&store_uuid, 0x41);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+	check(commit_chunk(s, admission, 0, 1, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "there is something to read");
+
+	/* A call is admitted and has not returned. */
+	d1_fixture_call_enter(s);
+	check(d1_store_close(s) == D1_BUSY,
+	      "a close during an admitted call is refused");
+
+	/* A view outstanding at the same time is refused for its own reason. */
+	ordinary_sel(&sel);
+	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
+			   &view) == D1_OK,
+	      "a view opens while the call is in flight");
+	check(d1_store_close(s) == D1_BUSY, "and the close is still refused");
+	d1_view_close(s, view);
+	check(d1_store_close(s) == D1_BUSY,
+	      "closing the view is not enough while the call is in flight");
+
+	/* The call returns; now the close succeeds. */
+	d1_fixture_call_leave(s);
+	check(d1_store_close(s) == D1_OK,
+	      "and the close succeeds once the call has returned");
+}
+
+/*
+ * A store whose rebuild failed is finished.
+ *
+ * Returning an error is not the same as being safe to serve from: a
+ * partial rebuild is neither the logged history nor an empty store.
+ * The handle stops being usable for anything but teardown.
+ */
+static void test_failed_replay_poisons_the_handle(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *bad;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
+	struct d1_envelope env;
+	struct d1_result res;
+	const uint8_t *log;
+	size_t len;
+	uint8_t *writable;
+	static uint8_t data[16];
+	d1_id_t admission;
+
+	memset(data, 0x77, sizeof(data));
+	fill_uuid(&store_uuid, 0x42);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	admission = d1_fixture_admit(live, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+	check(commit_chunk(live, admission, 0, 1, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "there is a history to rebuild");
+	check(commit_chunk(live, admission, 2, 2, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "with more than one record in it");
+
+	log = d1_store_journal(live, &len);
+	bad = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!bad) {
+		d1_store_free(live);
+		return;
+	}
+	/* Corrupt a record in the middle so the rebuild stops part way. */
+	writable = (uint8_t *)(uintptr_t)log;
+	writable[len - 1] ^= 0xffu;
+	check(d1_store_replay(bad, log, len) == D1_IO, "the rebuild fails");
+	writable[len - 1] ^= 0xffu;
+
+	/* From here the handle answers nothing but teardown. */
+	env_init(&env, bad, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 3, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(bad, &env, &res) == D1_INVALID,
+	      "it will not apply anything");
+	ordinary_sel(&sel);
+	check(d1_view_open(bad, &object, admission, &sel, 0, CHUNK_BYTES,
+			   &view) == D1_INVALID,
+	      "nor open a view");
+	check(view == NULL, "and gives none");
+	check(d1_store_replay(bad, log, len) == D1_INVALID,
+	      "nor try the rebuild again");
+	check(d1_store_close(bad) == D1_OK, "but it still closes");
+
+	d1_store_free(live);
+}
+
+/* Fixture custody names a version that exists. */
+static void test_custody_needs_a_real_version(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	static uint8_t data[16];
+	d1_id_t admission, v1;
+
+	memset(data, 0x78, sizeof(data));
+	fill_uuid(&store_uuid, 0x43);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	check(d1_fixture_custody(s, 1) == 0,
+	      "custody over a version that does not exist yet is refused");
+	v1 = commit_chunk(s, admission, 0, 1, data, sizeof(data),
+			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+	check(v1 != 0, "a version is committed");
+	check(d1_fixture_custody(s, v1) != 0, "and custody over it is issued");
+	check(d1_fixture_custody(s, v1 + 1000u) == 0,
+	      "but not over one that has never been allocated");
+
+	d1_store_free(s);
 }
 
 /*
@@ -1730,20 +1919,28 @@ static void test_append_fault_is_unrecorded(void)
 }
 
 /*
- * A batch interrupted in the middle keeps what it already did.
+ * A batch interrupted in the middle stops there and resumes in order.
  *
- * Section 8: results for entries up to the interruption are retained,
- * an exact retry reconstructs those and evaluates the rest, and
- * successful siblings are not rolled back.
+ * Section 8 describes a batch "interrupted after entry j" whose exact
+ * retry "reconstructs those and evaluates remaining entries", and
+ * section 7 requires input order.  An infrastructure failure is that
+ * interruption: carrying on past it would put later members into the
+ * log ahead of one that has not happened, so log order would stop being
+ * input order.  A semantic refusal is not an interruption -- it is a
+ * result, with a receipt -- and independent later members still run.
+ *
+ * The oracle the memo asks for is the last check here: the resumed
+ * history and an uninterrupted one, at the same accepted operations,
+ * must end in the same store.
  */
-static void test_interrupted_batch_retry(void)
+static void test_interrupted_batch_stops_and_resumes(void)
 {
-	struct d1_uuid store_uuid;
-	struct d1_store *s;
-	struct d1_envelope env;
-	struct d1_result first, retry;
+	struct d1_uuid store_uuid, clean_uuid;
+	struct d1_store *s, *clean;
+	struct d1_envelope env, plain;
+	struct d1_result first, retry, ref;
 	static uint8_t data[16];
-	d1_id_t admission, visible;
+	d1_id_t admission, clean_admission, visible;
 	unsigned int i;
 
 	memset(data, 0xa7, sizeof(data));
@@ -1767,37 +1964,114 @@ static void test_interrupted_batch_retry(void)
 	/* The second member's event is the one that cannot be written. */
 	d1_fixture_fail_append_in(s, 2);
 	check(d1_store_apply(s, &env, &first) == D1_OK,
-	      "the batch runs to the end");
+	      "the operation itself completes");
 	check(first.entries[0].status == D1_OK &&
 		      first.entries[0].disposition == D1_COMPLETED,
 	      "the first member completed");
 	check(first.entries[1].disposition == D1_UNRECORDED,
 	      "the second member is UNRECORDED");
-	check(first.entries[2].status == D1_OK &&
-		      first.entries[2].disposition == D1_COMPLETED,
-	      "and the third completed once the fault was spent");
+	check(first.entries[2].disposition == D1_UNRECORDED,
+	      "and the batch stopped, so the third is UNRECORDED too");
+	check(!first.entries[2].txn_present &&
+		      !first.entries[2].version_present,
+	      "with nothing reserved for it");
 	check(d1_store_visible(s, &object, 0, &visible), "chunk 0 is visible");
-	check(!d1_store_visible(s, &object, 1, &visible),
-	      "chunk 1 is not, because its event never happened");
-	check(d1_store_visible(s, &object, 2, &visible), "chunk 2 is");
+	check(!d1_store_visible(s, &object, 1, &visible), "chunk 1 is not");
+	check(!d1_store_visible(s, &object, 2, &visible),
+	      "and neither is chunk 2, which never ran");
 
-	/*
-	 * The exact retry returns the recorded results for the members
-	 * that completed and evaluates the one that did not.  Successful
-	 * siblings are not rolled back and not executed again.
-	 */
+	/* The exact retry resumes the interrupted members, in input order. */
 	check(d1_store_apply(s, &env, &retry) == D1_OK, "the exact retry runs");
 	check(retry.entries[0].status == D1_OK &&
 		      retry.entries[0].version == first.entries[0].version &&
 		      retry.entries[0].txn == first.entries[0].txn,
 	      "the first member returns its recorded result");
-	check(retry.entries[2].version == first.entries[2].version,
-	      "and so does the third");
 	check(retry.entries[1].status == D1_OK &&
 		      retry.entries[1].disposition == D1_COMPLETED,
-	      "and the interrupted member executes now");
-	check(d1_store_visible(s, &object, 1, &visible),
-	      "so chunk 1 becomes visible");
+	      "the second member executes now");
+	check(retry.entries[2].status == D1_OK &&
+		      retry.entries[2].disposition == D1_COMPLETED,
+	      "and so does the third");
+	check(retry.entries[1].txn < retry.entries[2].txn,
+	      "and they took their IDs in input order");
+	check(d1_store_visible(s, &object, 1, &visible) &&
+		      d1_store_visible(s, &object, 2, &visible),
+	      "so both become visible");
+
+	/*
+	 * The memo's oracle: the same accepted operations, uninterrupted,
+	 * end in the same store.
+	 */
+	fill_uuid(&clean_uuid, 0x16);
+	clean = d1_store_open(&clean_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (clean) {
+		d1_store_journal_enable(clean);
+		clean_admission = d1_fixture_admit(
+			clean, &object, 11,
+			D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+		env_init(&plain, clean, clean_admission, D1_OP_WRITE_BATCH);
+		plain.body.write.count = 3;
+		plain.body.write.stability = D1_DATA_SYNC;
+		plain.body.write.activate = true;
+		for (i = 0; i < 3; i++)
+			write_entry(&plain.body.write.entries[i], i, 11, i + 1u,
+				    data, sizeof(data), true,
+				    &(struct d1_guard){ .never_written =
+								true });
+		check(d1_store_apply(clean, &plain, &ref) == D1_OK,
+		      "an uninterrupted batch runs");
+		check(states_agree(s, clean),
+		      "and ends in the same store as the resumed one");
+		d1_store_free(clean);
+	}
+
+	d1_store_free(s);
+}
+
+/* A semantic refusal in the middle does not stop the members after it. */
+static void test_semantic_refusal_does_not_interrupt(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t data[16];
+	d1_id_t admission, visible;
+	unsigned int i;
+
+	memset(data, 0xa8, sizeof(data));
+	fill_uuid(&store_uuid, 0x17);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 3;
+	env.body.write.stability = D1_DATA_SYNC;
+	env.body.write.activate = true;
+	for (i = 0; i < 3; i++)
+		write_entry(&env.body.write.entries[i], i, 11, i + 1u, data,
+			    sizeof(data), true,
+			    &(struct d1_guard){ .never_written = true });
+	/* The middle member is refused on its own merits. */
+	env.body.write.entries[1].checksum.digest[0] ^= 0xffu;
+
+	check(d1_store_apply(s, &env, &res) == D1_OK, "the batch runs");
+	check(res.entries[0].status == D1_OK, "the first member completes");
+	check(res.entries[1].status == D1_CHECKSUM &&
+		      res.entries[1].disposition == D1_COMPLETED,
+	      "the second is a recorded refusal");
+	check(res.entries[2].status == D1_OK &&
+		      res.entries[2].disposition == D1_COMPLETED,
+	      "and the third still runs");
+	check(d1_store_visible(s, &object, 0, &visible) &&
+		      d1_store_visible(s, &object, 2, &visible),
+	      "so the independent members are visible");
+	check(!d1_store_visible(s, &object, 1, &visible),
+	      "and the refused one is not");
 
 	d1_store_free(s);
 }
@@ -2035,10 +2309,13 @@ static void test_reopen_fences_and_repeats(void)
  * I2: a forced index fault after a durable COMMIT.
  *
  * The event is durable, so the COMMIT receipt stands.  What must not
- * happen is a read serving the predecessor against that receipt.  The
- * store switches to the durable reducer state before it unlocks, and
- * the materialized pointer it left behind is checked separately, so a
- * read that consulted it would be caught.
+ * happen is a read serving the predecessor against that receipt.
+ *
+ * Read this for what it is: reads in this model use the reducer's state
+ * and always did, so there is no switch to observe.  The fault leaves a
+ * stale materialized pointer, and these checks show that nothing
+ * followed it.  That is not a demonstration of failover between two
+ * real index paths, and the model does not have two.
  */
 static void test_index_fault_serves_the_overlay(void)
 {
@@ -2077,7 +2354,7 @@ static void test_index_fault_serves_the_overlay(void)
 	check(v2 != 0 && v2 != v1,
 	      "the replacement commits despite the index fault");
 	check(d1_store_overlay_active(s),
-	      "and the store switched to the overlay");
+	      "and the store records that the two have diverged");
 
 	/* The materialized pointer was left behind, on purpose. */
 	check(d1_store_materialized(s, &object, 0, &stale) && stale == v1,
@@ -2111,6 +2388,7 @@ static void test_index_fault_serves_the_overlay(void)
 			      "the log replays");
 			check(!d1_store_overlay_active(rebuilt),
 			      "and the fault did not replay with it");
+			/* Unjournalled harness state, so it cannot. */
 			check(d1_store_visible(rebuilt, &object, 0, &seen) &&
 				      seen == v2,
 			      "and the rebuilt store sees the committed "
@@ -2902,6 +3180,131 @@ static void test_bound_authority_refusal_is_recorded(void)
 }
 
 /*
+ * The two envelope-borne controls are journalled and replay.
+ *
+ * The previous cycle's matrix claimed this was tested; it was not.
+ * Neither control test enabled journalling, so no CONTROL record
+ * carrying an Envelope had ever been through a rebuild.
+ */
+static void test_control_envelopes_replay(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	const uint8_t *log;
+	size_t len;
+	static uint8_t data[16];
+	d1_id_t control, old, fresh, reaped, txn_recovered, txn_reaped;
+
+	memset(data, 0x64, sizeof(data));
+	fill_uuid(&store_uuid, 0x37);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	check(d1_store_journal_enable(live) == D1_OK,
+	      "journalling starts before any of it");
+	control = d1_fixture_admit(live, &object, 11, D1_RIGHT_CONTROL);
+	old = d1_fixture_admit(live, &object, 11,
+			       D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	fresh = d1_fixture_admit(live, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	reaped = d1_fixture_admit(live, &object, 12, D1_RIGHT_WRITE);
+
+	/* Work for each control to act on. */
+	env_init(&env, live, old, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(live, &env, &res);
+	txn_recovered = res.entries[0].txn;
+
+	env_init(&env, live, reaped, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 12, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(live, &env, &res);
+	txn_reaped = res.entries[0].txn;
+	check(txn_recovered != 0 && txn_reaped != 0,
+	      "two admissions leave work behind");
+
+	/* A recovery_admit, journalled. */
+	env_init(&env, live, control, D1_OP_RECOVERY_ADMIT);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = txn_recovered;
+	env.body.control.old_admission = old;
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = fresh;
+	env.body.control.read_epoch_present = true;
+	env.body.control.read_epoch = 0;
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "recovery re-admits the work");
+
+	/* A lease_reap, journalled. */
+	d1_fixture_expire(live, reaped);
+	env_init(&env, live, control, D1_OP_LEASE_REAP);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = txn_reaped;
+	env.body.control.old_admission = reaped;
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the expired admission's work is reaped");
+
+	/* And a refusal of each, which is also a recorded event. */
+	env_init(&env, live, control, D1_OP_LEASE_REAP);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = txn_recovered;
+	env.body.control.old_admission = fresh;
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "a live admission's work is refused");
+
+	log = d1_store_journal(live, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!rebuilt) {
+		d1_store_free(live);
+		return;
+	}
+	check(d1_store_replay(rebuilt, log, len) == D1_OK,
+	      "the log with both controls in it replays");
+	check(states_agree(live, rebuilt), "into the same store");
+
+	/*
+	 * And the recovery really moved: the rebuilt store lets the new
+	 * handle finalize the work, exactly as the live one does.
+	 */
+	{
+		struct d1_result live_res, rebuilt_res;
+		uint8_t verifier[D1_VERIFIER_BYTES];
+
+		d1_store_verifier(live, verifier);
+		env_init(&env, live, fresh, D1_OP_FINALIZE_BATCH);
+		env.body.lifecycle.range_begin = 0;
+		env.body.lifecycle.range_end = 1;
+		env.body.lifecycle.count = 1;
+		env.body.lifecycle.entries[0].index = 0;
+		env.body.lifecycle.entries[0].owner.cohort = 1;
+		env.body.lifecycle.entries[0].owner.writer = 11;
+		env.body.lifecycle.entries[0].owner.co_id = 1;
+		env.body.lifecycle.entries[0].txn = txn_recovered;
+		memcpy(env.body.lifecycle.prior_verifier, verifier,
+		       sizeof(verifier));
+		d1_store_apply(live, &env, &live_res);
+		d1_store_apply(rebuilt, &env, &rebuilt_res);
+		check(live_res.entries[0].status == D1_OK &&
+			      rebuilt_res.entries[0].status ==
+				      live_res.entries[0].status,
+		      "and both stores finalize the recovered work alike");
+	}
+
+	d1_store_free(rebuilt);
+	d1_store_free(live);
+}
+
+/*
  * The outcomes that depend on fixture state must replay.
  *
  * A rollback's answer depends on which version the custody handle is
@@ -3476,6 +3879,9 @@ int main(void)
 	test_rollback_shrinks_eof();
 	test_released_predecessor();
 	test_view_is_stable();
+	test_close_refuses_an_active_call();
+	test_failed_replay_poisons_the_handle();
+	test_custody_needs_a_real_version();
 	test_release_order_does_not_matter();
 	test_view_owner_selection();
 	test_owner_view_shrinkage();
@@ -3483,7 +3889,8 @@ int main(void)
 	test_replay_reproduces_the_store();
 	test_crash_loses_only_the_torn_record();
 	test_append_fault_is_unrecorded();
-	test_interrupted_batch_retry();
+	test_interrupted_batch_stops_and_resumes();
+	test_semantic_refusal_does_not_interrupt();
 	test_receipt_exhaustion_changes_nothing();
 	test_exact_retry_survives_revocation();
 	test_reopen_fences_and_repeats();
@@ -3497,6 +3904,7 @@ int main(void)
 	test_undone_event_never_becomes_durable();
 	test_retry_after_flush_fault_agrees_with_replay();
 	test_repair_only_rollback_replays();
+	test_control_envelopes_replay();
 	test_custody_and_release_replay();
 	test_replay_refuses_a_foreign_log();
 	test_recovery_admit();

@@ -26,6 +26,12 @@
  * repository's library code.  The model depends on nothing the build
  * configures: it is C11 and the C library, built here only so the
  * repository's check gate runs its tests.
+ *
+ * One mutex covers all model state, and the journal's byte vector grows
+ * with realloc under it.  Allocating under the lock is accepted here:
+ * this is a userspace model with no allocator of its own and no
+ * interrupt context, and the memo's rule is that nothing which could
+ * block on the outside world runs under the lock.
  */
 
 #ifndef REFFS_D1_STORE_H
@@ -82,12 +88,27 @@ struct d1_result {
 struct d1_store *d1_store_open(const struct d1_uuid *store_uuid,
 			       uint32_t chunk_bytes, uint64_t max_file_bytes);
 /*
- * Normal close.  Returns D1_BUSY while any view is outstanding, because
- * a view's bytes live in the store: closing under one is not a close,
- * it is a use-after-free with a friendly name.  On D1_OK the store is
- * gone and the caller drops its pointer.
+ * Normal close.  Returns D1_BUSY while any view is outstanding or any
+ * call has been admitted and not yet returned: a view's bytes and a
+ * part-finished call's state both live in the store, so closing under
+ * either is a use-after-free with a friendly name.
+ *
+ * On D1_OK the store is gone and the caller drops its pointer.  This
+ * cannot protect a caller from using a handle it has already closed --
+ * that is the caller's responsibility, and is a different thing from
+ * the calls this refuses to close under, which were admitted first.
  */
 uint32_t d1_store_close(struct d1_store *s);
+
+/*
+ * Fixture controls that hold what a paused call holds.  This model is
+ * single threaded, so a test cannot stop a real call part way through;
+ * between these two the store is in the state it is in between two
+ * members of an ordinary batch, which is the window a close must not
+ * slip through.
+ */
+void d1_fixture_call_enter(struct d1_store *s);
+void d1_fixture_call_leave(struct d1_store *s);
 
 /*
  * Crash teardown: destroy the whole simulated world, views included,
@@ -97,9 +118,8 @@ uint32_t d1_store_close(struct d1_store *s);
 void d1_store_free(struct d1_store *s);
 
 /* The current verifier, as a START publishes it. */
-void d1_store_verifier(const struct d1_store *s,
-		       uint8_t out[D1_VERIFIER_BYTES]);
-uint64_t d1_store_incarnation(const struct d1_store *s);
+void d1_store_verifier(struct d1_store *s, uint8_t out[D1_VERIFIER_BYTES]);
+uint64_t d1_store_incarnation(struct d1_store *s);
 
 /*
  * Fixture controls.  These are the harness, not wire operations and not
@@ -283,14 +303,19 @@ void d1_fixture_fail_next_flush(struct d1_store *s);
 /*
  * Fixture fault control: force the next publication to leave the
  * materialized index behind.  The event is already durable, so the
- * COMMIT receipt stands; reads switch to the durable reducer state --
- * the WAL-backed overlay -- before the lock is released, and never
- * serve the old pointer.  Unjournalled, and disabled during recovery.
+ * COMMIT receipt stands.
+ *
+ * Reads in this model use the reducer's state and always did, so
+ * nothing switches over; what the fault gives a test is a stale
+ * materialized pointer to check against, showing that no read followed
+ * it.  That is weaker than a failover between two real index paths, and
+ * is not claimed to be one.  Unjournalled, and disabled during
+ * recovery.
  */
 void d1_fixture_fail_next_index(struct d1_store *s);
 
-/* Whether an index fault has put this store on the overlay. */
-bool d1_store_overlay_active(const struct d1_store *s);
+/* Whether an index fault has left a materialized pointer behind. */
+bool d1_store_overlay_active(struct d1_store *s);
 
 /*
  * What the materialized index still says, so a test can prove a read

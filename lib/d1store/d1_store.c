@@ -81,9 +81,12 @@ struct d1_chunk {
 	bool visible_present;
 	d1_id_t visible;
 	/*
-	 * The materialized index, which an injected fault can leave
-	 * behind.  Reads never consult it while the overlay is active; it
-	 * exists so a test can prove they did not.
+	 * The materialized index.  Reads in this model never consult it at
+	 * all: they use the reducer's visible pointer, which is the
+	 * authoritative state.  It exists so an injected fault can leave a
+	 * stale pointer behind and a test can show that no read followed
+	 * it.  That is weaker than demonstrating a failover between two
+	 * real index paths, and this model does not claim otherwise.
 	 */
 	bool materialized_present;
 	d1_id_t materialized;
@@ -220,12 +223,23 @@ struct d1_store {
 
 	/*
 	 * Set when an injected index fault has left a materialized pointer
-	 * behind.  Reads are served from the durable reducer state -- the
-	 * WAL-backed overlay -- from that moment, never from the old
-	 * pointer, and the switch happens before the lock is released.
+	 * behind.  It is bookkeeping, not a switch: reads already use the
+	 * reducer's state and always did.  What the flag records is that
+	 * the materialized pointer and the reducer have diverged, so a
+	 * test can check that the divergence changed no answer.
 	 */
 	bool overlay_active;
 	bool fail_next_index;
+
+	/*
+	 * Calls admitted and not yet returned.  A call is not one lock
+	 * interval: an ordinary batch releases the lock between members so
+	 * the next one is revalidated, and a close that ran in that gap
+	 * would free the store out from under the caller.  Section 6 asks
+	 * for BUSY while views OR active calls exist, so both are counted.
+	 */
+	uint32_t active_calls;
+	bool closed;
 
 	struct d1_journal journal;
 	/* The last LSN a rebuild consumed, so a reopen continues from it. */
@@ -237,6 +251,13 @@ struct d1_store {
 	 * re-applied.  Nothing is appended and no fault can fire.
 	 */
 	bool replaying;
+	/*
+	 * A rebuild that failed part way leaves state that is neither the
+	 * logged history nor an empty store.  Returning an error is not
+	 * enough: the handle must stop being usable for anything but
+	 * teardown, or a caller could go on serving from it.
+	 */
+	bool poisoned;
 };
 
 static void d1_verifier_of(uint64_t incarnation, uint8_t out[D1_VERIFIER_BYTES])
@@ -247,14 +268,32 @@ static void d1_verifier_of(uint64_t incarnation, uint8_t out[D1_VERIFIER_BYTES])
 		out[i] = (uint8_t)(incarnation >> (56 - 8 * i));
 }
 
-void d1_store_verifier(const struct d1_store *s, uint8_t out[D1_VERIFIER_BYTES])
+/*
+ * Public observers of mutable store state take the lock, like the
+ * others the last cycle locked.  The reducer uses d1_verifier_of and
+ * s->incarnation directly, because it already holds it.
+ *
+ * A view's observers -- d1_view_version, d1_view_eof -- do not, and do
+ * not need to: everything they read was captured under the lock when
+ * the view opened and is immutable for its lifetime.  What a view does
+ * not survive is the store being torn down under it, which is what
+ * d1_store_close refuses to do.
+ */
+void d1_store_verifier(struct d1_store *s, uint8_t out[D1_VERIFIER_BYTES])
 {
+	pthread_mutex_lock(&s->lock);
 	d1_verifier_of(s->incarnation, out);
+	pthread_mutex_unlock(&s->lock);
 }
 
-uint64_t d1_store_incarnation(const struct d1_store *s)
+uint64_t d1_store_incarnation(struct d1_store *s)
 {
-	return s->incarnation;
+	uint64_t incarnation;
+
+	pthread_mutex_lock(&s->lock);
+	incarnation = s->incarnation;
+	pthread_mutex_unlock(&s->lock);
+	return incarnation;
 }
 
 struct d1_store *d1_store_open(const struct d1_uuid *store_uuid,
@@ -281,6 +320,7 @@ struct d1_store *d1_store_open(const struct d1_uuid *store_uuid,
 		return NULL;
 	}
 	if (pthread_mutex_init(&s->lock, NULL) != 0) {
+		free(s->record);
 		free(s->scratch);
 		free(s);
 		return NULL;
@@ -298,9 +338,45 @@ struct d1_store *d1_store_open(const struct d1_uuid *store_uuid,
 }
 
 /*
- * Normal close.  A view's bytes live in the store, so closing while one
- * is outstanding is not a close; it is a use-after-free with a friendly
- * name.  This refuses instead.
+ * Admit a call, unless the store has been closed.
+ *
+ * A call is bracketed rather than a lock interval, because a call is
+ * not a lock interval: an ordinary batch deliberately releases the lock
+ * between members.
+ */
+static bool d1_call_enter(struct d1_store *s)
+{
+	bool admitted;
+
+	pthread_mutex_lock(&s->lock);
+	admitted = !s->closed && !s->poisoned;
+	if (admitted)
+		s->active_calls++;
+	pthread_mutex_unlock(&s->lock);
+	return admitted;
+}
+
+static void d1_call_leave(struct d1_store *s)
+{
+	pthread_mutex_lock(&s->lock);
+	if (s->active_calls)
+		s->active_calls--;
+	pthread_mutex_unlock(&s->lock);
+}
+
+/*
+ * Normal close.
+ *
+ * A view's bytes live in the store, and so does the state an admitted
+ * call is part way through; closing under either is not a close, it is
+ * a use-after-free with a friendly name.  Both are refused.
+ *
+ * Close admission and call admission are settled under the same lock,
+ * so a call cannot be admitted after the close has decided to proceed
+ * and a close cannot proceed after a call has been admitted.  What this
+ * does NOT do, and cannot, is stop a caller from using a handle it has
+ * already closed: once this returns D1_OK the store is gone, and using
+ * the pointer afterwards is the caller's error.
  */
 uint32_t d1_store_close(struct d1_store *s)
 {
@@ -309,15 +385,38 @@ uint32_t d1_store_close(struct d1_store *s)
 	if (!s)
 		return D1_OK;
 	pthread_mutex_lock(&s->lock);
+	if (s->active_calls) {
+		pthread_mutex_unlock(&s->lock);
+		return D1_BUSY;
+	}
 	for (i = 0; i < D1_MAX_VIEWS; i++) {
 		if (s->views[i].used) {
 			pthread_mutex_unlock(&s->lock);
 			return D1_BUSY;
 		}
 	}
+	s->closed = true;
 	pthread_mutex_unlock(&s->lock);
 	d1_store_free(s);
 	return D1_OK;
+}
+
+/*
+ * Fixture controls that hold what a paused call holds.
+ *
+ * This model is single threaded, so a test cannot stop a real call part
+ * way through.  These stand in for one: between them the store is in
+ * exactly the state it is in between two members of an ordinary batch,
+ * which is the window a close must not slip through.
+ */
+void d1_fixture_call_enter(struct d1_store *s)
+{
+	(void)d1_call_enter(s);
+}
+
+void d1_fixture_call_leave(struct d1_store *s)
+{
+	d1_call_leave(s);
 }
 
 /*
@@ -507,10 +606,11 @@ static struct d1_owner_assoc *d1_owner_add(struct d1_store *s,
  * Publish a new visible version for one chunk.
  *
  * The reducer's state always moves.  The materialized index moves with
- * it unless a fault is armed, in which case it is left behind and the
- * store switches to serving reads from the reducer state before the
- * lock is released.  No read ever serves the old pointer against a new
- * successful COMMIT receipt.
+ * it unless a fault is armed, in which case it is left behind.  Nothing
+ * has to switch over, because nothing reads the materialized pointer:
+ * the memo's requirement that no read serves the old pointer against a
+ * new successful COMMIT receipt is met by construction here, and the
+ * fault exists so a test can demonstrate that rather than assume it.
  */
 static void d1_publish_visible(struct d1_store *s, struct d1_chunk *c,
 			       d1_id_t version)
@@ -527,7 +627,7 @@ static void d1_publish_visible(struct d1_store *s, struct d1_chunk *c,
 	c->materialized = version;
 }
 
-/* What a read sees: the reducer state, never a stale materialized one. */
+/* What a read sees: the reducer's state, which is the authority. */
 static bool d1_chunk_visible(const struct d1_chunk *c, d1_id_t *version)
 {
 	if (!c->visible_present)
@@ -737,6 +837,14 @@ struct d1_undo {
 	uint64_t epoch_before;
 	d1_id_t next_txn_before;
 	d1_id_t next_version_before;
+	/*
+	 * The injected index fault is consumed, and the overlay flag set,
+	 * at publication.  They are unjournalled harness state, so they
+	 * have no replay effect -- but "the before-state restored exactly"
+	 * has to include them, or the claim is wrong in a small way.
+	 */
+	bool fail_index_before;
+	bool overlay_before;
 };
 
 static void d1_undo_begin(struct d1_store *s, struct d1_undo *u)
@@ -745,6 +853,8 @@ static void d1_undo_begin(struct d1_store *s, struct d1_undo *u)
 	u->epoch_before = s->index_epoch;
 	u->next_txn_before = s->next_txn;
 	u->next_version_before = s->next_version;
+	u->fail_index_before = s->fail_next_index;
+	u->overlay_before = s->overlay_active;
 }
 
 /* Record a chunk's state before the first change to it. */
@@ -786,6 +896,8 @@ static void d1_undo_apply(struct d1_store *s, struct d1_undo *u)
 	s->index_epoch = u->epoch_before;
 	s->next_txn = u->next_txn_before;
 	s->next_version = u->next_version_before;
+	s->fail_next_index = u->fail_index_before;
+	s->overlay_active = u->overlay_before;
 }
 
 static uint32_t
@@ -1333,7 +1445,7 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 			named[i]->read_epoch = cb->read_epoch;
 		}
 		old->revoked = true;
-		d1_store_verifier(s, res->verifier);
+		d1_verifier_of(s->incarnation, res->verifier);
 		return D1_OK;
 	}
 
@@ -1351,7 +1463,7 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 		t->phase = D1_PHASE_ROLLED_BACK;
 	}
 	res->phase = D1_PHASE_ROLLED_BACK;
-	d1_store_verifier(s, res->verifier);
+	d1_verifier_of(s->incarnation, res->verifier);
 	return D1_OK;
 }
 
@@ -1428,14 +1540,18 @@ static bool d1_journal_control_event(struct d1_store *s, uint32_t kind,
 				(uint32_t)cur.len);
 }
 
-/* Whether this caller is bound to this object at all. */
+/*
+ * Whether this caller is bound to this object at all.
+ *
+ * Replay asks the same question of the same rebuilt table.  The special
+ * case that used to skip it was one more place where replay was not the
+ * reducer that ran live, and it bought nothing: the authority the entry
+ * ran under is in the log.
+ */
 static bool d1_binding_ok(struct d1_store *s, const struct d1_envelope *env)
 {
-	struct d1_admission *a;
+	struct d1_admission *a = d1_admission_find(s, env->admission);
 
-	if (s->replaying)
-		return true;
-	a = d1_admission_find(s, env->admission);
 	return a && memcmp(&a->object, &env->object, sizeof(a->object)) == 0;
 }
 
@@ -1730,6 +1846,14 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	out->key = env->key;
 	out->disposition = D1_COMPLETED;
 
+	/*
+	 * The call is bracketed for its whole length, not for each of its
+	 * lock intervals: a close must not slip into the gap between two
+	 * members of a batch.
+	 */
+	if (!d1_call_enter(s))
+		return D1_INVALID;
+
 	switch (env->op) {
 	case D1_OP_WRITE_BATCH:
 	case D1_OP_FINALIZE_BATCH:
@@ -1746,6 +1870,7 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		 * episode are not this slice's, and say so rather than doing
 		 * part of the job.
 		 */
+		d1_call_leave(s);
 		return D1_UNSUPPORTED;
 	}
 
@@ -1754,8 +1879,10 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	 * are outside the canonical form is refused before anything reads
 	 * a payload, hashes a byte or touches the store.
 	 */
-	if (!d1_envelope_validate(env))
+	if (!d1_envelope_validate(env)) {
+		d1_call_leave(s);
 		return D1_INVALID;
+	}
 
 	commit = env->op == D1_OP_COMMIT_BATCH;
 	switch (env->op) {
@@ -1779,6 +1906,7 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	pthread_mutex_lock(&s->lock);
 	if (!d1_envelope_digest(env, s->scratch, s->scratch_cap, digest)) {
 		pthread_mutex_unlock(&s->lock);
+		d1_call_leave(s);
 		out->count = 0;
 		return D1_INVALID;
 	}
@@ -1792,6 +1920,7 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		out->index_epoch = complete.index_epoch;
 		out->eof = complete.eof;
 		out->disposition = complete.disposition;
+		d1_call_leave(s);
 		return D1_OK;
 	}
 
@@ -1808,7 +1937,34 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		out->entries[i] = complete.entry;
 		out->index_epoch = complete.index_epoch;
 		out->eof = complete.eof;
+
+		/*
+		 * Section 8 describes a batch "interrupted after entry j":
+		 * an infrastructure failure stops the batch there, and the
+		 * exact retry reconstructs what was recorded and evaluates
+		 * the rest in input order.  Carrying on past it would put
+		 * later members in the log ahead of the one that has not
+		 * happened yet, so log order would stop being input order.
+		 *
+		 * A semantic refusal is not an interruption: it is a result,
+		 * it has a receipt, and independent later members still run.
+		 */
+		if (complete.disposition == D1_UNRECORDED &&
+		    (complete.entry.status == D1_IO ||
+		     complete.entry.status == D1_NOSPC)) {
+			for (i++; i < count; i++) {
+				struct d1_entry_result *rest = &out->entries[i];
+
+				memset(rest, 0, sizeof(*rest));
+				rest->status = complete.entry.status;
+				rest->stability = D1_FILE_SYNC;
+				rest->disposition = D1_UNRECORDED;
+				d1_verifier_of(s->incarnation, rest->verifier);
+			}
+			break;
+		}
 	}
+	d1_call_leave(s);
 	return D1_OK;
 }
 
@@ -1933,6 +2089,8 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 		return D1_INVALID;
 	if (byte_begin >= byte_end)
 		return D1_INVALID;
+	if (!d1_call_enter(s))
+		return D1_INVALID;
 
 	pthread_mutex_lock(&s->lock);
 	if (byte_end > s->max_file_bytes) {
@@ -2029,6 +2187,7 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 	status = D1_OK;
 out:
 	pthread_mutex_unlock(&s->lock);
+	d1_call_leave(s);
 	return status;
 }
 
@@ -2182,10 +2341,20 @@ static bool d1_expire_locked(struct d1_store *s, d1_id_t admission)
 	return true;
 }
 
+/*
+ * Issue repair custody over an existing version.
+ *
+ * The fixture is the harness, not a production authority, but it is
+ * still not allowed to bind a handle to an ID that has not been
+ * allocated: such a handle would silently become valid later, when the
+ * counter reached it.  Custody names a version that is there now.
+ */
 static d1_id_t d1_custody_locked(struct d1_store *s, d1_id_t version)
 {
 	uint32_t i;
 
+	if (!d1_version_find(s, version))
+		return 0;
 	for (i = 0; i < D1_MAX_CUSTODY; i++) {
 		struct d1_custody *c = &s->custody[i];
 
@@ -2261,9 +2430,14 @@ void d1_fixture_fail_next_index(struct d1_store *s)
 	pthread_mutex_unlock(&s->lock);
 }
 
-bool d1_store_overlay_active(const struct d1_store *s)
+bool d1_store_overlay_active(struct d1_store *s)
 {
-	return s->overlay_active;
+	bool active;
+
+	pthread_mutex_lock(&s->lock);
+	active = s->overlay_active;
+	pthread_mutex_unlock(&s->lock);
+	return active;
 }
 
 /*
@@ -2706,7 +2880,7 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
 	unsigned int starts = 0;
 
 	pthread_mutex_lock(&s->lock);
-	if (s->journaling || s->replaying) {
+	if (s->journaling || s->replaying || s->poisoned) {
 		pthread_mutex_unlock(&s->lock);
 		return D1_INVALID;
 	}
@@ -2760,6 +2934,13 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
 	/* The log's own LSNs continue if this store goes on to write. */
 	s->replayed_lsn = c.last_lsn;
 	s->replaying = false;
+	/*
+	 * A rebuild that stopped part way leaves state that is neither the
+	 * logged history nor an empty store.  The handle is finished: only
+	 * teardown may touch it from here.
+	 */
+	if (status != D1_OK)
+		s->poisoned = true;
 	pthread_mutex_unlock(&s->lock);
 	return status;
 }
