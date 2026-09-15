@@ -235,13 +235,15 @@ struct d1_store {
 	bool overlay_active;
 	bool fail_next_index;
 	/*
-	 * The fixture's window on the gap a batch leaves between deciding
-	 * that its operation key is free and running its first member.
-	 * A second caller occupies that gap by being preempted in it; a
-	 * test occupies it on purpose.  See d1_fixture_before_members.
+	 * The fixture's window on a gap a batch leaves between two of its
+	 * members -- and, at ordinal zero, on the gap between deciding
+	 * that its operation key is free and running the first member.
+	 * A second caller occupies such a gap by being preempted in it;
+	 * a test occupies one on purpose.  See d1_fixture_before_member.
 	 */
-	void (*before_members)(void *);
-	void *before_members_arg;
+	void (*before_member)(void *);
+	void *before_member_arg;
+	uint32_t before_member_ordinal;
 
 	/*
 	 * Calls admitted and not yet returned.  A call is not one lock
@@ -634,8 +636,8 @@ void d1_fixture_fail_append_in(struct d1_store *s, uint32_t n)
 	pthread_mutex_unlock(&s->lock);
 }
 
-void d1_fixture_before_members(struct d1_store *s, void (*fn)(void *),
-			       void *arg)
+void d1_fixture_before_member(struct d1_store *s, uint32_t ordinal,
+			      void (*fn)(void *), void *arg)
 {
 	pthread_mutex_lock(&s->lock);
 	if (!d1_fixture_may_mutate(s)) {
@@ -643,8 +645,9 @@ void d1_fixture_before_members(struct d1_store *s, void (*fn)(void *),
 		return;
 	}
 	if (!s->replaying) {
-		s->before_members = fn;
-		s->before_members_arg = arg;
+		s->before_member = fn;
+		s->before_member_arg = arg;
+		s->before_member_ordinal = ordinal;
 	}
 	pthread_mutex_unlock(&s->lock);
 }
@@ -653,17 +656,23 @@ void d1_fixture_before_members(struct d1_store *s, void (*fn)(void *),
  * Run the armed hook, once, with the lock not held -- which is the
  * state a preempted caller would leave the store in, and which lets
  * the hook make an ordinary call of its own.
+ *
+ * A batch that stops before @ordinal never reaches this, which is
+ * itself an oracle: a test can arm a later member and prove the batch
+ * did not get there.
  */
-static void d1_run_member_hook(struct d1_store *s)
+static void d1_run_member_hook(struct d1_store *s, uint32_t ordinal)
 {
-	void (*fn)(void *);
-	void *arg;
+	void (*fn)(void *) = NULL;
+	void *arg = NULL;
 
 	pthread_mutex_lock(&s->lock);
-	fn = s->before_members;
-	arg = s->before_members_arg;
-	s->before_members = NULL;
-	s->before_members_arg = NULL;
+	if (s->before_member && s->before_member_ordinal == ordinal) {
+		fn = s->before_member;
+		arg = s->before_member_arg;
+		s->before_member = NULL;
+		s->before_member_arg = NULL;
+	}
 	pthread_mutex_unlock(&s->lock);
 	if (fn)
 		fn(arg);
@@ -2275,13 +2284,12 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	}
 	pthread_mutex_unlock(&s->lock);
 
-	/*
-	 * The gap the fixture can open: everything decided above was
-	 * decided under a lock this call no longer holds.
-	 */
-	d1_run_member_hook(s);
-
 	if (need == D1_RIGHT_CONTROL) {
+		/*
+		 * The gap the fixture can open: everything decided above
+		 * was decided under a lock this call no longer holds.
+		 */
+		d1_run_member_hook(s, 0);
 		pthread_mutex_lock(&s->lock);
 		d1_apply_control(s, env, digest, &complete);
 		pthread_mutex_unlock(&s->lock);
@@ -2294,6 +2302,15 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	}
 
 	for (i = 0; i < count; i++) {
+		/*
+		 * The gap before this member: at ordinal zero it is the gap
+		 * left by the preflight above, and afterwards it is the gap
+		 * this loop leaves between two members.  Everything decided
+		 * outside the lock below was decided in a lock interval
+		 * this call no longer holds.
+		 */
+		d1_run_member_hook(s, i);
+
 		/*
 		 * One lock interval per member, covering its validation,
 		 * transition, durable event and receipt; released between
@@ -2315,12 +2332,22 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		 * later members in the log ahead of the one that has not
 		 * happened yet, so log order would stop being input order.
 		 *
+		 * The disposition is the whole test, not the status.  Any
+		 * UNRECORDED member is a member that left no receipt, and
+		 * the dense prefix replay relies on is the claim that the
+		 * receipts under a key are 0..n-1 -- so recording a later
+		 * member over the hole an earlier one left writes a log
+		 * this store cannot replay, for the rest of its life.  The
+		 * status that used to be checked here missed the one such
+		 * member a live call can produce on its own: caller binding
+		 * is re-asked in every member's lock interval, so an
+		 * admission installed between members turns member 0's
+		 * STALE_AUTH into member 1's receipt at ordinal 1.
+		 *
 		 * A semantic refusal is not an interruption: it is a result,
 		 * it has a receipt, and independent later members still run.
 		 */
-		if (complete.disposition == D1_UNRECORDED &&
-		    (complete.entry.status == D1_IO ||
-		     complete.entry.status == D1_NOSPC)) {
+		if (complete.disposition == D1_UNRECORDED) {
 			for (i++; i < count; i++) {
 				struct d1_entry_result *rest = &out->entries[i];
 

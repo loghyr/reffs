@@ -207,10 +207,11 @@ bool d1_fixture_release_predecessor(struct d1_store *s, d1_id_t version);
  * for as long as that record is kept -- a semantic refusal is recorded
  * exactly like a success.  D1_UNRECORDED means nothing was durably
  * decided: the member did not happen, it consumed no capacity, and the
- * caller may retry it.  Members after an interruption are reported
- * UNRECORDED too; the batch stops there rather than carrying the
- * interruption forward, and no receipt is invented for work that was
- * never attempted.
+ * caller may retry it.  Any UNRECORDED member ends the batch, whatever
+ * refused it: the members after it are reported UNRECORDED too, no
+ * receipt is invented for work that was never attempted, and nothing is
+ * recorded over the hole an earlier member left -- which is what makes
+ * the receipts under a key a dense prefix, and the log replayable.
  *
  * An operation key is bound by the whole Envelope from the moment any
  * member of it is recorded.  A retry with a changed body -- a different
@@ -449,18 +450,21 @@ void d1_fixture_fail_next_index(struct d1_store *s);
 bool d1_store_overlay_active(struct d1_store *s);
 
 /*
- * Fixture control: run @fn once, in the gap a batch leaves between
- * deciding that its operation key is free and running its first member.
+ * Fixture control: run @fn once, in the gap a batch leaves before the
+ * member at @ordinal -- and at ordinal zero, in the gap between
+ * deciding that its operation key is free and running the first member.
  *
- * That gap is where a second caller lands when it is preempted there,
- * and it is the only place from which two callers can reach one key.
- * A scheduler finds it rarely enough that waiting for one is not
- * evidence, so a test opens it on purpose: @fn runs with no lock held
- * and may make ordinary calls of its own.  The arm is one-shot,
- * unjournalled, and refused during recovery.
+ * Those gaps are where a second caller lands when it is preempted, and
+ * they are the places from which two callers can reach one key: the
+ * preflight gap, and every gap between two members.  A scheduler finds
+ * one rarely enough that waiting for it is not evidence, so a test
+ * opens one on purpose: @fn runs with no lock held and may make
+ * ordinary calls of its own.  A batch that stops before @ordinal never
+ * runs it, which is how a test proves the batch stopped.  The arm is
+ * one-shot, unjournalled, and refused during recovery.
  */
-void d1_fixture_before_members(struct d1_store *s, void (*fn)(void *),
-			       void *arg);
+void d1_fixture_before_member(struct d1_store *s, uint32_t ordinal,
+			      void (*fn)(void *), void *arg);
 
 /*
  * What the materialized index still says, so a test can prove a read

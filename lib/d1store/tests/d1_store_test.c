@@ -5057,7 +5057,7 @@ static void test_concurrent_callers_cannot_splice_a_key(void)
 	 * The first caller runs to completion inside it, which is what a
 	 * preemption there amounts to.
 	 */
-	d1_fixture_before_members(s, run_other_caller, &first);
+	d1_fixture_before_member(s, 0, run_other_caller, &first);
 	check(d1_store_apply(s, &second, &res) == D1_OK,
 	      "the second caller's batch is admitted");
 	check(first.ran, "after the first caller ran inside its window");
@@ -5913,6 +5913,110 @@ static void test_replay_refuses_a_record_that_found_no_room(void)
 	d1_store_free(live);
 }
 
+/* An admission that arrives in the gap between two members. */
+struct late_admit {
+	struct d1_store *s;
+	bool fired;
+};
+
+static void admit_the_handle(void *arg)
+{
+	struct late_admit *l = arg;
+
+	l->fired = true;
+	(void)d1_fixture_admit(l->s, &object, 11,
+			       D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+}
+
+/*
+ * A batch stops at the first member it could not record, whatever the
+ * reason it could not.
+ *
+ * Caller binding is asked again inside every member's lock interval, so
+ * an admission installed between two members of one call makes member 0
+ * STALE_AUTH and lets member 1 take a receipt at ordinal 1.  The
+ * receipts under a key are supposed to be the dense prefix 0..n-1, and
+ * replay refuses a log that is not -- so a call that carried on past
+ * the hole would write a log its own store could never replay again,
+ * for the rest of its life.  What ends the batch is the disposition,
+ * not the two statuses that used to stand for it.
+ */
+static void test_a_batch_stops_at_its_first_unrecorded_member(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *target;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct late_admit late;
+	static uint8_t data[16];
+	const uint8_t *log;
+	size_t len, at[8];
+	unsigned int records;
+	d1_id_t admission;
+
+	memset(data, 0x75, sizeof(data));
+	fill_uuid(&store_uuid, 0x75);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	check(d1_store_journal_enable(live) == D1_OK, "journalling is on");
+
+	/*
+	 * The batch names the handle the fixture is about to issue, which
+	 * is what a client does when it learns a handle before the
+	 * authority has installed it.
+	 */
+	memset(&late, 0, sizeof(late));
+	late.s = live;
+	env_init(&env, live, 1, D1_OP_WRITE_BATCH);
+	env.body.write.count = 2;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	write_entry(&env.body.write.entries[1], 1, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_fixture_before_member(live, 1, admit_the_handle, &late);
+
+	check(d1_store_apply(live, &env, &res) == D1_OK, "the batch applies");
+	check(res.entries[0].status == D1_STALE_AUTH &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "member 0 is refused for its binding and records nothing");
+	check(res.entries[1].disposition == D1_UNRECORDED,
+	      "and member 1 is unrecorded with it");
+	check(!late.fired, "the batch never reached the gap before member 1");
+
+	log = d1_store_journal(live, &len);
+	records = index_log(log, len, at, 8);
+	check(records == 1, "so nothing but the START is in the log");
+
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, log, len) == D1_OK,
+		      "which is a log this store can still replay");
+		d1_store_free(target);
+	}
+
+	/* The handle arrives, and the exact request finishes. */
+	d1_fixture_before_member(live, 1, NULL, NULL);
+	admission = d1_fixture_admit(live, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	check(admission == 1, "the handle the request named is the one issued");
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[1].status == D1_OK,
+	      "and the exact retry completes both members");
+
+	log = d1_store_journal(live, &len);
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, log, len) == D1_OK,
+		      "and the log it then wrote replays");
+		check(states_agree(live, target), "into the same store");
+		d1_store_free(target);
+	}
+	d1_store_free(live);
+}
+
 /*
  * The one failure that happens before the log has a frontier: the START
  * that opens it.
@@ -6034,6 +6138,7 @@ int main(void)
 	test_records_must_name_what_they_carry();
 	test_replay_requires_the_record_to_have_happened();
 	test_replay_refuses_a_record_that_found_no_room();
+	test_a_batch_stops_at_its_first_unrecorded_member();
 	test_start_can_fail_to_become_durable();
 	test_caller_binding_is_settled_first();
 	test_control_envelopes_replay();
