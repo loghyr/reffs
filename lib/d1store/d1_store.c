@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include "d1_digest.h"
+#include "d1_control.h"
 #include "d1_journal.h"
 #include "d1_store.h"
 
@@ -148,7 +149,12 @@ struct d1_receipt {
 	struct d1_opkey key;
 	uint32_t ordinal;
 	uint8_t digest[D1_DIGEST_BYTES];
-	struct d1_entry_result result;
+	/*
+	 * The complete recorded result, including the epoch and EOF the
+	 * request saw.  An exact replay returns these, not values
+	 * recomputed from whatever the store looks like later.
+	 */
+	struct d1_complete_result result;
 };
 
 struct d1_store {
@@ -188,8 +194,13 @@ struct d1_store {
 	 */
 	uint8_t *scratch;
 	size_t scratch_cap;
+	/* Record assembly, also this store's and also under this lock. */
+	uint8_t *record;
+	size_t record_cap;
 
 	struct d1_journal journal;
+	/* The last LSN a rebuild consumed, so a reopen continues from it. */
+	uint64_t replayed_lsn;
 	bool journaling;
 	/*
 	 * Set only while rebuilding from a log.  A replayed record was
@@ -197,7 +208,6 @@ struct d1_store {
 	 * re-applied.  Nothing is appended and no fault can fire.
 	 */
 	bool replaying;
-	struct d1_admission replay_admission;
 };
 
 static void d1_verifier_of(uint64_t incarnation, uint8_t out[D1_VERIFIER_BYTES])
@@ -233,7 +243,11 @@ struct d1_store *d1_store_open(const struct d1_uuid *store_uuid,
 		return NULL;
 	s->scratch_cap = D1_ENVELOPE_MAX;
 	s->scratch = calloc(1, s->scratch_cap);
-	if (!s->scratch) {
+	s->record_cap = D1_JOURNAL_RECORD_MAX;
+	s->record = calloc(1, s->record_cap);
+	if (!s->scratch || !s->record) {
+		free(s->record);
+		free(s->scratch);
 		free(s);
 		return NULL;
 	}
@@ -260,6 +274,7 @@ void d1_store_free(struct d1_store *s)
 		return;
 	d1_journal_fini(&s->journal);
 	pthread_mutex_destroy(&s->lock);
+	free(s->record);
 	free(s->scratch);
 	free(s);
 }
@@ -333,66 +348,6 @@ static uint32_t d1_object_slot(const struct d1_store *s,
 	return (uint32_t)(o - s->objects);
 }
 
-d1_id_t d1_fixture_admit_full(struct d1_store *s,
-			      const struct d1_objkey *object,
-			      const struct d1_fixture_authority *auth)
-{
-	d1_id_t id = 0;
-	uint32_t i;
-
-	/* Reserved writer IDs are never issued. */
-	if (auth->writer == D1_WRITER_RESERVED_LOW ||
-	    auth->writer == D1_WRITER_RESERVED_HIGH)
-		return 0;
-	pthread_mutex_lock(&s->lock);
-	for (i = 0; i < D1_MAX_ADMISSIONS; i++) {
-		struct d1_admission *a = &s->admissions[i];
-
-		if (a->used)
-			continue;
-		memset(a, 0, sizeof(*a));
-		a->used = true;
-		a->id = s->next_admission++;
-		a->issuer = auth->issuer;
-		a->object = *object;
-		a->principal = auth->principal;
-		a->writer = auth->writer;
-		memcpy(a->stateid, auth->stateid, sizeof(a->stateid));
-		memcpy(a->session, auth->session, sizeof(a->session));
-		a->lease_epoch = auth->lease_epoch;
-		a->authority_epoch = auth->authority_epoch;
-		a->fence_sequence = auth->fence_sequence;
-		a->rights = auth->rights;
-		a->incarnation = s->incarnation;
-		id = a->id;
-		break;
-	}
-	pthread_mutex_unlock(&s->lock);
-	return id;
-}
-
-/*
- * The common case: one issuer, and a principal derived from the writer
- * so that two handles for the same writer are the same principal and
- * two for different writers are not.  Tests that need a specific
- * binding use the full form.
- */
-d1_id_t d1_fixture_admit(struct d1_store *s, const struct d1_objkey *object,
-			 uint32_t writer, uint32_t rights)
-{
-	struct d1_fixture_authority auth;
-	unsigned int i;
-
-	memset(&auth, 0, sizeof(auth));
-	for (i = 0; i < D1_UUID_BYTES; i++) {
-		auth.issuer.bytes[i] = (uint8_t)(0xf0u + i);
-		auth.principal.bytes[i] = (uint8_t)(writer + i);
-	}
-	auth.writer = writer;
-	auth.rights = rights;
-	return d1_fixture_admit_full(s, object, &auth);
-}
-
 static struct d1_admission *d1_admission_find(struct d1_store *s, d1_id_t id)
 {
 	uint32_t i;
@@ -403,49 +358,6 @@ static struct d1_admission *d1_admission_find(struct d1_store *s, d1_id_t id)
 		if (s->admissions[i].used && s->admissions[i].id == id)
 			return &s->admissions[i];
 	return NULL;
-}
-
-void d1_fixture_revoke(struct d1_store *s, d1_id_t admission)
-{
-	struct d1_admission *a;
-
-	pthread_mutex_lock(&s->lock);
-	a = d1_admission_find(s, admission);
-	if (a)
-		a->revoked = true;
-	pthread_mutex_unlock(&s->lock);
-}
-
-void d1_fixture_expire(struct d1_store *s, d1_id_t admission)
-{
-	struct d1_admission *a;
-
-	pthread_mutex_lock(&s->lock);
-	a = d1_admission_find(s, admission);
-	if (a)
-		a->expired = true;
-	pthread_mutex_unlock(&s->lock);
-}
-
-d1_id_t d1_fixture_custody(struct d1_store *s, d1_id_t version)
-{
-	d1_id_t id = 0;
-	uint32_t i;
-
-	pthread_mutex_lock(&s->lock);
-	for (i = 0; i < D1_MAX_CUSTODY; i++) {
-		struct d1_custody *c = &s->custody[i];
-
-		if (c->used)
-			continue;
-		c->used = true;
-		c->id = s->next_custody++;
-		c->version = version;
-		id = c->id;
-		break;
-	}
-	pthread_mutex_unlock(&s->lock);
-	return id;
 }
 
 static struct d1_custody *d1_custody_find(struct d1_store *s, d1_id_t id)
@@ -526,60 +438,6 @@ static struct d1_owner_assoc *d1_owner_add(struct d1_store *s,
 	return NULL;
 }
 
-/*
- * Receipt lookup.  An exact match returns the recorded result without
- * mutating anything, even across an incarnation change; the same key
- * with a different body is a conflict and never a new transition.
- */
-static struct d1_receipt *d1_receipt_find(struct d1_store *s,
-					  const struct d1_uuid *export_uuid,
-					  const struct d1_opkey *key,
-					  uint32_t ordinal)
-{
-	uint32_t i;
-
-	for (i = 0; i < D1_MAX_RECEIPTS; i++) {
-		struct d1_receipt *r = &s->receipts[i];
-
-		if (!r->used || r->ordinal != ordinal)
-			continue;
-		if (memcmp(&r->export_uuid, export_uuid,
-			   sizeof(*export_uuid)) != 0)
-			continue;
-		if (memcmp(&r->key.origin, &key->origin, sizeof(key->origin)) ==
-			    0 &&
-		    r->key.sequence == key->sequence &&
-		    r->key.ordinal == key->ordinal)
-			return r;
-	}
-	return NULL;
-}
-
-static struct d1_receipt *d1_receipt_add(struct d1_store *s,
-					 const struct d1_uuid *export_uuid,
-					 const struct d1_opkey *key,
-					 uint32_t ordinal,
-					 const uint8_t digest[D1_DIGEST_BYTES])
-{
-	uint32_t i;
-
-	for (i = 0; i < D1_MAX_RECEIPTS; i++) {
-		struct d1_receipt *r = &s->receipts[i];
-
-		if (r->used)
-			continue;
-		memset(r, 0, sizeof(*r));
-		r->used = true;
-		r->export_uuid = *export_uuid;
-		r->key = *key;
-		r->ordinal = ordinal;
-		memcpy(r->digest, digest, D1_DIGEST_BYTES);
-		return r;
-	}
-	/* No room for a receipt is UNRECORDED, never a silent success. */
-	return NULL;
-}
-
 static bool d1_visible_locked(struct d1_store *s,
 			      const struct d1_objkey *object, uint64_t index,
 			      d1_id_t *version)
@@ -638,63 +496,32 @@ static uint64_t d1_eof_locked(struct d1_store *s,
 }
 
 /*
- * Release one predecessor's retention root.
- *
- * Eligibility is a question about durable state alone: the version is
- * not visible, no uncommitted transaction is that version or records it
- * as its predecessor, and it has not been released already.  Live read
- * pins are deliberately NOT part of this test -- a pin keeps the
- * immutable bytes alive for the view that holds it, and says nothing
- * about whether a future rollback may still reach the version.  Making
- * release depend on pins would make the durable history depend on the
- * order in which views happened to close.
- *
- * Physical reclamation is a declared no-op in this model: bytes are
- * retained conservatively for the life of the store.  That is a stated
- * limitation of the model's capacity, not a licence to answer the
- * logical question differently.
+ * Receipt lookup.  An exact match returns the recorded result without
+ * mutating anything, even across an incarnation change; the same key
+ * with a different body is a conflict and never a new transition.
  */
-bool d1_fixture_release_predecessor(struct d1_store *s, d1_id_t version)
+static struct d1_receipt *d1_receipt_find(struct d1_store *s,
+					  const struct d1_uuid *export_uuid,
+					  const struct d1_opkey *key,
+					  uint32_t ordinal)
 {
-	struct d1_version *v;
-	uint32_t i, c;
-	bool ok = false;
+	uint32_t i;
 
-	pthread_mutex_lock(&s->lock);
-	v = d1_version_find(s, version);
-	if (!v || v->released)
-		goto out;
-	for (i = 0; i < D1_MAX_OBJECTS; i++) {
-		if (!s->objects[i].used)
-			continue;
-		for (c = 0; c < D1_MAX_CHUNKS; c++)
-			if (s->objects[i].chunks[c].visible_present &&
-			    s->objects[i].chunks[c].visible == version)
-				goto out;
-	}
-	for (i = 0; i < D1_MAX_TXNS; i++) {
-		const struct d1_txn *t = &s->txns[i];
+	for (i = 0; i < D1_MAX_RECEIPTS; i++) {
+		struct d1_receipt *r = &s->receipts[i];
 
-		if (!t->used)
+		if (!r->used || r->ordinal != ordinal)
 			continue;
-		if (t->phase != D1_PHASE_PREPARED &&
-		    t->phase != D1_PHASE_FINALIZED)
+		if (memcmp(&r->export_uuid, export_uuid,
+			   sizeof(*export_uuid)) != 0)
 			continue;
-		/*
-		 * An uncommitted transaction that would restore this version
-		 * on cancellation still depends on it, which is a different
-		 * question from whether the version is itself private.
-		 */
-		if (t->version == version)
-			goto out;
-		if (t->predecessor_present && t->predecessor == version)
-			goto out;
+		if (memcmp(&r->key.origin, &key->origin, sizeof(key->origin)) ==
+			    0 &&
+		    r->key.sequence == key->sequence &&
+		    r->key.ordinal == key->ordinal)
+			return r;
 	}
-	v->released = true;
-	ok = true;
-out:
-	pthread_mutex_unlock(&s->lock);
-	return ok;
+	return NULL;
 }
 
 static uint32_t d1_holes_locked(struct d1_store *s,
@@ -744,18 +571,13 @@ static uint32_t d1_admission_check(struct d1_store *s,
 				   const struct d1_envelope *env, uint32_t need,
 				   struct d1_admission **out)
 {
-	struct d1_admission *a;
-
 	/*
-	 * A record in the log was admitted when it was written.  Replay
-	 * re-applies it; it does not re-authorise it, because the
-	 * admission that authorised it may be long gone.
+	 * Replay uses the real authority table, rebuilt from the same log.
+	 * Nothing is fabricated: an admission that was revoked, expired or
+	 * fenced when the entry ran is revoked, expired or fenced again,
+	 * so re-execution reaches the same answer for the same reason.
 	 */
-	if (s->replaying) {
-		*out = &s->replay_admission;
-		return D1_OK;
-	}
-	a = d1_admission_find(s, env->admission);
+	struct d1_admission *a = d1_admission_find(s, env->admission);
 	if (!a || a->revoked || a->expired)
 		return D1_STALE_AUTH;
 	if (memcmp(&a->object, &env->object, sizeof(a->object)) != 0)
@@ -794,13 +616,87 @@ static bool d1_activation_allowed(bool single_writer, bool flag,
 	return empty;
 }
 
-static uint32_t d1_do_write_entry(struct d1_store *s,
-				  const struct d1_envelope *env,
-				  const struct d1_write_entry *e,
-				  struct d1_admission *a,
-				  struct d1_entry_result *res)
+/*
+ * Everything one entry changed, so it can be put back exactly.
+ *
+ * The contract is that a failure to make an event durable leaves no
+ * state change, no consumed ID and no receipt.  An entry runs inside
+ * one lock interval, so nothing can observe what happens between its
+ * first mutation and its durable event; recording the before-state and
+ * restoring it on failure is therefore observationally identical to
+ * computing a candidate and publishing it only after the frontier, and
+ * it keeps the transition logic in one place instead of two.
+ */
+struct d1_undo {
+	struct d1_chunk *chunk;
+	struct d1_chunk chunk_before;
+	struct d1_txn *txn;
+	uint32_t txn_phase_before;
+	d1_id_t txn_admission_before;
+	struct d1_object *fresh_object;
+	struct d1_txn *fresh_txn;
+	struct d1_version *fresh_version;
+	struct d1_owner_assoc *fresh_assoc;
+	uint64_t epoch_before;
+	d1_id_t next_txn_before;
+	d1_id_t next_version_before;
+};
+
+static void d1_undo_begin(struct d1_store *s, struct d1_undo *u)
 {
-	struct d1_object *o = d1_object_get(s, &env->object);
+	memset(u, 0, sizeof(*u));
+	u->epoch_before = s->index_epoch;
+	u->next_txn_before = s->next_txn;
+	u->next_version_before = s->next_version;
+}
+
+/* Record a chunk's state before the first change to it. */
+static void d1_undo_chunk(struct d1_undo *u, struct d1_chunk *c)
+{
+	if (!u->chunk) {
+		u->chunk = c;
+		u->chunk_before = *c;
+	}
+}
+
+/* Record a transaction's phase and admission before the first change. */
+static void d1_undo_txn(struct d1_undo *u, struct d1_txn *t)
+{
+	if (!u->txn) {
+		u->txn = t;
+		u->txn_phase_before = t->phase;
+		u->txn_admission_before = t->admission;
+	}
+}
+
+static void d1_undo_apply(struct d1_store *s, struct d1_undo *u)
+{
+	if (u->chunk)
+		*u->chunk = u->chunk_before;
+	if (u->txn) {
+		u->txn->phase = u->txn_phase_before;
+		u->txn->admission = u->txn_admission_before;
+	}
+	/* A refused entry consumes no durable ID that replay would not. */
+	if (u->fresh_object)
+		u->fresh_object->used = false;
+	if (u->fresh_txn)
+		u->fresh_txn->used = false;
+	if (u->fresh_version)
+		u->fresh_version->used = false;
+	if (u->fresh_assoc)
+		u->fresh_assoc->used = false;
+	s->index_epoch = u->epoch_before;
+	s->next_txn = u->next_txn_before;
+	s->next_version = u->next_version_before;
+}
+
+static uint32_t
+d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
+		  const struct d1_write_entry *e, struct d1_admission *a,
+		  struct d1_entry_result *res, struct d1_undo *u)
+{
+	struct d1_object *o = d1_object_find(s, &env->object);
 	struct d1_owner_assoc *assoc;
 	struct d1_chunk *chunk;
 	struct d1_txn *txn = NULL;
@@ -810,8 +706,14 @@ static uint32_t d1_do_write_entry(struct d1_store *s,
 	bool activate, invalid;
 	uint32_t i;
 
-	if (!o)
-		return D1_NOSPC;
+	if (!o) {
+		/* First touch of an object creates it, and a refusal
+		 * afterwards must leave it uncreated. */
+		o = d1_object_get(s, &env->object);
+		if (!o)
+			return D1_NOSPC;
+		u->fresh_object = o;
+	}
 	if (e->index >= D1_MAX_CHUNKS)
 		return D1_INVALID;
 	/* Bounds are the object's maximum, not its current EOF. */
@@ -872,6 +774,7 @@ static uint32_t d1_do_write_entry(struct d1_store *s,
 	if (!txn || !ver)
 		return D1_NOSPC;
 
+	u->fresh_version = ver;
 	memset(ver, 0, sizeof(*ver));
 	ver->used = true;
 	ver->id = s->next_version++;
@@ -884,6 +787,7 @@ static uint32_t d1_do_write_entry(struct d1_store *s,
 	ver->predecessor_present = chunk->visible_present;
 	ver->predecessor = chunk->visible;
 
+	u->fresh_txn = txn;
 	memset(txn, 0, sizeof(*txn));
 	txn->used = true;
 	txn->id = s->next_txn++;
@@ -898,11 +802,9 @@ static uint32_t d1_do_write_entry(struct d1_store *s,
 	txn->predecessor = ver->predecessor;
 
 	assoc = d1_owner_add(s, &env->object.export_uuid, &e->owner);
-	if (!assoc) {
-		txn->used = false;
-		ver->used = false;
+	if (!assoc)
 		return D1_NOSPC;
-	}
+	u->fresh_assoc = assoc;
 	assoc->object = ver->object;
 	assoc->index = e->index;
 	assoc->version = ver->id;
@@ -912,6 +814,7 @@ static uint32_t d1_do_write_entry(struct d1_store *s,
 	 * chunk's first success is generation zero with the granted writer;
 	 * later successes increment, and nothing ever decreases it.
 	 */
+	d1_undo_chunk(u, chunk);
 	if (chunk->guard.never_written) {
 		chunk->guard.generation = 0;
 		chunk->guard.never_written = false;
@@ -950,7 +853,8 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 				      const struct d1_envelope *env,
 				      const struct d1_lifecycle_entry *e,
 				      struct d1_admission *a, bool commit,
-				      struct d1_entry_result *res)
+				      struct d1_entry_result *res,
+				      struct d1_undo *u)
 {
 	struct d1_object *o = d1_object_find(s, &env->object);
 	const struct d1_lifecycle_batch *l = &env->body.lifecycle;
@@ -996,6 +900,7 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 	if (!commit) {
 		if (txn->phase != D1_PHASE_PREPARED)
 			return D1_BAD_PHASE;
+		d1_undo_txn(u, txn);
 		txn->phase = D1_PHASE_FINALIZED;
 		res->phase = txn->phase;
 		return D1_OK;
@@ -1007,6 +912,8 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 	if (!ver)
 		return D1_INVALID;
 	/* Payload and extent metadata are replaced together. */
+	d1_undo_txn(u, txn);
+	d1_undo_chunk(u, chunk);
 	txn->phase = D1_PHASE_COMMITTED;
 	chunk->visible_present = true;
 	chunk->visible = ver->id;
@@ -1034,11 +941,10 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
  * NO_PREDECESSOR, which describes what is there rather than granting
  * permission to remove it.
  */
-static uint32_t d1_do_rollback_entry(struct d1_store *s,
-				     const struct d1_envelope *env,
-				     const struct d1_rollback_entry *e,
-				     struct d1_admission *a,
-				     struct d1_entry_result *res)
+static uint32_t
+d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
+		     const struct d1_rollback_entry *e, struct d1_admission *a,
+		     struct d1_entry_result *res, struct d1_undo *u)
 {
 	struct d1_object *o = d1_object_find(s, &env->object);
 	const struct d1_rollback_batch *r = &env->body.rollback;
@@ -1076,6 +982,8 @@ static uint32_t d1_do_rollback_entry(struct d1_store *s,
 		/* Cancelling one's own private work needs no custody. */
 		if (e->custody_present)
 			return D1_INVALID;
+		d1_undo_chunk(u, chunk);
+		d1_undo_txn(u, txn);
 		if (chunk->pending_present && chunk->pending == txn->id) {
 			chunk->pending_present = false;
 			chunk->pending = 0;
@@ -1094,21 +1002,17 @@ static uint32_t d1_do_rollback_entry(struct d1_store *s,
 	if ((a->rights & D1_RIGHT_REPAIR) != D1_RIGHT_REPAIR)
 		return D1_STALE_AUTH;
 	/*
-	 * Replay re-applies a record that already held custody when it was
-	 * written; the handle itself is fixture state that no log
-	 * describes, so it is not looked up again.  Everything the record
-	 * itself asserts is still checked.
+	 * Custody is looked up on replay too.  It is journalled, so the
+	 * rebuilt table holds the same handle bound to the same version --
+	 * and the binding is not merely authorisation: it is the exact
+	 * successor pointer section 7 requires, so skipping it would make
+	 * replay reach a different answer than the live store did.
 	 */
-	if (!s->replaying) {
-		custody = d1_custody_find(s, e->custody);
-		if (!custody)
-			return D1_STALE_AUTH;
-		/* Custody names the exact version it was issued over. */
-		if (!chunk->visible_present ||
-		    custody->version != chunk->visible)
-			return D1_OWNER_CONFLICT;
-	}
-	if (!chunk->visible_present)
+	custody = d1_custody_find(s, e->custody);
+	if (!custody)
+		return D1_STALE_AUTH;
+	/* Custody names the exact version it was issued over. */
+	if (!chunk->visible_present || custody->version != chunk->visible)
 		return D1_OWNER_CONFLICT;
 	if (chunk->visible != txn->version)
 		return D1_OWNER_CONFLICT;
@@ -1139,6 +1043,8 @@ static uint32_t d1_do_rollback_entry(struct d1_store *s,
 		return D1_OWNER_CONFLICT;
 
 	/* Payload and extent are restored in the one transition. */
+	d1_undo_chunk(u, chunk);
+	d1_undo_txn(u, txn);
 	chunk->visible = pred->id;
 	txn->phase = D1_PHASE_ROLLED_BACK;
 	s->index_epoch++;
@@ -1172,9 +1078,41 @@ static bool d1_verifier_matches(const struct d1_store *s,
  * advance only through whole-cohort entry points, and letting a lease
  * sweep take one would break that atomicity from the side.
  */
+/*
+ * A control transition is whole-operation atomic, so its before-state
+ * is a vector: every named transaction and every chunk it frees.
+ */
+struct d1_control_undo {
+	uint32_t count;
+	struct d1_txn *txn[D1_BATCH_ENTRIES_MAX];
+	uint32_t phase[D1_BATCH_ENTRIES_MAX];
+	d1_id_t admission[D1_BATCH_ENTRIES_MAX];
+	uint64_t read_epoch[D1_BATCH_ENTRIES_MAX];
+	struct d1_chunk *chunk[D1_BATCH_ENTRIES_MAX];
+	struct d1_chunk chunk_before[D1_BATCH_ENTRIES_MAX];
+	struct d1_admission *old;
+	bool old_revoked_before;
+};
+
+static void d1_control_undo_apply(struct d1_control_undo *u)
+{
+	uint32_t i;
+
+	for (i = 0; i < u->count; i++) {
+		u->txn[i]->phase = u->phase[i];
+		u->txn[i]->admission = u->admission[i];
+		u->txn[i]->read_epoch = u->read_epoch[i];
+		if (u->chunk[i])
+			*u->chunk[i] = u->chunk_before[i];
+	}
+	if (u->old)
+		u->old->revoked = u->old_revoked_before;
+}
+
 static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 			      struct d1_admission *a,
-			      struct d1_entry_result *res)
+			      struct d1_entry_result *res,
+			      struct d1_control_undo *u)
 {
 	const struct d1_control_batch *cb = &env->body.control;
 	struct d1_object *o = d1_object_find(s, &env->object);
@@ -1215,7 +1153,15 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 		if (t->admission != old->id)
 			return D1_OWNER_CONFLICT;
 		named[i] = t;
+		u->txn[i] = t;
+		u->phase[i] = t->phase;
+		u->admission[i] = t->admission;
+		u->read_epoch[i] = t->read_epoch;
+		u->chunk[i] = NULL;
 	}
+	u->count = cb->count;
+	u->old = old;
+	u->old_revoked_before = old->revoked;
 
 	if (env->op == D1_OP_RECOVERY_ADMIT) {
 		fresh = d1_admission_find(s, cb->new_admission);
@@ -1254,6 +1200,8 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 		struct d1_txn *t = named[i];
 		struct d1_chunk *chunk = &o->chunks[t->index];
 
+		u->chunk[i] = chunk;
+		u->chunk_before[i] = *chunk;
 		if (chunk->pending_present && chunk->pending == t->id) {
 			chunk->pending_present = false;
 			chunk->pending = 0;
@@ -1265,17 +1213,317 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 	return D1_OK;
 }
 
-/* Defined with the rest of the journal, below. */
-static bool d1_journal_intent(struct d1_store *s, const struct d1_envelope *env,
-			      const struct d1_admission *a);
+/*
+ * The durable event for one ordinary entry.
+ *
+ * Section 9 wants the whole Envelope, the entry ordinal, the request
+ * digest and the complete result in each ENTRY record, because recovery
+ * re-executes and compares what it computed against what was logged.
+ * A whole-request intent could not support that comparison: it says
+ * what was asked for, not what happened.
+ */
+static bool d1_journal_entry_event(struct d1_store *s,
+				   const struct d1_envelope *env,
+				   uint32_t ordinal,
+				   const uint8_t digest[D1_DIGEST_BYTES],
+				   const struct d1_complete_result *complete)
+{
+	uint8_t result_bytes[256];
+	struct d1_cursor cur;
+	size_t env_len, res_len;
+
+	env_len = d1_envelope_encode(env, s->scratch, s->scratch_cap);
+	res_len = d1_complete_result_encode(complete, result_bytes,
+					    sizeof(result_bytes));
+	if (!env_len || !res_len)
+		return false;
+
+	d1_enc_init(&cur, s->record, s->record_cap);
+	d1_enc_bytes(&cur, s->scratch, env_len);
+	d1_enc_u32(&cur, ordinal);
+	d1_enc_raw(&cur, digest, D1_DIGEST_BYTES);
+	d1_enc_bytes(&cur, result_bytes, res_len);
+	if (cur.bad)
+		return false;
+	if (!d1_journal_append(&s->journal, D1_REC_ENTRY, s->record,
+			       (uint32_t)cur.len))
+		return false;
+	/* The frontier advances only when both succeed. */
+	return d1_journal_flush(&s->journal);
+}
+
+/* The durable event for a control, whether an Envelope's or a fixture's. */
+static bool d1_journal_control_event(struct d1_store *s, uint32_t kind,
+				     const uint8_t *request, size_t request_len,
+				     const uint8_t *result, size_t result_len)
+{
+	struct d1_cursor cur;
+
+	d1_enc_init(&cur, s->record, s->record_cap);
+	d1_enc_u32(&cur, kind);
+	d1_enc_bytes(&cur, request, request_len);
+	d1_enc_bytes(&cur, result, result_len);
+	if (cur.bad)
+		return false;
+	if (!d1_journal_append(&s->journal, D1_REC_CONTROL, s->record,
+			       (uint32_t)cur.len))
+		return false;
+	return d1_journal_flush(&s->journal);
+}
+
+/* Whether this caller is bound to this object at all. */
+static bool d1_binding_ok(struct d1_store *s, const struct d1_envelope *env)
+{
+	struct d1_admission *a;
+
+	if (s->replaying)
+		return true;
+	a = d1_admission_find(s, env->admission);
+	return a && memcmp(&a->object, &env->object, sizeof(a->object)) == 0;
+}
+
+/*
+ * Reserve a receipt slot before anything mutates.
+ *
+ * Section 8 makes an inability to record a receipt an UNRECORDED
+ * failure with no state change.  Reserving first is what makes that
+ * true: a store that mutates and then discovers it cannot record has
+ * already told the caller nothing happened while something did.
+ */
+static struct d1_receipt *d1_receipt_reserve(struct d1_store *s)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_RECEIPTS; i++) {
+		if (s->receipts[i].used)
+			continue;
+		memset(&s->receipts[i], 0, sizeof(s->receipts[i]));
+		s->receipts[i].used = true;
+		return &s->receipts[i];
+	}
+	return NULL;
+}
+
+/*
+ * Run one ordinary entry, whole: lookup, reservation, revalidation,
+ * transition, durable event and receipt, all inside one lock interval.
+ * The caller holds the lock and releases it between entries, so the
+ * next one is revalidated against whatever this one left.
+ */
+static void d1_apply_one(struct d1_store *s, const struct d1_envelope *env,
+			 uint32_t ordinal,
+			 const uint8_t digest[D1_DIGEST_BYTES], uint32_t need,
+			 bool commit, struct d1_complete_result *complete)
+{
+	struct d1_entry_result *res = &complete->entry;
+	struct d1_admission *a = NULL;
+	struct d1_receipt *slot;
+	struct d1_undo undo;
+	uint32_t status;
+
+	memset(complete, 0, sizeof(*complete));
+	complete->key = env->key;
+	complete->disposition = D1_COMPLETED;
+	res->stability = D1_FILE_SYNC;
+	res->disposition = D1_COMPLETED;
+	d1_verifier_of(s->incarnation, res->verifier);
+
+	/*
+	 * Section 8: validate the caller binding, look the key up, compare
+	 * the digest, and return the recorded result without mutation --
+	 * even after an incarnation change, and before any question about
+	 * whether the admission is still live.  Retrieving a result is not
+	 * a new mutation.
+	 */
+	if (!d1_binding_ok(s, env)) {
+		res->status = D1_STALE_AUTH;
+		res->disposition = D1_UNRECORDED;
+		complete->disposition = D1_UNRECORDED;
+		return;
+	}
+	slot = d1_receipt_find(s, &env->object.export_uuid, &env->key, ordinal);
+	if (slot) {
+		if (memcmp(slot->digest, digest, D1_DIGEST_BYTES) != 0) {
+			res->status = D1_REPLAY_CONFLICT;
+			return;
+		}
+		/* The complete historical result, epoch and EOF included. */
+		*complete = slot->result;
+		return;
+	}
+
+	slot = d1_receipt_reserve(s);
+	if (!slot) {
+		res->status = D1_NOSPC;
+		res->disposition = D1_UNRECORDED;
+		complete->disposition = D1_UNRECORDED;
+		return;
+	}
+
+	status = d1_admission_check(s, env, need, &a);
+	if (status != D1_OK) {
+		slot->used = false;
+		res->status = status;
+		res->disposition = D1_UNRECORDED;
+		complete->disposition = D1_UNRECORDED;
+		return;
+	}
+
+	d1_undo_begin(s, &undo);
+	if (env->op == D1_OP_WRITE_BATCH)
+		status = d1_do_write_entry(s, env,
+					   &env->body.write.entries[ordinal], a,
+					   res, &undo);
+	else if (env->op == D1_OP_ROLLBACK_BATCH)
+		status = d1_do_rollback_entry(
+			s, env, &env->body.rollback.entries[ordinal], a, res,
+			&undo);
+	else if (!d1_verifier_matches(s, env->body.lifecycle.prior_verifier))
+		status = D1_STALE_AUTH;
+	else
+		status = d1_do_lifecycle_entry(
+			s, env, &env->body.lifecycle.entries[ordinal], a,
+			commit, res, &undo);
+
+	/*
+	 * NOSPC and IO are reserved for UNRECORDED failures: no logged
+	 * operation produces them as a completed receipt.
+	 */
+	if (status == D1_NOSPC || status == D1_IO) {
+		d1_undo_apply(s, &undo);
+		slot->used = false;
+		res->status = status;
+		res->disposition = D1_UNRECORDED;
+		complete->disposition = D1_UNRECORDED;
+		return;
+	}
+
+	res->status = status;
+	complete->index_epoch = s->index_epoch;
+	complete->eof = d1_eof_locked(s, &env->object);
+
+	if (s->journaling && !s->replaying &&
+	    !d1_journal_entry_event(s, env, ordinal, digest, complete)) {
+		/*
+		 * The event did not become durable, so nothing happened:
+		 * the transition is put back, the reserved ID is given
+		 * back, and no receipt is recorded.
+		 */
+		d1_undo_apply(s, &undo);
+		slot->used = false;
+		memset(complete, 0, sizeof(*complete));
+		complete->key = env->key;
+		complete->disposition = D1_UNRECORDED;
+		res->stability = D1_FILE_SYNC;
+		res->disposition = D1_UNRECORDED;
+		res->status = D1_IO;
+		d1_verifier_of(s->incarnation, res->verifier);
+		return;
+	}
+
+	slot->export_uuid = env->object.export_uuid;
+	slot->key = env->key;
+	slot->ordinal = ordinal;
+	memcpy(slot->digest, digest, D1_DIGEST_BYTES);
+	slot->result = *complete;
+}
+
+/* The same, for a control operation, which is atomic as a whole. */
+static void d1_apply_control(struct d1_store *s, const struct d1_envelope *env,
+			     const uint8_t digest[D1_DIGEST_BYTES],
+			     struct d1_complete_result *complete)
+{
+	struct d1_entry_result *res = &complete->entry;
+	struct d1_control_undo undo;
+	struct d1_admission *a = NULL;
+	struct d1_receipt *slot;
+	uint8_t result_bytes[256];
+	size_t env_len, res_len;
+	uint32_t status;
+
+	memset(&undo, 0, sizeof(undo));
+	memset(complete, 0, sizeof(*complete));
+	complete->key = env->key;
+	complete->disposition = D1_COMPLETED;
+	res->stability = D1_FILE_SYNC;
+	res->disposition = D1_COMPLETED;
+	d1_verifier_of(s->incarnation, res->verifier);
+
+	if (!d1_binding_ok(s, env)) {
+		res->status = D1_STALE_AUTH;
+		res->disposition = D1_UNRECORDED;
+		complete->disposition = D1_UNRECORDED;
+		return;
+	}
+	slot = d1_receipt_find(s, &env->object.export_uuid, &env->key, 0);
+	if (slot) {
+		if (memcmp(slot->digest, digest, D1_DIGEST_BYTES) != 0) {
+			res->status = D1_REPLAY_CONFLICT;
+			return;
+		}
+		*complete = slot->result;
+		return;
+	}
+	slot = d1_receipt_reserve(s);
+	if (!slot) {
+		res->status = D1_NOSPC;
+		res->disposition = D1_UNRECORDED;
+		complete->disposition = D1_UNRECORDED;
+		return;
+	}
+
+	status = d1_admission_check(s, env, D1_RIGHT_CONTROL, &a);
+	if (status == D1_OK)
+		status = d1_do_control(s, env, a, res, &undo);
+	if (status == D1_NOSPC || status == D1_IO) {
+		d1_control_undo_apply(&undo);
+		slot->used = false;
+		res->status = status;
+		res->disposition = D1_UNRECORDED;
+		complete->disposition = D1_UNRECORDED;
+		return;
+	}
+	if (status != D1_OK && status != D1_INVALID &&
+	    status != D1_STALE_AUTH && status != D1_OWNER_CONFLICT &&
+	    status != D1_BAD_PHASE)
+		d1_control_undo_apply(&undo);
+	res->status = status;
+	complete->index_epoch = s->index_epoch;
+	complete->eof = d1_eof_locked(s, &env->object);
+
+	if (s->journaling && !s->replaying) {
+		env_len = d1_envelope_encode(env, s->scratch, s->scratch_cap);
+		res_len = d1_complete_result_encode(complete, result_bytes,
+						    sizeof(result_bytes));
+		if (!env_len || !res_len ||
+		    !d1_journal_control_event(s, D1_CTL_ENVELOPE, s->scratch,
+					      env_len, result_bytes, res_len)) {
+			d1_control_undo_apply(&undo);
+			slot->used = false;
+			memset(complete, 0, sizeof(*complete));
+			complete->key = env->key;
+			complete->disposition = D1_UNRECORDED;
+			res->stability = D1_FILE_SYNC;
+			res->disposition = D1_UNRECORDED;
+			res->status = D1_IO;
+			d1_verifier_of(s->incarnation, res->verifier);
+			return;
+		}
+	}
+
+	slot->export_uuid = env->object.export_uuid;
+	slot->key = env->key;
+	slot->ordinal = 0;
+	memcpy(slot->digest, digest, D1_DIGEST_BYTES);
+	slot->result = *complete;
+}
 
 uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 			struct d1_result *out)
 {
 	uint8_t digest[D1_DIGEST_BYTES];
-	struct d1_admission *a = NULL;
-	uint32_t need, status, i;
-	uint32_t count;
+	struct d1_complete_result complete;
+	uint32_t need, count, i;
 	bool commit;
 
 	memset(out, 0, sizeof(*out));
@@ -1299,7 +1547,6 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		 * episode are not this slice's, and say so rather than doing
 		 * part of the job.
 		 */
-		out->count = 0;
 		return D1_UNSUPPORTED;
 	}
 
@@ -1310,12 +1557,6 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	 */
 	if (!d1_envelope_validate(env))
 		return D1_INVALID;
-	pthread_mutex_lock(&s->lock);
-	if (!d1_envelope_digest(env, s->scratch, s->scratch_cap, digest)) {
-		pthread_mutex_unlock(&s->lock);
-		return D1_INVALID;
-	}
-	pthread_mutex_unlock(&s->lock);
 
 	commit = env->op == D1_OP_COMMIT_BATCH;
 	switch (env->op) {
@@ -1336,116 +1577,39 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	}
 	out->count = count;
 
-	/*
-	 * Admission is an envelope-level question, so it is asked once.  A
-	 * request that is not admitted leaves nothing at all behind -- no
-	 * transition, no receipt and no record -- because it never entered
-	 * the store.  UNRECORDED says exactly that.
-	 */
 	pthread_mutex_lock(&s->lock);
-	status = d1_admission_check(s, env, need, &a);
-	if (status == D1_OK && s->journaling && !s->replaying &&
-	    !d1_journal_intent(s, env, a)) {
-		/*
-		 * The intent is written before anything is published, so a
-		 * refused append leaves a store that never made the change
-		 * and a log that never claimed it did.
-		 */
+	if (!d1_envelope_digest(env, s->scratch, s->scratch_cap, digest)) {
 		pthread_mutex_unlock(&s->lock);
 		out->count = 0;
-		out->disposition = D1_UNRECORDED;
-		return D1_IO;
+		return D1_INVALID;
 	}
 	pthread_mutex_unlock(&s->lock);
 
-	if (status != D1_OK) {
-		for (i = 0; i < count; i++) {
-			out->entries[i].status = status;
-			out->entries[i].disposition = D1_UNRECORDED;
-			out->entries[i].stability = D1_FILE_SYNC;
-			d1_store_verifier(s, out->entries[i].verifier);
-		}
-		out->index_epoch = s->index_epoch;
-		out->eof = d1_eof_locked(s, &env->object);
+	if (need == D1_RIGHT_CONTROL) {
+		pthread_mutex_lock(&s->lock);
+		d1_apply_control(s, env, digest, &complete);
+		pthread_mutex_unlock(&s->lock);
+		out->entries[0] = complete.entry;
+		out->index_epoch = complete.index_epoch;
+		out->eof = complete.eof;
+		out->disposition = complete.disposition;
 		return D1_OK;
 	}
 
 	for (i = 0; i < count; i++) {
-		struct d1_entry_result *res = &out->entries[i];
-		struct d1_receipt *receipt;
-
+		/*
+		 * One lock interval per member, covering its validation,
+		 * transition, durable event and receipt; released between
+		 * members so the next is revalidated against what this one
+		 * left.
+		 */
 		pthread_mutex_lock(&s->lock);
-		res->stability = D1_FILE_SYNC;
-		res->disposition = D1_COMPLETED;
-		d1_store_verifier(s, res->verifier);
-
-		/*
-		 * The key is looked up before anything is revalidated: an
-		 * exact replay answers from its receipt without mutating,
-		 * and the same key with a different body conflicts.
-		 */
-		receipt = d1_receipt_find(s, &env->object.export_uuid,
-					  &env->key, i);
-		if (receipt) {
-			if (memcmp(receipt->digest, digest, D1_DIGEST_BYTES) !=
-			    0) {
-				res->status = D1_REPLAY_CONFLICT;
-				pthread_mutex_unlock(&s->lock);
-				continue;
-			}
-			*res = receipt->result;
-			pthread_mutex_unlock(&s->lock);
-			continue;
-		}
-
-		status = D1_OK;
-		{
-			if (env->op == D1_OP_WRITE_BATCH) {
-				status = d1_do_write_entry(
-					s, env, &env->body.write.entries[i], a,
-					res);
-			} else if (env->op == D1_OP_ROLLBACK_BATCH) {
-				status = d1_do_rollback_entry(
-					s, env, &env->body.rollback.entries[i],
-					a, res);
-			} else if (env->op == D1_OP_RECOVERY_ADMIT ||
-				   env->op == D1_OP_LEASE_REAP) {
-				status = d1_do_control(s, env, a, res);
-				out->disposition = res->disposition;
-			} else {
-				if (!d1_verifier_matches(
-					    s,
-					    env->body.lifecycle.prior_verifier))
-					status = D1_STALE_AUTH;
-				else
-					status = d1_do_lifecycle_entry(
-						s, env,
-						&env->body.lifecycle.entries[i],
-						a, commit, res);
-			}
-		}
-		res->status = status;
-
-		/*
-		 * A semantic error is a recorded receipt with no state
-		 * change; only an inability to record one is UNRECORDED.
-		 */
-		receipt = d1_receipt_add(s, &env->object.export_uuid, &env->key,
-					 i, digest);
-		if (!receipt) {
-			res->disposition = D1_UNRECORDED;
-			res->status = D1_NOSPC;
-			pthread_mutex_unlock(&s->lock);
-			continue;
-		}
-		receipt->result = *res;
+		d1_apply_one(s, env, i, digest, need, commit, &complete);
 		pthread_mutex_unlock(&s->lock);
+		out->entries[i] = complete.entry;
+		out->index_epoch = complete.index_epoch;
+		out->eof = complete.eof;
 	}
-
-	pthread_mutex_lock(&s->lock);
-	out->index_epoch = s->index_epoch;
-	out->eof = d1_eof_locked(s, &env->object);
-	pthread_mutex_unlock(&s->lock);
 	return D1_OK;
 }
 
@@ -1646,36 +1810,355 @@ void d1_view_close(struct d1_store *s, struct d1_view *v)
 }
 
 /*
+ * Fixture authority, as durable control events.
+ *
+ * Which handle is live, which custody binds which version and which
+ * predecessor has been released all change what the reducer answers.
+ * So each of these is logged, and a rebuild re-executes it rather than
+ * inventing it.  Each has a locked core the rebuild calls directly and
+ * a public form that takes the lock and writes the event.
+ */
+static d1_id_t d1_admit_locked(struct d1_store *s,
+			       const struct d1_objkey *object,
+			       const struct d1_fixture_authority *auth)
+{
+	uint32_t i;
+
+	/* Reserved writer IDs are never issued. */
+	if (auth->writer == D1_WRITER_RESERVED_LOW ||
+	    auth->writer == D1_WRITER_RESERVED_HIGH)
+		return 0;
+	for (i = 0; i < D1_MAX_ADMISSIONS; i++) {
+		struct d1_admission *a = &s->admissions[i];
+
+		if (a->used)
+			continue;
+		memset(a, 0, sizeof(*a));
+		a->used = true;
+		a->id = s->next_admission++;
+		a->issuer = auth->issuer;
+		a->object = *object;
+		a->principal = auth->principal;
+		a->writer = auth->writer;
+		memcpy(a->stateid, auth->stateid, sizeof(a->stateid));
+		memcpy(a->session, auth->session, sizeof(a->session));
+		a->lease_epoch = auth->lease_epoch;
+		a->authority_epoch = auth->authority_epoch;
+		a->fence_sequence = auth->fence_sequence;
+		a->rights = auth->rights;
+		a->incarnation = s->incarnation;
+		return a->id;
+	}
+	return 0;
+}
+
+static bool d1_revoke_locked(struct d1_store *s, d1_id_t admission)
+{
+	struct d1_admission *a = d1_admission_find(s, admission);
+
+	if (!a)
+		return false;
+	a->revoked = true;
+	return true;
+}
+
+static bool d1_expire_locked(struct d1_store *s, d1_id_t admission)
+{
+	struct d1_admission *a = d1_admission_find(s, admission);
+
+	if (!a)
+		return false;
+	a->expired = true;
+	return true;
+}
+
+static d1_id_t d1_custody_locked(struct d1_store *s, d1_id_t version)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_CUSTODY; i++) {
+		struct d1_custody *c = &s->custody[i];
+
+		if (c->used)
+			continue;
+		c->used = true;
+		c->id = s->next_custody++;
+		c->version = version;
+		return c->id;
+	}
+	return 0;
+}
+
+/*
+ * Release one predecessor's retention root.
+ *
+ * Eligibility is a question about durable state alone: the version is
+ * not visible, no uncommitted transaction is that version or records it
+ * as its predecessor, and it has not been released already.  Live read
+ * pins are deliberately NOT part of this test -- a pin keeps the
+ * immutable bytes alive for the view that holds it, and says nothing
+ * about whether a future rollback may still reach the version.  Making
+ * release depend on pins would make the durable history depend on the
+ * order in which views happened to close.
+ *
+ * Physical reclamation is a declared no-op in this model: bytes are
+ * retained conservatively for the life of the store.  That is a stated
+ * limitation of the model's capacity, not a licence to answer the
+ * logical question differently.
+ */
+static bool d1_release_locked(struct d1_store *s, d1_id_t version)
+{
+	struct d1_version *v = d1_version_find(s, version);
+	uint32_t i, c;
+
+	if (!v || v->released)
+		return false;
+	for (i = 0; i < D1_MAX_OBJECTS; i++) {
+		if (!s->objects[i].used)
+			continue;
+		for (c = 0; c < D1_MAX_CHUNKS; c++)
+			if (s->objects[i].chunks[c].visible_present &&
+			    s->objects[i].chunks[c].visible == version)
+				return false;
+	}
+	for (i = 0; i < D1_MAX_TXNS; i++) {
+		const struct d1_txn *t = &s->txns[i];
+
+		if (!t->used)
+			continue;
+		if (t->phase != D1_PHASE_PREPARED &&
+		    t->phase != D1_PHASE_FINALIZED)
+			continue;
+		/*
+		 * An uncommitted transaction that would restore this version
+		 * on cancellation still depends on it, which is a different
+		 * question from whether the version is itself private.
+		 */
+		if (t->version == version)
+			return false;
+		if (t->predecessor_present && t->predecessor == version)
+			return false;
+	}
+	v->released = true;
+	return true;
+}
+
+/* Write one fixture control event.  Called with the lock held. */
+static bool d1_journal_fixture(struct d1_store *s,
+			       const struct d1_control_request *request,
+			       const struct d1_control_result *result)
+{
+	uint8_t request_bytes[256];
+	uint8_t result_bytes[64];
+	size_t request_len, result_len;
+
+	if (!s->journaling || s->replaying)
+		return true;
+	request_len = d1_control_request_encode(request, request_bytes,
+						sizeof(request_bytes));
+	result_len = d1_control_result_encode(result, result_bytes,
+					      sizeof(result_bytes));
+	if (!request_len || !result_len)
+		return false;
+	return d1_journal_control_event(s, request->kind, request_bytes,
+					request_len, result_bytes, result_len);
+}
+
+d1_id_t d1_fixture_admit_full(struct d1_store *s,
+			      const struct d1_objkey *object,
+			      const struct d1_fixture_authority *auth)
+{
+	struct d1_control_request request;
+	struct d1_control_result result;
+	struct d1_admission *a;
+	d1_id_t id;
+
+	memset(&request, 0, sizeof(request));
+	request.kind = D1_CTL_ADMIT;
+	request.object = *object;
+	request.auth = *auth;
+
+	pthread_mutex_lock(&s->lock);
+	id = d1_admit_locked(s, object, auth);
+	memset(&result, 0, sizeof(result));
+	result.id = id;
+	result.status = id ? D1_OK : D1_NOSPC;
+	if (id && !d1_journal_fixture(s, &request, &result)) {
+		/* An event that is not durable did not happen. */
+		a = d1_admission_find(s, id);
+		if (a)
+			a->used = false;
+		s->next_admission--;
+		id = 0;
+	}
+	pthread_mutex_unlock(&s->lock);
+	return id;
+}
+
+/*
+ * The common case: one issuer, and a principal derived from the writer,
+ * so two handles for one writer share a principal and two for different
+ * writers do not.  Tests that need a specific binding use the full form.
+ */
+d1_id_t d1_fixture_admit(struct d1_store *s, const struct d1_objkey *object,
+			 uint32_t writer, uint32_t rights)
+{
+	struct d1_fixture_authority auth;
+	unsigned int i;
+
+	memset(&auth, 0, sizeof(auth));
+	for (i = 0; i < D1_UUID_BYTES; i++) {
+		auth.issuer.bytes[i] = (uint8_t)(0xf0u + i);
+		auth.principal.bytes[i] = (uint8_t)(writer + i);
+	}
+	auth.writer = writer;
+	auth.rights = rights;
+	return d1_fixture_admit_full(s, object, &auth);
+}
+
+void d1_fixture_revoke(struct d1_store *s, d1_id_t admission)
+{
+	struct d1_control_request request;
+	struct d1_control_result result;
+	struct d1_admission *a;
+	bool before;
+
+	memset(&request, 0, sizeof(request));
+	request.kind = D1_CTL_REVOKE;
+	request.admission = admission;
+
+	pthread_mutex_lock(&s->lock);
+	a = d1_admission_find(s, admission);
+	before = a ? a->revoked : false;
+	memset(&result, 0, sizeof(result));
+	result.status = d1_revoke_locked(s, admission) ? D1_OK : D1_STALE_AUTH;
+	result.id = admission;
+	if (a)
+		request.object = a->object;
+	if (!d1_journal_fixture(s, &request, &result) && a)
+		a->revoked = before;
+	pthread_mutex_unlock(&s->lock);
+}
+
+void d1_fixture_expire(struct d1_store *s, d1_id_t admission)
+{
+	struct d1_control_request request;
+	struct d1_control_result result;
+	struct d1_admission *a;
+	bool before;
+
+	memset(&request, 0, sizeof(request));
+	request.kind = D1_CTL_EXPIRE;
+	request.admission = admission;
+
+	pthread_mutex_lock(&s->lock);
+	a = d1_admission_find(s, admission);
+	before = a ? a->expired : false;
+	memset(&result, 0, sizeof(result));
+	result.status = d1_expire_locked(s, admission) ? D1_OK : D1_STALE_AUTH;
+	result.id = admission;
+	if (a)
+		request.object = a->object;
+	if (!d1_journal_fixture(s, &request, &result) && a)
+		a->expired = before;
+	pthread_mutex_unlock(&s->lock);
+}
+
+d1_id_t d1_fixture_custody(struct d1_store *s, d1_id_t version)
+{
+	struct d1_control_request request;
+	struct d1_control_result result;
+	struct d1_custody *c;
+	d1_id_t id;
+	uint32_t i;
+
+	memset(&request, 0, sizeof(request));
+	request.kind = D1_CTL_CUSTODY;
+	request.version = version;
+
+	pthread_mutex_lock(&s->lock);
+	id = d1_custody_locked(s, version);
+	memset(&result, 0, sizeof(result));
+	result.id = id;
+	result.status = id ? D1_OK : D1_NOSPC;
+	if (id && !d1_journal_fixture(s, &request, &result)) {
+		for (i = 0; i < D1_MAX_CUSTODY; i++) {
+			c = &s->custody[i];
+			if (c->used && c->id == id)
+				c->used = false;
+		}
+		s->next_custody--;
+		id = 0;
+	}
+	pthread_mutex_unlock(&s->lock);
+	return id;
+}
+
+bool d1_fixture_release_predecessor(struct d1_store *s, d1_id_t version)
+{
+	struct d1_control_request request;
+	struct d1_control_result result;
+	struct d1_version *v;
+	bool ok;
+
+	memset(&request, 0, sizeof(request));
+	request.kind = D1_CTL_RELEASE;
+	request.version = version;
+
+	pthread_mutex_lock(&s->lock);
+	ok = d1_release_locked(s, version);
+	memset(&result, 0, sizeof(result));
+	result.id = version;
+	result.status = ok ? D1_OK : D1_INVALID;
+	if (!d1_journal_fixture(s, &request, &result) && ok) {
+		v = d1_version_find(s, version);
+		if (v)
+			v->released = false;
+		ok = false;
+	}
+	pthread_mutex_unlock(&s->lock);
+	return ok;
+}
+
+/*
  * The journal, and rebuilding from it.
  *
- * Records are written ahead of the state they describe: the intent is
- * durable before anything is published, so a refused append leaves a
- * store that never made the change and a log that never claimed it did.
- * Replay then re-applies the intents in order through the same reducer,
- * which is what makes "same log, same state" a property of the code
- * rather than a promise about it.
+ * Recovery is deterministic re-execution of the reducer with logging
+ * disabled: begin empty, validate the frame, decode the inputs, apply
+ * the same table-driven operation including the fixture authority
+ * state, and compare the complete computed result and digest against
+ * the logged ones.  Any disagreement fails closed.
+ *
+ * That is why the fixture's own control events are journalled.  Which
+ * handle is live, which custody binds which version and which
+ * predecessor has been released all change what the reducer answers, so
+ * a replay that invented them would be re-executing a different
+ * history.  Fault arms, read pins and physical reclamation are not
+ * journalled, because they change no reducer outcome.
  */
 
 /* previous incarnation, new incarnation, verifier. */
 #define D1_START_PAYLOAD_BYTES (8u + 8u + D1_VERIFIER_BYTES)
-#define D1_CHECKPOINT_PAYLOAD_BYTES (8u + 8u + 8u)
 
-uint32_t d1_store_journal_enable(struct d1_store *s)
+static uint32_t d1_op_rights(uint32_t op)
+{
+	switch (op) {
+	case D1_OP_WRITE_BATCH:
+	case D1_OP_FINALIZE_BATCH:
+	case D1_OP_COMMIT_BATCH:
+	case D1_OP_ROLLBACK_BATCH:
+		return D1_RIGHT_WRITE;
+	default:
+		return D1_RIGHT_CONTROL;
+	}
+}
+
+static uint32_t d1_start_append(struct d1_store *s)
 {
 	uint8_t payload[D1_START_PAYLOAD_BYTES];
 	uint8_t verifier[D1_VERIFIER_BYTES];
 	struct d1_cursor cur;
-	uint32_t status = D1_OK;
 
-	pthread_mutex_lock(&s->lock);
-	if (s->journaling) {
-		status = D1_INVALID;
-		goto out;
-	}
-	if (!d1_journal_init(&s->journal, &s->uuid)) {
-		status = D1_NOSPC;
-		goto out;
-	}
 	/*
 	 * A START header carries its NEW incarnation; every later record
 	 * matches the latest START.  The first one chains from zero.
@@ -1689,9 +2172,27 @@ uint32_t d1_store_journal_enable(struct d1_store *s)
 	if (cur.bad ||
 	    !d1_journal_append(&s->journal, D1_REC_START, payload,
 			       (uint32_t)cur.len) ||
-	    !d1_journal_flush(&s->journal)) {
+	    !d1_journal_flush(&s->journal))
+		return D1_IO;
+	return D1_OK;
+}
+
+uint32_t d1_store_journal_enable(struct d1_store *s)
+{
+	uint32_t status = D1_OK;
+
+	pthread_mutex_lock(&s->lock);
+	if (s->journaling) {
+		status = D1_INVALID;
+		goto out;
+	}
+	if (!d1_journal_init(&s->journal, &s->uuid)) {
+		status = D1_NOSPC;
+		goto out;
+	}
+	status = d1_start_append(s);
+	if (status != D1_OK) {
 		d1_journal_fini(&s->journal);
-		status = D1_IO;
 		goto out;
 	}
 	s->journaling = true;
@@ -1700,65 +2201,9 @@ out:
 	return status;
 }
 
-uint32_t d1_store_checkpoint(struct d1_store *s)
-{
-	uint8_t payload[D1_CHECKPOINT_PAYLOAD_BYTES];
-	struct d1_cursor cur;
-	uint32_t status = D1_OK;
-
-	pthread_mutex_lock(&s->lock);
-	if (!s->journaling) {
-		status = D1_INVALID;
-		goto out;
-	}
-	d1_enc_init(&cur, payload, sizeof(payload));
-	d1_enc_u64(&cur, s->next_txn);
-	d1_enc_u64(&cur, s->next_version);
-	d1_enc_u64(&cur, s->index_epoch);
-	if (cur.bad ||
-	    !d1_journal_append(&s->journal, D1_REC_CONTROL, payload,
-			       (uint32_t)cur.len) ||
-	    !d1_journal_flush(&s->journal))
-		status = D1_IO;
-out:
-	pthread_mutex_unlock(&s->lock);
-	return status;
-}
-
-/*
- * Write the intent for one envelope.  The record carries the writer and
- * rights the operation was admitted under, because replay must reapply
- * it exactly as it was accepted and the admission itself is fixture
- * state that no log describes.
- */
-static bool d1_journal_intent(struct d1_store *s, const struct d1_envelope *env,
-			      const struct d1_admission *a)
-{
-	struct d1_cursor cur;
-	size_t body;
-
-	/* The store's own scratch, under the store's own lock. */
-	d1_enc_init(&cur, s->scratch, s->scratch_cap);
-	d1_enc_u32(&cur, a->writer);
-	d1_enc_u32(&cur, a->rights);
-	if (cur.bad)
-		return false;
-	body = d1_envelope_encode(env, s->scratch + cur.len,
-				  s->scratch_cap - cur.len);
-	if (!body || cur.len + body > D1_JOURNAL_RECORD_MAX)
-		return false;
-	/*
-	 * Append and flush together: the frontier advances only when both
-	 * succeed, so a failure at either leaves nothing claimed durable.
-	 */
-	if (!d1_journal_append(&s->journal, D1_REC_ENTRY, s->scratch,
-			       (uint32_t)(cur.len + body)))
-		return false;
-	return d1_journal_flush(&s->journal);
-}
-
 static uint32_t d1_replay_start(struct d1_store *s, const uint8_t *payload,
-				uint32_t len, uint64_t header_incarnation)
+				uint32_t len, uint64_t header_incarnation,
+				unsigned int ordinal)
 {
 	struct d1_cursor cur;
 	uint8_t want[D1_VERIFIER_BYTES];
@@ -1770,67 +2215,142 @@ static uint32_t d1_replay_start(struct d1_store *s, const uint8_t *payload,
 	    !d1_dec_raw(&cur, verifier, sizeof(verifier)) ||
 	    !d1_dec_finished(&cur))
 		return D1_INVALID;
-	/* Incarnations chain: the first from zero, each later from the last. */
+	/* Incarnations chain: each from the one before it. */
 	if (fresh != previous + 1u || fresh != header_incarnation)
 		return D1_INVALID;
-	if (previous != s->incarnation - 1u && s->incarnation != 1u)
+	/*
+	 * The first START opens the store's first incarnation; every later
+	 * one supersedes the incarnation the log has reached so far.
+	 */
+	if (previous != (ordinal == 1u ? 0u : s->incarnation))
 		return D1_INVALID;
 	d1_verifier_of(fresh, want);
 	if (memcmp(want, verifier, sizeof(want)) != 0)
 		return D1_INVALID;
 	s->incarnation = fresh;
-	return D1_OK;
-}
-
-static uint32_t d1_replay_checkpoint(struct d1_store *s, const uint8_t *payload,
-				     uint32_t len)
-{
-	struct d1_cursor cur;
-	uint64_t txn, version, epoch;
-
-	d1_dec_init(&cur, payload, len);
-	if (!d1_dec_u64(&cur, &txn) || !d1_dec_u64(&cur, &version) ||
-	    !d1_dec_u64(&cur, &epoch) || !d1_dec_finished(&cur))
-		return D1_INVALID;
 	/*
-	 * Reaching a checkpoint and disagreeing with it means the replay
-	 * produced a different store from the one that wrote the log.
-	 * That is worth stopping for.
+	 * The new START fences the old incarnation's mutation admissions:
+	 * every mutation checks that its handle was issued in the current
+	 * incarnation, so a handle from before the START is dead without
+	 * anything having to walk the table.  Stable pending and finalized
+	 * work stays retained, and needs an explicit recovery_admit under
+	 * a current handle before it can be used again.
 	 */
-	if (txn != s->next_txn || version != s->next_version ||
-	    epoch != s->index_epoch)
-		return D1_INVALID;
 	return D1_OK;
 }
 
-static uint32_t d1_replay_entry(struct d1_store *s, const uint8_t *payload,
+static uint32_t d1_replay_entry(struct d1_store *s, const uint8_t *body,
 				uint32_t len)
 {
-	struct d1_cursor cur;
 	struct d1_envelope env;
-	struct d1_result res;
-	uint32_t writer, rights;
+	struct d1_complete_result logged, computed;
+	struct d1_cursor cur;
+	const uint8_t *env_bytes, *result_bytes;
+	uint8_t digest[D1_DIGEST_BYTES];
+	uint8_t logged_digest[D1_DIGEST_BYTES];
+	uint32_t env_len, result_len, ordinal;
 
-	d1_dec_init(&cur, payload, len);
-	if (!d1_dec_u32(&cur, &writer) || !d1_dec_u32(&cur, &rights))
+	d1_dec_init(&cur, body, len);
+	if (!d1_dec_bytes_ref(&cur, &env_bytes, &env_len, D1_ENVELOPE_MAX) ||
+	    !d1_dec_u32(&cur, &ordinal) ||
+	    !d1_dec_raw(&cur, logged_digest, sizeof(logged_digest)) ||
+	    !d1_dec_bytes_ref(&cur, &result_bytes, &result_len, 4096u) ||
+	    !d1_dec_finished(&cur))
 		return D1_INVALID;
-	if (!d1_envelope_decode(payload + cur.len, len - cur.len, &env))
+	if (!d1_envelope_decode(env_bytes, env_len, &env))
+		return D1_INVALID;
+	if (!d1_complete_result_decode(result_bytes, result_len, &logged))
+		return D1_INVALID;
+	if (ordinal >= D1_BATCH_ENTRIES_MAX)
 		return D1_INVALID;
 
-	memset(&s->replay_admission, 0, sizeof(s->replay_admission));
-	s->replay_admission.used = true;
-	s->replay_admission.id = env.admission;
-	s->replay_admission.object = env.object;
-	s->replay_admission.writer = writer;
-	s->replay_admission.rights = rights;
-	s->replay_admission.incarnation = s->incarnation;
+	/* The store computes the digest; it never trusts a logged one. */
+	if (!d1_envelope_digest(&env, s->scratch, s->scratch_cap, digest))
+		return D1_INVALID;
+	if (memcmp(digest, logged_digest, sizeof(digest)) != 0)
+		return D1_INVALID;
 
-	/*
-	 * The entry results are the log's business, not the replay's; what
-	 * matters is that the same transitions happen in the same order.
-	 */
-	return d1_store_apply(s, &env, &res) == D1_UNSUPPORTED ? D1_INVALID :
-								 D1_OK;
+	d1_apply_one(s, &env, ordinal, digest, d1_op_rights(env.op),
+		     env.op == D1_OP_COMMIT_BATCH, &computed);
+	/* Re-execution that disagrees with the log is not this history. */
+	if (!d1_complete_result_equal(&computed, &logged))
+		return D1_INVALID;
+	return D1_OK;
+}
+
+static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
+				  uint32_t len)
+{
+	struct d1_control_request request;
+	struct d1_control_result logged_ctl, computed_ctl;
+	struct d1_complete_result logged, computed;
+	struct d1_envelope env;
+	struct d1_cursor cur;
+	const uint8_t *request_bytes, *result_bytes;
+	uint8_t digest[D1_DIGEST_BYTES];
+	uint32_t kind, request_len, result_len;
+
+	d1_dec_init(&cur, body, len);
+	if (!d1_dec_u32(&cur, &kind) ||
+	    !d1_dec_bytes_ref(&cur, &request_bytes, &request_len,
+			      D1_ENVELOPE_MAX) ||
+	    !d1_dec_bytes_ref(&cur, &result_bytes, &result_len, 4096u) ||
+	    !d1_dec_finished(&cur))
+		return D1_INVALID;
+
+	if (kind == D1_CTL_ENVELOPE) {
+		if (!d1_envelope_decode(request_bytes, request_len, &env))
+			return D1_INVALID;
+		if (!d1_complete_result_decode(result_bytes, result_len,
+					       &logged))
+			return D1_INVALID;
+		if (!d1_envelope_digest(&env, s->scratch, s->scratch_cap,
+					digest))
+			return D1_INVALID;
+		d1_apply_control(s, &env, digest, &computed);
+		if (!d1_complete_result_equal(&computed, &logged))
+			return D1_INVALID;
+		return D1_OK;
+	}
+
+	if (!d1_control_request_decode(request_bytes, request_len, &request))
+		return D1_INVALID;
+	if (!d1_control_result_decode(result_bytes, result_len, &logged_ctl))
+		return D1_INVALID;
+	memset(&computed_ctl, 0, sizeof(computed_ctl));
+	switch (request.kind) {
+	case D1_CTL_ADMIT:
+		computed_ctl.id =
+			d1_admit_locked(s, &request.object, &request.auth);
+		computed_ctl.status = computed_ctl.id ? D1_OK : D1_NOSPC;
+		break;
+	case D1_CTL_REVOKE:
+		computed_ctl.id = request.admission;
+		computed_ctl.status = d1_revoke_locked(s, request.admission) ?
+					      D1_OK :
+					      D1_STALE_AUTH;
+		break;
+	case D1_CTL_EXPIRE:
+		computed_ctl.id = request.admission;
+		computed_ctl.status = d1_expire_locked(s, request.admission) ?
+					      D1_OK :
+					      D1_STALE_AUTH;
+		break;
+	case D1_CTL_CUSTODY:
+		computed_ctl.id = d1_custody_locked(s, request.version);
+		computed_ctl.status = computed_ctl.id ? D1_OK : D1_NOSPC;
+		break;
+	default:
+		computed_ctl.id = request.version;
+		computed_ctl.status = d1_release_locked(s, request.version) ?
+					      D1_OK :
+					      D1_INVALID;
+		break;
+	}
+	if (computed_ctl.status != logged_ctl.status ||
+	    computed_ctl.id != logged_ctl.id)
+		return D1_INVALID;
+	return D1_OK;
 }
 
 /*
@@ -1841,6 +2361,9 @@ static uint32_t d1_replay_entry(struct d1_store *s, const uint8_t *payload,
  * malformed inside it is corruption of data the writer did claim, and
  * fails closed -- a completed record never quietly disappears, and a
  * corrupt prefix is never reported as a successful replay.
+ *
+ * This is read-only reconstruction.  It does not open a new incarnation;
+ * d1_store_reopen does that, on top of this.
  */
 uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
 {
@@ -1857,7 +2380,6 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
 		return D1_INVALID;
 	}
 	s->replaying = true;
-	pthread_mutex_unlock(&s->lock);
 
 	d1_journal_cursor_init(&c, log, durable, &s->uuid);
 	for (;;) {
@@ -1886,13 +2408,14 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
 		switch (type) {
 		case D1_REC_START:
 			starts++;
-			status = d1_replay_start(s, body, blen, incarnation);
+			status = d1_replay_start(s, body, blen, incarnation,
+						 starts);
 			break;
 		case D1_REC_ENTRY:
 			status = d1_replay_entry(s, body, blen);
 			break;
 		case D1_REC_CONTROL:
-			status = d1_replay_checkpoint(s, body, blen);
+			status = d1_replay_control(s, body, blen);
 			break;
 		default:
 			status = D1_INVALID;
@@ -1903,11 +2426,57 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
 	}
 	if (status == D1_OK && !starts)
 		status = D1_INVALID;
-
-	pthread_mutex_lock(&s->lock);
+	/* The log's own LSNs continue if this store goes on to write. */
+	s->replayed_lsn = c.last_lsn;
 	s->replaying = false;
 	pthread_mutex_unlock(&s->lock);
 	return status;
+}
+
+/*
+ * Actual reopen: rebuild, then open a new incarnation.
+ *
+ * Read-only reconstruction is not a reboot.  A reopen appends and
+ * flushes a new START, which fences the old incarnation's mutation
+ * admissions and publishes a new verifier, and it continues the log's
+ * LSNs rather than starting them again.  Doing it twice is ordinary.
+ */
+uint32_t d1_store_reopen(struct d1_store *s, const uint8_t *log, size_t durable)
+{
+	uint32_t status;
+
+	status = d1_store_replay(s, log, durable);
+	if (status != D1_OK)
+		return status;
+
+	pthread_mutex_lock(&s->lock);
+	if (!d1_journal_init(&s->journal, &s->uuid)) {
+		pthread_mutex_unlock(&s->lock);
+		return D1_NOSPC;
+	}
+	/* Copy the durable prefix forward; the new START follows it. */
+	if (durable && !d1_journal_adopt(&s->journal, log, durable,
+					 s->replayed_lsn + 1u)) {
+		d1_journal_fini(&s->journal);
+		pthread_mutex_unlock(&s->lock);
+		return D1_NOSPC;
+	}
+	if (s->incarnation == UINT64_MAX) {
+		d1_journal_fini(&s->journal);
+		pthread_mutex_unlock(&s->lock);
+		return D1_NOSPC;
+	}
+	s->incarnation++;
+	status = d1_start_append(s);
+	if (status != D1_OK) {
+		s->incarnation--;
+		d1_journal_fini(&s->journal);
+		pthread_mutex_unlock(&s->lock);
+		return status;
+	}
+	s->journaling = true;
+	pthread_mutex_unlock(&s->lock);
+	return D1_OK;
 }
 
 /*

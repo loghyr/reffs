@@ -9,6 +9,7 @@ LDADD = $(top_builddir)/lib/d1store/libd1store.la -lpthread
 # nothing outside the model.
 TESTS = \
 	d1_codec_test \
+	d1_control_test \
 	d1_envelope_test \
 	d1_journal_test \
 	d1_store_test
@@ -16,6 +17,7 @@ TESTS = \
 check_PROGRAMS = $(TESTS)
 
 d1_codec_test_SOURCES = d1_codec_test.c
+d1_control_test_SOURCES = d1_control_test.c
 d1_envelope_test_SOURCES = d1_envelope_test.c
 d1_journal_test_SOURCES = d1_journal_test.c
 d1_store_test_SOURCES = d1_store_test.c

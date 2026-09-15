@@ -1219,7 +1219,6 @@ static void test_replay_reproduces_the_store(void)
 					     D1_RIGHT_REPAIR |
 					     D1_RIGHT_SINGLE_WRITER);
 	check(drive_history(a, admission) != 0, "the history is written");
-	check(d1_store_checkpoint(a) == D1_OK, "a checkpoint is written");
 
 	log = d1_store_journal(a, &len);
 	check(len > 0, "the log has bytes");
@@ -1358,7 +1357,14 @@ static void test_crash_loses_only_the_torn_record(void)
 	d1_store_free(a);
 }
 
-/* I: a refused append publishes nothing and records nothing. */
+/*
+ * I1: a refused append publishes nothing and records nothing.
+ *
+ * Disposition is per entry for an ordinary batch, so the operation
+ * succeeds and the entry says UNRECORDED.  What must be true is that
+ * nothing happened: no transition, no consumed ID, no receipt, and a
+ * log that did not grow.
+ */
 static void test_append_fault_is_unrecorded(void)
 {
 	struct d1_uuid store_uuid;
@@ -1368,7 +1374,7 @@ static void test_append_fault_is_unrecorded(void)
 	struct d1_guard guard;
 	static uint8_t data[32];
 	size_t before, after;
-	d1_id_t admission, seen;
+	d1_id_t admission, seen, first_txn;
 
 	memset(data, 0x41, sizeof(data));
 	fill_uuid(&store_uuid, 0xaa);
@@ -1386,11 +1392,11 @@ static void test_append_fault_is_unrecorded(void)
 	env.body.write.stability = D1_FILE_SYNC;
 	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
 		    true, &(struct d1_guard){ .never_written = true });
-	check(d1_store_apply(s, &env, &res) == D1_IO,
-	      "an append that cannot happen fails the operation");
-	check(res.disposition == D1_UNRECORDED,
-	      "and the operation is UNRECORDED");
-	check(res.count == 0, "and answers no entries");
+	check(d1_store_apply(s, &env, &res) == D1_OK,
+	      "the operation itself completes");
+	check(res.entries[0].status == D1_IO,
+	      "the entry reports the failure to record");
+	check(res.entries[0].disposition == D1_UNRECORDED, "and is UNRECORDED");
 	(void)d1_store_journal(s, &after);
 	check(after == before, "the log did not grow");
 	check(!d1_store_guard(s, &object, 0, &guard),
@@ -1398,21 +1404,353 @@ static void test_append_fault_is_unrecorded(void)
 	check(!d1_store_visible(s, &object, 0, &seen), "nothing is visible");
 	check(d1_store_eof(s, &object) == 0, "and there is nothing to read");
 
-	/* The fault is spent; the next attempt is ordinary. */
-	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
-	env.body.write.count = 1;
-	env.body.write.stability = D1_FILE_SYNC;
-	write_entry(&env.body.write.entries[0], 0, 11, 2, data, sizeof(data),
-		    true, &(struct d1_guard){ .never_written = true });
+	/*
+	 * No receipt was recorded, so the exact same request may be tried
+	 * again and execute.  Demanding a replay conflict for a key that
+	 * was never recorded would be wrong.
+	 */
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
-	      "the next write is admitted");
+	      "the exact retry executes");
+	first_txn = res.entries[0].txn;
+	check(first_txn == 1,
+	      "and consumes the first transaction ID, not the second");
 	(void)d1_store_journal(s, &after);
 	check(after > before, "and the log grew this time");
 	check(d1_store_guard(s, &object, 0, &guard) && !guard.never_written,
 	      "and the chunk now has a guard");
 
+	/* A flush that does not happen is the same kind of nothing. */
+	d1_fixture_fail_next_flush(s);
+	(void)d1_store_journal(s, &before);
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(s, &env, &res);
+	check(res.entries[0].disposition == D1_UNRECORDED,
+	      "an unflushed event is UNRECORDED too");
+	(void)d1_store_journal(s, &after);
+	check(after == before, "and claims no new durable bytes");
+	check(d1_store_guard(s, &object, 1, &guard) && guard.never_written,
+	      "and left the chunk alone");
+
 	d1_store_free(s);
+}
+
+/*
+ * An inability to reserve a receipt is UNRECORDED with no state change.
+ * The old behaviour published the write and then told the caller
+ * nothing had been recorded, which no retry could repair.
+ */
+static void test_receipt_exhaustion_changes_nothing(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_guard guard;
+	static uint8_t data[8];
+	unsigned int i;
+	d1_id_t admission, seen;
+	bool filled = false;
+
+	memset(data, 0x42, sizeof(data));
+	fill_uuid(&store_uuid, 0xab);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	/* Fill the receipt table with recorded semantic errors. */
+	for (i = 0; i < D1_MAX_RECEIPTS + 2u; i++) {
+		env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], 0, 11, i + 1u, data,
+			    sizeof(data), true,
+			    &(struct d1_guard){ .generation = 900u + i,
+						.writer = 11 });
+		d1_store_apply(s, &env, &res);
+		if (res.entries[0].status == D1_NOSPC) {
+			filled = true;
+			break;
+		}
+		if (res.entries[0].status != D1_GUARDED)
+			break;
+	}
+	check(filled, "the receipt table fills with recorded errors");
+	check(res.entries[0].disposition == D1_UNRECORDED,
+	      "and the next request is UNRECORDED");
+
+	/* Now a request that would otherwise succeed must change nothing. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_DATA_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 2, 11, 5000, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(s, &env, &res);
+	check(res.entries[0].status == D1_NOSPC &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "a valid write with no receipt room is UNRECORDED");
+	check(!res.entries[0].txn_present && !res.entries[0].version_present,
+	      "and reserved no transaction or version");
+	check(!d1_store_visible(s, &object, 2, &seen), "and published nothing");
+	check(!d1_store_guard(s, &object, 2, &guard) || guard.never_written,
+	      "and left the guard where it was");
+	check(d1_store_eof(s, &object) == 0, "and did not move EOF");
+
+	d1_store_free(s);
+}
+
+/*
+ * H1: an exact retry returns its recorded receipt even after the
+ * admission that made it is gone.  Retrieving a recorded result is not
+ * a new mutation, so it is not gated on current authority.
+ */
+static void test_exact_retry_survives_revocation(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env, extend;
+	struct d1_result first, again;
+	static uint8_t data[8];
+	d1_id_t admission, second;
+
+	memset(data, 0x43, sizeof(data));
+	fill_uuid(&store_uuid, 0xac);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	second = d1_fixture_admit(s, &object, 11,
+				  D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_DATA_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &first) == D1_OK &&
+		      first.entries[0].status == D1_OK &&
+		      first.entries[0].activated,
+	      "the write activates");
+
+	/* Something else moves EOF and the index epoch afterwards. */
+	env_init(&extend, s, second, D1_OP_WRITE_BATCH);
+	extend.body.write.count = 1;
+	extend.body.write.stability = D1_DATA_SYNC;
+	extend.body.write.activate = true;
+	write_entry(&extend.body.write.entries[0], 4, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(s, &extend, &again);
+	check(d1_store_eof(s, &object) > first.eof, "EOF has moved on");
+
+	d1_fixture_revoke(s, admission);
+
+	check(d1_store_apply(s, &env, &again) == D1_OK,
+	      "the exact retry is answered");
+	check(again.entries[0].status == D1_OK,
+	      "with the recorded success, not a stale-authority error");
+	check(again.entries[0].disposition == D1_COMPLETED,
+	      "recorded, not unrecorded");
+	check(again.entries[0].version == first.entries[0].version &&
+		      again.entries[0].txn == first.entries[0].txn,
+	      "naming the same version and transaction");
+	check(again.eof == first.eof && again.index_epoch == first.index_epoch,
+	      "and the EOF and epoch it saw, not today's");
+
+	/* A different body under the same key is still a conflict. */
+	{
+		struct d1_envelope changed = env;
+		struct d1_result conflict;
+
+		changed.body.write.activate = false;
+		check(d1_store_apply(s, &changed, &conflict) == D1_OK &&
+			      conflict.entries[0].status == D1_REPLAY_CONFLICT,
+		      "a changed body under the used key conflicts");
+	}
+
+	d1_store_free(s);
+}
+
+/*
+ * H1: an actual reopen is not a read-only rebuild.  It opens a new
+ * incarnation, fences the old handles, and can be done again.
+ */
+static void test_reopen_fences_and_repeats(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *a, *b, *c;
+	struct d1_envelope env;
+	struct d1_result res;
+	const uint8_t *log;
+	size_t len;
+	static uint8_t data[8];
+	d1_id_t admission, again, txn;
+	uint8_t verifier_before[D1_VERIFIER_BYTES];
+	uint8_t verifier_after[D1_VERIFIER_BYTES];
+
+	memset(data, 0x44, sizeof(data));
+	fill_uuid(&store_uuid, 0xad);
+	a = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!a)
+		return;
+	d1_store_journal_enable(a);
+	admission = d1_fixture_admit(a, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_CONTROL |
+					     D1_RIGHT_SINGLE_WRITER);
+	env_init(&env, a, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(a, &env, &res);
+	txn = res.entries[0].txn;
+	check(txn != 0, "there is pending work to recover");
+	d1_store_verifier(a, verifier_before);
+	log = d1_store_journal(a, &len);
+
+	b = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!b) {
+		d1_store_free(a);
+		return;
+	}
+	check(d1_store_reopen(b, log, len) == D1_OK, "the store reopens");
+	check(d1_store_incarnation(b) == d1_store_incarnation(a) + 1u,
+	      "in a new incarnation");
+	d1_store_verifier(b, verifier_after);
+	check(memcmp(verifier_before, verifier_after,
+		     sizeof(verifier_before)) != 0,
+	      "with a new verifier");
+
+	/* The old handle is fenced: its work needs re-admission. */
+	env_init(&env, b, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(b, &env, &res);
+	check(res.entries[0].status == D1_STALE_AUTH,
+	      "an admission from before the reopen cannot mutate");
+
+	/* A fresh handle in the new incarnation can. */
+	again = d1_fixture_admit(b, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	check(again != 0 && again != admission,
+	      "a new admission gets a new ID, never a reused one");
+	env_init(&env, b, again, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 3, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(b, &env, &res);
+	check(res.entries[0].status == D1_OK,
+	      "and a handle from this incarnation can");
+
+	/* Reopening again is ordinary. */
+	log = d1_store_journal(b, &len);
+	c = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (c) {
+		check(d1_store_reopen(c, log, len) == D1_OK,
+		      "the store reopens a second time");
+		check(d1_store_incarnation(c) == d1_store_incarnation(b) + 1u,
+		      "into a third incarnation");
+		d1_store_free(c);
+	}
+
+	d1_store_free(b);
+	d1_store_free(a);
+}
+
+/*
+ * The outcomes that depend on fixture state must replay.
+ *
+ * A rollback's answer depends on which version the custody handle is
+ * bound to and on whether the predecessor has been released.  Both are
+ * fixture state, and both are journalled, so a rebuild reaches the same
+ * answer for the same reason.  Before they were journalled, a replay of
+ * these two histories produced a different store from the one that
+ * wrote the log.
+ */
+static void test_custody_and_release_replay(void)
+{
+	static const bool release_case[] = { false, true };
+	unsigned int pass;
+
+	for (pass = 0; pass < 2; pass++) {
+		struct d1_uuid store_uuid;
+		struct d1_store *live, *rebuilt;
+		struct d1_guard guard;
+		struct d1_entry_result entry;
+		const uint8_t *log;
+		size_t len;
+		static uint8_t data[32];
+		d1_id_t admission, v1, v2, txn2, custody, live_visible;
+		d1_id_t rebuilt_visible;
+		uint32_t status;
+
+		memset(data, 0x51, sizeof(data));
+		fill_uuid(&store_uuid, (uint8_t)(0xb1 + pass));
+		live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!live)
+			return;
+		/* Journalling first, so the authority history is in the log. */
+		check(d1_store_journal_enable(live) == D1_OK,
+		      "journalling starts before any authority is issued");
+		admission = d1_fixture_admit(live, &object, 11,
+					     D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+						     D1_RIGHT_SINGLE_WRITER);
+
+		v1 = commit_chunk(live, admission, 0, 1, data, sizeof(data),
+				  &(struct d1_guard){ .never_written = true },
+				  0, NULL);
+		d1_store_guard(live, &object, 0, &guard);
+		v2 = commit_chunk(live, admission, 0, 2, data, sizeof(data),
+				  &guard, v1, &txn2);
+		check(v1 != 0 && v2 != 0, "two versions commit in turn");
+
+		if (release_case[pass]) {
+			/* The predecessor is released, so it is not eligible. */
+			check(d1_fixture_release_predecessor(live, v1),
+			      "the displaced predecessor releases");
+			custody = d1_fixture_custody(live, v2);
+		} else {
+			/* Custody bound to the wrong version is a conflict. */
+			custody = d1_fixture_custody(live, v1);
+		}
+		status = rollback_one(live, admission, 0, 2, txn2, true,
+				      custody, &entry);
+		check(status == (release_case[pass] ? D1_NO_PREDECESSOR :
+						      D1_OWNER_CONFLICT),
+		      "the rollback answers from the fixture state");
+		check(d1_store_visible(live, &object, 0, &live_visible) &&
+			      live_visible == v2,
+		      "and the current data stays where it is");
+
+		log = d1_store_journal(live, &len);
+		rebuilt =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!rebuilt) {
+			d1_store_free(live);
+			return;
+		}
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "the log replays without diverging");
+		check(d1_store_visible(rebuilt, &object, 0, &rebuilt_visible) &&
+			      rebuilt_visible == live_visible,
+		      "and the rebuilt store sees the same version");
+		check(states_agree(live, rebuilt),
+		      "and agrees with the store that wrote it");
+
+		d1_store_free(rebuilt);
+		d1_store_free(live);
+	}
 }
 
 /* A log only rebuilds the store it was written for. */
@@ -1898,6 +2236,10 @@ int main(void)
 	test_replay_reproduces_the_store();
 	test_crash_loses_only_the_torn_record();
 	test_append_fault_is_unrecorded();
+	test_receipt_exhaustion_changes_nothing();
+	test_exact_retry_survives_revocation();
+	test_reopen_fences_and_repeats();
+	test_custody_and_release_replay();
 	test_replay_refuses_a_foreign_log();
 	test_recovery_admit();
 	test_recovery_admit_is_atomic();

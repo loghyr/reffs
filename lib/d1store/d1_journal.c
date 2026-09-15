@@ -104,6 +104,20 @@ bool d1_journal_append(struct d1_journal *j, uint32_t type, const uint8_t *body,
 	return true;
 }
 
+bool d1_journal_adopt(struct d1_journal *j, const uint8_t *log, size_t durable,
+		      uint64_t next_lsn)
+{
+	if (j->len)
+		return false;
+	if (!d1_journal_reserve(j, durable))
+		return false;
+	memcpy(j->buf, log, durable);
+	j->len = durable;
+	j->durable = durable;
+	j->next_lsn = next_lsn;
+	return true;
+}
+
 bool d1_journal_flush(struct d1_journal *j)
 {
 	if (j->fail_next_flush) {

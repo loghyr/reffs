@@ -204,19 +204,18 @@ uint32_t d1_store_journal_enable(struct d1_store *s);
 /* The journal bytes, for a test to truncate, corrupt or replay. */
 const uint8_t *d1_store_journal(const struct d1_store *s, size_t *len);
 
-/*
- * Write a checkpoint naming the counters and index epoch as they stand.
- * A replay that reaches it and disagrees has diverged, and says so
- * rather than carrying on.
- */
-uint32_t d1_store_checkpoint(struct d1_store *s);
+uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log,
+			 size_t durable);
 
 /*
- * Rebuild @s from @log.  @s must be freshly opened with the geometry
- * the log's START record names.  Records are applied in order until the
- * durable frontier; what lies past it was never written.
+ * Actual reopen: rebuild, then open a new incarnation.
+ *
+ * Read-only reconstruction is not a reboot.  A reopen appends and
+ * flushes a new START, which fences the old incarnation's mutation
+ * admissions and publishes a new verifier, and it continues the log's
+ * LSNs rather than starting them over.  Doing it twice is ordinary.
  */
-uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log,
+uint32_t d1_store_reopen(struct d1_store *s, const uint8_t *log,
 			 size_t durable);
 
 /*

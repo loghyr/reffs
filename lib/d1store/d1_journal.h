@@ -63,6 +63,14 @@ void d1_journal_fini(struct d1_journal *j);
 bool d1_journal_append(struct d1_journal *j, uint32_t type, const uint8_t *body,
 		       uint32_t len);
 
+/*
+ * Adopt an existing durable prefix and continue its LSNs.  A reopen
+ * writes on top of the history it rebuilt rather than starting a new
+ * log beside it.
+ */
+bool d1_journal_adopt(struct d1_journal *j, const uint8_t *log, size_t durable,
+		      uint64_t next_lsn);
+
 /* Claim everything appended so far as durable.  Whole records only. */
 bool d1_journal_flush(struct d1_journal *j);
 
