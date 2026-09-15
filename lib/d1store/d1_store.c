@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include "d1_digest.h"
+#include "d1_journal.h"
 #include "d1_store.h"
 
 struct d1_version {
@@ -161,6 +162,16 @@ struct d1_store {
 	struct d1_custody custody[D1_MAX_CUSTODY];
 	struct d1_view views[D1_MAX_VIEWS];
 	d1_id_t next_custody;
+
+	struct d1_journal journal;
+	bool journaling;
+	/*
+	 * Set only while rebuilding from a log.  A replayed record was
+	 * admitted when it was written, so it is not re-authorised; it is
+	 * re-applied.  Nothing is appended and no fault can fire.
+	 */
+	bool replaying;
+	struct d1_admission replay_admission;
 };
 
 static void d1_verifier_of(uint64_t incarnation, uint8_t out[D1_VERIFIER_BYTES])
@@ -214,8 +225,24 @@ void d1_store_free(struct d1_store *s)
 {
 	if (!s)
 		return;
+	d1_journal_fini(&s->journal);
 	pthread_mutex_destroy(&s->lock);
 	free(s);
+}
+
+void d1_fixture_fail_next_append(struct d1_store *s)
+{
+	pthread_mutex_lock(&s->lock);
+	/* Faults are disabled throughout recovery, by construction. */
+	if (!s->replaying)
+		s->journal.fail_next = true;
+	pthread_mutex_unlock(&s->lock);
+}
+
+const uint8_t *d1_store_journal(const struct d1_store *s, size_t *len)
+{
+	*len = s->journal.len;
+	return s->journal.buf;
 }
 
 static struct d1_object *d1_object_find(struct d1_store *s,
@@ -605,8 +632,18 @@ static uint32_t d1_admission_check(struct d1_store *s,
 				   const struct d1_envelope *env, uint32_t need,
 				   struct d1_admission **out)
 {
-	struct d1_admission *a = d1_admission_find(s, env->admission);
+	struct d1_admission *a;
 
+	/*
+	 * A record in the log was admitted when it was written.  Replay
+	 * re-applies it; it does not re-authorise it, because the
+	 * admission that authorised it may be long gone.
+	 */
+	if (s->replaying) {
+		*out = &s->replay_admission;
+		return D1_OK;
+	}
+	a = d1_admission_find(s, env->admission);
 	if (!a || a->revoked || a->expired)
 		return D1_STALE_AUTH;
 	if (memcmp(&a->object, &env->object, sizeof(a->object)) != 0)
@@ -944,11 +981,22 @@ static uint32_t d1_do_rollback_entry(struct d1_store *s,
 		return D1_STALE_AUTH;
 	if ((a->rights & D1_RIGHT_REPAIR) != D1_RIGHT_REPAIR)
 		return D1_STALE_AUTH;
-	custody = d1_custody_find(s, e->custody);
-	if (!custody)
-		return D1_STALE_AUTH;
-	/* Custody names the exact version it was issued over. */
-	if (!chunk->visible_present || custody->version != chunk->visible)
+	/*
+	 * Replay re-applies a record that already held custody when it was
+	 * written; the handle itself is fixture state that no log
+	 * describes, so it is not looked up again.  Everything the record
+	 * itself asserts is still checked.
+	 */
+	if (!s->replaying) {
+		custody = d1_custody_find(s, e->custody);
+		if (!custody)
+			return D1_STALE_AUTH;
+		/* Custody names the exact version it was issued over. */
+		if (!chunk->visible_present ||
+		    custody->version != chunk->visible)
+			return D1_OWNER_CONFLICT;
+	}
+	if (!chunk->visible_present)
 		return D1_OWNER_CONFLICT;
 	if (chunk->visible != txn->version)
 		return D1_OWNER_CONFLICT;
@@ -996,6 +1044,10 @@ static bool d1_verifier_matches(const struct d1_store *s,
 	return memcmp(want, given, D1_VERIFIER_BYTES) == 0;
 }
 
+/* Defined with the rest of the journal, below. */
+static bool d1_journal_intent(struct d1_store *s, const struct d1_envelope *env,
+			      const struct d1_admission *a);
+
 uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 			struct d1_result *out)
 {
@@ -1042,6 +1094,40 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	}
 	out->count = count;
 
+	/*
+	 * Admission is an envelope-level question, so it is asked once.  A
+	 * request that is not admitted leaves nothing at all behind -- no
+	 * transition, no receipt and no record -- because it never entered
+	 * the store.  UNRECORDED says exactly that.
+	 */
+	pthread_mutex_lock(&s->lock);
+	status = d1_admission_check(s, env, need, &a);
+	if (status == D1_OK && s->journaling && !s->replaying &&
+	    !d1_journal_intent(s, env, a)) {
+		/*
+		 * The intent is written before anything is published, so a
+		 * refused append leaves a store that never made the change
+		 * and a log that never claimed it did.
+		 */
+		pthread_mutex_unlock(&s->lock);
+		out->count = 0;
+		out->disposition = D1_UNRECORDED;
+		return D1_IO;
+	}
+	pthread_mutex_unlock(&s->lock);
+
+	if (status != D1_OK) {
+		for (i = 0; i < count; i++) {
+			out->entries[i].status = status;
+			out->entries[i].disposition = D1_UNRECORDED;
+			out->entries[i].stability = D1_FILE_SYNC;
+			d1_store_verifier(s, out->entries[i].verifier);
+		}
+		out->index_epoch = s->index_epoch;
+		out->eof = d1_store_eof(s, &env->object);
+		return D1_OK;
+	}
+
 	for (i = 0; i < count; i++) {
 		struct d1_entry_result *res = &out->entries[i];
 		struct d1_receipt *receipt;
@@ -1070,8 +1156,8 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 			continue;
 		}
 
-		status = d1_admission_check(s, env, need, &a);
-		if (status == D1_OK) {
+		status = D1_OK;
+		{
 			if (env->op == D1_OP_WRITE_BATCH) {
 				status = d1_do_write_entry(
 					s, env, &env->body.write.entries[i], a,
@@ -1311,4 +1397,231 @@ void d1_view_close(struct d1_store *s, struct d1_view *v)
 	d1_view_unpin(s, v);
 	v->used = false;
 	pthread_mutex_unlock(&s->lock);
+}
+
+/*
+ * The journal, and rebuilding from it.
+ *
+ * Records are written ahead of the state they describe: the intent is
+ * durable before anything is published, so a refused append leaves a
+ * store that never made the change and a log that never claimed it did.
+ * Replay then re-applies the intents in order through the same reducer,
+ * which is what makes "same log, same state" a property of the code
+ * rather than a promise about it.
+ */
+
+#define D1_START_PAYLOAD_BYTES (D1_UUID_BYTES + 8u + 4u + 8u)
+#define D1_CHECKPOINT_PAYLOAD_BYTES (8u + 8u + 8u)
+
+uint32_t d1_store_journal_enable(struct d1_store *s)
+{
+	uint8_t payload[D1_START_PAYLOAD_BYTES];
+	struct d1_cursor cur;
+	uint32_t status = D1_OK;
+
+	pthread_mutex_lock(&s->lock);
+	if (s->journaling) {
+		status = D1_INVALID;
+		goto out;
+	}
+	if (!d1_journal_init(&s->journal)) {
+		status = D1_NOSPC;
+		goto out;
+	}
+	d1_enc_init(&cur, payload, sizeof(payload));
+	d1_enc_uuid(&cur, &s->uuid);
+	d1_enc_u64(&cur, s->incarnation);
+	d1_enc_u32(&cur, s->chunk_bytes);
+	d1_enc_u64(&cur, s->max_file_bytes);
+	if (cur.bad || !d1_journal_append(&s->journal, D1_REC_START, payload,
+					  (uint32_t)cur.len)) {
+		d1_journal_fini(&s->journal);
+		status = D1_IO;
+		goto out;
+	}
+	s->journaling = true;
+out:
+	pthread_mutex_unlock(&s->lock);
+	return status;
+}
+
+uint32_t d1_store_checkpoint(struct d1_store *s)
+{
+	uint8_t payload[D1_CHECKPOINT_PAYLOAD_BYTES];
+	struct d1_cursor cur;
+	uint32_t status = D1_OK;
+
+	pthread_mutex_lock(&s->lock);
+	if (!s->journaling) {
+		status = D1_INVALID;
+		goto out;
+	}
+	d1_enc_init(&cur, payload, sizeof(payload));
+	d1_enc_u64(&cur, s->next_txn);
+	d1_enc_u64(&cur, s->next_version);
+	d1_enc_u64(&cur, s->index_epoch);
+	if (cur.bad || !d1_journal_append(&s->journal, D1_REC_CONTROL, payload,
+					  (uint32_t)cur.len))
+		status = D1_IO;
+out:
+	pthread_mutex_unlock(&s->lock);
+	return status;
+}
+
+/*
+ * Write the intent for one envelope.  The record carries the writer and
+ * rights the operation was admitted under, because replay must reapply
+ * it exactly as it was accepted and the admission itself is fixture
+ * state that no log describes.
+ */
+static bool d1_journal_intent(struct d1_store *s, const struct d1_envelope *env,
+			      const struct d1_admission *a)
+{
+	static uint8_t payload[D1_JOURNAL_RECORD_MAX];
+	struct d1_cursor cur;
+	size_t body;
+
+	d1_enc_init(&cur, payload, sizeof(payload));
+	d1_enc_u32(&cur, a->writer);
+	d1_enc_u32(&cur, a->rights);
+	if (cur.bad)
+		return false;
+	body = d1_envelope_encode(env, payload + cur.len,
+				  sizeof(payload) - cur.len);
+	if (!body)
+		return false;
+	return d1_journal_append(&s->journal, D1_REC_ENTRY, payload,
+				 (uint32_t)(cur.len + body));
+}
+
+static uint32_t d1_replay_start(struct d1_store *s, const uint8_t *payload,
+				uint32_t len)
+{
+	struct d1_cursor cur;
+	struct d1_uuid uuid;
+	uint64_t incarnation, max_file_bytes;
+	uint32_t chunk_bytes;
+
+	d1_dec_init(&cur, payload, len);
+	if (!d1_dec_uuid(&cur, &uuid) || !d1_dec_u64(&cur, &incarnation) ||
+	    !d1_dec_u32(&cur, &chunk_bytes) ||
+	    !d1_dec_u64(&cur, &max_file_bytes) || !d1_dec_finished(&cur))
+		return D1_INVALID;
+	/* A log only rebuilds the store it was written for. */
+	if (memcmp(&uuid, &s->uuid, sizeof(uuid)) != 0 ||
+	    chunk_bytes != s->chunk_bytes ||
+	    max_file_bytes != s->max_file_bytes)
+		return D1_INVALID;
+	s->incarnation = incarnation;
+	return D1_OK;
+}
+
+static uint32_t d1_replay_checkpoint(struct d1_store *s, const uint8_t *payload,
+				     uint32_t len)
+{
+	struct d1_cursor cur;
+	uint64_t txn, version, epoch;
+
+	d1_dec_init(&cur, payload, len);
+	if (!d1_dec_u64(&cur, &txn) || !d1_dec_u64(&cur, &version) ||
+	    !d1_dec_u64(&cur, &epoch) || !d1_dec_finished(&cur))
+		return D1_INVALID;
+	/*
+	 * Reaching a checkpoint and disagreeing with it means the replay
+	 * produced a different store from the one that wrote the log.
+	 * That is worth stopping for.
+	 */
+	if (txn != s->next_txn || version != s->next_version ||
+	    epoch != s->index_epoch)
+		return D1_INVALID;
+	return D1_OK;
+}
+
+static uint32_t d1_replay_entry(struct d1_store *s, const uint8_t *payload,
+				uint32_t len)
+{
+	struct d1_cursor cur;
+	struct d1_envelope env;
+	struct d1_result res;
+	uint32_t writer, rights;
+
+	d1_dec_init(&cur, payload, len);
+	if (!d1_dec_u32(&cur, &writer) || !d1_dec_u32(&cur, &rights))
+		return D1_INVALID;
+	if (!d1_envelope_decode(payload + cur.len, len - cur.len, &env))
+		return D1_INVALID;
+
+	memset(&s->replay_admission, 0, sizeof(s->replay_admission));
+	s->replay_admission.used = true;
+	s->replay_admission.id = env.admission;
+	s->replay_admission.object = env.object;
+	s->replay_admission.writer = writer;
+	s->replay_admission.rights = rights;
+	s->replay_admission.incarnation = s->incarnation;
+
+	/*
+	 * The entry results are the log's business, not the replay's; what
+	 * matters is that the same transitions happen in the same order.
+	 */
+	return d1_store_apply(s, &env, &res) == D1_UNSUPPORTED ? D1_INVALID :
+								 D1_OK;
+}
+
+uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t len)
+{
+	struct d1_journal_cursor c;
+	const uint8_t *payload;
+	uint32_t type, plen, status = D1_OK;
+	uint64_t seq, expect = 1;
+	bool saw_start = false;
+
+	pthread_mutex_lock(&s->lock);
+	if (s->journaling || s->replaying) {
+		pthread_mutex_unlock(&s->lock);
+		return D1_INVALID;
+	}
+	s->replaying = true;
+	pthread_mutex_unlock(&s->lock);
+
+	d1_journal_cursor_init(&c, log, len);
+	while (d1_journal_next(&c, &type, &seq, &payload, &plen)) {
+		/* A gap in the sequence is a log this reader cannot trust. */
+		if (seq != expect) {
+			status = D1_INVALID;
+			break;
+		}
+		expect++;
+		if (!saw_start && type != D1_REC_START) {
+			status = D1_INVALID;
+			break;
+		}
+		switch (type) {
+		case D1_REC_START:
+			if (saw_start) {
+				status = D1_INVALID;
+				break;
+			}
+			saw_start = true;
+			status = d1_replay_start(s, payload, plen);
+			break;
+		case D1_REC_ENTRY:
+			status = d1_replay_entry(s, payload, plen);
+			break;
+		case D1_REC_CONTROL:
+			status = d1_replay_checkpoint(s, payload, plen);
+			break;
+		default:
+			status = D1_INVALID;
+			break;
+		}
+		if (status != D1_OK)
+			break;
+	}
+	if (status == D1_OK && !saw_start)
+		status = D1_INVALID;
+
+	pthread_mutex_lock(&s->lock);
+	s->replaying = false;
+	pthread_mutex_unlock(&s->lock);
+	return status;
 }

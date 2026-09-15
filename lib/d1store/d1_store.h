@@ -170,4 +170,34 @@ uint64_t d1_view_eof(const struct d1_view *v);
 /* Drop the view's pins.  The view is gone once this returns. */
 void d1_view_close(struct d1_store *s, struct d1_view *v);
 
+/*
+ * Start journalling.  Writes the START record that opens this
+ * incarnation and names the geometry a replay must agree with.
+ */
+uint32_t d1_store_journal_enable(struct d1_store *s);
+
+/* The journal bytes, for a test to truncate, corrupt or replay. */
+const uint8_t *d1_store_journal(const struct d1_store *s, size_t *len);
+
+/*
+ * Write a checkpoint naming the counters and index epoch as they stand.
+ * A replay that reaches it and disagrees has diverged, and says so
+ * rather than carrying on.
+ */
+uint32_t d1_store_checkpoint(struct d1_store *s);
+
+/*
+ * Rebuild @s from @log.  @s must be freshly opened with the geometry
+ * the log's START record names.  Records are applied in order until the
+ * durable frontier; what lies past it was never written.
+ */
+uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t len);
+
+/*
+ * Fixture fault control: refuse the next journal append.  It is not
+ * journalled and does not survive, so it can neither replay nor outlive
+ * the run that armed it.
+ */
+void d1_fixture_fail_next_append(struct d1_store *s);
+
 #endif /* REFFS_D1_STORE_H */

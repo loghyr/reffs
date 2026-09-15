@@ -1073,6 +1073,334 @@ static void test_view_holes_and_admission(void)
 	d1_store_free(s);
 }
 
+/* Do the model's state agree, as far as anything can observe it? */
+static bool states_agree(const struct d1_store *a, const struct d1_store *b)
+{
+	struct d1_interval ha[D1_MAX_INTERVALS], hb[D1_MAX_INTERVALS];
+	uint32_t na, nb, i;
+
+	if (d1_store_eof(a, &object) != d1_store_eof(b, &object))
+		return false;
+	na = d1_store_holes(a, &object, ha, D1_MAX_INTERVALS);
+	nb = d1_store_holes(b, &object, hb, D1_MAX_INTERVALS);
+	if (na != nb)
+		return false;
+	for (i = 0; i < na; i++)
+		if (ha[i].start != hb[i].start || ha[i].end != hb[i].end)
+			return false;
+	for (i = 0; i < D1_MAX_CHUNKS; i++) {
+		d1_id_t va = 0, vb = 0;
+		bool pa, pb;
+		struct d1_guard ga, gb;
+
+		pa = d1_store_visible(a, &object, i, &va);
+		pb = d1_store_visible(b, &object, i, &vb);
+		if (pa != pb || (pa && va != vb))
+			return false;
+		if (d1_store_guard(a, &object, i, &ga) !=
+		    d1_store_guard(b, &object, i, &gb))
+			return false;
+		if (ga.never_written != gb.never_written ||
+		    ga.generation != gb.generation || ga.writer != gb.writer)
+			return false;
+	}
+	return true;
+}
+
+/* A short history, written the same way twice. */
+static d1_id_t drive_history(struct d1_store *s, d1_id_t admission)
+{
+	static uint8_t small[100];
+	static uint8_t tiny[50];
+	static uint8_t big[512];
+	struct d1_guard guard;
+	d1_id_t v3, txn4, custody;
+
+	memset(small, 0x21, sizeof(small));
+	memset(tiny, 0x22, sizeof(tiny));
+	memset(big, 0x23, sizeof(big));
+
+	v3 = commit_chunk(s, admission, 3, 1, small, sizeof(small),
+			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+	if (!v3)
+		return 0;
+	if (!commit_chunk(s, admission, 5, 2, tiny, sizeof(tiny),
+			  &(struct d1_guard){ .never_written = true }, 0, NULL))
+		return 0;
+	d1_store_guard(s, &object, 3, &guard);
+	if (!commit_chunk(s, admission, 3, 3, big, sizeof(big), &guard, v3,
+			  &txn4))
+		return 0;
+	custody = d1_fixture_custody(s, 0);
+	/* Custody is issued over whatever is visible on chunk 3 now. */
+	{
+		d1_id_t visible = 0;
+
+		d1_store_visible(s, &object, 3, &visible);
+		custody = d1_fixture_custody(s, visible);
+	}
+	if (rollback_one(s, admission, 3, 3, txn4, true, custody, NULL) !=
+	    D1_OK)
+		return 0;
+	return v3;
+}
+
+/* H: the log rebuilds the store that wrote it. */
+static void test_replay_reproduces_the_store(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *a, *b;
+	const uint8_t *log;
+	size_t len;
+	d1_id_t admission;
+
+	fill_uuid(&store_uuid, 0x88);
+	a = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!a)
+		return;
+	check(d1_store_journal_enable(a) == D1_OK, "journalling starts");
+	admission = d1_fixture_admit(a, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	check(drive_history(a, admission) != 0, "the history is written");
+	check(d1_store_checkpoint(a) == D1_OK, "a checkpoint is written");
+
+	log = d1_store_journal(a, &len);
+	check(len > 0, "the log has bytes");
+
+	b = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!b) {
+		d1_store_free(a);
+		return;
+	}
+	check(d1_store_replay(b, log, len) == D1_OK,
+	      "the log replays without diverging");
+	check(states_agree(a, b), "and rebuilds the same store");
+
+	/* Recovery leaves no journal of its own and arms no faults. */
+	{
+		size_t blen = 1;
+
+		(void)d1_store_journal(b, &blen);
+		check(blen == 0, "a replayed store has written no log");
+	}
+
+	d1_store_free(b);
+	d1_store_free(a);
+}
+
+/* H: a crash mid-record loses that record and nothing else. */
+static void test_crash_loses_only_the_torn_record(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *a, *before, *after;
+	const uint8_t *log;
+	size_t len, prefix;
+	d1_id_t admission, admission_b;
+	static uint8_t data[64];
+
+	memset(data, 0x31, sizeof(data));
+	fill_uuid(&store_uuid, 0x99);
+	a = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!a)
+		return;
+	d1_store_journal_enable(a);
+	admission = d1_fixture_admit(a, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	check(commit_chunk(a, admission, 0, 1, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "the first chunk commits");
+	(void)d1_store_journal(a, &prefix);
+
+	check(commit_chunk(a, admission, 2, 2, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "the second chunk commits");
+	log = d1_store_journal(a, &len);
+	check(len > prefix, "and the log grew");
+
+	/*
+	 * A store built from only the first chunk is what a reader must
+	 * see when the rest of the log did not survive.
+	 */
+	before = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!before) {
+		d1_store_free(a);
+		return;
+	}
+	d1_store_journal_enable(before);
+	admission_b = d1_fixture_admit(before, &object, 11,
+				       D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	commit_chunk(before, admission_b, 0, 1, data, sizeof(data),
+		     &(struct d1_guard){ .never_written = true }, 0, NULL);
+
+	after = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!after) {
+		d1_store_free(before);
+		d1_store_free(a);
+		return;
+	}
+	/* Cut at a record boundary: everything after it is simply absent. */
+	check(d1_store_replay(after, log, prefix) == D1_OK,
+	      "a log cut at a record boundary replays");
+	check(states_agree(before, after),
+	      "and stops exactly where the writing stopped");
+
+	/*
+	 * Cutting one byte short tears only the final record.  The frontier
+	 * is per record, not per operation: the write and finalize that
+	 * preceded that commit did survive, so the chunk is not visible but
+	 * its guard has moved.
+	 */
+	{
+		struct d1_store *torn =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		struct d1_guard guard;
+		d1_id_t seen;
+
+		if (torn) {
+			check(d1_store_replay(torn, log, len - 1) == D1_OK,
+			      "a torn log still replays");
+			check(!d1_store_visible(torn, &object, 2, &seen),
+			      "the torn record never published its chunk");
+			check(d1_store_guard(torn, &object, 2, &guard) &&
+				      !guard.never_written,
+			      "but the records before it did happen");
+			d1_store_free(torn);
+		}
+	}
+
+	/* The whole log gets the whole store. */
+	{
+		struct d1_store *whole =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+
+		if (whole) {
+			check(d1_store_replay(whole, log, len) == D1_OK,
+			      "the untruncated log replays");
+			check(states_agree(a, whole),
+			      "and rebuilds everything");
+			d1_store_free(whole);
+		}
+	}
+
+	d1_store_free(after);
+	d1_store_free(before);
+	d1_store_free(a);
+}
+
+/* I: a refused append publishes nothing and records nothing. */
+static void test_append_fault_is_unrecorded(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_guard guard;
+	static uint8_t data[32];
+	size_t before, after;
+	d1_id_t admission, seen;
+
+	memset(data, 0x41, sizeof(data));
+	fill_uuid(&store_uuid, 0xaa);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	(void)d1_store_journal(s, &before);
+
+	d1_fixture_fail_next_append(s);
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_IO,
+	      "an append that cannot happen fails the operation");
+	check(res.disposition == D1_UNRECORDED,
+	      "and the operation is UNRECORDED");
+	check(res.count == 0, "and answers no entries");
+	(void)d1_store_journal(s, &after);
+	check(after == before, "the log did not grow");
+	check(!d1_store_guard(s, &object, 0, &guard),
+	      "the object was never even created");
+	check(!d1_store_visible(s, &object, 0, &seen), "nothing is visible");
+	check(d1_store_eof(s, &object) == 0, "and there is nothing to read");
+
+	/* The fault is spent; the next attempt is ordinary. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the next write is admitted");
+	(void)d1_store_journal(s, &after);
+	check(after > before, "and the log grew this time");
+	check(d1_store_guard(s, &object, 0, &guard) && !guard.never_written,
+	      "and the chunk now has a guard");
+
+	d1_store_free(s);
+}
+
+/* A log only rebuilds the store it was written for. */
+static void test_replay_refuses_a_foreign_log(void)
+{
+	struct d1_uuid mine, theirs;
+	struct d1_store *a, *b, *narrow;
+	const uint8_t *log;
+	size_t len;
+	d1_id_t admission;
+	static uint8_t data[16];
+
+	memset(data, 0x51, sizeof(data));
+	fill_uuid(&mine, 0xbb);
+	fill_uuid(&theirs, 0xcc);
+	a = d1_store_open(&mine, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!a)
+		return;
+	d1_store_journal_enable(a);
+	admission = d1_fixture_admit(a, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	commit_chunk(a, admission, 0, 1, data, sizeof(data),
+		     &(struct d1_guard){ .never_written = true }, 0, NULL);
+	log = d1_store_journal(a, &len);
+
+	b = d1_store_open(&theirs, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (b) {
+		check(d1_store_replay(b, log, len) == D1_INVALID,
+		      "a log from another store is refused");
+		d1_store_free(b);
+	}
+
+	narrow = d1_store_open(&mine, CHUNK_BYTES / 2, MAX_FILE_BYTES);
+	if (narrow) {
+		check(d1_store_replay(narrow, log, len) == D1_INVALID,
+		      "and so is a store with a different geometry");
+		d1_store_free(narrow);
+	}
+
+	/* A log with no START record is not a log. */
+	{
+		struct d1_store *fresh =
+			d1_store_open(&mine, CHUNK_BYTES, MAX_FILE_BYTES);
+
+		if (fresh) {
+			check(d1_store_replay(fresh, log, 0) == D1_INVALID,
+			      "an empty log rebuilds nothing");
+			d1_store_free(fresh);
+		}
+	}
+
+	d1_store_free(a);
+}
+
 int main(void)
 {
 	fill_uuid(&object.export_uuid, 0x30);
@@ -1092,6 +1420,10 @@ int main(void)
 	test_view_unpin_order();
 	test_view_owner_selection();
 	test_view_holes_and_admission();
+	test_replay_reproduces_the_store();
+	test_crash_loses_only_the_torn_record();
+	test_append_fault_is_unrecorded();
+	test_replay_refuses_a_foreign_log();
 	test_unsupported();
 
 	if (failures) {
