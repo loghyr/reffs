@@ -1,6 +1,10 @@
 /* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h" // IWYU pragma: keep
+#endif
+
 /*
  * D1 storage model: state, admission and the ordinary write lifecycle.
  *
@@ -16,10 +20,6 @@
  * it, on an empty chunk, with a stability stronger than UNSTABLE,
  * publishes owner, payload, extent, guard and receipt together.
  */
-
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
 
 #include <pthread.h>
 #include <stdlib.h>

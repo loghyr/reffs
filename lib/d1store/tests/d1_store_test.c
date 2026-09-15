@@ -1,6 +1,10 @@
 /* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h" // IWYU pragma: keep
+#endif
+
 /*
  * D1 storage model: the ordinary write lifecycle, activation and owner
  * collisions -- the A, B and C traces of the design.
@@ -10,10 +14,6 @@
  * finalize does not publish, and that the one operation which does
  * publish in a single step says so in its own result.
  */
-
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
 
 #include <pthread.h>
 #include <stdio.h>

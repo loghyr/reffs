@@ -1,6 +1,10 @@
 /* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h" // IWYU pragma: keep
+#endif
+
 /*
  * D1 storage model: the canonical envelope, its golden bytes and the
  * request digest it binds.
@@ -10,10 +14,6 @@
  * a different digest each time, rather than hashing one request and
  * declaring the property.
  */
-
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
 
 #include <stdio.h>
 #include <stdlib.h>

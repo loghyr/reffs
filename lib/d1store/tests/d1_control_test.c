@@ -1,6 +1,10 @@
 /* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h" // IWYU pragma: keep
+#endif
+
 /*
  * D1 storage model: journalled control requests and canonical results.
  *
@@ -9,10 +13,6 @@
  * with golden bytes, and check that the comparison actually
  * distinguishes results rather than agreeing with everything.
  */
-
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
 
 #include <stdio.h>
 #include <string.h>
