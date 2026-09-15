@@ -36,6 +36,8 @@ struct d1_journal {
 	size_t len;
 	/* Claimed durable bytes; always a whole record boundary. */
 	size_t durable;
+	/* The next LSN as of the last flush, so a rollback can restore it. */
+	uint64_t durable_lsn;
 	size_t cap;
 	/* Strictly increasing from one, globally across the log. */
 	uint64_t next_lsn;
@@ -78,6 +80,18 @@ bool d1_journal_adopt(struct d1_journal *j, const uint8_t *log, size_t durable,
 
 /* Claim everything appended so far as durable.  Whole records only. */
 bool d1_journal_flush(struct d1_journal *j);
+
+/*
+ * Discard everything appended since the last successful flush, and give
+ * back the LSNs those records took.
+ *
+ * This is the enclosing event's undo, not the byte vector's own policy:
+ * an append that is never claimed is a legitimate thing for a buffer to
+ * be holding, but an event whose reducer has been undone must not be
+ * left there for the next flush to claim.  It never moves the durable
+ * length, so a record that was successfully claimed is never discarded.
+ */
+void d1_journal_rollback(struct d1_journal *j);
 
 /* The incarnation subsequent records carry; START sets it. */
 void d1_journal_set_incarnation(struct d1_journal *j, uint64_t incarnation);

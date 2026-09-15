@@ -17,6 +17,7 @@ bool d1_journal_init(struct d1_journal *j, const struct d1_uuid *store_uuid)
 		return false;
 	/* LSNs begin at one; zero means no record was ever written. */
 	j->next_lsn = 1;
+	j->durable_lsn = 1;
 	j->store_uuid = *store_uuid;
 	return true;
 }
@@ -127,7 +128,14 @@ bool d1_journal_flush(struct d1_journal *j)
 	}
 	/* Appends only ever leave whole records, so this is a boundary. */
 	j->durable = j->len;
+	j->durable_lsn = j->next_lsn;
 	return true;
+}
+
+void d1_journal_rollback(struct d1_journal *j)
+{
+	j->len = j->durable;
+	j->next_lsn = j->durable_lsn;
 }
 
 void d1_journal_cursor_init(struct d1_journal_cursor *c, const uint8_t *buf,

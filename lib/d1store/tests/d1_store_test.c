@@ -2122,6 +2122,299 @@ static void test_index_fault_serves_the_overlay(void)
 }
 
 /*
+ * An undone event never becomes durable, whatever happens next.
+ *
+ * The append vector is the store's state too.  A flush fault used to
+ * leave the record it wrote sitting in front of the next one, and the
+ * next successful flush claimed it: a write the caller was told was
+ * UNRECORDED became durable behind its back, and either replayed into a
+ * store the live one never was, or poisoned the log so it no longer
+ * rebuilt at all.  Each kind of event is driven here, and each is
+ * followed by something that does flush.
+ */
+static void test_undone_event_never_becomes_durable(void)
+{
+	static const unsigned int kinds = 3;
+	unsigned int kind;
+
+	for (kind = 0; kind < kinds; kind++) {
+		struct d1_uuid store_uuid;
+		struct d1_store *live, *rebuilt;
+		struct d1_envelope env;
+		struct d1_result res;
+		const uint8_t *log;
+		size_t len, before;
+		static uint8_t data[16];
+		d1_id_t admission, control, extra, seen;
+		uint32_t status;
+
+		memset(data, 0xb5, sizeof(data));
+		fill_uuid(&store_uuid, (uint8_t)(0x21 + kind));
+		live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!live)
+			return;
+		check(d1_store_journal_enable(live) == D1_OK,
+		      "journalling starts");
+		admission = d1_fixture_admit(live, &object, 11,
+					     D1_RIGHT_WRITE | D1_RIGHT_CONTROL |
+						     D1_RIGHT_SINGLE_WRITER);
+		(void)d1_store_journal(live, &before);
+
+		d1_fixture_fail_next_flush(live);
+		switch (kind) {
+		case 0:
+			/* An ordinary ENTRY event. */
+			env_init(&env, live, admission, D1_OP_WRITE_BATCH);
+			env.body.write.count = 1;
+			env.body.write.stability = D1_FILE_SYNC;
+			write_entry(&env.body.write.entries[0], 0, 11, 1, data,
+				    sizeof(data), true,
+				    &(struct d1_guard){ .never_written =
+								true });
+			d1_store_apply(live, &env, &res);
+			check(res.entries[0].disposition == D1_UNRECORDED,
+			      "the entry event is UNRECORDED");
+			break;
+		case 1:
+			/* An envelope-borne control event. */
+			env_init(&env, live, admission, D1_OP_LEASE_REAP);
+			env.body.control.count = 1;
+			env.body.control.txns[0] = 1;
+			env.body.control.old_admission = admission;
+			d1_store_apply(live, &env, &res);
+			check(res.entries[0].disposition == D1_UNRECORDED,
+			      "the control event is UNRECORDED");
+			break;
+		default:
+			/* A fixture control event. */
+			control = d1_fixture_admit(live, &object, 12,
+						   D1_RIGHT_READ);
+			check(control == 0,
+			      "the fixture control event is refused");
+			break;
+		}
+		(void)d1_store_journal(live, &len);
+		check(len == before, "and claims no durable bytes");
+
+		/* Something unrelated now succeeds and flushes. */
+		extra = d1_fixture_admit(live, &object, 13, D1_RIGHT_READ);
+		check(extra != 0, "an unrelated control event succeeds");
+		log = d1_store_journal(live, &len);
+		check(len > before, "and does claim bytes");
+
+		rebuilt =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!rebuilt) {
+			d1_store_free(live);
+			return;
+		}
+		status = d1_store_replay(rebuilt, log, len);
+		check(status == D1_OK,
+		      "the log still rebuilds after the failed event");
+		check(!d1_store_visible(rebuilt, &object, 0, &seen),
+		      "and the undone event did not come back");
+		check(states_agree(live, rebuilt),
+		      "so the rebuilt store is the store that wrote it");
+		d1_store_free(rebuilt);
+		d1_store_free(live);
+	}
+}
+
+/*
+ * The same fault, then an unrelated operation, then an exact retry:
+ * the retry executes, because nothing was recorded, and the IDs it
+ * takes are the ones a replay takes.
+ */
+static void test_retry_after_flush_fault_agrees_with_replay(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *rebuilt;
+	struct d1_envelope env, other;
+	struct d1_result res;
+	const uint8_t *log;
+	size_t len;
+	static uint8_t data[16];
+	d1_id_t admission, seen_live, seen_rebuilt;
+
+	memset(data, 0xb6, sizeof(data));
+	fill_uuid(&store_uuid, 0x24);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	admission = d1_fixture_admit(live, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	env_init(&env, live, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_DATA_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+
+	d1_fixture_fail_next_flush(live);
+	d1_store_apply(live, &env, &res);
+	check(res.entries[0].disposition == D1_UNRECORDED,
+	      "the first attempt is UNRECORDED");
+
+	/* An unrelated write lands in between, and does flush. */
+	env_init(&other, live, admission, D1_OP_WRITE_BATCH);
+	other.body.write.count = 1;
+	other.body.write.stability = D1_DATA_SYNC;
+	other.body.write.activate = true;
+	write_entry(&other.body.write.entries[0], 2, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(live, &other, &res);
+	check(res.entries[0].status == D1_OK, "the unrelated write succeeds");
+
+	/* The exact retry executes: no receipt was ever recorded. */
+	d1_store_apply(live, &env, &res);
+	check(res.entries[0].status == D1_OK && res.entries[0].activated,
+	      "the exact retry executes");
+
+	log = d1_store_journal(live, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!rebuilt) {
+		d1_store_free(live);
+		return;
+	}
+	check(d1_store_replay(rebuilt, log, len) == D1_OK, "the log rebuilds");
+	check(d1_store_visible(live, &object, 0, &seen_live) &&
+		      d1_store_visible(rebuilt, &object, 0, &seen_rebuilt) &&
+		      seen_live == seen_rebuilt,
+	      "and agrees on the retried version");
+	check(states_agree(live, rebuilt), "and on everything else");
+
+	/* Reopen takes the same log the same way. */
+	{
+		struct d1_store *reopened =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+
+		if (reopened) {
+			check(d1_store_reopen(reopened, log, len) == D1_OK,
+			      "and the same log reopens");
+			check(states_agree(live, reopened),
+			      "into the same store");
+			d1_store_free(reopened);
+		}
+	}
+
+	d1_store_free(rebuilt);
+	d1_store_free(live);
+}
+
+/*
+ * A REPAIR-only committed rollback is admitted live on REPAIR plus
+ * custody, and must replay the same way.  Two rights tables disagreed
+ * here: replay demanded WRITE and refused a log the live store had
+ * written.
+ */
+static void test_repair_only_rollback_replays(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *rebuilt;
+	struct d1_guard guard;
+	const uint8_t *log;
+	size_t len;
+	static uint8_t data[16];
+	d1_id_t writer_adm, repair_adm, v1, v2, txn2, custody, seen;
+
+	memset(data, 0xb7, sizeof(data));
+	fill_uuid(&store_uuid, 0x25);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	check(d1_store_journal_enable(live) == D1_OK, "journalling starts");
+	writer_adm = d1_fixture_admit(live, &object, 11,
+				      D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	/* REPAIR only: no WRITE at all, so the two tables differ. */
+	repair_adm = d1_fixture_admit(live, &object, 11, D1_RIGHT_REPAIR);
+
+	v1 = commit_chunk(live, writer_adm, 0, 1, data, sizeof(data),
+			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+	d1_store_guard(live, &object, 0, &guard);
+	v2 = commit_chunk(live, writer_adm, 0, 2, data, sizeof(data), &guard,
+			  v1, &txn2);
+	custody = d1_fixture_custody(live, v2);
+	check(v1 && v2 && custody, "a replacement is committed under custody");
+
+	check(rollback_one(live, repair_adm, 0, 2, txn2,
+			   &(struct rollback_expect){ .custody_present = true,
+						      .custody = custody,
+						      .visible_present = true,
+						      .visible = v2,
+						      .predecessor_present =
+							      true,
+						      .predecessor = v1 },
+			   NULL) == D1_OK,
+	      "a REPAIR-only handle rolls it back");
+	check(d1_store_visible(live, &object, 0, &seen) && seen == v1,
+	      "and the predecessor is visible");
+
+	log = d1_store_journal(live, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!rebuilt) {
+		d1_store_free(live);
+		return;
+	}
+	check(d1_store_replay(rebuilt, log, len) == D1_OK,
+	      "and the log replays rather than being refused");
+	check(states_agree(live, rebuilt), "into the same store");
+	d1_store_free(rebuilt);
+
+	/* Its refusals replay too. */
+	{
+		struct d1_store *second, *second_rebuilt;
+		struct d1_uuid other_uuid;
+		d1_id_t other_writer, other_repair, w1, w2, t2, bad;
+
+		fill_uuid(&other_uuid, 0x26);
+		second =
+			d1_store_open(&other_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (second) {
+			d1_store_journal_enable(second);
+			other_writer = d1_fixture_admit(
+				second, &object, 11,
+				D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+			other_repair = d1_fixture_admit(second, &object, 11,
+							D1_RIGHT_REPAIR);
+			w1 = commit_chunk(
+				second, other_writer, 0, 1, data, sizeof(data),
+				&(struct d1_guard){ .never_written = true }, 0,
+				NULL);
+			d1_store_guard(second, &object, 0, &guard);
+			w2 = commit_chunk(second, other_writer, 0, 2, data,
+					  sizeof(data), &guard, w1, &t2);
+			bad = d1_fixture_custody(second, w1);
+			check(w2 != 0 && bad != 0, "a stale custody is issued");
+			check(rollback_one(second, other_repair, 0, 2, t2,
+					   &(struct rollback_expect){
+						   .custody_present = true,
+						   .custody = bad,
+						   .visible_present = true,
+						   .visible = w2,
+						   .predecessor_present = true,
+						   .predecessor = w1 },
+					   NULL) == D1_OWNER_CONFLICT,
+			      "and its refusal is a conflict");
+
+			log = d1_store_journal(second, &len);
+			second_rebuilt = d1_store_open(&other_uuid, CHUNK_BYTES,
+						       MAX_FILE_BYTES);
+			if (second_rebuilt) {
+				check(d1_store_replay(second_rebuilt, log,
+						      len) == D1_OK,
+				      "the refusal replays too");
+				d1_store_free(second_rebuilt);
+			}
+			d1_store_free(second);
+		}
+	}
+
+	d1_store_free(live);
+}
+
+/*
  * The outcomes that depend on fixture state must replay.
  *
  * A rollback's answer depends on which version the custody handle is
@@ -2703,6 +2996,9 @@ int main(void)
 	test_exact_retry_survives_revocation();
 	test_reopen_fences_and_repeats();
 	test_index_fault_serves_the_overlay();
+	test_undone_event_never_becomes_durable();
+	test_retry_after_flush_fault_agrees_with_replay();
+	test_repair_only_rollback_replays();
 	test_custody_and_release_replay();
 	test_replay_refuses_a_foreign_log();
 	test_recovery_admit();

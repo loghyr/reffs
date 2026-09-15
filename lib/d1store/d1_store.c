@@ -1331,6 +1331,27 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 }
 
 /*
+ * One journal event, whole.
+ *
+ * An event is durable or it never happened.  If the append or the flush
+ * fails, the bytes the append wrote are discarded and the LSNs they
+ * took are given back, so the next event cannot find an orphan in front
+ * of it and the next flush cannot claim a record whose reducer was
+ * undone.  A record that was already successfully claimed is never
+ * touched: the rollback only ever goes back to the durable length.
+ */
+static bool d1_journal_event(struct d1_store *s, uint32_t type,
+			     const uint8_t *body, uint32_t len)
+{
+	if (!d1_journal_append(&s->journal, type, body, len) ||
+	    !d1_journal_flush(&s->journal)) {
+		d1_journal_rollback(&s->journal);
+		return false;
+	}
+	return true;
+}
+
+/*
  * The durable event for one ordinary entry.
  *
  * Section 9 wants the whole Envelope, the entry ordinal, the request
@@ -1362,11 +1383,7 @@ static bool d1_journal_entry_event(struct d1_store *s,
 	d1_enc_bytes(&cur, result_bytes, res_len);
 	if (cur.bad)
 		return false;
-	if (!d1_journal_append(&s->journal, D1_REC_ENTRY, s->record,
-			       (uint32_t)cur.len))
-		return false;
-	/* The frontier advances only when both succeed. */
-	return d1_journal_flush(&s->journal);
+	return d1_journal_event(s, D1_REC_ENTRY, s->record, (uint32_t)cur.len);
 }
 
 /* The durable event for a control, whether an Envelope's or a fixture's. */
@@ -1382,10 +1399,8 @@ static bool d1_journal_control_event(struct d1_store *s, uint32_t kind,
 	d1_enc_bytes(&cur, result, result_len);
 	if (cur.bad)
 		return false;
-	if (!d1_journal_append(&s->journal, D1_REC_CONTROL, s->record,
-			       (uint32_t)cur.len))
-		return false;
-	return d1_journal_flush(&s->journal);
+	return d1_journal_event(s, D1_REC_CONTROL, s->record,
+				(uint32_t)cur.len);
 }
 
 /* Whether this caller is bound to this object at all. */
@@ -1635,6 +1650,32 @@ static void d1_apply_control(struct d1_store *s, const struct d1_envelope *env,
 	slot->result = *complete;
 }
 
+/*
+ * The rights an operation needs, for the live path and for replay
+ * alike.  There is one table, because two would eventually disagree --
+ * and did: replay demanded WRITE for a rollback the live path had
+ * correctly admitted on REPAIR plus custody, so a valid log would not
+ * rebuild.
+ *
+ * Rollback answers zero because the right it needs depends on the phase
+ * of the transaction it names, which only the handler knows: WRITE to
+ * cancel one's own private work, REPAIR plus exact custody for
+ * committed data.
+ */
+static uint32_t d1_op_rights(uint32_t op)
+{
+	switch (op) {
+	case D1_OP_WRITE_BATCH:
+	case D1_OP_FINALIZE_BATCH:
+	case D1_OP_COMMIT_BATCH:
+		return D1_RIGHT_WRITE;
+	case D1_OP_ROLLBACK_BATCH:
+		return 0;
+	default:
+		return D1_RIGHT_CONTROL;
+	}
+}
+
 uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 			struct d1_result *out)
 {
@@ -1651,21 +1692,11 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	case D1_OP_WRITE_BATCH:
 	case D1_OP_FINALIZE_BATCH:
 	case D1_OP_COMMIT_BATCH:
-		need = D1_RIGHT_WRITE;
-		break;
 	case D1_OP_ROLLBACK_BATCH:
-		/*
-		 * Which right a rollback needs depends on the phase of the
-		 * transaction it names: WRITE to cancel one's own private
-		 * work, REPAIR plus exact custody for committed data.  The
-		 * handler decides once it knows; demanding WRITE here would
-		 * turn away a REPAIR-only caller holding valid custody.
-		 */
-		need = 0;
-		break;
 	case D1_OP_RECOVERY_ADMIT:
 	case D1_OP_LEASE_REAP:
-		need = D1_RIGHT_CONTROL;
+		/* One table, shared with replay; see d1_op_rights. */
+		need = d1_op_rights(env->op);
 		break;
 	default:
 		/*
@@ -2376,19 +2407,6 @@ bool d1_fixture_release_predecessor(struct d1_store *s, d1_id_t version)
 
 /* previous incarnation, new incarnation, verifier. */
 #define D1_START_PAYLOAD_BYTES (8u + 8u + D1_VERIFIER_BYTES)
-
-static uint32_t d1_op_rights(uint32_t op)
-{
-	switch (op) {
-	case D1_OP_WRITE_BATCH:
-	case D1_OP_FINALIZE_BATCH:
-	case D1_OP_COMMIT_BATCH:
-	case D1_OP_ROLLBACK_BATCH:
-		return D1_RIGHT_WRITE;
-	default:
-		return D1_RIGHT_CONTROL;
-	}
-}
 
 static uint32_t d1_start_append(struct d1_store *s)
 {

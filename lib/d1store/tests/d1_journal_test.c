@@ -340,9 +340,57 @@ static void test_faults_leave_no_residue(void)
 	check(drain(&j, j.durable, &n) == D1_JOURNAL_CLEAN_END && n == 1,
 	      "so a reader sees only what was claimed");
 
+	/*
+	 * A buffer that still holds an unclaimed append is a legitimate
+	 * state for this primitive to be in, and a later flush would claim
+	 * it.  Whether that is allowed to happen is the enclosing event's
+	 * business, not the buffer's: see d1_journal_rollback below and
+	 * the store-level oracle that uses it.
+	 */
 	check(d1_journal_flush(&j), "the fault is spent");
 	check(drain(&j, j.durable, &n) == D1_JOURNAL_CLEAN_END && n == 2,
-	      "and the record becomes durable");
+	      "and this primitive would claim the appended record");
+	d1_journal_fini(&j);
+}
+
+/*
+ * Rolling an event back discards what it appended and gives its LSNs
+ * back, without ever touching what was already claimed.
+ */
+static void test_rollback_discards_only_the_unclaimed(void)
+{
+	struct d1_journal j;
+	size_t durable_before;
+	uint64_t lsn_before;
+	unsigned int n;
+
+	if (!d1_journal_init(&j, &the_uuid))
+		return;
+	d1_journal_set_incarnation(&j, 1);
+	d1_journal_append(&j, D1_REC_START, body_abc, sizeof(body_abc));
+	d1_journal_flush(&j);
+	durable_before = j.durable;
+	lsn_before = j.next_lsn;
+
+	check(d1_journal_append(&j, D1_REC_ENTRY, body_abc, sizeof(body_abc)),
+	      "a second record appends");
+	check(j.len > j.durable, "and is not yet claimed");
+	check(j.next_lsn == lsn_before + 1u, "and took an LSN");
+
+	d1_journal_rollback(&j);
+	check(j.len == durable_before, "the rollback discards its bytes");
+	check(j.durable == durable_before,
+	      "without moving what was already claimed");
+	check(j.next_lsn == lsn_before, "and gives the LSN back");
+	check(drain(&j, j.durable, &n) == D1_JOURNAL_CLEAN_END && n == 1,
+	      "so the claimed prefix still reads exactly one record");
+
+	/* The next record takes the LSN the rolled-back one had. */
+	check(d1_journal_append(&j, D1_REC_CONTROL, NULL, 0),
+	      "a later record appends");
+	check(d1_journal_flush(&j), "and is claimed");
+	check(drain(&j, j.durable, &n) == D1_JOURNAL_CLEAN_END && n == 2,
+	      "leaving a log with no gap in it");
 	d1_journal_fini(&j);
 }
 
@@ -373,6 +421,7 @@ int main(void)
 	test_durable_corruption_fails_closed();
 	test_identity_and_order();
 	test_faults_leave_no_residue();
+	test_rollback_discards_only_the_unclaimed();
 	test_oversized_record();
 
 	if (failures) {
