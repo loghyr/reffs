@@ -36,6 +36,17 @@ struct d1_version {
 	/* The predecessor this version displaced, if it is still retained. */
 	bool predecessor_present;
 	d1_id_t predecessor;
+	/*
+	 * Whether this version is still retained as somebody's predecessor.
+	 * Releasing it removes that root; the bytes are a separate question
+	 * this model never answers in a receipt.
+	 */
+	bool released;
+	/*
+	 * Live read pins.  A pinned version's bytes stay whatever else
+	 * happens to the pointers that named it.
+	 */
+	uint32_t pins;
 };
 
 struct d1_txn {
@@ -90,6 +101,13 @@ struct d1_owner_assoc {
 	d1_id_t version;
 };
 
+/* Repair custody over one exact version. */
+struct d1_custody {
+	bool used;
+	d1_id_t id;
+	d1_id_t version;
+};
+
 struct d1_receipt {
 	bool used;
 	struct d1_uuid export_uuid;
@@ -125,6 +143,8 @@ struct d1_store {
 	struct d1_admission admissions[D1_MAX_ADMISSIONS];
 	struct d1_owner_assoc owners[D1_MAX_OWNERS];
 	struct d1_receipt receipts[D1_MAX_RECEIPTS];
+	struct d1_custody custody[D1_MAX_CUSTODY];
+	d1_id_t next_custody;
 };
 
 static void d1_verifier_of(uint64_t incarnation, uint8_t out[D1_VERIFIER_BYTES])
@@ -170,6 +190,7 @@ struct d1_store *d1_store_open(const struct d1_uuid *store_uuid,
 	s->next_txn = 1;
 	s->next_version = 1;
 	s->next_admission = 1;
+	s->next_custody = 1;
 	return s;
 }
 
@@ -275,6 +296,35 @@ void d1_fixture_expire(struct d1_store *s, d1_id_t admission)
 
 	if (a)
 		a->expired = true;
+}
+
+d1_id_t d1_fixture_custody(struct d1_store *s, d1_id_t version)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_CUSTODY; i++) {
+		struct d1_custody *c = &s->custody[i];
+
+		if (c->used)
+			continue;
+		c->used = true;
+		c->id = s->next_custody++;
+		c->version = version;
+		return c->id;
+	}
+	return 0;
+}
+
+static struct d1_custody *d1_custody_find(struct d1_store *s, d1_id_t id)
+{
+	uint32_t i;
+
+	if (!id)
+		return NULL;
+	for (i = 0; i < D1_MAX_CUSTODY; i++)
+		if (s->custody[i].used && s->custody[i].id == id)
+			return &s->custody[i];
+	return NULL;
 }
 
 static struct d1_txn *d1_txn_find(struct d1_store *s, d1_id_t id)
@@ -453,6 +503,85 @@ uint64_t d1_store_eof(const struct d1_store *s, const struct d1_objkey *object)
 			eof = end;
 	}
 	return eof;
+}
+
+/*
+ * Release one predecessor's retention root.
+ *
+ * Eligible only when nothing depends on it: no chunk makes it visible,
+ * no uncommitted transaction names it, no read pin holds it, and it has
+ * not been released already.  What this changes is what a later
+ * rollback may restore; it reports nothing about bytes.
+ */
+bool d1_fixture_release_predecessor(struct d1_store *s, d1_id_t version)
+{
+	struct d1_version *v = d1_version_find(s, version);
+	uint32_t i, c;
+
+	if (!v || v->released || v->pins)
+		return false;
+	for (i = 0; i < D1_MAX_OBJECTS; i++) {
+		if (!s->objects[i].used)
+			continue;
+		for (c = 0; c < D1_MAX_CHUNKS; c++)
+			if (s->objects[i].chunks[c].visible_present &&
+			    s->objects[i].chunks[c].visible == version)
+				return false;
+	}
+	for (i = 0; i < D1_MAX_TXNS; i++) {
+		const struct d1_txn *t = &s->txns[i];
+
+		if (!t->used || t->version != version)
+			continue;
+		if (t->phase == D1_PHASE_PREPARED ||
+		    t->phase == D1_PHASE_FINALIZED)
+			return false;
+	}
+	v->released = true;
+	return true;
+}
+
+uint32_t d1_store_holes(const struct d1_store *s,
+			const struct d1_objkey *object, struct d1_interval *out,
+			uint32_t max)
+{
+	struct d1_store *m = (struct d1_store *)(uintptr_t)s;
+	const struct d1_object *o = d1_object_find(m, object);
+	uint64_t eof = d1_store_eof(s, object);
+	uint64_t at = 0;
+	uint32_t n = 0;
+	uint32_t i;
+
+	if (!o || !eof)
+		return 0;
+	/*
+	 * Chunks are walked in index order, so the intervals they
+	 * contribute are already sorted and the complement is whatever
+	 * lies between them, up to EOF and not past it.
+	 */
+	for (i = 0; i < D1_MAX_CHUNKS; i++) {
+		const struct d1_version *v;
+		uint64_t start, end;
+
+		if (!o->chunks[i].visible_present)
+			continue;
+		v = d1_version_find(m, o->chunks[i].visible);
+		if (!v)
+			continue;
+		if (!d1_mul_u64(i, s->chunk_bytes, &start) ||
+		    !d1_add_u64(start, v->len, &end))
+			continue;
+		if (start > at) {
+			if (n >= max)
+				return n;
+			out[n].start = at;
+			out[n].end = start;
+			n++;
+		}
+		if (end > at)
+			at = end;
+	}
+	return n;
 }
 
 /* Whether @a may act on @object at all, and with the rights it needs. */
@@ -723,6 +852,125 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 	return D1_OK;
 }
 
+/*
+ * Roll one entry back.
+ *
+ * A private transaction is its owner's to cancel: PREPARED or FINALIZED,
+ * validated by owner, transaction, admission and the predecessor it
+ * recorded, it loses its pending slot and becomes ROLLED_BACK.  A
+ * different chunk's visible version is not its business and is not
+ * touched, and the CAS generation does not go back -- a rollback is not
+ * an undo of the guard.
+ *
+ * Committed data is not the owner's to roll back.  That needs repair
+ * custody over the exact version currently visible, and even then it can
+ * only put back a predecessor that is still retained: a missing or
+ * released one leaves the current data where it is and says
+ * NO_PREDECESSOR, which describes what is there rather than granting
+ * permission to remove it.
+ */
+static uint32_t d1_do_rollback_entry(struct d1_store *s,
+				     const struct d1_envelope *env,
+				     const struct d1_rollback_entry *e,
+				     struct d1_admission *a,
+				     struct d1_entry_result *res)
+{
+	struct d1_object *o = d1_object_find(s, &env->object);
+	const struct d1_rollback_batch *r = &env->body.rollback;
+	struct d1_chunk *chunk;
+	struct d1_txn *txn;
+	struct d1_version *ver, *pred;
+	struct d1_custody *custody;
+
+	if (!o || e->index >= D1_MAX_CHUNKS)
+		return D1_INVALID;
+	if (e->index < r->range_begin || e->index >= r->range_end)
+		return D1_INVALID;
+
+	txn = d1_txn_find(s, e->txn);
+	if (!txn || txn->index != e->index ||
+	    txn->object != d1_object_slot(s, o))
+		return D1_INVALID;
+	if (txn->owner.cohort != e->owner.cohort ||
+	    txn->owner.writer != e->owner.writer ||
+	    txn->owner.co_id != e->owner.co_id)
+		return D1_OWNER_CONFLICT;
+	if (txn->mode != D1_MODE_ORDINARY)
+		return D1_INVALID;
+
+	chunk = &o->chunks[e->index];
+	res->guard = chunk->guard;
+	res->owner = txn->owner;
+	res->txn_present = true;
+	res->txn = txn->id;
+
+	if (txn->phase == D1_PHASE_PREPARED ||
+	    txn->phase == D1_PHASE_FINALIZED) {
+		if (txn->admission != a->id)
+			return D1_STALE_AUTH;
+		/* Cancelling one's own private work needs no custody. */
+		if (e->custody_present)
+			return D1_INVALID;
+		if (chunk->pending_present && chunk->pending == txn->id) {
+			chunk->pending_present = false;
+			chunk->pending = 0;
+		}
+		txn->phase = D1_PHASE_ROLLED_BACK;
+		res->phase = txn->phase;
+		return D1_OK;
+	}
+
+	if (txn->phase != D1_PHASE_COMMITTED)
+		return D1_BAD_PHASE;
+
+	/* From here it is committed data, and custody is not optional. */
+	if (!e->custody_present)
+		return D1_STALE_AUTH;
+	if ((a->rights & D1_RIGHT_REPAIR) != D1_RIGHT_REPAIR)
+		return D1_STALE_AUTH;
+	custody = d1_custody_find(s, e->custody);
+	if (!custody)
+		return D1_STALE_AUTH;
+	/* Custody names the exact version it was issued over. */
+	if (!chunk->visible_present || custody->version != chunk->visible)
+		return D1_OWNER_CONFLICT;
+	if (chunk->visible != txn->version)
+		return D1_OWNER_CONFLICT;
+	if (e->visible_present && e->visible != chunk->visible)
+		return D1_OWNER_CONFLICT;
+	/* A pending transaction must be cancelled before this. */
+	if (chunk->pending_present)
+		return D1_GUARDED;
+
+	ver = d1_version_find(s, txn->version);
+	if (!ver)
+		return D1_INVALID;
+	res->version_present = true;
+	res->version = ver->id;
+
+	pred = ver->predecessor_present ? d1_version_find(s, ver->predecessor) :
+					  NULL;
+	if (!pred || pred->released) {
+		/*
+		 * Nothing to put back.  The current data stays, no episode
+		 * is created, and the entry names the predecessor it was
+		 * looking for.
+		 */
+		res->phase = txn->phase;
+		return D1_NO_PREDECESSOR;
+	}
+	if (e->predecessor_present && e->predecessor != pred->id)
+		return D1_OWNER_CONFLICT;
+
+	/* Payload and extent are restored in the one transition. */
+	chunk->visible = pred->id;
+	txn->phase = D1_PHASE_ROLLED_BACK;
+	s->index_epoch++;
+	res->version = pred->id;
+	res->phase = txn->phase;
+	return D1_OK;
+}
+
 static bool d1_verifier_matches(const struct d1_store *s,
 				const uint8_t given[D1_VERIFIER_BYTES])
 {
@@ -749,6 +997,7 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	case D1_OP_WRITE_BATCH:
 	case D1_OP_FINALIZE_BATCH:
 	case D1_OP_COMMIT_BATCH:
+	case D1_OP_ROLLBACK_BATCH:
 		need = D1_RIGHT_WRITE;
 		break;
 	default:
@@ -764,8 +1013,17 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		return D1_INVALID;
 
 	commit = env->op == D1_OP_COMMIT_BATCH;
-	count = env->op == D1_OP_WRITE_BATCH ? env->body.write.count :
-					       env->body.lifecycle.count;
+	switch (env->op) {
+	case D1_OP_WRITE_BATCH:
+		count = env->body.write.count;
+		break;
+	case D1_OP_ROLLBACK_BATCH:
+		count = env->body.rollback.count;
+		break;
+	default:
+		count = env->body.lifecycle.count;
+		break;
+	}
 	out->count = count;
 
 	for (i = 0; i < count; i++) {
@@ -802,6 +1060,10 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 				status = d1_do_write_entry(
 					s, env, &env->body.write.entries[i], a,
 					res);
+			} else if (env->op == D1_OP_ROLLBACK_BATCH) {
+				status = d1_do_rollback_entry(
+					s, env, &env->body.rollback.entries[i],
+					a, res);
 			} else {
 				if (!d1_verifier_matches(
 					    s,

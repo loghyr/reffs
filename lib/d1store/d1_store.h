@@ -28,6 +28,8 @@
 #define D1_MAX_RECEIPTS 256u
 #define D1_MAX_ADMISSIONS 32u
 #define D1_MAX_OWNERS 256u
+#define D1_MAX_CUSTODY 32u
+#define D1_MAX_INTERVALS 64u
 
 struct d1_store;
 
@@ -84,6 +86,22 @@ void d1_fixture_revoke(struct d1_store *s, d1_id_t admission);
 void d1_fixture_expire(struct d1_store *s, d1_id_t admission);
 
 /*
+ * Issue repair custody over one version.  Rolling back committed data
+ * needs this and ordinary owner custody never suffices; the handle is
+ * tied to the exact version it is issued for, so a stale pointer is a
+ * conflict rather than a weaker check.
+ */
+d1_id_t d1_fixture_custody(struct d1_store *s, d1_id_t version);
+
+/*
+ * Release the retention of one predecessor version.  Allowed only for a
+ * version nothing makes visible and nothing else holds: it removes the
+ * durable retention root and changes what a future rollback is eligible
+ * for.  It says nothing about whether any bytes were freed.
+ */
+bool d1_fixture_release_predecessor(struct d1_store *s, d1_id_t version);
+
+/*
  * Apply one envelope.  The returned status is the operation's own; per
  * entry results are in @out.  An operation this slice does not implement
  * answers D1_UNSUPPORTED and mutates nothing.
@@ -97,5 +115,21 @@ bool d1_store_visible(const struct d1_store *s, const struct d1_objkey *object,
 bool d1_store_guard(const struct d1_store *s, const struct d1_objkey *object,
 		    uint64_t index, struct d1_guard *guard);
 uint64_t d1_store_eof(const struct d1_store *s, const struct d1_objkey *object);
+
+/* One interval of the object's extent map. */
+struct d1_interval {
+	uint64_t start;
+	uint64_t end;
+};
+
+/*
+ * The holes of @object: the complement, within [0, EOF), of the
+ * intervals its visible versions contribute.  Beyond EOF is not a hole,
+ * it is a different answer, and is never reported here.  Returns how
+ * many intervals were written.
+ */
+uint32_t d1_store_holes(const struct d1_store *s,
+			const struct d1_objkey *object, struct d1_interval *out,
+			uint32_t max);
 
 #endif /* REFFS_D1_STORE_H */

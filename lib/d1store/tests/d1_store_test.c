@@ -474,11 +474,319 @@ static void test_unsupported(void)
 		return;
 	admission = d1_fixture_admit(s, &object, 11, D1_RIGHT_WRITE);
 
-	env_init(&env, s, admission, D1_OP_ROLLBACK_BATCH);
-	env.body.rollback.count = 1;
+	env_init(&env, s, admission, D1_OP_LEASE_REAP);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = 1;
 	check(d1_store_apply(s, &env, &res) == D1_UNSUPPORTED,
 	      "an unimplemented operation says so");
 	check(res.count == 0, "and answers no entries");
+
+	d1_store_free(s);
+}
+
+/* Write, finalize and commit one chunk, and answer its version. */
+static d1_id_t commit_chunk(struct d1_store *s, d1_id_t admission,
+			    uint64_t index, uint32_t co_id, const uint8_t *data,
+			    uint32_t len, const struct d1_guard *expected,
+			    d1_id_t predecessor, d1_id_t *txn_out)
+{
+	struct d1_envelope env;
+	struct d1_result res;
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	d1_id_t txn, version;
+	unsigned int pass;
+
+	d1_store_verifier(s, verifier);
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], index, 11, co_id, data, len,
+		    true, expected);
+	if (d1_store_apply(s, &env, &res) != D1_OK ||
+	    res.entries[0].status != D1_OK)
+		return 0;
+	txn = res.entries[0].txn;
+	version = res.entries[0].version;
+
+	for (pass = 0; pass < 2; pass++) {
+		env_init(&env, s, admission,
+			 pass == 0 ? D1_OP_FINALIZE_BATCH : D1_OP_COMMIT_BATCH);
+		env.body.lifecycle.range_begin = index;
+		env.body.lifecycle.range_end = index + 1;
+		env.body.lifecycle.count = 1;
+		env.body.lifecycle.entries[0].index = index;
+		env.body.lifecycle.entries[0].owner.cohort = 1;
+		env.body.lifecycle.entries[0].owner.writer = 11;
+		env.body.lifecycle.entries[0].owner.co_id = co_id;
+		env.body.lifecycle.entries[0].txn = txn;
+		/*
+		 * Finalize and commit name the predecessor the write
+		 * recorded; a caller that does not know it is not the
+		 * caller that wrote it.
+		 */
+		env.body.lifecycle.entries[0].predecessor_present =
+			predecessor != 0;
+		env.body.lifecycle.entries[0].predecessor = predecessor;
+		memcpy(env.body.lifecycle.prior_verifier, verifier,
+		       sizeof(verifier));
+		if (d1_store_apply(s, &env, &res) != D1_OK ||
+		    res.entries[0].status != D1_OK)
+			return 0;
+	}
+	if (txn_out)
+		*txn_out = txn;
+	return version;
+}
+
+static uint32_t rollback_one(struct d1_store *s, d1_id_t admission,
+			     uint64_t index, uint32_t co_id, d1_id_t txn,
+			     bool custody_present, d1_id_t custody,
+			     struct d1_entry_result *out)
+{
+	struct d1_envelope env;
+	struct d1_result res;
+
+	env_init(&env, s, admission, D1_OP_ROLLBACK_BATCH);
+	env.body.rollback.range_begin = index;
+	env.body.rollback.range_end = index + 1;
+	env.body.rollback.count = 1;
+	env.body.rollback.entries[0].index = index;
+	env.body.rollback.entries[0].owner.cohort = 1;
+	env.body.rollback.entries[0].owner.writer = 11;
+	env.body.rollback.entries[0].owner.co_id = co_id;
+	env.body.rollback.entries[0].txn = txn;
+	env.body.rollback.entries[0].custody_present = custody_present;
+	env.body.rollback.entries[0].custody = custody;
+	if (d1_store_apply(s, &env, &res) != D1_OK)
+		return D1_INVALID;
+	if (out)
+		*out = res.entries[0];
+	return res.entries[0].status;
+}
+
+/* Cancelling one's own private work, and what it does not undo. */
+static void test_private_rollback(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_guard before, after;
+	d1_id_t admission, txn, visible;
+
+	fill_uuid(&store_uuid, 0xf0);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, payload_a,
+		    sizeof(payload_a), true,
+		    &(struct d1_guard){ .never_written = true });
+	d1_store_apply(s, &env, &res);
+	check(res.entries[0].status == D1_OK, "a write is admitted");
+	txn = res.entries[0].txn;
+	d1_store_guard(s, &object, 0, &before);
+
+	check(rollback_one(s, admission, 0, 1, txn, false, 0, NULL) == D1_OK,
+	      "its owner may cancel it");
+	check(!d1_store_visible(s, &object, 0, &visible),
+	      "and nothing became visible");
+	check(d1_store_guard(s, &object, 0, &after) &&
+		      after.generation == before.generation &&
+		      !after.never_written,
+	      "the generation does not go back");
+
+	/* The pending slot is free again, for a new owner. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 2, payload_b,
+		    sizeof(payload_b), true, &after);
+	d1_store_apply(s, &env, &res);
+	check(res.entries[0].status == D1_OK,
+	      "a new owner may write the chunk again");
+	check(res.entries[0].guard.generation == before.generation + 1,
+	      "and the generation moves on rather than back");
+
+	/* Committed data is not the owner's to roll back. */
+	{
+		d1_id_t ctxn = 0;
+		struct d1_entry_result entry;
+
+		check(rollback_one(s, admission, 0, 2, res.entries[0].txn,
+				   false, 0, NULL) == D1_OK,
+		      "the second write is cancelled too");
+		check(commit_chunk(s, admission, 1, 3, payload_a,
+				   sizeof(payload_a),
+				   &(struct d1_guard){ .never_written = true },
+				   0, &ctxn) != 0,
+		      "a chunk is committed");
+		check(rollback_one(s, admission, 1, 3, ctxn, false, 0,
+				   &entry) == D1_STALE_AUTH,
+		      "committed data needs custody, not ownership");
+		check(d1_store_visible(s, &object, 1, &visible),
+		      "and is still visible");
+	}
+
+	d1_store_free(s);
+}
+
+/* D: sparse commits, holes, and what a rollback does to EOF. */
+static void test_sparse_and_rollback_extents(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_interval holes[D1_MAX_INTERVALS];
+	struct d1_guard guard;
+	static uint8_t big[4096];
+	static uint8_t small[100];
+	static uint8_t tiny[50];
+	d1_id_t admission, v3, v4, v5, txn4, custody, visible;
+	uint32_t n;
+
+	memset(big, 0x11, sizeof(big));
+	memset(small, 0x22, sizeof(small));
+	memset(tiny, 0x33, sizeof(tiny));
+
+	fill_uuid(&store_uuid, 0x11);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+
+	/* D1: a sparse commit at chunk 3 of 100 bytes. */
+	v3 = commit_chunk(s, admission, 3, 1, small, sizeof(small),
+			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+	check(v3 != 0, "the sparse chunk commits");
+	check(d1_store_eof(s, &object) == 3 * CHUNK_BYTES + sizeof(small),
+	      "EOF is the end of the only interval");
+	n = d1_store_holes(s, &object, holes, D1_MAX_INTERVALS);
+	check(n == 1 && holes[0].start == 0 && holes[0].end == 3 * CHUNK_BYTES,
+	      "everything before it is an explicit hole");
+
+	/* D2: a later chunk 5 of 50 bytes. */
+	v5 = commit_chunk(s, admission, 5, 2, tiny, sizeof(tiny),
+			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+	check(v5 != 0, "the later chunk commits");
+	check(d1_store_eof(s, &object) == 5 * CHUNK_BYTES + sizeof(tiny),
+	      "EOF follows the highest interval");
+	n = d1_store_holes(s, &object, holes, D1_MAX_INTERVALS);
+	check(n == 2 && holes[1].start == 3 * CHUNK_BYTES + sizeof(small) &&
+		      holes[1].end == 5 * CHUNK_BYTES,
+	      "the gap between them is a hole");
+
+	/* D3: replace chunk 3 with a full image, then roll it back. */
+	d1_store_guard(s, &object, 3, &guard);
+	v4 = commit_chunk(s, admission, 3, 3, big, sizeof(big), &guard, v3,
+			  &txn4);
+	check(v4 != 0 && v4 != v3, "the replacement commits");
+	check(d1_store_eof(s, &object) == 5 * CHUNK_BYTES + sizeof(tiny),
+	      "the higher chunk still sets EOF");
+
+	custody = d1_fixture_custody(s, v4);
+	check(custody != 0, "the fixture issues custody over it");
+	check(rollback_one(s, admission, 3, 3, txn4, true, custody, NULL) ==
+		      D1_OK,
+	      "custody rolls the replacement back");
+	check(d1_store_visible(s, &object, 3, &visible) && visible == v3,
+	      "and the predecessor is visible again");
+	check(d1_store_eof(s, &object) == 5 * CHUNK_BYTES + sizeof(tiny),
+	      "EOF stays high because chunk 5 still holds it");
+	n = d1_store_holes(s, &object, holes, D1_MAX_INTERVALS);
+	check(n == 2 && holes[1].start == 3 * CHUNK_BYTES + sizeof(small),
+	      "and the hole vector is restored with it");
+
+	d1_store_free(s);
+}
+
+/* D4: the same rollback with nothing above it shrinks EOF. */
+static void test_rollback_shrinks_eof(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_guard guard;
+	static uint8_t big[4096];
+	static uint8_t small[100];
+	d1_id_t admission, v3, v4, txn4, custody, visible;
+
+	memset(big, 0x44, sizeof(big));
+	memset(small, 0x55, sizeof(small));
+
+	fill_uuid(&store_uuid, 0x22);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+
+	v3 = commit_chunk(s, admission, 3, 1, small, sizeof(small),
+			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+	check(d1_store_eof(s, &object) == 3 * CHUNK_BYTES + sizeof(small),
+	      "the short image sets EOF");
+	d1_store_guard(s, &object, 3, &guard);
+	v4 = commit_chunk(s, admission, 3, 2, big, sizeof(big), &guard, v3,
+			  &txn4);
+	check(v4 != 0, "the full image commits");
+	check(d1_store_eof(s, &object) == 4 * CHUNK_BYTES,
+	      "and EOF grows with it");
+
+	custody = d1_fixture_custody(s, v4);
+	check(rollback_one(s, admission, 3, 2, txn4, true, custody, NULL) ==
+		      D1_OK,
+	      "the replacement rolls back");
+	check(d1_store_visible(s, &object, 3, &visible) && visible == v3,
+	      "the predecessor is visible");
+	check(d1_store_eof(s, &object) == 3 * CHUNK_BYTES + sizeof(small),
+	      "and EOF shrinks with the payload it came from");
+
+	d1_store_free(s);
+}
+
+/* A predecessor that has been released is not a predecessor any more. */
+static void test_released_predecessor(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_guard guard;
+	struct d1_entry_result entry;
+	static uint8_t data[64];
+	d1_id_t admission, v1, v2, txn2, custody, visible;
+
+	memset(data, 0x66, sizeof(data));
+	fill_uuid(&store_uuid, 0x33);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+
+	v1 = commit_chunk(s, admission, 0, 1, data, sizeof(data),
+			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+	d1_store_guard(s, &object, 0, &guard);
+	v2 = commit_chunk(s, admission, 0, 2, data, sizeof(data), &guard, v1,
+			  &txn2);
+	check(v1 != 0 && v2 != 0, "two versions commit in turn");
+
+	check(d1_fixture_release_predecessor(s, v1),
+	      "the displaced predecessor may be released");
+	check(!d1_fixture_release_predecessor(s, v2),
+	      "the visible version may not");
+
+	custody = d1_fixture_custody(s, v2);
+	check(rollback_one(s, admission, 0, 2, txn2, true, custody, &entry) ==
+		      D1_NO_PREDECESSOR,
+	      "a released predecessor is no longer eligible");
+	check(d1_store_visible(s, &object, 0, &visible) && visible == v2,
+	      "and the current data stays exactly where it is");
 
 	d1_store_free(s);
 }
@@ -494,6 +802,10 @@ int main(void)
 	test_owner_collision();
 	test_write_refusals();
 	test_phase_order();
+	test_private_rollback();
+	test_sparse_and_rollback_extents();
+	test_rollback_shrinks_eof();
+	test_released_predecessor();
 	test_unsupported();
 
 	if (failures) {
