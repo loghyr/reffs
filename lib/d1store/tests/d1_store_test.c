@@ -1618,16 +1618,26 @@ static bool states_agree(struct d1_store *a, struct d1_store *b)
 			return false;
 	for (i = 0; i < D1_MAX_CHUNKS; i++) {
 		d1_id_t va = 0, vb = 0;
-		bool pa, pb;
+		bool pa, pb, qa, qb;
 		struct d1_guard ga, gb;
 
 		pa = d1_store_visible(a, &object, i, &va);
 		pb = d1_store_visible(b, &object, i, &vb);
 		if (pa != pb || (pa && va != vb))
 			return false;
-		if (d1_store_guard(a, &object, i, &ga) !=
-		    d1_store_guard(b, &object, i, &gb))
+		qa = d1_store_guard(a, &object, i, &ga);
+		qb = d1_store_guard(b, &object, i, &gb);
+		if (qa != qb)
 			return false;
+		/*
+		 * Only compare the guard when there was one to fetch.  A
+		 * lookup that answers "no such object" leaves the caller's
+		 * struct untouched, so comparing it reads whatever the stack
+		 * happened to hold -- which agreed under one set of build
+		 * flags and disagreed under another.
+		 */
+		if (!qa)
+			continue;
 		if (ga.never_written != gb.never_written ||
 		    ga.generation != gb.generation || ga.writer != gb.writer)
 			return false;
