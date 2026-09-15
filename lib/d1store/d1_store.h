@@ -174,14 +174,15 @@ bool d1_fixture_release_predecessor(struct d1_store *s, d1_id_t version);
  * answers D1_UNSUPPORTED and mutates nothing.
  *
  * Each member result carries a disposition as well as a status.
- * D1_COMPLETED means the outcome is recorded under the operation key
- * and the exact request will be answered from that record for as long
- * as it is kept -- a semantic refusal is recorded exactly like a
- * success.  D1_UNRECORDED means nothing was durably decided: the member
- * did not happen, it consumed no capacity, and the caller may retry it.
- * Members after an interruption are reported UNRECORDED too; the batch
- * stops there rather than carrying the interruption forward, and no
- * receipt is invented for work that was never attempted.
+ * D1_COMPLETED means the answer comes from what is recorded under the
+ * operation key, and the same question will be answered the same way
+ * for as long as that record is kept -- a semantic refusal is recorded
+ * exactly like a success.  D1_UNRECORDED means nothing was durably
+ * decided: the member did not happen, it consumed no capacity, and the
+ * caller may retry it.  Members after an interruption are reported
+ * UNRECORDED too; the batch stops there rather than carrying the
+ * interruption forward, and no receipt is invented for work that was
+ * never attempted.
  *
  * An operation key is bound by the whole Envelope from the moment any
  * member of it is recorded.  A retry with a changed body -- a different
@@ -190,6 +191,23 @@ bool d1_fixture_release_predecessor(struct d1_store *s, d1_id_t version);
  * take the key from the original: the exact original request can still
  * be resumed and finished afterwards.  A key with no recorded member is
  * not bound, and is free for any request.
+ *
+ * That refusal is D1_COMPLETED in the sense above -- it is the answer
+ * the key's record dictates -- and in no other.  No receipt is created
+ * for the changed request, nothing of it is retained, and nothing about
+ * it can be resumed; the record it was answered from belongs to the
+ * Envelope that was there first.
+ *
+ * The binding holds between concurrent callers as well as between a
+ * request and its own retry.  It is revalidated inside the lock
+ * interval that records each member, not once for the call, so two
+ * callers that both find the key free cannot then interleave their
+ * members into one key: whichever records first owns it, and the other
+ * is refused on every member and records nothing.
+ *
+ * The caller binding is settled before the key is: a handle that is not
+ * bound to the object it names is answered D1_STALE_AUTH and is told
+ * nothing about whether the key is in use.
  */
 uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 			struct d1_result *out);
@@ -377,6 +395,20 @@ void d1_fixture_fail_next_index(struct d1_store *s);
 
 /* Whether an index fault has left a materialized pointer behind. */
 bool d1_store_overlay_active(struct d1_store *s);
+
+/*
+ * Fixture control: run @fn once, in the gap a batch leaves between
+ * deciding that its operation key is free and running its first member.
+ *
+ * That gap is where a second caller lands when it is preempted there,
+ * and it is the only place from which two callers can reach one key.
+ * A scheduler finds it rarely enough that waiting for one is not
+ * evidence, so a test opens it on purpose: @fn runs with no lock held
+ * and may make ordinary calls of its own.  The arm is one-shot,
+ * unjournalled, and refused during recovery.
+ */
+void d1_fixture_before_members(struct d1_store *s, void (*fn)(void *),
+			       void *arg);
 
 /*
  * What the materialized index still says, so a test can prove a read

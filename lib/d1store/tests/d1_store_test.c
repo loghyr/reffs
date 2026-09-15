@@ -4813,6 +4813,374 @@ static void test_malformed_requests_are_refused(void)
 	d1_store_free(s);
 }
 
+/*
+ * Two callers under one operation key cannot splice their bodies.
+ *
+ * The preflight in d1_store_apply is an early answer, not the
+ * guarantee.  The guarantee is the same question asked inside the lock
+ * interval that records each member, and the difference between the two
+ * is exactly the gap a second caller occupies when it is preempted
+ * between finding the key free and running its first member.  A
+ * scheduler reaches that gap rarely enough that not reaching it proves
+ * nothing, so the fixture opens it instead of waiting for one.
+ */
+struct other_caller {
+	struct d1_store *store;
+	struct d1_envelope env;
+	struct d1_result res;
+	uint32_t call;
+	bool ran;
+};
+
+static void run_other_caller(void *arg)
+{
+	struct other_caller *o = arg;
+
+	o->ran = true;
+	o->call = d1_store_apply(o->store, &o->env, &o->res);
+}
+
+static void test_concurrent_callers_cannot_splice_a_key(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct other_caller first;
+	struct d1_envelope second;
+	struct d1_result res, retry;
+	const uint8_t *log;
+	size_t len;
+	static uint8_t mine[16];
+	static uint8_t theirs[16];
+	d1_id_t admission, seen;
+	unsigned int i;
+
+	memset(mine, 0x61, sizeof(mine));
+	memset(theirs, 0x62, sizeof(theirs));
+	fill_uuid(&store_uuid, 0x63);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	/* One key, two two-member bodies differing only in member 1. */
+	memset(&first, 0, sizeof(first));
+	first.store = s;
+	env_init(&first.env, s, admission, D1_OP_WRITE_BATCH);
+	first.env.body.write.count = 2;
+	first.env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&first.env.body.write.entries[0], 0, 11, 1, mine,
+		    sizeof(mine), true,
+		    &(struct d1_guard){ .never_written = true });
+	write_entry(&first.env.body.write.entries[1], 1, 11, 2, mine,
+		    sizeof(mine), true,
+		    &(struct d1_guard){ .never_written = true });
+	second = first.env;
+	write_entry(&second.body.write.entries[1], 1, 11, 2, theirs,
+		    sizeof(theirs), true,
+		    &(struct d1_guard){ .never_written = true });
+
+	/*
+	 * The second caller reaches the gap first and finds the key free.
+	 * The first caller runs to completion inside it, which is what a
+	 * preemption there amounts to.
+	 */
+	d1_fixture_before_members(s, run_other_caller, &first);
+	check(d1_store_apply(s, &second, &res) == D1_OK,
+	      "the second caller's batch is admitted");
+	check(first.ran, "after the first caller ran inside its window");
+	check(first.call == D1_OK && first.res.entries[0].status == D1_OK &&
+		      first.res.entries[1].status == D1_OK,
+	      "and recorded both of its members");
+	for (i = 0; i < 2; i++)
+		check(res.entries[i].status == D1_REPLAY_CONFLICT,
+		      "every member of the second body is refused");
+	check(res.disposition == D1_COMPLETED,
+	      "answered from the record the key already holds");
+
+	/* Nothing of the second body reached the store. */
+	check(d1_store_apply(s, &first.env, &retry) == D1_OK,
+	      "the first caller's exact request still answers");
+	for (i = 0; i < 2; i++) {
+		check(retry.entries[i].status == D1_OK,
+		      "from its own receipts, member by member");
+		check(retry.entries[i].version == first.res.entries[i].version,
+		      "with the versions it was given the first time");
+	}
+	check(!d1_store_visible(s, &object, 1, &seen),
+	      "and a private write published nothing either way");
+
+	log = d1_store_journal(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "the log the pair left rebuilds");
+		check(states_agree(s, rebuilt), "into the same store");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/* Big-endian stores, the framing section 9 fixes. */
+static void put_be32(uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)(v >> 24);
+	p[1] = (uint8_t)(v >> 16);
+	p[2] = (uint8_t)(v >> 8);
+	p[3] = (uint8_t)v;
+}
+
+static void put_be64(uint8_t *p, uint64_t v)
+{
+	put_be32(p, (uint32_t)(v >> 32));
+	put_be32(p + 4, (uint32_t)v);
+}
+
+static uint32_t get_be32(const uint8_t *p)
+{
+	return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+	       ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+/* The framed length of the record at @r. */
+static uint32_t record_bytes(const uint8_t *r)
+{
+	return get_be32(r + 12);
+}
+
+/* Where each record of a durable log begins. */
+static unsigned int index_log(const uint8_t *log, size_t len, size_t *at,
+			      unsigned int max)
+{
+	unsigned int n = 0;
+	size_t off = 0;
+
+	while (off < len && n < max) {
+		at[n++] = off;
+		off += record_bytes(log + off);
+	}
+	return n;
+}
+
+/* Copy a framed record, re-stamp its LSN, recompute its CRC. */
+static size_t restamp_record(uint8_t *dst, const uint8_t *src, uint64_t lsn)
+{
+	uint32_t total = record_bytes(src);
+
+	memcpy(dst, src, total);
+	put_be64(dst + 36, lsn);
+	put_be32(dst + total - D1_JOURNAL_TRAILER_BYTES,
+		 d1_crc32c(dst, total - D1_JOURNAL_TRAILER_BYTES));
+	return total;
+}
+
+/*
+ * A log that repeats, skips or splices a member of one operation key.
+ *
+ * None of these can come from the live writer: it records member j
+ * before it reaches member j+1, stops at the first member it could not
+ * record, and answers an exact repeat from the receipt rather than
+ * logging it again.  Each case is built by reframing real records --
+ * LSN re-stamped, CRC recomputed -- so what is under test is the
+ * semantic rule and not the checksum.
+ */
+static void test_replay_refuses_a_spliced_key(void)
+{
+	static const char *const what[] = {
+		"a member recorded twice is refused",
+		"a member whose predecessor was never recorded is refused",
+		"a member of another body under the same key is refused",
+	};
+	unsigned int pass;
+
+	for (pass = 0; pass < 3; pass++) {
+		struct d1_uuid store_uuid;
+		struct d1_store *live, *other, *target;
+		struct d1_envelope env, changed;
+		struct d1_result res;
+		static uint8_t copy[65536];
+		static uint8_t mine[16];
+		static uint8_t theirs[16];
+		const uint8_t *log, *log_b = NULL;
+		size_t len, len_b = 0, at[16], at_b[16], used = 0;
+		unsigned int records, records_b = 0, i;
+		d1_id_t admission;
+
+		memset(mine, 0x64, sizeof(mine));
+		memset(theirs, 0x65, sizeof(theirs));
+		fill_uuid(&store_uuid, (uint8_t)(0x66 + pass));
+		live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!live)
+			return;
+		d1_store_journal_enable(live);
+		admission = d1_fixture_admit(live, &object, 11,
+					     D1_RIGHT_WRITE |
+						     D1_RIGHT_SINGLE_WRITER);
+		env_init(&env, live, admission, D1_OP_WRITE_BATCH);
+		env.body.write.count = 2;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], 0, 11, 1, mine,
+			    sizeof(mine), true,
+			    &(struct d1_guard){ .never_written = true });
+		/*
+		 * The skipped-prefix case needs a member 1 whose answer does
+		 * not depend on member 0 having run, or the record is caught
+		 * by the ordinary result comparison instead of by the rule
+		 * under test.  A guard refusal is such an answer: it carries
+		 * the chunk's own guard and no allocated identifier.
+		 */
+		write_entry(&env.body.write.entries[1], 1, 11, 2, mine,
+			    sizeof(mine), true,
+			    &(struct d1_guard){ .never_written = pass != 1 });
+		check(d1_store_apply(live, &env, &res) == D1_OK &&
+			      res.entries[1].status ==
+				      (pass == 1 ? D1_GUARDED : D1_OK),
+		      "a two-member batch under one key");
+		log = d1_store_journal(live, &len);
+		records = index_log(log, len, at, 16);
+		check(records == 4, "logs a START, a control and two entries");
+
+		/*
+		 * The splice needs the same two members written by a second
+		 * store from the same starting point, so its member 1 is a
+		 * record whose own history is identical up to that point.
+		 */
+		if (pass == 2) {
+			other = d1_store_open(&store_uuid, CHUNK_BYTES,
+					      MAX_FILE_BYTES);
+			if (!other) {
+				d1_store_free(live);
+				return;
+			}
+			d1_store_journal_enable(other);
+			check(d1_fixture_admit(other, &object, 11,
+					       D1_RIGHT_WRITE |
+						       D1_RIGHT_SINGLE_WRITER) ==
+				      admission,
+			      "the second store admits the same handle");
+			changed = env;
+			write_entry(&changed.body.write.entries[1], 1, 11, 2,
+				    theirs, sizeof(theirs), true,
+				    &(struct d1_guard){ .never_written =
+								true });
+			check(d1_store_apply(other, &changed, &res) == D1_OK &&
+				      res.entries[1].status == D1_OK,
+			      "and records the changed body under that key");
+			log_b = d1_store_journal(other, &len_b);
+			records_b = index_log(log_b, len_b, at_b, 16);
+		} else {
+			other = NULL;
+		}
+		check(len <= sizeof(copy), "the log fits the fixture buffer");
+		if (len > sizeof(copy) || records != 4 ||
+		    (pass == 2 && records_b != 4)) {
+			d1_store_free(other);
+			d1_store_free(live);
+			return;
+		}
+
+		if (pass == 0) {
+			/* Everything, then member 1 a second time. */
+			memcpy(copy, log, len);
+			used = len;
+			used += restamp_record(copy + used, log + at[3], 5);
+		} else if (pass == 1) {
+			/* Member 1, with member 0 never recorded. */
+			for (i = 0; i < 2; i++)
+				used += restamp_record(copy + used, log + at[i],
+						       i + 1);
+			used += restamp_record(copy + used, log + at[3], 3);
+		} else {
+			/* Member 0 from one body, member 1 from the other. */
+			for (i = 0; i < 3; i++)
+				used += restamp_record(copy + used, log + at[i],
+						       i + 1);
+			used += restamp_record(copy + used, log_b + at_b[3], 4);
+		}
+
+		target =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (target) {
+			check(d1_store_replay(target, copy, used) == D1_INVALID,
+			      what[pass]);
+			d1_store_free(target);
+		}
+		target =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (target) {
+			check(d1_store_replay(target, log, len) == D1_OK,
+			      "while the log as written still rebuilds");
+			check(states_agree(live, target),
+			      "into the same store");
+			d1_store_free(target);
+		}
+		d1_store_free(other);
+		d1_store_free(live);
+	}
+}
+
+/*
+ * The caller binding is settled before the operation key is.
+ *
+ * Memo section 8 orders the two: validate the caller binding, look the
+ * key up, compare the digest.  A handle that is not bound to the object
+ * it names has no business being told whether someone else's key is in
+ * use, and the answer it gets must be its own failure rather than a
+ * conflict with a record it could never have written.
+ */
+static void test_caller_binding_is_settled_first(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_objkey elsewhere;
+	struct d1_store *s;
+	struct d1_envelope env, stranger;
+	struct d1_result res;
+	static uint8_t data[16];
+	d1_id_t mine, theirs, seen;
+
+	memset(data, 0x71, sizeof(data));
+	fill_uuid(&store_uuid, 0x72);
+	elsewhere.export_uuid = object.export_uuid;
+	fill_uuid(&elsewhere.object_uuid, 0x73);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	mine = d1_fixture_admit(s, &object, 11,
+				D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	theirs = d1_fixture_admit(s, &elsewhere, 12,
+				  D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	check(mine != 0 && theirs != 0, "two handles, on two objects");
+
+	env_init(&env, s, mine, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the bound handle records a member under its key");
+
+	/* The same key, from a handle bound to a different object. */
+	stranger = env;
+	stranger.admission = theirs;
+	check(d1_store_apply(s, &stranger, &res) == D1_OK,
+	      "a stranger submits the same key");
+	check(res.entries[0].status == D1_STALE_AUTH,
+	      "and is answered for its own binding, not for the key");
+	check(res.entries[0].disposition == D1_UNRECORDED,
+	      "with nothing recorded for it");
+
+	/* And the key's owner is undisturbed. */
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the original request still answers from its receipt");
+	check(!d1_store_visible(s, &object, 0, &seen),
+	      "and nothing was published either way");
+	d1_store_free(s);
+}
+
 int main(void)
 {
 	fill_uuid(&object.export_uuid, 0x30);
@@ -4866,6 +5234,9 @@ int main(void)
 	test_operation_key_binds_the_whole_envelope();
 	test_unused_key_is_not_bound();
 	test_recovery_clears_fault_arms();
+	test_concurrent_callers_cannot_splice_a_key();
+	test_replay_refuses_a_spliced_key();
+	test_caller_binding_is_settled_first();
 	test_control_envelopes_replay();
 	test_custody_and_release_replay();
 	test_replay_refuses_a_foreign_log();

@@ -234,6 +234,14 @@ struct d1_store {
 	 */
 	bool overlay_active;
 	bool fail_next_index;
+	/*
+	 * The fixture's window on the gap a batch leaves between deciding
+	 * that its operation key is free and running its first member.
+	 * A second caller occupies that gap by being preempted in it; a
+	 * test occupies it on purpose.  See d1_fixture_before_members.
+	 */
+	void (*before_members)(void *);
+	void *before_members_arg;
 
 	/*
 	 * Calls admitted and not yet returned.  A call is not one lock
@@ -525,6 +533,41 @@ void d1_fixture_fail_append_in(struct d1_store *s, uint32_t n)
 	pthread_mutex_unlock(&s->lock);
 }
 
+void d1_fixture_before_members(struct d1_store *s, void (*fn)(void *),
+			       void *arg)
+{
+	pthread_mutex_lock(&s->lock);
+	if (!d1_fixture_may_mutate(s)) {
+		pthread_mutex_unlock(&s->lock);
+		return;
+	}
+	if (!s->replaying) {
+		s->before_members = fn;
+		s->before_members_arg = arg;
+	}
+	pthread_mutex_unlock(&s->lock);
+}
+
+/*
+ * Run the armed hook, once, with the lock not held -- which is the
+ * state a preempted caller would leave the store in, and which lets
+ * the hook make an ordinary call of its own.
+ */
+static void d1_run_member_hook(struct d1_store *s)
+{
+	void (*fn)(void *);
+	void *arg;
+
+	pthread_mutex_lock(&s->lock);
+	fn = s->before_members;
+	arg = s->before_members_arg;
+	s->before_members = NULL;
+	s->before_members_arg = NULL;
+	pthread_mutex_unlock(&s->lock);
+	if (fn)
+		fn(arg);
+}
+
 void d1_fixture_fail_next_flush(struct d1_store *s)
 {
 	pthread_mutex_lock(&s->lock);
@@ -774,6 +817,24 @@ static uint64_t d1_eof_locked(struct d1_store *s,
  * mutating anything, even across an incarnation change; the same key
  * with a different body is a conflict and never a new transition.
  */
+/*
+ * Whether this receipt belongs to that export and operation key.  The
+ * entry ordinal is deliberately not part of the question: three callers
+ * want the key itself, and only one of them also cares which member.
+ */
+static bool d1_receipt_keyed(const struct d1_receipt *r,
+			     const struct d1_uuid *export_uuid,
+			     const struct d1_opkey *key)
+{
+	if (!r->used)
+		return false;
+	if (memcmp(&r->export_uuid, export_uuid, sizeof(*export_uuid)) != 0)
+		return false;
+	return memcmp(&r->key.origin, &key->origin, sizeof(key->origin)) == 0 &&
+	       r->key.sequence == key->sequence &&
+	       r->key.ordinal == key->ordinal;
+}
+
 static struct d1_receipt *d1_receipt_find(struct d1_store *s,
 					  const struct d1_uuid *export_uuid,
 					  const struct d1_opkey *key,
@@ -784,15 +845,8 @@ static struct d1_receipt *d1_receipt_find(struct d1_store *s,
 	for (i = 0; i < D1_MAX_RECEIPTS; i++) {
 		struct d1_receipt *r = &s->receipts[i];
 
-		if (!r->used || r->ordinal != ordinal)
-			continue;
-		if (memcmp(&r->export_uuid, export_uuid,
-			   sizeof(*export_uuid)) != 0)
-			continue;
-		if (memcmp(&r->key.origin, &key->origin, sizeof(key->origin)) ==
-			    0 &&
-		    r->key.sequence == key->sequence &&
-		    r->key.ordinal == key->ordinal)
+		if (r->ordinal == ordinal &&
+		    d1_receipt_keyed(r, export_uuid, key))
 			return r;
 	}
 	return NULL;
@@ -1669,20 +1723,35 @@ static bool d1_key_conflicts(struct d1_store *s,
 	for (i = 0; i < D1_MAX_RECEIPTS; i++) {
 		const struct d1_receipt *r = &s->receipts[i];
 
-		if (!r->used)
-			continue;
-		if (memcmp(&r->export_uuid, export_uuid,
-			   sizeof(*export_uuid)) != 0)
-			continue;
-		if (memcmp(&r->key.origin, &key->origin, sizeof(key->origin)) !=
-			    0 ||
-		    r->key.sequence != key->sequence ||
-		    r->key.ordinal != key->ordinal)
+		if (!d1_receipt_keyed(r, export_uuid, key))
 			continue;
 		if (memcmp(r->digest, digest, D1_DIGEST_BYTES) != 0)
 			return true;
 	}
 	return false;
+}
+
+/*
+ * How many members of this key already carry a receipt.
+ *
+ * A live batch records member j before it reaches member j+1, stops at
+ * the first member it could not record, and answers an exact repeat of
+ * a recorded member from its receipt rather than logging it again.  So
+ * the receipts a key holds are always the dense prefix 0..n-1, and the
+ * next ENTRY a log may legitimately carry for that key is member n --
+ * which is one comparison, and covers a repeated ordinal as well as a
+ * skipped one, because a repeated ordinal is already inside the count.
+ */
+static uint32_t d1_key_recorded(struct d1_store *s,
+				const struct d1_uuid *export_uuid,
+				const struct d1_opkey *key)
+{
+	uint32_t i, n = 0;
+
+	for (i = 0; i < D1_MAX_RECEIPTS; i++)
+		if (d1_receipt_keyed(&s->receipts[i], export_uuid, key))
+			n++;
+	return n;
 }
 
 /*
@@ -1770,12 +1839,26 @@ static void d1_apply_one(struct d1_store *s, const struct d1_envelope *env,
 		complete->disposition = D1_UNRECORDED;
 		return;
 	}
+	/*
+	 * The whole-Envelope binding is an invariant of this transition,
+	 * not of the call that reached it.  One preflight in the public
+	 * path is not enough: two callers can both pass it while the key
+	 * is unused and then interleave their members, because the lock is
+	 * released between members, and replay enters here directly and
+	 * never preflights at all.  So the key is asked again inside the
+	 * lock interval that goes on to reserve the receipt, and a member
+	 * whose key already names a different Envelope mutates nothing.
+	 *
+	 * This subsumes the per-ordinal digest comparison that used to
+	 * stand here: a receipt at this ordinal with another digest is one
+	 * of the receipts this question already asks about.
+	 */
+	if (d1_key_conflicts(s, &env->object.export_uuid, &env->key, digest)) {
+		res->status = D1_REPLAY_CONFLICT;
+		return;
+	}
 	slot = d1_receipt_find(s, &env->object.export_uuid, &env->key, ordinal);
 	if (slot) {
-		if (memcmp(slot->digest, digest, D1_DIGEST_BYTES) != 0) {
-			res->status = D1_REPLAY_CONFLICT;
-			return;
-		}
 		/* The complete historical result, epoch and EOF included. */
 		*complete = slot->result;
 		return;
@@ -1902,12 +1985,13 @@ static void d1_apply_control(struct d1_store *s, const struct d1_envelope *env,
 		complete->disposition = D1_UNRECORDED;
 		return;
 	}
+	/* The same invariant, asked in the same place; see d1_apply_one. */
+	if (d1_key_conflicts(s, &env->object.export_uuid, &env->key, digest)) {
+		res->status = D1_REPLAY_CONFLICT;
+		return;
+	}
 	slot = d1_receipt_find(s, &env->object.export_uuid, &env->key, 0);
 	if (slot) {
-		if (memcmp(slot->digest, digest, D1_DIGEST_BYTES) != 0) {
-			res->status = D1_REPLAY_CONFLICT;
-			return;
-		}
 		*complete = slot->result;
 		return;
 	}
@@ -1970,7 +2054,7 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	uint8_t digest[D1_DIGEST_BYTES];
 	struct d1_complete_result complete;
 	uint32_t need, count, i;
-	bool commit;
+	bool commit, conflict;
 
 	memset(out, 0, sizeof(*out));
 	out->key = env->key;
@@ -2045,10 +2129,20 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	/*
 	 * If this key is recorded under a different request, no member of
 	 * this one runs.  The recorded request keeps its receipts and can
-	 * still be finished by its own exact retry.
+	 * still be finished by its own exact retry.  This is an early
+	 * answer, not the guarantee: the guarantee is the same question
+	 * asked inside each member's lock interval, in d1_apply_one.
+	 *
+	 * Section 8 orders the two halves: validate the caller binding,
+	 * then look the key up.  A handle bound to another object learns
+	 * nothing about whose key is in use; it falls through to the
+	 * member path, which answers STALE_AUTH and reserves nothing.
 	 */
 	pthread_mutex_lock(&s->lock);
-	if (d1_key_conflicts(s, &env->object.export_uuid, &env->key, digest)) {
+	conflict = d1_binding_ok(s, env) &&
+		   d1_key_conflicts(s, &env->object.export_uuid, &env->key,
+				    digest);
+	if (conflict) {
 		pthread_mutex_unlock(&s->lock);
 		for (i = 0; i < count; i++) {
 			struct d1_entry_result *res = &out->entries[i];
@@ -2063,6 +2157,12 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		return D1_OK;
 	}
 	pthread_mutex_unlock(&s->lock);
+
+	/*
+	 * The gap the fixture can open: everything decided above was
+	 * decided under a lock this call no longer holds.
+	 */
+	d1_run_member_hook(s);
 
 	if (need == D1_RIGHT_CONTROL) {
 		pthread_mutex_lock(&s->lock);
@@ -2975,6 +3075,18 @@ static uint32_t d1_replay_entry(struct d1_store *s, const uint8_t *body,
 	if (!d1_envelope_digest(&env, s->scratch, s->scratch_cap, digest))
 		return D1_INVALID;
 	if (memcmp(digest, logged_digest, sizeof(digest)) != 0)
+		return D1_INVALID;
+
+	/*
+	 * The receipts a key holds are the dense prefix of its members
+	 * (see d1_key_recorded), so a record that repeats an ordinal or
+	 * skips one is a record the live writer could not have emitted.
+	 * Refusing it here, before the reducer runs, is what stops a
+	 * spliced log from reconstructing a state no caller ever claimed.
+	 * A member of the same key carrying a different Envelope digest is
+	 * refused inside the reducer, which replay shares.
+	 */
+	if (ordinal != d1_key_recorded(s, &env.object.export_uuid, &env.key))
 		return D1_INVALID;
 
 	d1_apply_one(s, &env, ordinal, digest, d1_op_rights(env.op),
