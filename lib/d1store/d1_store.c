@@ -3403,6 +3403,24 @@ static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 		return D1_INVALID;
 	if (!d1_control_result_decode(result_bytes, result_len, &logged_ctl))
 		return D1_INVALID;
+	/*
+	 * And its result is an outcome this kind's writer appends.  A
+	 * fixture control has no receipt, so there is no before-and-after
+	 * question to ask about it; what stands in for one is the rule
+	 * each live writer already follows.  ADMIT and CUSTODY journal
+	 * only an allocation: d1_fixture_admit_full and d1_fixture_custody
+	 * append nothing when the ID came back zero, so a record carrying
+	 * their zero ID is a record no writer emits -- and result equality
+	 * cannot notice, because the reducer refuses the same request the
+	 * same way and computes exactly the pair that was logged.
+	 *
+	 * The other three journal every outcome they reach, including a
+	 * refusal and a repeat, so their unsuccessful records are real
+	 * history and are not held to this.
+	 */
+	if ((request.kind == D1_CTL_ADMIT || request.kind == D1_CTL_CUSTODY) &&
+	    logged_ctl.id == 0)
+		return D1_INVALID;
 	memset(&computed_ctl, 0, sizeof(computed_ctl));
 	switch (request.kind) {
 	case D1_CTL_ADMIT:

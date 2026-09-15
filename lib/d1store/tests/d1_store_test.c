@@ -6225,6 +6225,144 @@ static void test_fixture_control_records_are_canonical(void)
 }
 
 /*
+ * A fixture control record has no receipt, so its emission rule is the
+ * one its own writer follows.
+ *
+ * ADMIT and CUSTODY append nothing when the allocation came back zero,
+ * so a record carrying their zero ID is a record no writer emits -- and
+ * result equality cannot notice it, because the reducer refuses the same
+ * request the same way and recomputes exactly the pair that was logged.
+ * Both negatives below carry that exact pair.  Accepting one moved the
+ * accepted frontier over an event that never happened, and the next
+ * reopen adopted the invented LSN, so the reopen is checked too.
+ */
+static void test_fixture_records_carry_an_outcome_that_was_logged(void)
+{
+	static const char *const what[] = {
+		"an ADMIT that allocated nothing is refused",
+		"a CUSTODY that allocated nothing is refused",
+	};
+	unsigned int pass;
+
+	for (pass = 0; pass < 2; pass++) {
+		struct d1_uuid store_uuid;
+		struct d1_store *live, *target;
+		struct d1_control_request request;
+		struct d1_control_result result;
+		struct d1_envelope env;
+		struct d1_result res;
+		static uint8_t copy[65536];
+		static uint8_t body[2048];
+		static uint8_t bytes[1024];
+		static uint8_t encoded[512];
+		static uint8_t data[16];
+		const uint8_t *log;
+		size_t len, at[16], used, req_len, res_len;
+		unsigned int i, records;
+		uint32_t blen;
+		size_t after = 0;
+		d1_id_t admission;
+
+		memset(data, 0x7f, sizeof(data));
+		fill_uuid(&store_uuid, (uint8_t)(0x7f + pass));
+		live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!live)
+			return;
+		d1_store_journal_enable(live);
+		admission = d1_fixture_admit(live, &object, 11,
+					     D1_RIGHT_WRITE |
+						     D1_RIGHT_SINGLE_WRITER);
+		env_init(&env, live, admission, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], 0, 11, 1, data,
+			    sizeof(data), true,
+			    &(struct d1_guard){ .never_written = true });
+		check(d1_store_apply(live, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "a history to append to");
+
+		/* The live writer really does append nothing for these. */
+		(void)d1_store_journal(live, &len);
+		memset(&request, 0, sizeof(request));
+		if (pass == 0) {
+			request.kind = D1_CTL_ADMIT;
+			request.object = object;
+			for (i = 0; i < D1_UUID_BYTES; i++) {
+				request.auth.issuer.bytes[i] =
+					(uint8_t)(0xf0u + i);
+				request.auth.principal.bytes[i] = (uint8_t)i;
+			}
+			request.auth.writer = D1_WRITER_RESERVED_LOW;
+			request.auth.rights = D1_RIGHT_WRITE;
+			check(d1_fixture_admit_full(live, &object,
+						    &request.auth) == 0,
+			      "a reserved writer is never admitted");
+		} else {
+			request.kind = D1_CTL_CUSTODY;
+			request.version = 999999u;
+			check(d1_fixture_custody(live, request.version) == 0,
+			      "custody over no version is never issued");
+		}
+		log = d1_store_journal(live, &after);
+		check(after == len, "and the refusal was not journalled");
+
+		memset(&result, 0, sizeof(result));
+		result.status = D1_NOSPC;
+		result.id = 0;
+		req_len = d1_control_request_encode(&request, bytes,
+						    sizeof(bytes));
+		res_len = d1_control_result_encode(&result, encoded,
+						   sizeof(encoded));
+		records = index_log(log, after, at, 16);
+		check(req_len && res_len && after + 4096u <= sizeof(copy),
+		      "the record it did not write encodes");
+		if (!req_len || !res_len || after + 4096u > sizeof(copy)) {
+			d1_store_free(live);
+			return;
+		}
+		blen = control_body(body, request.kind, bytes,
+				    (uint32_t)req_len, encoded,
+				    (uint32_t)res_len);
+		memcpy(copy, log, after);
+		used = after + frame_record(copy + after, D1_REC_CONTROL,
+					    &store_uuid, (uint64_t)records + 1u,
+					    1, body, blen);
+
+		target =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (target) {
+			check(d1_store_replay(target, copy, used) == D1_INVALID,
+			      what[pass]);
+			d1_store_free(target);
+		}
+		/* And a reopen does not adopt the frontier it invented. */
+		target =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (target) {
+			size_t adopted = 1;
+
+			check(d1_store_reopen(target, copy, used) == D1_INVALID,
+			      "and a reopen over it fails");
+			(void)d1_store_journal(target, &adopted);
+			check(adopted == 0,
+			      "with no journal of its own to carry the LSN");
+			d1_store_free(target);
+		}
+		target =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (target) {
+			check(d1_store_replay(target, log, after) == D1_OK,
+			      "while the log as written still rebuilds");
+			check(states_agree(live, target),
+			      "into the same store");
+			d1_store_free(target);
+		}
+		d1_store_free(live);
+	}
+}
+
+/*
  * A typed ID of zero is the absent one.
  *
  * So an option that says it is present and carries zero is two
@@ -6498,6 +6636,7 @@ int main(void)
 	test_replay_refuses_a_record_that_found_no_room();
 	test_a_batch_stops_at_its_first_unrecorded_member();
 	test_fixture_control_records_are_canonical();
+	test_fixture_records_carry_an_outcome_that_was_logged();
 	test_lifecycle_options_are_canonical();
 	test_start_can_fail_to_become_durable();
 	test_caller_binding_is_settled_first();
