@@ -1266,11 +1266,16 @@ static void test_failed_replay_poisons_the_handle(void)
 	struct d1_view *view = NULL;
 	struct d1_envelope env;
 	struct d1_result res;
+	struct d1_guard guard;
+	struct d1_interval holes[4];
+	uint8_t verifier[D1_VERIFIER_BYTES];
 	const uint8_t *log;
-	size_t len;
+	size_t len, badlen;
 	uint8_t *writable;
 	static uint8_t data[16];
-	d1_id_t admission;
+	d1_id_t admission, seen;
+	unsigned int i;
+	bool zero = true;
 
 	memset(data, 0x77, sizeof(data));
 	fill_uuid(&store_uuid, 0x42);
@@ -1289,6 +1294,15 @@ static void test_failed_replay_poisons_the_handle(void)
 			   &(struct d1_guard){ .never_written = true }, 0,
 			   NULL) != 0,
 	      "with more than one record in it");
+	/*
+	 * Two committed chunks with a gap between them, so the prefix the
+	 * rebuild does reduce has a visible version, an EOF, a guard and
+	 * an extent list to be wrongly served from.
+	 */
+	check(commit_chunk(live, admission, 4, 3, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "and a third, past a hole");
 
 	log = d1_store_journal(live, &len);
 	bad = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -1317,6 +1331,29 @@ static void test_failed_replay_poisons_the_handle(void)
 	check(view == NULL, "and gives none");
 	check(d1_store_replay(bad, log, len) == D1_INVALID,
 	      "nor try the rebuild again");
+
+	/*
+	 * And "nothing" includes the observers.  The rebuild got as far as
+	 * the committed chunks before the corrupt record stopped it, so
+	 * every one of these would otherwise hand back a value out of a
+	 * history the model refused.
+	 */
+	check(!d1_store_visible(bad, &object, 0, &seen),
+	      "it makes nothing visible");
+	check(!d1_store_guard(bad, &object, 0, &guard),
+	      "it has no guard to give");
+	check(d1_store_eof(bad, &object) == 0, "no EOF");
+	check(d1_store_holes(bad, &object, holes, 4) == 0, "no extents");
+	check(!d1_store_materialized(bad, &object, 0, &seen),
+	      "no materialized pointer");
+	check(d1_store_incarnation(bad) == 0, "no incarnation");
+	d1_store_verifier(bad, verifier);
+	for (i = 0; i < D1_VERIFIER_BYTES; i++)
+		zero = zero && verifier[i] == 0;
+	check(zero, "a zero verifier");
+	(void)d1_store_journal(bad, &badlen);
+	check(badlen == 0, "and no journal bytes");
+
 	check(d1_store_close(bad) == D1_OK, "but it still closes");
 
 	d1_store_free(live);

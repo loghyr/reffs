@@ -336,9 +336,16 @@ const uint8_t *d1_store_journal(const struct d1_store *s, size_t *len);
  * an active store underneath its callers, and none is wanted: a
  * reconstruction target is owned by one caller until it returns.
  *
- * A rebuild that fails part way leaves the handle poisoned.  A poisoned
- * handle serves nothing and accepts no further authority; only teardown
- * is left for it.
+ * A rebuild that fails part way leaves the handle poisoned, and
+ * "serves nothing" is meant literally: it applies nothing, opens no
+ * view, accepts no fixture authority, and every public observer answers
+ * as if it knew nothing -- no visible version, no guard, no EOF, no
+ * holes, no materialized pointer, a zero verifier and incarnation, and
+ * no journal bytes.  A partial reduction is neither the logged history
+ * nor an empty store, and there is deliberately no diagnostic route to
+ * it: a caller that wants to see what a log builds reads the store it
+ * is comparing against, before the rebuild that failed.  Only teardown
+ * is left for a poisoned handle.
  */
 uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log,
 			 size_t durable);
@@ -352,9 +359,15 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log,
  * LSNs rather than starting them over.  Doing it twice is ordinary.
  *
  * The pristine target, exclusive ownership, geometry and poisoning
- * rules of d1_store_replay apply here unchanged.  Fixture fault arms do
- * not survive either path: reconstruction clears them on entry, so the
- * first operation after a rebuild or a reopen is an ordinary one.
+ * rules of d1_store_replay apply here unchanged, and one more: a reopen
+ * whose rebuild succeeded and whose new journal then could not be
+ * initialized, adopted or started poisons the handle too.  What it
+ * would otherwise leave is a populated, mutable store that nothing is
+ * recording and that can never be reconstructed into again.
+ *
+ * Fixture fault arms do not survive either path: reconstruction clears
+ * them on entry, so the first operation after a rebuild or a reopen is
+ * an ordinary one.
  */
 uint32_t d1_store_reopen(struct d1_store *s, const uint8_t *log,
 			 size_t durable);

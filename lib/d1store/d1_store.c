@@ -291,10 +291,35 @@ static void d1_verifier_of(uint64_t incarnation, uint8_t out[D1_VERIFIER_BYTES])
  * not survive is the store being torn down under it, which is what
  * d1_store_close refuses to do.
  */
+/*
+ * Whether this handle may still answer for the model.
+ *
+ * A rebuild that stopped part way left state that is neither the logged
+ * history nor an empty store; a reopen that rebuilt and then failed to
+ * start its new journal left a store nothing is recording.  Either way
+ * the handle is finished, and "serves nothing" has to mean the
+ * observers too.  A version, an EOF, a guard or a verifier read out of
+ * a history the model rejected is precisely the value a caller would
+ * mistake for the state of the store, so every public observer answers
+ * as if it knew nothing, and only teardown remains.
+ *
+ * There is deliberately no diagnostic back door here.  A test that
+ * wants to look at a partial reduction reads the state before it
+ * poisons the handle, which is what the reduction is being compared
+ * against anyway.
+ */
+static bool d1_store_serving(const struct d1_store *s)
+{
+	return !s->poisoned;
+}
+
 void d1_store_verifier(struct d1_store *s, uint8_t out[D1_VERIFIER_BYTES])
 {
 	pthread_mutex_lock(&s->lock);
-	d1_verifier_of(s->incarnation, out);
+	if (d1_store_serving(s))
+		d1_verifier_of(s->incarnation, out);
+	else
+		memset(out, 0, D1_VERIFIER_BYTES);
 	pthread_mutex_unlock(&s->lock);
 }
 
@@ -303,7 +328,7 @@ uint64_t d1_store_incarnation(struct d1_store *s)
 	uint64_t incarnation;
 
 	pthread_mutex_lock(&s->lock);
-	incarnation = s->incarnation;
+	incarnation = d1_store_serving(s) ? s->incarnation : 0;
 	pthread_mutex_unlock(&s->lock);
 	return incarnation;
 }
@@ -500,12 +525,11 @@ void d1_store_free(struct d1_store *s)
  * Whether the fixture may change this store at all.
  *
  * A poisoned handle serves nothing, and that includes the harness: a
- * half-rebuilt store is not a place to install authority.  Observers
- * still answer, so a caller can look at what it has before dropping it.
+ * half-rebuilt store is not a place to install authority.
  */
 static bool d1_fixture_may_mutate(const struct d1_store *s)
 {
-	return !s->poisoned && !s->closed;
+	return d1_store_serving(s) && !s->closed;
 }
 
 void d1_fixture_fail_next_append(struct d1_store *s)
@@ -586,6 +610,10 @@ void d1_fixture_fail_next_flush(struct d1_store *s)
  */
 const uint8_t *d1_store_journal(const struct d1_store *s, size_t *len)
 {
+	if (!d1_store_serving(s)) {
+		*len = 0;
+		return NULL;
+	}
 	*len = s->journal.durable;
 	return s->journal.buf;
 }
@@ -2718,7 +2746,7 @@ bool d1_store_materialized(struct d1_store *s, const struct d1_objkey *object,
 	bool found = false;
 
 	pthread_mutex_lock(&s->lock);
-	o = d1_object_find(s, object);
+	o = d1_store_serving(s) ? d1_object_find(s, object) : NULL;
 	if (o && index < D1_MAX_CHUNKS &&
 	    o->chunks[index].materialized_present) {
 		*version = o->chunks[index].materialized;
@@ -3313,7 +3341,16 @@ uint32_t d1_store_reopen(struct d1_store *s, const uint8_t *log, size_t durable)
 		return status;
 
 	pthread_mutex_lock(&s->lock);
+	/*
+	 * Everything from here runs on a store that has already been
+	 * rebuilt, so a failure cannot be answered by leaving the handle
+	 * alone: the reduction happened.  What it would leave is a
+	 * populated, mutable store with no journal recording it and no way
+	 * to reconstruct into it again, which is the same thing a partial
+	 * rebuild leaves and is poisoned for the same reason.
+	 */
 	if (!d1_journal_init(&s->journal, &s->uuid)) {
+		s->poisoned = true;
 		pthread_mutex_unlock(&s->lock);
 		return D1_NOSPC;
 	}
@@ -3321,11 +3358,13 @@ uint32_t d1_store_reopen(struct d1_store *s, const uint8_t *log, size_t durable)
 	if (durable && !d1_journal_adopt(&s->journal, log, durable,
 					 s->replayed_lsn + 1u)) {
 		d1_journal_fini(&s->journal);
+		s->poisoned = true;
 		pthread_mutex_unlock(&s->lock);
 		return D1_NOSPC;
 	}
 	if (s->incarnation == UINT64_MAX) {
 		d1_journal_fini(&s->journal);
+		s->poisoned = true;
 		pthread_mutex_unlock(&s->lock);
 		return D1_NOSPC;
 	}
@@ -3334,6 +3373,7 @@ uint32_t d1_store_reopen(struct d1_store *s, const uint8_t *log, size_t durable)
 	if (status != D1_OK) {
 		s->incarnation--;
 		d1_journal_fini(&s->journal);
+		s->poisoned = true;
 		pthread_mutex_unlock(&s->lock);
 		return status;
 	}
@@ -3354,7 +3394,8 @@ bool d1_store_visible(struct d1_store *s, const struct d1_objkey *object,
 	bool found;
 
 	pthread_mutex_lock(&s->lock);
-	found = d1_visible_locked(s, object, index, version);
+	found = d1_store_serving(s) &&
+		d1_visible_locked(s, object, index, version);
 	pthread_mutex_unlock(&s->lock);
 	return found;
 }
@@ -3365,7 +3406,7 @@ bool d1_store_guard(struct d1_store *s, const struct d1_objkey *object,
 	bool found;
 
 	pthread_mutex_lock(&s->lock);
-	found = d1_guard_locked(s, object, index, guard);
+	found = d1_store_serving(s) && d1_guard_locked(s, object, index, guard);
 	pthread_mutex_unlock(&s->lock);
 	return found;
 }
@@ -3375,7 +3416,7 @@ uint64_t d1_store_eof(struct d1_store *s, const struct d1_objkey *object)
 	uint64_t eof;
 
 	pthread_mutex_lock(&s->lock);
-	eof = d1_eof_locked(s, object);
+	eof = d1_store_serving(s) ? d1_eof_locked(s, object) : 0;
 	pthread_mutex_unlock(&s->lock);
 	return eof;
 }
@@ -3386,7 +3427,7 @@ uint32_t d1_store_holes(struct d1_store *s, const struct d1_objkey *object,
 	uint32_t n;
 
 	pthread_mutex_lock(&s->lock);
-	n = d1_holes_locked(s, object, out, max);
+	n = d1_store_serving(s) ? d1_holes_locked(s, object, out, max) : 0;
 	pthread_mutex_unlock(&s->lock);
 	return n;
 }
