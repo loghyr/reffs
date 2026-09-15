@@ -268,6 +268,34 @@ struct d1_store *d1_store_open(const struct d1_uuid *store_uuid,
 	return s;
 }
 
+/*
+ * Normal close.  A view's bytes live in the store, so closing while one
+ * is outstanding is not a close; it is a use-after-free with a friendly
+ * name.  This refuses instead.
+ */
+uint32_t d1_store_close(struct d1_store *s)
+{
+	uint32_t i;
+
+	if (!s)
+		return D1_OK;
+	pthread_mutex_lock(&s->lock);
+	for (i = 0; i < D1_MAX_VIEWS; i++) {
+		if (s->views[i].used) {
+			pthread_mutex_unlock(&s->lock);
+			return D1_BUSY;
+		}
+	}
+	pthread_mutex_unlock(&s->lock);
+	d1_store_free(s);
+	return D1_OK;
+}
+
+/*
+ * Crash teardown: the whole simulated world goes, views included, as a
+ * power loss would take it.  A crash is not a normal close, and nothing
+ * may hold a view across this and then read.
+ */
 void d1_store_free(struct d1_store *s)
 {
 	if (!s)
@@ -1619,7 +1647,8 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
  * a view, and one issued for a different object cannot either.
  */
 static uint32_t d1_read_admission(struct d1_store *s, d1_id_t admission,
-				  const struct d1_objkey *object)
+				  const struct d1_objkey *object,
+				  struct d1_admission **out)
 {
 	struct d1_admission *a = d1_admission_find(s, admission);
 
@@ -1629,25 +1658,55 @@ static uint32_t d1_read_admission(struct d1_store *s, d1_id_t admission,
 		return D1_STALE_AUTH;
 	if ((a->rights & D1_RIGHT_READ) != D1_RIGHT_READ)
 		return D1_STALE_AUTH;
+	*out = a;
 	return D1_OK;
 }
 
-/* The owner's own finalized version on this chunk, if it has one. */
-static struct d1_version *d1_own_finalized(struct d1_store *s,
-					   const struct d1_chunk *c,
-					   const struct d1_owner *owner)
+/*
+ * The version a named private transaction offers for this chunk.
+ *
+ * An owner triple is not an authorisation token.  The transaction must
+ * be this caller's -- admitted under the very handle opening the view --
+ * and the caller must present the read epoch that was granted for it.
+ * PREPARED is never selectable; only FINALIZED work is.
+ */
+static uint32_t d1_owner_selection(struct d1_store *s,
+				   const struct d1_selection_spec *sel,
+				   const struct d1_admission *a,
+				   uint32_t object, uint64_t index,
+				   struct d1_version **out)
 {
-	struct d1_txn *t;
+	uint32_t i;
 
-	if (!owner || !c->pending_present)
-		return NULL;
-	t = d1_txn_find(s, c->pending);
-	if (!t || t->phase != D1_PHASE_FINALIZED)
-		return NULL;
-	if (t->owner.cohort != owner->cohort ||
-	    t->owner.writer != owner->writer || t->owner.co_id != owner->co_id)
-		return NULL;
-	return d1_version_find(s, t->version);
+	*out = NULL;
+	for (i = 0; i < sel->count; i++) {
+		struct d1_txn *t = d1_txn_find(s, sel->txns[i]);
+		struct d1_version *v;
+
+		if (!t)
+			return D1_INVALID;
+		if (t->object != object)
+			return D1_INVALID;
+		if (t->owner.cohort != sel->owners[i].cohort ||
+		    t->owner.writer != sel->owners[i].writer ||
+		    t->owner.co_id != sel->owners[i].co_id)
+			return D1_OWNER_CONFLICT;
+		/* Somebody else's private work is not selectable at all. */
+		if (t->admission != a->id)
+			return D1_STALE_AUTH;
+		if (t->read_epoch != sel->read_epoch)
+			return D1_STALE_AUTH;
+		if (t->index != index)
+			continue;
+		if (t->phase != D1_PHASE_FINALIZED)
+			return D1_BAD_PHASE;
+		v = d1_version_find(s, t->version);
+		if (!v)
+			return D1_INVALID;
+		*out = v;
+		return D1_OK;
+	}
+	return D1_OK;
 }
 
 static void d1_view_unpin(struct d1_store *s, struct d1_view *v)
@@ -1667,26 +1726,46 @@ static void d1_view_unpin(struct d1_store *s, struct d1_view *v)
 }
 
 uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
-		      d1_id_t admission, uint32_t selection,
-		      const struct d1_owner *owner, uint64_t range_begin,
-		      uint64_t range_end, struct d1_view **out)
+		      d1_id_t admission, const struct d1_selection_spec *sel,
+		      uint64_t byte_begin, uint64_t byte_end,
+		      struct d1_view **out)
 {
+	struct d1_admission *a = NULL;
 	struct d1_object *o;
 	struct d1_view *v = NULL;
+	uint64_t first, last;
 	uint32_t status, i;
 
 	*out = NULL;
-	if (selection != D1_SELECT_ORDINARY && selection != D1_SELECT_OWNER)
+	if (sel->selection != D1_SELECT_ORDINARY &&
+	    sel->selection != D1_SELECT_OWNER)
 		return D1_INVALID;
-	if (range_begin >= range_end || range_end > D1_MAX_CHUNKS)
+	if (sel->selection == D1_SELECT_OWNER &&
+	    (sel->count < D1_BATCH_ENTRIES_MIN ||
+	     sel->count > D1_BATCH_ENTRIES_MAX))
+		return D1_INVALID;
+	if (sel->selection == D1_SELECT_ORDINARY && sel->count != 0)
+		return D1_INVALID;
+	if (byte_begin >= byte_end)
 		return D1_INVALID;
 
 	pthread_mutex_lock(&s->lock);
-	status = d1_read_admission(s, admission, object);
+	if (byte_end > s->max_file_bytes) {
+		status = D1_INVALID;
+		goto out;
+	}
+	status = d1_read_admission(s, admission, object, &a);
 	if (status != D1_OK)
 		goto out;
 	o = d1_object_find(s, object);
 	if (!o) {
+		status = D1_INVALID;
+		goto out;
+	}
+	/* The byte range names the chunks it touches; it is not one. */
+	first = byte_begin / s->chunk_bytes;
+	last = (byte_end - 1u) / s->chunk_bytes;
+	if (last >= D1_MAX_CHUNKS) {
 		status = D1_INVALID;
 		goto out;
 	}
@@ -1702,15 +1781,28 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 	v->used = true;
 	v->store = s;
 	v->object = d1_object_slot(s, o);
-	v->range_begin = range_begin;
-	v->range_end = range_end;
+	v->range_begin = byte_begin;
+	v->range_end = byte_end;
 
-	for (i = (uint32_t)range_begin; i < (uint32_t)range_end; i++) {
+	for (i = (uint32_t)first; i <= (uint32_t)last; i++) {
 		struct d1_chunk *c = &o->chunks[i];
 		struct d1_version *ver = NULL;
+		uint64_t start, end;
 
-		if (selection == D1_SELECT_OWNER)
-			ver = d1_own_finalized(s, c, owner);
+		if (sel->selection == D1_SELECT_OWNER) {
+			status = d1_owner_selection(s, sel, a, v->object, i,
+						    &ver);
+			if (status != D1_OK) {
+				/*
+				 * A wrong owner, a stale epoch or another
+				 * caller's transaction fails the whole view.
+				 * There is no falling back to committed data.
+				 */
+				d1_view_unpin(s, v);
+				v->used = false;
+				goto out;
+			}
+		}
 		if (!ver && c->visible_present)
 			ver = d1_version_find(s, c->visible);
 		if (!ver)
@@ -1728,9 +1820,16 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 		ver->pins++;
 		v->present[i] = true;
 		v->version[i] = ver->id;
+		/*
+		 * The view's extents come from the vector it selected, so an
+		 * owner view that extends or shortens a chunk sees its own
+		 * EOF rather than the ordinary one.
+		 */
+		if (d1_mul_u64(i, s->chunk_bytes, &start) &&
+		    d1_add_u64(start, ver->len, &end) && end > v->eof)
+			v->eof = end;
 	}
 
-	v->eof = d1_eof_locked(s, object);
 	*out = v;
 	status = D1_OK;
 out:
@@ -1756,16 +1855,22 @@ uint32_t d1_view_read(struct d1_view *v, uint64_t offset, uint8_t *buf,
 {
 	struct d1_store *s = v->store;
 	uint64_t at = offset;
+	uint64_t limit;
 	uint32_t done = 0;
 
 	*out_len = 0;
 	if (!v->used || !s)
 		return D1_INVALID;
+	/* A read outside the range the view covers is not a hole. */
+	if (offset < v->range_begin || offset >= v->range_end)
+		return D1_INVALID;
 	if (offset >= v->eof || len == 0)
 		return D1_OK;
-	/* The view's own EOF bounds the read, not the store's current one. */
-	if (v->eof - offset < (uint64_t)len)
-		len = (uint32_t)(v->eof - offset);
+
+	/* Bounded by the view's own EOF and by its own range, not the store's. */
+	limit = v->eof < v->range_end ? v->eof : v->range_end;
+	if (limit - offset < (uint64_t)len)
+		len = (uint32_t)(limit - offset);
 
 	pthread_mutex_lock(&s->lock);
 	while (done < len) {
@@ -1779,7 +1884,7 @@ uint32_t d1_view_read(struct d1_view *v, uint64_t offset, uint8_t *buf,
 		if (index < D1_MAX_CHUNKS && v->present[index])
 			ver = d1_version_find(s, v->version[index]);
 		/*
-		 * A hole inside the view's EOF is zeros, and so is the part
+		 * A hole below the view's EOF is zeros, and so is the part
 		 * of a chunk past a partial image.  Both are answers, not
 		 * short reads.
 		 */

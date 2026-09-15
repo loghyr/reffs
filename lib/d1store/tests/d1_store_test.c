@@ -862,11 +862,33 @@ static d1_id_t finalize_chunk(struct d1_store *s, d1_id_t admission,
 	return version;
 }
 
-/* E: a view decides once, and keeps what it decided. */
+/* An ordinary selection over a byte range. */
+static void ordinary_sel(struct d1_selection_spec *sel)
+{
+	memset(sel, 0, sizeof(*sel));
+	sel->selection = D1_SELECT_ORDINARY;
+}
+
+/* An owner selection naming one transaction it claims. */
+static void owner_sel(struct d1_selection_spec *sel, d1_id_t txn,
+		      uint32_t writer, uint32_t co_id, uint64_t read_epoch)
+{
+	memset(sel, 0, sizeof(*sel));
+	sel->selection = D1_SELECT_OWNER;
+	sel->count = 1;
+	sel->txns[0] = txn;
+	sel->owners[0].cohort = 1;
+	sel->owners[0].writer = writer;
+	sel->owners[0].co_id = co_id;
+	sel->read_epoch = read_epoch;
+}
+
+/* E1: a view decides once, and keeps what it decided. */
 static void test_view_is_stable(void)
 {
 	struct d1_uuid store_uuid;
 	struct d1_store *s;
+	struct d1_selection_spec sel;
 	struct d1_view *view = NULL, *after = NULL;
 	struct d1_guard guard;
 	static uint8_t first[64];
@@ -889,15 +911,16 @@ static void test_view_is_stable(void)
 			  &(struct d1_guard){ .never_written = true }, 0, NULL);
 	check(v1 != 0, "the first version commits");
 
-	check(d1_view_open(s, &object, admission, D1_SELECT_ORDINARY, NULL, 0,
-			   1, &view) == D1_OK,
-	      "a view opens over the committed chunk");
+	ordinary_sel(&sel);
+	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
+			   &view) == D1_OK,
+	      "a view opens over the first chunk's bytes");
 	check(d1_view_read(view, 0, got, sizeof(got), &got_len) == D1_OK &&
 		      got_len == sizeof(first) &&
 		      memcmp(got, first, sizeof(first)) == 0,
 	      "and reads what was committed");
 
-	/* E1: a later commit does not reach back into the open view. */
+	/* A later commit does not reach back into the open view. */
 	d1_store_guard(s, &object, 0, &guard);
 	v2 = commit_chunk(s, admission, 0, 2, second, sizeof(second), &guard,
 			  v1, NULL);
@@ -912,25 +935,28 @@ static void test_view_is_stable(void)
 	 * E4: logical release asks a question about durable state.  A live
 	 * pin keeps the immutable bytes alive for the view that holds it;
 	 * it does not decide whether a future rollback may reach the
-	 * version.  Making release depend on pins would make the durable
-	 * history depend on when a reader happened to close.
+	 * version.
 	 */
 	check(d1_fixture_release_predecessor(s, v1),
 	      "an eligible predecessor releases while a view pins it");
 	check(d1_view_read(view, 0, got, sizeof(got), &got_len) == D1_OK &&
 		      memcmp(got, first, sizeof(first)) == 0,
 	      "and the pinned view still reads its own bytes");
+
+	/* A normal close refuses while the view is outstanding. */
+	check(d1_store_close(s) == D1_BUSY,
+	      "a normal close refuses while a view is open");
 	d1_view_close(s, view);
 
-	/* A view opened after the commit sees the new version. */
-	check(d1_view_open(s, &object, admission, D1_SELECT_ORDINARY, NULL, 0,
-			   1, &after) == D1_OK,
+	ordinary_sel(&sel);
+	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
+			   &after) == D1_OK,
 	      "a later view opens");
 	check(d1_view_version(after, 0, &seen) && seen == v2,
 	      "and names the newer version");
 	d1_view_close(s, after);
-
-	d1_store_free(s);
+	check(d1_store_close(s) == D1_OK,
+	      "and the close succeeds once nothing is outstanding");
 }
 
 /*
@@ -949,6 +975,7 @@ static void test_release_order_does_not_matter(void)
 	for (pass = 0; pass < 2; pass++) {
 		struct d1_uuid store_uuid;
 		struct d1_store *s;
+		struct d1_selection_spec sel;
 		struct d1_view *view = NULL;
 		struct d1_guard guard;
 		static uint8_t data[32];
@@ -967,8 +994,9 @@ static void test_release_order_does_not_matter(void)
 		v1 = commit_chunk(s, admission, 0, 1, data, sizeof(data),
 				  &(struct d1_guard){ .never_written = true },
 				  0, NULL);
-		check(d1_view_open(s, &object, admission, D1_SELECT_ORDINARY,
-				   NULL, 0, 1, &view) == D1_OK,
+		ordinary_sel(&sel);
+		check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
+				   &view) == D1_OK,
 		      "a view pins the version");
 		d1_store_guard(s, &object, 0, &guard);
 		v2 = commit_chunk(s, admission, 0, 2, data, sizeof(data),
@@ -997,19 +1025,22 @@ static void test_release_order_does_not_matter(void)
 	      "which is that the released predecessor is gone");
 }
 
-/* E3: an owner may select its own finalized version. */
+/*
+ * E3: an owner selects its own finalized work by naming it, and nobody
+ * else can.  An owner triple is not an authorisation token.
+ */
 static void test_view_owner_selection(void)
 {
 	struct d1_uuid store_uuid;
 	struct d1_store *s;
-	struct d1_view *own = NULL, *ordinary = NULL;
+	struct d1_selection_spec sel;
+	struct d1_view *own = NULL, *ordinary = NULL, *denied = NULL;
 	struct d1_guard guard;
 	static uint8_t committed[48];
-	static uint8_t pending[48];
-	uint8_t got[48];
+	static uint8_t pending[64];
+	uint8_t got[64];
 	uint32_t got_len;
-	struct d1_owner owner = { .cohort = 1, .writer = 11, .co_id = 2 };
-	d1_id_t admission, v1, v2, seen;
+	d1_id_t admission, stranger, v1, v2, txn, seen;
 
 	memset(committed, 0xd4, sizeof(committed));
 	memset(pending, 0xe5, sizeof(pending));
@@ -1020,54 +1051,109 @@ static void test_view_owner_selection(void)
 	admission = d1_fixture_admit(s, &object, 11,
 				     D1_RIGHT_READ | D1_RIGHT_WRITE |
 					     D1_RIGHT_SINGLE_WRITER);
+	stranger = d1_fixture_admit(s, &object, 22, D1_RIGHT_READ);
 
 	v1 = commit_chunk(s, admission, 0, 1, committed, sizeof(committed),
 			  &(struct d1_guard){ .never_written = true }, 0, NULL);
 	d1_store_guard(s, &object, 0, &guard);
 	v2 = finalize_chunk(s, admission, 0, 2, pending, sizeof(pending),
-			    &guard, v1, NULL);
+			    &guard, v1, &txn);
 	check(v1 != 0 && v2 != 0, "one version commits and one finalizes");
 
-	check(d1_view_open(s, &object, admission, D1_SELECT_OWNER, &owner, 0, 1,
-			   &own) == D1_OK,
-	      "an owner view opens");
-	check(d1_view_version(own, 0, &seen) && seen == v2,
-	      "and selects the owner's own finalized version");
+	owner_sel(&sel, txn, 11, 2, 0);
+	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES, &own) ==
+		      D1_OK,
+	      "an owner view opens on its own transaction");
+	check(d1_view_version(own, 0, &seen) && seen == v2, "and selects it");
 	check(d1_view_read(own, 0, got, sizeof(got), &got_len) == D1_OK &&
+		      got_len == sizeof(pending) &&
 		      memcmp(got, pending, sizeof(pending)) == 0,
 	      "and reads its bytes");
+	/* Private extension: the owner view has its own, longer EOF. */
+	check(d1_view_eof(own) == sizeof(pending),
+	      "the owner view's EOF comes from what it selected");
+	check(d1_store_eof(s, &object) == sizeof(committed),
+	      "and the ordinary EOF is unchanged");
 
-	check(d1_view_open(s, &object, admission, D1_SELECT_ORDINARY, NULL, 0,
-			   1, &ordinary) == D1_OK,
+	ordinary_sel(&sel);
+	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
+			   &ordinary) == D1_OK,
 	      "an ordinary view opens alongside it");
 	check(d1_view_version(ordinary, 0, &seen) && seen == v1,
 	      "and still sees only what is committed");
 
-	/* Another owner's view falls back to the committed version. */
-	{
-		struct d1_view *other = NULL;
-		struct d1_owner stranger = { .cohort = 1,
-					     .writer = 11,
-					     .co_id = 99 };
+	/* Another reader naming the same transaction gets nothing. */
+	owner_sel(&sel, txn, 11, 2, 0);
+	check(d1_view_open(s, &object, stranger, &sel, 0, CHUNK_BYTES,
+			   &denied) == D1_STALE_AUTH,
+	      "another admission cannot select this private version");
+	check(denied == NULL, "and gets no view at all, not committed data");
 
-		check(d1_view_open(s, &object, admission, D1_SELECT_OWNER,
-				   &stranger, 0, 1, &other) == D1_OK,
-		      "a different owner's view opens");
-		check(d1_view_version(other, 0, &seen) && seen == v1,
-		      "and does not see somebody else's finalized version");
-		d1_view_close(s, other);
-	}
+	/* The right caller with the wrong epoch gets nothing either. */
+	owner_sel(&sel, txn, 11, 2, 99);
+	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
+			   &denied) == D1_STALE_AUTH,
+	      "a stale read epoch fails the view");
+	check(denied == NULL, "with no fallback to committed data");
+
+	/* The right caller with the wrong owner triple gets nothing. */
+	owner_sel(&sel, txn, 11, 99, 0);
+	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
+			   &denied) == D1_OWNER_CONFLICT,
+	      "a wrong owner triple fails the view");
 
 	d1_view_close(s, own);
 	d1_view_close(s, ordinary);
 	d1_store_free(s);
 }
 
-/* Holes, EOF and the admission a read needs. */
-static void test_view_holes_and_admission(void)
+/* A private replacement that is shorter has its own shorter EOF. */
+static void test_owner_view_shrinkage(void)
 {
 	struct d1_uuid store_uuid;
 	struct d1_store *s;
+	struct d1_selection_spec sel;
+	struct d1_view *own = NULL;
+	struct d1_guard guard;
+	static uint8_t big[200];
+	static uint8_t small[20];
+	d1_id_t admission, v1, v2, txn;
+
+	memset(big, 0x11, sizeof(big));
+	memset(small, 0x22, sizeof(small));
+	fill_uuid(&store_uuid, 0x67);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+
+	v1 = commit_chunk(s, admission, 0, 1, big, sizeof(big),
+			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+	d1_store_guard(s, &object, 0, &guard);
+	v2 = finalize_chunk(s, admission, 0, 2, small, sizeof(small), &guard,
+			    v1, &txn);
+	check(v1 != 0 && v2 != 0, "a shorter private replacement finalizes");
+
+	owner_sel(&sel, txn, 11, 2, 0);
+	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES, &own) ==
+		      D1_OK,
+	      "the owner view opens");
+	check(d1_view_eof(own) == sizeof(small),
+	      "and its EOF shrinks with what it selected");
+	check(d1_store_eof(s, &object) == sizeof(big),
+	      "while the ordinary EOF stays where it was");
+	d1_view_close(s, own);
+	d1_store_free(s);
+}
+
+/* Byte ranges, holes, EOF and the admission a read needs. */
+static void test_view_range_holes_and_admission(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_selection_spec sel;
 	struct d1_view *view = NULL;
 	static uint8_t data[100];
 	uint8_t got[256];
@@ -1089,8 +1175,10 @@ static void test_view_holes_and_admission(void)
 			   &(struct d1_guard){ .never_written = true }, 0,
 			   NULL) != 0,
 	      "the sparse chunk commits");
-	check(d1_view_open(s, &object, admission, D1_SELECT_ORDINARY, NULL, 0,
-			   2, &view) == D1_OK,
+
+	ordinary_sel(&sel);
+	check(d1_view_open(s, &object, admission, &sel, 0, 2u * CHUNK_BYTES,
+			   &view) == D1_OK,
 	      "a view opens across the hole");
 	check(d1_view_eof(view) == CHUNK_BYTES + sizeof(data),
 	      "the view records the EOF it saw");
@@ -1103,24 +1191,44 @@ static void test_view_holes_and_admission(void)
 			break;
 	check(i == sizeof(got), "and the hole reads as zeros");
 
+	/* A byte offset that is not a chunk boundary is ordinary. */
+	check(d1_view_read(view, CHUNK_BYTES + 10u, got, 4, &got_len) ==
+			      D1_OK &&
+		      got_len == 4 && got[0] == 0xf6 && got[3] == 0xf6,
+	      "a read at a byte offset inside a chunk works");
+
 	check(d1_view_read(view, d1_view_eof(view), got, sizeof(got),
 			   &got_len) == D1_OK &&
 		      got_len == 0,
 	      "a read at EOF returns nothing");
 
-	/* The tail of a partial image is zeros, not the next chunk. */
-	check(d1_view_read(view, CHUNK_BYTES + sizeof(data) - 1, got, 16,
-			   &got_len) == D1_OK &&
-		      got_len == 1 && got[0] == 0xf6,
-	      "the last byte of the image is the image");
+	/* Outside the range the view covers is refused, not zero-filled. */
+	{
+		struct d1_view *narrow = NULL;
+
+		ordinary_sel(&sel);
+		check(d1_view_open(s, &object, admission, &sel, CHUNK_BYTES,
+				   2u * CHUNK_BYTES, &narrow) == D1_OK,
+		      "a view opens over the second chunk only");
+		check(d1_view_read(narrow, 0, got, sizeof(got), &got_len) ==
+			      D1_INVALID,
+		      "a read before its range is refused");
+		check(got_len == 0, "and returns nothing");
+		check(d1_view_read(narrow, CHUNK_BYTES, got, 8, &got_len) ==
+				      D1_OK &&
+			      got_len == 8,
+		      "and a read inside it works");
+		d1_view_close(s, narrow);
+	}
 
 	d1_view_close(s, view);
 
 	{
 		struct d1_view *denied = NULL;
 
-		check(d1_view_open(s, &object, writeonly, D1_SELECT_ORDINARY,
-				   NULL, 0, 1, &denied) == D1_STALE_AUTH,
+		ordinary_sel(&sel);
+		check(d1_view_open(s, &object, writeonly, &sel, 0, CHUNK_BYTES,
+				   &denied) == D1_STALE_AUTH,
 		      "an admission without READ cannot open a view");
 		check(denied == NULL, "and gets no view");
 	}
@@ -2232,7 +2340,8 @@ int main(void)
 	test_view_is_stable();
 	test_release_order_does_not_matter();
 	test_view_owner_selection();
-	test_view_holes_and_admission();
+	test_owner_view_shrinkage();
+	test_view_range_holes_and_admission();
 	test_replay_reproduces_the_store();
 	test_crash_loses_only_the_torn_record();
 	test_append_fault_is_unrecorded();

@@ -69,6 +69,19 @@ struct d1_result {
  */
 struct d1_store *d1_store_open(const struct d1_uuid *store_uuid,
 			       uint32_t chunk_bytes, uint64_t max_file_bytes);
+/*
+ * Normal close.  Returns D1_BUSY while any view is outstanding, because
+ * a view's bytes live in the store: closing under one is not a close,
+ * it is a use-after-free with a friendly name.  On D1_OK the store is
+ * gone and the caller drops its pointer.
+ */
+uint32_t d1_store_close(struct d1_store *s);
+
+/*
+ * Crash teardown: destroy the whole simulated world, views included,
+ * as a power loss would.  This is what crash tests use.  It is NOT a
+ * normal close, and nothing may hold a view across it and then read.
+ */
 void d1_store_free(struct d1_store *s);
 
 /* The current verifier, as a START publishes it. */
@@ -161,27 +174,45 @@ uint32_t d1_store_holes(struct d1_store *s, const struct d1_objkey *object,
 struct d1_view;
 
 /*
- * Open a read view over [range_begin, range_end) of @object.
- *
- * The view decides once, at open, which version each chunk resolves to,
- * and pins it.  What it reads afterwards is what it decided, whatever
- * later commits or rollbacks do to the pointers -- that is what a view
- * is for.  ORDINARY selection takes the visible version; OWNER takes
- * @owner's own finalized version where it has one, and the visible
- * version everywhere else.
- *
- * Every selected payload is verified against its stored checksum here.
- * A failure rejects the whole view rather than one entry: this model
- * has no per-entry read result to put one in.
+ * What a view selects.  ORDINARY sees only committed data.  OWNER names
+ * the exact transactions it wants, with their owners, and the read
+ * epoch it was granted; a named transaction that is not the caller's,
+ * or an epoch that is not the one granted for it, fails the whole view
+ * rather than quietly handing back committed data instead.
  */
-uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
-		      d1_id_t admission, uint32_t selection,
-		      const struct d1_owner *owner, uint64_t range_begin,
-		      uint64_t range_end, struct d1_view **out);
+struct d1_selection_spec {
+	uint32_t selection;
+	uint32_t count;
+	d1_id_t txns[D1_BATCH_ENTRIES_MAX];
+	struct d1_owner owners[D1_BATCH_ENTRIES_MAX];
+	uint64_t read_epoch;
+};
 
 /*
- * Read from the view.  Holes inside the view's EOF read as zeros; a
- * read starting at or past it returns zero bytes.
+ * Open a read view over the byte range [byte_begin, byte_end).
+ *
+ * The range is bytes, as section 6 specifies -- not chunk indices.  The
+ * view resolves every chunk the range touches once, under the lock,
+ * pins what it resolved before unlocking, and computes its own EOF and
+ * extents from that selected vector.  What it reads afterwards is what
+ * it decided, whatever later commits or rollbacks do to the pointers.
+ *
+ * Every selected payload is verified against its stored checksum here.
+ * One inadmissible or unverifiable member fails the WHOLE view and
+ * drops the pins it had taken: this model has no per-entry read result
+ * to put a failure in.
+ */
+uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
+		      d1_id_t admission, const struct d1_selection_spec *sel,
+		      uint64_t byte_begin, uint64_t byte_end,
+		      struct d1_view **out);
+
+/*
+ * Read from the view.  The offset must lie inside the range the view
+ * was opened over; a read outside it is refused rather than answered
+ * with zeros.  Inside the range, a hole below the view's own EOF reads
+ * as zeros, and a read at or past that EOF returns no bytes -- those
+ * are different answers, not the same one.
  */
 uint32_t d1_view_read(struct d1_view *v, uint64_t offset, uint8_t *buf,
 		      uint32_t len, uint32_t *out_len);

@@ -62,6 +62,12 @@ enum d1_status {
 	 * mutate nothing.  It is a model tag, not a draft status.
 	 */
 	D1_UNSUPPORTED = 13,
+	/*
+	 * Normal close with views or calls still outstanding.  Also a
+	 * model tag rather than a draft status: section 6 names the
+	 * condition, and the draft's status list has no word for it.
+	 */
+	D1_BUSY = 14,
 };
 
 /*
