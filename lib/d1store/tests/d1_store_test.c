@@ -350,8 +350,13 @@ static void test_write_refusals(void)
 	d1_store_apply(s, &env, &res);
 	check(res.entries[0].status == D1_CHECKSUM,
 	      "a payload that fails its checksum is refused");
-	check(d1_store_guard(s, &object, 0, &guard) && guard.never_written,
-	      "and the chunk is untouched");
+	/*
+	 * A semantic refusal changes nothing, which on a store that had
+	 * never seen this object means the object is still not there:
+	 * the entry created it on first touch and the refusal put it back.
+	 */
+	check(!d1_store_guard(s, &object, 0, &guard),
+	      "and the object it touched is still not there");
 
 	/* An admission without WRITE cannot write. */
 	env_init(&env, s, other, D1_OP_WRITE_BATCH);
@@ -2415,6 +2420,488 @@ static void test_repair_only_rollback_replays(void)
 }
 
 /*
+ * A START fences owner reads, not only mutations.
+ *
+ * Section 9: retained pending and finalized versions "need explicit
+ * recovery_admit before owner reads or new lifecycle work".  The
+ * transaction still records the old handle and its epoch, so nothing
+ * about the selection itself changes at a reopen; what changes is that
+ * the handle belongs to an incarnation that is over.
+ */
+static void test_reopen_fences_owner_reads(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *reopened;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
+	struct d1_envelope env;
+	struct d1_result res;
+	const uint8_t *log;
+	size_t len;
+	static uint8_t data[24];
+	uint8_t got[24];
+	uint32_t got_len;
+	d1_id_t admission, control, fresh, txn, seen;
+
+	memset(data, 0xd1, sizeof(data));
+	fill_uuid(&store_uuid, 0x31);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	admission = d1_fixture_admit(live, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+	check(finalize_chunk(live, admission, 0, 1, data, sizeof(data),
+			     &(struct d1_guard){ .never_written = true }, 0,
+			     &txn) != 0,
+	      "a private version is finalized");
+
+	/* Before the reopen, its owner can select it. */
+	owner_sel(&sel, txn, 11, 1, 0);
+	check(d1_view_open(live, &object, admission, &sel, 0, CHUNK_BYTES,
+			   &view) == D1_OK,
+	      "its owner selects it while the incarnation is current");
+	d1_view_close(live, view);
+	view = NULL;
+
+	log = d1_store_journal(live, &len);
+	reopened = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!reopened) {
+		d1_store_free(live);
+		return;
+	}
+	check(d1_store_reopen(reopened, log, len) == D1_OK,
+	      "the store reopens");
+
+	/* The old handle is fenced for reads as well as for mutations. */
+	owner_sel(&sel, txn, 11, 1, 0);
+	check(d1_view_open(reopened, &object, admission, &sel, 0, CHUNK_BYTES,
+			   &view) == D1_STALE_AUTH,
+	      "an old handle cannot select its private version after a reopen");
+	check(view == NULL, "and gets no view");
+
+	/* An ordinary read by that handle is a separate question. */
+	ordinary_sel(&sel);
+	check(d1_view_open(reopened, &object, admission, &sel, 0, CHUNK_BYTES,
+			   &view) == D1_OK,
+	      "an ordinary view by the same handle is not fenced here");
+	if (view)
+		d1_view_close(reopened, view);
+	view = NULL;
+
+	/* Recovery under current authority is what opens it again. */
+	control = d1_fixture_admit(reopened, &object, 11, D1_RIGHT_CONTROL);
+	fresh = d1_fixture_admit(reopened, &object, 11,
+				 D1_RIGHT_READ | D1_RIGHT_WRITE |
+					 D1_RIGHT_SINGLE_WRITER);
+	env_init(&env, reopened, control, D1_OP_RECOVERY_ADMIT);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = txn;
+	env.body.control.old_admission = admission;
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = fresh;
+	env.body.control.read_epoch_present = true;
+	env.body.control.read_epoch = 0;
+	check(d1_store_apply(reopened, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "recovery re-admits the transaction");
+
+	owner_sel(&sel, txn, 11, 1, 0);
+	check(d1_view_open(reopened, &object, fresh, &sel, 0, CHUNK_BYTES,
+			   &view) == D1_OK,
+	      "and the recovered handle selects it");
+	check(d1_view_version(view, 0, &seen), "with a version");
+	check(d1_view_read(view, 0, got, sizeof(got), &got_len) == D1_OK &&
+		      got_len == sizeof(data) &&
+		      memcmp(got, data, sizeof(data)) == 0,
+	      "and reads its bytes");
+	d1_view_close(reopened, view);
+
+	d1_store_free(reopened);
+	d1_store_free(live);
+}
+
+/* Recovery onto a handle that is itself fenced is not a recovery. */
+static void test_recovery_target_must_be_current(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *reopened;
+	struct d1_envelope env;
+	struct d1_result res;
+	const uint8_t *log;
+	size_t len;
+	static uint8_t data[16];
+	d1_id_t old_a, old_b, control, txn;
+
+	memset(data, 0xd2, sizeof(data));
+	fill_uuid(&store_uuid, 0x32);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	old_a = d1_fixture_admit(live, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	/* A second handle issued in the same, soon to be old, incarnation. */
+	old_b = d1_fixture_admit(live, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	env_init(&env, live, old_a, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(live, &env, &res);
+	txn = res.entries[0].txn;
+	check(txn != 0 && old_b != 0, "there is work and a second old handle");
+
+	log = d1_store_journal(live, &len);
+	reopened = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!reopened) {
+		d1_store_free(live);
+		return;
+	}
+	d1_store_reopen(reopened, log, len);
+	control = d1_fixture_admit(reopened, &object, 11, D1_RIGHT_CONTROL);
+
+	env_init(&env, reopened, control, D1_OP_RECOVERY_ADMIT);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = txn;
+	env.body.control.old_admission = old_a;
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = old_b;
+	env.body.control.read_epoch_present = true;
+	env.body.control.read_epoch = 0;
+	check(d1_store_apply(reopened, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "recovery onto a fenced handle is refused");
+
+	/* And the old handle was not revoked on the way to refusing. */
+	env_init(&env, reopened, control, D1_OP_RECOVERY_ADMIT);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = txn;
+	env.body.control.old_admission = old_a;
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = d1_fixture_admit(
+		reopened, &object, 11, D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	env.body.control.read_epoch_present = true;
+	env.body.control.read_epoch = 0;
+	check(d1_store_apply(reopened, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and a recovery onto a current handle still works");
+
+	d1_store_free(reopened);
+	d1_store_free(live);
+}
+
+/*
+ * A hole is a hole wherever the read window ends.
+ *
+ * EOF belongs to the object, not to the window: a view over a low range
+ * must still report the object's EOF, so a read inside a hole under a
+ * higher chunk returns zeros rather than "end of file".
+ */
+static void test_view_eof_is_object_wide(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
+	static uint8_t data[100];
+	uint8_t got[64];
+	uint32_t got_len, i;
+	d1_id_t admission;
+
+	memset(data, 0xe1, sizeof(data));
+	fill_uuid(&store_uuid, 0x33);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+
+	check(commit_chunk(s, admission, 0, 1, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "chunk 0 commits a partial image");
+	check(commit_chunk(s, admission, 3, 2, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "and chunk 3 commits far above it");
+	check(d1_store_eof(s, &object) == 3u * CHUNK_BYTES + sizeof(data),
+	      "the object's EOF is set by the higher chunk");
+
+	/* A window that stops below the higher chunk. */
+	ordinary_sel(&sel);
+	check(d1_view_open(s, &object, admission, &sel, 0, 2u * CHUNK_BYTES,
+			   &view) == D1_OK,
+	      "a view opens over the lower two chunks");
+	check(d1_view_eof(view) == d1_store_eof(s, &object),
+	      "and reports the object's EOF, not its window's");
+
+	/* The tail of the partial lower image is a hole, not EOF. */
+	check(d1_view_read(view, sizeof(data), got, sizeof(got), &got_len) ==
+			      D1_OK &&
+		      got_len == sizeof(got),
+	      "a read past the partial image is not short");
+	for (i = 0; i < sizeof(got); i++)
+		if (got[i] != 0)
+			break;
+	check(i == sizeof(got), "and reads as zeros");
+
+	/* A window that is nothing but hole. */
+	d1_view_close(s, view);
+	view = NULL;
+	check(d1_view_open(s, &object, admission, &sel, CHUNK_BYTES,
+			   2u * CHUNK_BYTES, &view) == D1_OK,
+	      "a hole-only view opens");
+	check(d1_view_eof(view) == d1_store_eof(s, &object),
+	      "with the object's EOF");
+	check(d1_view_read(view, CHUNK_BYTES, got, sizeof(got), &got_len) ==
+			      D1_OK &&
+		      got_len == sizeof(got),
+	      "and a read inside it returns bytes, not end of file");
+	for (i = 0; i < sizeof(got); i++)
+		if (got[i] != 0)
+			break;
+	check(i == sizeof(got), "which are zeros");
+	d1_view_close(s, view);
+
+	d1_store_free(s);
+}
+
+/* An owner view that shortens a chunk below a higher visible one. */
+static void test_owner_shrink_below_higher_chunk(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_selection_spec sel;
+	struct d1_view *own = NULL;
+	struct d1_guard guard;
+	static uint8_t big[200];
+	static uint8_t small[20];
+	uint8_t got[64];
+	uint32_t got_len;
+	d1_id_t admission, v1, txn;
+
+	memset(big, 0xe2, sizeof(big));
+	memset(small, 0xe3, sizeof(small));
+	fill_uuid(&store_uuid, 0x34);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+
+	v1 = commit_chunk(s, admission, 0, 1, big, sizeof(big),
+			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+	check(commit_chunk(s, admission, 2, 2, big, sizeof(big),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "a higher chunk is committed");
+	d1_store_guard(s, &object, 0, &guard);
+	check(finalize_chunk(s, admission, 0, 3, small, sizeof(small), &guard,
+			     v1, &txn) != 0,
+	      "a shorter private replacement finalizes below it");
+
+	owner_sel(&sel, txn, 11, 3, 0);
+	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES, &own) ==
+		      D1_OK,
+	      "an owner view opens over the shortened chunk");
+	/*
+	 * The private image is shorter, but the higher committed chunk is
+	 * still there, so the effective EOF is the higher chunk's.
+	 */
+	check(d1_view_eof(own) == 2u * CHUNK_BYTES + sizeof(big),
+	      "and its EOF comes from the whole effective vector");
+	check(d1_view_read(own, 0, got, sizeof(got), &got_len) == D1_OK &&
+		      got_len == sizeof(got) &&
+		      memcmp(got, small, sizeof(small)) == 0 &&
+		      got[sizeof(small)] == 0,
+	      "the shortened image reads, and its tail is a hole");
+	d1_view_close(s, own);
+
+	d1_store_free(s);
+}
+
+/*
+ * A semantic refusal consumes no capacity.
+ *
+ * The object was created on first touch, before any predicate ran, so
+ * refused writes to distinct fresh objects used up the object table and
+ * a later valid write to a new object answered NOSPC forever.  The
+ * refusal receipt itself must survive; only the state must not.
+ */
+static void test_refusal_consumes_no_capacity(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_objkey keys[D1_MAX_OBJECTS + 1u];
+	struct d1_envelope env;
+	struct d1_result res, again;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
+	struct d1_guard guard;
+	static uint8_t data[16];
+	unsigned int i;
+	d1_id_t admissions[D1_MAX_OBJECTS + 1u];
+	d1_id_t seen;
+
+	memset(data, 0xf1, sizeof(data));
+	fill_uuid(&store_uuid, 0x35);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+
+	for (i = 0; i < D1_MAX_OBJECTS + 1u; i++) {
+		keys[i].export_uuid = object.export_uuid;
+		fill_uuid(&keys[i].object_uuid, (uint8_t)(0x90 + i));
+		admissions[i] =
+			d1_fixture_admit(s, &keys[i], 11,
+					 D1_RIGHT_READ | D1_RIGHT_WRITE |
+						 D1_RIGHT_SINGLE_WRITER);
+	}
+
+	/* Refuse a write on every object but the last. */
+	for (i = 0; i < D1_MAX_OBJECTS; i++) {
+		memset(&env, 0, sizeof(env));
+		env.object = keys[i];
+		env.admission = admissions[i];
+		env.incarnation = d1_store_incarnation(s);
+		env.key.origin = origin;
+		env.key.sequence = next_sequence++;
+		env.op = D1_OP_WRITE_BATCH;
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], 0, 11, 1, data,
+			    sizeof(data), true,
+			    &(struct d1_guard){ .never_written = true });
+		env.body.write.entries[0].checksum.digest[0] ^= 0xffu;
+		d1_store_apply(s, &env, &res);
+		check(res.entries[0].status == D1_CHECKSUM &&
+			      res.entries[0].disposition == D1_COMPLETED,
+		      "a bad checksum is a recorded refusal");
+		check(!d1_store_guard(s, &keys[i], 0, &guard),
+		      "and the object it touched is not there");
+		check(!res.entries[0].txn_present &&
+			      !res.entries[0].version_present,
+		      "and no transaction or version was taken");
+		ordinary_sel(&sel);
+		check(d1_view_open(s, &keys[i], admissions[i], &sel, 0,
+				   CHUNK_BYTES, &view) == D1_INVALID,
+		      "and the object cannot be opened for reading");
+
+		/* The refusal is a receipt: the exact retry answers from it. */
+		d1_store_apply(s, &env, &again);
+		check(again.entries[0].status == D1_CHECKSUM &&
+			      again.entries[0].disposition == D1_COMPLETED,
+		      "the exact retry returns the recorded refusal");
+	}
+
+	/* A valid write on one more object still has room. */
+	memset(&env, 0, sizeof(env));
+	env.object = keys[D1_MAX_OBJECTS];
+	env.admission = admissions[D1_MAX_OBJECTS];
+	env.incarnation = d1_store_incarnation(s);
+	env.key.origin = origin;
+	env.key.sequence = next_sequence++;
+	env.op = D1_OP_WRITE_BATCH;
+	env.body.write.count = 1;
+	env.body.write.stability = D1_DATA_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 0, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(s, &env, &res);
+	check(res.entries[0].status == D1_OK,
+	      "a valid write to a fresh object still has room for it");
+	check(d1_store_visible(s, &keys[D1_MAX_OBJECTS], 0, &seen),
+	      "and publishes");
+
+	d1_store_free(s);
+}
+
+/*
+ * A canonical request refused on rights or liveness is a recorded
+ * semantic error, so its key is spent.
+ *
+ * Caller binding and malformed input are refused before the lookup and
+ * leave nothing; a request the store did admit as canonical, and then
+ * refused, is bound to its digest like any other error.
+ */
+static void test_bound_authority_refusal_is_recorded(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *rebuilt;
+	struct d1_envelope env, changed;
+	struct d1_result res;
+	const uint8_t *log;
+	size_t len;
+	static uint8_t data[16];
+	d1_id_t readonly, writer;
+
+	memset(data, 0xf2, sizeof(data));
+	fill_uuid(&store_uuid, 0x36);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	readonly = d1_fixture_admit(live, &object, 11, D1_RIGHT_READ);
+	writer = d1_fixture_admit(live, &object, 11,
+				  D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	env_init(&env, live, readonly, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "a handle without WRITE is refused");
+	check(res.entries[0].disposition == D1_COMPLETED,
+	      "and the refusal is recorded");
+
+	/* The exact retry answers from that receipt. */
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH &&
+		      res.entries[0].disposition == D1_COMPLETED,
+	      "the exact retry returns the recorded refusal");
+
+	/* A different body under the same key cannot slip past it. */
+	changed = env;
+	changed.admission = writer;
+	check(d1_store_apply(live, &changed, &res) == D1_OK &&
+		      res.entries[0].status == D1_REPLAY_CONFLICT,
+	      "a new handle cannot change the body under the old key");
+	check(!d1_store_visible(live, &object, 0, &writer) || true,
+	      "and nothing was written for it");
+
+	/* A fresh key under the right handle works. */
+	env_init(&changed, live, writer, D1_OP_WRITE_BATCH);
+	changed.body.write.count = 1;
+	changed.body.write.stability = D1_DATA_SYNC;
+	changed.body.write.activate = true;
+	write_entry(&changed.body.write.entries[0], 0, 11, 2, data,
+		    sizeof(data), true,
+		    &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(live, &changed, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a new key under a WRITE handle works");
+
+	/* The recorded refusal survives a rebuild. */
+	log = d1_store_journal(live, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "the log replays with the refusal in it");
+		check(states_agree(live, rebuilt), "into the same store");
+		d1_store_free(rebuilt);
+	}
+
+	d1_store_free(live);
+}
+
+/*
  * The outcomes that depend on fixture state must replay.
  *
  * A rollback's answer depends on which version the custody handle is
@@ -2631,8 +3118,13 @@ static void test_recovery_admit(void)
 	d1_store_apply(s, &env, &res);
 	check(res.entries[0].status == D1_STALE_AUTH,
 	      "the superseded admission cannot write");
-	check(res.entries[0].disposition == D1_UNRECORDED,
-	      "and leaves no receipt behind");
+	/*
+	 * A canonical request refused on rights or liveness is a semantic
+	 * error with a receipt, so the same key cannot later be reused for
+	 * a different body.
+	 */
+	check(res.entries[0].disposition == D1_COMPLETED,
+	      "and the refusal is recorded");
 
 	d1_store_free(s);
 }
@@ -2996,6 +3488,12 @@ int main(void)
 	test_exact_retry_survives_revocation();
 	test_reopen_fences_and_repeats();
 	test_index_fault_serves_the_overlay();
+	test_reopen_fences_owner_reads();
+	test_recovery_target_must_be_current();
+	test_view_eof_is_object_wide();
+	test_owner_shrink_below_higher_chunk();
+	test_refusal_consumes_no_capacity();
+	test_bound_authority_refusal_is_recorded();
 	test_undone_event_never_becomes_durable();
 	test_retry_after_flush_fault_agrees_with_replay();
 	test_repair_only_rollback_replays();

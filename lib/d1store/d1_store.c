@@ -140,7 +140,18 @@ struct d1_view {
 	uint32_t object;
 	uint64_t range_begin;
 	uint64_t range_end;
+	/*
+	 * The EOF of the whole effective object as it stood at open, not
+	 * of the window that was asked for.  A hole below it is a hole
+	 * wherever the read window happens to end; making EOF window-local
+	 * turned a hole under a higher chunk into end-of-file.
+	 */
 	uint64_t eof;
+	uint64_t index_epoch;
+	/* The extent every chunk contributed, captured under the lock. */
+	bool extent_present[D1_MAX_CHUNKS];
+	uint32_t extent_len[D1_MAX_CHUNKS];
+	/* The versions this view pinned: the ones its window can read. */
 	bool present[D1_MAX_CHUNKS];
 	d1_id_t version[D1_MAX_CHUNKS];
 };
@@ -808,8 +819,15 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 		return D1_INVALID;
 	if (e->payload_len < 1 || e->payload_len > s->chunk_bytes)
 		return D1_INVALID;
+	/*
+	 * Section 2 puts "writer-bearing input must match its granted
+	 * writer ID" with the export/object/principal bindings, so a
+	 * mismatch is a binding failure rather than a malformed request.
+	 * The shape of the field was already checked before the store saw
+	 * it; what fails here is whose writer it is.
+	 */
 	if (e->owner.writer != a->writer)
-		return D1_INVALID;
+		return D1_STALE_AUTH;
 	if (e->owner.writer == D1_WRITER_RESERVED_LOW ||
 	    e->owner.writer == D1_WRITER_RESERVED_HIGH)
 		return D1_INVALID;
@@ -1294,6 +1312,13 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 			return D1_STALE_AUTH;
 		if (fresh->writer != old->writer)
 			return D1_STALE_AUTH;
+		/*
+		 * Recovery grants access in the incarnation that is running.
+		 * Re-admitting onto another fenced handle would report a
+		 * recovery that left the work just as unreachable.
+		 */
+		if (fresh->incarnation != s->incarnation)
+			return D1_STALE_AUTH;
 		if (memcmp(&fresh->issuer, &old->issuer,
 			   sizeof(fresh->issuer)) != 0 ||
 		    memcmp(&fresh->principal, &old->principal,
@@ -1437,6 +1462,32 @@ static struct d1_receipt *d1_receipt_reserve(struct d1_store *s)
 }
 
 /*
+ * The rights an operation needs, for the live path and for replay
+ * alike.  There is one table, because two would eventually disagree --
+ * and did: replay demanded WRITE for a rollback the live path had
+ * correctly admitted on REPAIR plus custody, so a valid log would not
+ * rebuild.
+ *
+ * Rollback answers zero because the right it needs depends on the phase
+ * of the transaction it names, which only the handler knows: WRITE to
+ * cancel one's own private work, REPAIR plus exact custody for
+ * committed data.
+ */
+static uint32_t d1_op_rights(uint32_t op)
+{
+	switch (op) {
+	case D1_OP_WRITE_BATCH:
+	case D1_OP_FINALIZE_BATCH:
+	case D1_OP_COMMIT_BATCH:
+		return D1_RIGHT_WRITE;
+	case D1_OP_ROLLBACK_BATCH:
+		return 0;
+	default:
+		return D1_RIGHT_CONTROL;
+	}
+}
+
+/*
  * Run one ordinary entry, whole: lookup, reservation, revalidation,
  * transition, durable event and receipt, all inside one lock interval.
  * The caller holds the lock and releases it between entries, so the
@@ -1492,16 +1543,23 @@ static void d1_apply_one(struct d1_store *s, const struct d1_envelope *env,
 		return;
 	}
 
-	status = d1_admission_check(s, env, need, &a);
-	if (status != D1_OK) {
-		slot->used = false;
-		res->status = status;
-		res->disposition = D1_UNRECORDED;
-		complete->disposition = D1_UNRECORDED;
-		return;
-	}
-
+	/*
+	 * A canonical request whose rights or liveness fail is a semantic
+	 * error, not the absence of a request: section 8 records every
+	 * ordinary semantic error that has room for a receipt, and section
+	 * 4 lists STALE_AUTH among the statuses that are COMPLETED.  Only
+	 * caller binding and malformed input are refused before the
+	 * lookup, above, and those leave nothing behind.
+	 *
+	 * So this joins the normal path -- complete result, durable event,
+	 * receipt -- and an exact retry answers from that receipt while a
+	 * changed body under the same key conflicts.
+	 */
 	d1_undo_begin(s, &undo);
+	status = d1_admission_check(s, env, need, &a);
+	if (status != D1_OK)
+		goto record;
+
 	if (env->op == D1_OP_WRITE_BATCH)
 		status = d1_do_write_entry(s, env,
 					   &env->body.write.entries[ordinal], a,
@@ -1530,6 +1588,17 @@ static void d1_apply_one(struct d1_store *s, const struct d1_envelope *env,
 		return;
 	}
 
+	/*
+	 * A semantic refusal is recorded, but it changes nothing: whatever
+	 * the entry touched on its way to being refused -- an object it
+	 * created on first touch, a slot it took -- goes back.  The result
+	 * fields the handler filled are copies taken before it mutated, so
+	 * they still describe what the caller was refused against.
+	 */
+	if (status != D1_OK)
+		d1_undo_apply(s, &undo);
+
+record:
 	res->status = status;
 	complete->index_epoch = s->index_epoch;
 	complete->eof = d1_eof_locked(s, &env->object);
@@ -1604,7 +1673,7 @@ static void d1_apply_control(struct d1_store *s, const struct d1_envelope *env,
 		return;
 	}
 
-	status = d1_admission_check(s, env, D1_RIGHT_CONTROL, &a);
+	status = d1_admission_check(s, env, d1_op_rights(env->op), &a);
 	if (status == D1_OK)
 		status = d1_do_control(s, env, a, res, &undo);
 	if (status == D1_NOSPC || status == D1_IO) {
@@ -1615,9 +1684,8 @@ static void d1_apply_control(struct d1_store *s, const struct d1_envelope *env,
 		complete->disposition = D1_UNRECORDED;
 		return;
 	}
-	if (status != D1_OK && status != D1_INVALID &&
-	    status != D1_STALE_AUTH && status != D1_OWNER_CONFLICT &&
-	    status != D1_BAD_PHASE)
+	/* As for an ordinary entry: recorded, but nothing changed. */
+	if (status != D1_OK)
 		d1_control_undo_apply(&undo);
 	res->status = status;
 	complete->index_epoch = s->index_epoch;
@@ -1648,32 +1716,6 @@ static void d1_apply_control(struct d1_store *s, const struct d1_envelope *env,
 	slot->ordinal = 0;
 	memcpy(slot->digest, digest, D1_DIGEST_BYTES);
 	slot->result = *complete;
-}
-
-/*
- * The rights an operation needs, for the live path and for replay
- * alike.  There is one table, because two would eventually disagree --
- * and did: replay demanded WRITE for a rollback the live path had
- * correctly admitted on REPAIR plus custody, so a valid log would not
- * rebuild.
- *
- * Rollback answers zero because the right it needs depends on the phase
- * of the transaction it names, which only the handler knows: WRITE to
- * cancel one's own private work, REPAIR plus exact custody for
- * committed data.
- */
-static uint32_t d1_op_rights(uint32_t op)
-{
-	switch (op) {
-	case D1_OP_WRITE_BATCH:
-	case D1_OP_FINALIZE_BATCH:
-	case D1_OP_COMMIT_BATCH:
-		return D1_RIGHT_WRITE;
-	case D1_OP_ROLLBACK_BATCH:
-		return 0;
-	default:
-		return D1_RIGHT_CONTROL;
-	}
 }
 
 uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
@@ -1776,7 +1818,7 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
  * a view, and one issued for a different object cannot either.
  */
 static uint32_t d1_read_admission(struct d1_store *s, d1_id_t admission,
-				  const struct d1_objkey *object,
+				  const struct d1_objkey *object, bool private,
 				  struct d1_admission **out)
 {
 	struct d1_admission *a = d1_admission_find(s, admission);
@@ -1786,6 +1828,20 @@ static uint32_t d1_read_admission(struct d1_store *s, d1_id_t admission,
 	if (memcmp(&a->object, object, sizeof(*object)) != 0)
 		return D1_STALE_AUTH;
 	if ((a->rights & D1_RIGHT_READ) != D1_RIGHT_READ)
+		return D1_STALE_AUTH;
+	/*
+	 * A START fences the old incarnation's handles.  Section 9 says
+	 * retained pending and finalized versions "need explicit
+	 * recovery_admit before owner reads or new lifecycle work", so a
+	 * handle from before the reopen cannot select private data even
+	 * though the transaction still records it.
+	 *
+	 * This is deliberately narrower than fencing every read: the memo
+	 * names owner reads, and whether an ordinary committed read by an
+	 * old handle should also be fenced is a separate question this
+	 * model does not answer here.
+	 */
+	if (private && a->incarnation != s->incarnation)
 		return D1_STALE_AUTH;
 	*out = a;
 	return D1_OK;
@@ -1883,7 +1939,8 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 		status = D1_INVALID;
 		goto out;
 	}
-	status = d1_read_admission(s, admission, object, &a);
+	status = d1_read_admission(s, admission, object,
+				   sel->selection == D1_SELECT_OWNER, &a);
 	if (status != D1_OK)
 		goto out;
 	o = d1_object_find(s, object);
@@ -1913,7 +1970,15 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 	v->range_begin = byte_begin;
 	v->range_end = byte_end;
 
-	for (i = (uint32_t)first; i <= (uint32_t)last; i++) {
+	/*
+	 * Two passes, because the two questions are different.  The extent
+	 * of the whole effective object decides where EOF and the holes
+	 * are, and every chunk answers it.  What the view may read is
+	 * decided by the window it was opened over, and only those chunks
+	 * are verified and pinned -- a view does not keep alive bytes it
+	 * cannot return.
+	 */
+	for (i = 0; i < D1_MAX_CHUNKS; i++) {
 		struct d1_chunk *c = &o->chunks[i];
 		struct d1_version *ver = NULL;
 		uint64_t start, end;
@@ -1936,6 +2001,14 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 			ver = d1_version_find(s, c->visible);
 		if (!ver)
 			continue;
+		v->extent_present[i] = true;
+		v->extent_len[i] = ver->len;
+		if (d1_mul_u64(i, s->chunk_bytes, &start) &&
+		    d1_add_u64(start, ver->len, &end) && end > v->eof)
+			v->eof = end;
+
+		if (i < (uint32_t)first || i > (uint32_t)last)
+			continue;
 		/*
 		 * A view that would hand back bytes it cannot vouch for is
 		 * not opened at all.
@@ -1949,15 +2022,8 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 		ver->pins++;
 		v->present[i] = true;
 		v->version[i] = ver->id;
-		/*
-		 * The view's extents come from the vector it selected, so an
-		 * owner view that extends or shortens a chunk sees its own
-		 * EOF rather than the ordinary one.
-		 */
-		if (d1_mul_u64(i, s->chunk_bytes, &start) &&
-		    d1_add_u64(start, ver->len, &end) && end > v->eof)
-			v->eof = end;
 	}
+	v->index_epoch = s->index_epoch;
 
 	*out = v;
 	status = D1_OK;
@@ -1996,7 +2062,12 @@ uint32_t d1_view_read(struct d1_view *v, uint64_t offset, uint8_t *buf,
 	if (offset >= v->eof || len == 0)
 		return D1_OK;
 
-	/* Bounded by the view's own EOF and by its own range, not the store's. */
+	/*
+	 * Bounded by the range the view covers and by the EOF of the whole
+	 * effective object it captured -- not by the highest chunk inside
+	 * the window, which would report a hole under a higher chunk as
+	 * end of file.
+	 */
 	limit = v->eof < v->range_end ? v->eof : v->range_end;
 	if (limit - offset < (uint64_t)len)
 		len = (uint32_t)(limit - offset);
@@ -2012,6 +2083,11 @@ uint32_t d1_view_read(struct d1_view *v, uint64_t offset, uint8_t *buf,
 			span = len - done;
 		if (index < D1_MAX_CHUNKS && v->present[index])
 			ver = d1_version_find(s, v->version[index]);
+		/*
+		 * A chunk inside the window is either pinned or a hole; one
+		 * outside it never reaches here, because the read is clipped
+		 * to the range above.
+		 */
 		/*
 		 * A hole below the view's EOF is zeros, and so is the part
 		 * of a chunk past a partial image.  Both are answers, not
