@@ -22,11 +22,6 @@
  * declared no-op: bytes are retained conservatively for the life of the
  * store.  It bounds how large a fixture can be, and nothing else.
  *
- * These sources carry no HAVE_CONFIG_H preamble, unlike most of the
- * repository's library code.  The model depends on nothing the build
- * configures: it is C11 and the C library, built here only so the
- * repository's check gate runs its tests.
- *
  * One mutex covers all model state, and the journal's byte vector grows
  * with realloc under it.  Allocating under the lock is accepted here:
  * this is a userspace model with no allocator of its own and no
@@ -177,6 +172,24 @@ bool d1_fixture_release_predecessor(struct d1_store *s, d1_id_t version);
  * Apply one envelope.  The returned status is the operation's own; per
  * entry results are in @out.  An operation this slice does not implement
  * answers D1_UNSUPPORTED and mutates nothing.
+ *
+ * Each member result carries a disposition as well as a status.
+ * D1_COMPLETED means the outcome is recorded under the operation key
+ * and the exact request will be answered from that record for as long
+ * as it is kept -- a semantic refusal is recorded exactly like a
+ * success.  D1_UNRECORDED means nothing was durably decided: the member
+ * did not happen, it consumed no capacity, and the caller may retry it.
+ * Members after an interruption are reported UNRECORDED too; the batch
+ * stops there rather than carrying the interruption forward, and no
+ * receipt is invented for work that was never attempted.
+ *
+ * An operation key is bound by the whole Envelope from the moment any
+ * member of it is recorded.  A retry with a changed body -- a different
+ * payload, a different admission, anything the request digest covers --
+ * is refused with D1_REPLAY_CONFLICT and mutates nothing, and it cannot
+ * take the key from the original: the exact original request can still
+ * be resumed and finished afterwards.  A key with no recorded member is
+ * not bound, and is free for any request.
  */
 uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 			struct d1_result *out);
@@ -232,7 +245,19 @@ struct d1_selection_spec {
  * Every selected payload is verified against its stored checksum here.
  * One inadmissible or unverifiable member fails the WHOLE view and
  * drops the pins it had taken: this model has no per-entry read result
- * to put a failure in.
+ * to put a failure in.  The whole OWNER vector is judged before any of
+ * it is selected, so the answer does not depend on the order the
+ * members are written in, and two members resolving to one chunk are
+ * not a selection at all.
+ *
+ * An OWNER selection substitutes FINALIZED versions only.  A member
+ * naming a transaction that has already COMMITTED fails the view, even
+ * though an ordinary read of that chunk would return the version it
+ * committed.  The memo permits substituting matching FINALIZED versions
+ * and is silent about committed ones; refusing is the conservative
+ * reading, and a caller that wants the committed data can ask for it
+ * ordinarily.  Chunks the vector does not name are supplied ordinarily
+ * as usual.
  */
 uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 		      d1_id_t admission, const struct d1_selection_spec *sel,
@@ -260,13 +285,43 @@ void d1_view_close(struct d1_store *s, struct d1_view *v);
 
 /*
  * Start journalling.  Writes the START record that opens this
- * incarnation and names the geometry a replay must agree with.
+ * incarnation.
+ *
+ * The log describes everything its store did, so it can only begin on a
+ * store that has not done anything yet: a store holding unlogged
+ * authority or data, and a handle whose own rebuild failed, both refuse
+ * with D1_INVALID.
+ *
+ * The START record does NOT carry the geometry.  Chunk size and maximum
+ * file size are trusted configuration supplied by the caller to
+ * d1_store_open, and this log neither records nor checks them.
+ * Reconstruction is deterministic only when the target is opened with
+ * the same geometry the logged store used: the reduced results compare
+ * equal either way, but quantities derived from geometry -- a private
+ * OWNER view's captured EOF, for one -- follow the target's numbers,
+ * not the log's.  Binding geometry to storage identity belongs to a
+ * persistent backend, and is not done here.
  */
 uint32_t d1_store_journal_enable(struct d1_store *s);
 
 /* The journal bytes, for a test to truncate, corrupt or replay. */
 const uint8_t *d1_store_journal(const struct d1_store *s, size_t *len);
 
+/*
+ * Rebuild a store from a log, read-only: no new records are written.
+ *
+ * The target must be pristine -- freshly opened, with no authority, no
+ * data and no journal of its own -- and it must be exclusively the
+ * caller's for the duration.  A populated target is refused with
+ * D1_INVALID before anything is reduced, so a refused target is still
+ * exactly the store it was.  There is no mechanism here for replacing
+ * an active store underneath its callers, and none is wanted: a
+ * reconstruction target is owned by one caller until it returns.
+ *
+ * A rebuild that fails part way leaves the handle poisoned.  A poisoned
+ * handle serves nothing and accepts no further authority; only teardown
+ * is left for it.
+ */
 uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log,
 			 size_t durable);
 
@@ -277,14 +332,20 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log,
  * flushes a new START, which fences the old incarnation's mutation
  * admissions and publishes a new verifier, and it continues the log's
  * LSNs rather than starting them over.  Doing it twice is ordinary.
+ *
+ * The pristine target, exclusive ownership, geometry and poisoning
+ * rules of d1_store_replay apply here unchanged.  Fixture fault arms do
+ * not survive either path: reconstruction clears them on entry, so the
+ * first operation after a rebuild or a reopen is an ordinary one.
  */
 uint32_t d1_store_reopen(struct d1_store *s, const uint8_t *log,
 			 size_t durable);
 
 /*
  * Fixture fault control: refuse the next journal append.  It is not
- * journalled and does not survive, so it can neither replay nor outlive
- * the run that armed it.
+ * journalled, it does not survive a rebuild or a reopen, and it cannot
+ * be armed during one -- so it can neither replay nor outlive the run
+ * that armed it.
  */
 void d1_fixture_fail_next_append(struct d1_store *s);
 
