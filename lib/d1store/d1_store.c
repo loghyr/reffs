@@ -621,9 +621,9 @@ static uint32_t d1_admission_check(struct d1_store *s,
 	return D1_OK;
 }
 
-static bool d1_chunk_empty(struct d1_store *s, const struct d1_chunk *c)
+static bool d1_chunk_empty(struct d1_store *s __attribute__((unused)),
+			   const struct d1_chunk *c)
 {
-	(void)s;
 	return !c->visible_present && !c->pending_present;
 }
 
@@ -898,6 +898,16 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 	if (e->index < l->range_begin || e->index >= l->range_end)
 		return D1_INVALID;
 
+	/*
+	 * Section 5 says GUARDED and OWNER_CONFLICT results carry the
+	 * current CAS guard, so it is captured as soon as the chunk is
+	 * known -- before any check that can produce one.  A zeroed guard
+	 * decodes as "written, generation 0, writer 0", which is a
+	 * different and wrong answer.
+	 */
+	chunk = &o->chunks[e->index];
+	res->guard = chunk->guard;
+
 	txn = d1_txn_find(s, e->txn);
 	if (!txn)
 		return D1_INVALID;
@@ -913,8 +923,6 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 	if (txn->admission != a->id)
 		return D1_STALE_AUTH;
 
-	chunk = &o->chunks[e->index];
-	res->guard = chunk->guard;
 	res->owner = txn->owner;
 	res->txn_present = true;
 	res->txn = txn->id;
@@ -986,6 +994,14 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 	if (e->index < r->range_begin || e->index >= r->range_end)
 		return D1_INVALID;
 
+	/*
+	 * GUARDED and OWNER_CONFLICT results carry the current CAS guard,
+	 * so it is captured as soon as the chunk is known -- before any
+	 * check that can produce one.
+	 */
+	chunk = &o->chunks[e->index];
+	res->guard = chunk->guard;
+
 	txn = d1_txn_find(s, e->txn);
 	if (!txn || txn->index != e->index ||
 	    txn->object != d1_object_slot(s, o))
@@ -997,19 +1013,31 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 	if (txn->mode != D1_MODE_ORDINARY)
 		return D1_INVALID;
 
-	chunk = &o->chunks[e->index];
-	res->guard = chunk->guard;
 	res->owner = txn->owner;
 	res->txn_present = true;
 	res->txn = txn->id;
 
 	if (txn->phase == D1_PHASE_PREPARED ||
 	    txn->phase == D1_PHASE_FINALIZED) {
+		/* One's own private work, cancelled with WRITE and no custody. */
+		if ((a->rights & D1_RIGHT_WRITE) != D1_RIGHT_WRITE)
+			return D1_STALE_AUTH;
 		if (txn->admission != a->id)
 			return D1_STALE_AUTH;
-		/* Cancelling one's own private work needs no custody. */
 		if (e->custody_present)
 			return D1_INVALID;
+		/*
+		 * The options are expected states, not flags that switch
+		 * checking off.  An absent option asserts that there is
+		 * nothing there.
+		 */
+		if (e->visible_present != chunk->visible_present ||
+		    (e->visible_present && e->visible != chunk->visible))
+			return D1_OWNER_CONFLICT;
+		if (txn->predecessor_present != e->predecessor_present ||
+		    (e->predecessor_present &&
+		     txn->predecessor != e->predecessor))
+			return D1_NO_PREDECESSOR;
 		d1_undo_chunk(u, chunk);
 		d1_undo_txn(u, txn);
 		if (chunk->pending_present && chunk->pending == txn->id) {
@@ -1024,11 +1052,18 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 	if (txn->phase != D1_PHASE_COMMITTED)
 		return D1_BAD_PHASE;
 
-	/* From here it is committed data, and custody is not optional. */
+	/*
+	 * From here it is committed data.  Section 2 asks for REPAIR plus
+	 * exact custody; it does not also ask for WRITE, and normal owner
+	 * custody cannot roll back committed data at all.
+	 */
 	if (!e->custody_present)
 		return D1_STALE_AUTH;
 	if ((a->rights & D1_RIGHT_REPAIR) != D1_RIGHT_REPAIR)
 		return D1_STALE_AUTH;
+	if (e->visible_present != chunk->visible_present ||
+	    (e->visible_present && e->visible != chunk->visible))
+		return D1_OWNER_CONFLICT;
 	/*
 	 * Custody is looked up on replay too.  It is journalled, so the
 	 * rebuilt table holds the same handle bound to the same version --
@@ -1044,8 +1079,6 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 		return D1_OWNER_CONFLICT;
 	if (chunk->visible != txn->version)
 		return D1_OWNER_CONFLICT;
-	if (e->visible_present && e->visible != chunk->visible)
-		return D1_OWNER_CONFLICT;
 	/* A pending transaction must be cancelled before this. */
 	if (chunk->pending_present)
 		return D1_GUARDED;
@@ -1056,6 +1089,10 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 	res->version_present = true;
 	res->version = ver->id;
 
+	/* The expected predecessor is compared for presence and value. */
+	if (ver->predecessor_present != e->predecessor_present ||
+	    (e->predecessor_present && ver->predecessor != e->predecessor))
+		return D1_NO_PREDECESSOR;
 	pred = ver->predecessor_present ? d1_version_find(s, ver->predecessor) :
 					  NULL;
 	if (!pred || pred->released) {
@@ -1067,9 +1104,6 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 		res->phase = txn->phase;
 		return D1_NO_PREDECESSOR;
 	}
-	if (e->predecessor_present && e->predecessor != pred->id)
-		return D1_OWNER_CONFLICT;
-
 	/* Payload and extent are restored in the one transition. */
 	d1_undo_chunk(u, chunk);
 	d1_undo_txn(u, txn);
@@ -1138,7 +1172,7 @@ static void d1_control_undo_apply(struct d1_control_undo *u)
 }
 
 static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
-			      struct d1_admission *a,
+			      struct d1_admission *a __attribute__((unused)),
 			      struct d1_entry_result *res,
 			      struct d1_control_undo *u)
 {
@@ -1148,7 +1182,6 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 	struct d1_txn *named[D1_BATCH_ENTRIES_MAX];
 	uint32_t i;
 
-	(void)a;
 	if (!o)
 		return D1_INVALID;
 	old = d1_admission_find(s, cb->old_admission);
@@ -1562,8 +1595,17 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	case D1_OP_WRITE_BATCH:
 	case D1_OP_FINALIZE_BATCH:
 	case D1_OP_COMMIT_BATCH:
-	case D1_OP_ROLLBACK_BATCH:
 		need = D1_RIGHT_WRITE;
+		break;
+	case D1_OP_ROLLBACK_BATCH:
+		/*
+		 * Which right a rollback needs depends on the phase of the
+		 * transaction it names: WRITE to cancel one's own private
+		 * work, REPAIR plus exact custody for committed data.  The
+		 * handler decides once it knows; demanding WRITE here would
+		 * turn away a REPAIR-only caller holding valid custody.
+		 */
+		need = 0;
 		break;
 	case D1_OP_RECOVERY_ADMIT:
 	case D1_OP_LEASE_REAP:

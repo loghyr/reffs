@@ -71,8 +71,9 @@ struct d1_rollback_entry {
 	bool predecessor_present;
 	d1_id_t predecessor;
 	/*
-	 * Repair custody, for rolling back committed data.  This slice
-	 * accepts the field and refuses the operation it would authorise.
+	 * Repair custody, for rolling back committed data.  It is what
+	 * authorises that; ordinary owner custody cannot roll back a
+	 * committed version, including a replacement.
 	 */
 	bool custody_present;
 	d1_id_t custody;

@@ -565,9 +565,23 @@ static d1_id_t commit_chunk(struct d1_store *s, d1_id_t admission,
 	return version;
 }
 
+/*
+ * What a rollback asserts about the state it expects to find.  These
+ * are expected states, not flags that switch checking off, so a test
+ * that omits them is asserting that nothing is there.
+ */
+struct rollback_expect {
+	bool custody_present;
+	d1_id_t custody;
+	bool visible_present;
+	d1_id_t visible;
+	bool predecessor_present;
+	d1_id_t predecessor;
+};
+
 static uint32_t rollback_one(struct d1_store *s, d1_id_t admission,
 			     uint64_t index, uint32_t co_id, d1_id_t txn,
-			     bool custody_present, d1_id_t custody,
+			     const struct rollback_expect *x,
 			     struct d1_entry_result *out)
 {
 	struct d1_envelope env;
@@ -582,8 +596,13 @@ static uint32_t rollback_one(struct d1_store *s, d1_id_t admission,
 	env.body.rollback.entries[0].owner.writer = 11;
 	env.body.rollback.entries[0].owner.co_id = co_id;
 	env.body.rollback.entries[0].txn = txn;
-	env.body.rollback.entries[0].custody_present = custody_present;
-	env.body.rollback.entries[0].custody = custody;
+	env.body.rollback.entries[0].custody_present = x->custody_present;
+	env.body.rollback.entries[0].custody = x->custody;
+	env.body.rollback.entries[0].visible_present = x->visible_present;
+	env.body.rollback.entries[0].visible = x->visible;
+	env.body.rollback.entries[0].predecessor_present =
+		x->predecessor_present;
+	env.body.rollback.entries[0].predecessor = x->predecessor;
 	if (d1_store_apply(s, &env, &res) != D1_OK)
 		return D1_INVALID;
 	if (out)
@@ -619,7 +638,8 @@ static void test_private_rollback(void)
 	txn = res.entries[0].txn;
 	d1_store_guard(s, &object, 0, &before);
 
-	check(rollback_one(s, admission, 0, 1, txn, false, 0, NULL) == D1_OK,
+	check(rollback_one(s, admission, 0, 1, txn,
+			   &(struct rollback_expect){ 0 }, NULL) == D1_OK,
 	      "its owner may cancel it");
 	check(!d1_store_visible(s, &object, 0, &visible),
 	      "and nothing became visible");
@@ -643,22 +663,135 @@ static void test_private_rollback(void)
 	/* Committed data is not the owner's to roll back. */
 	{
 		d1_id_t ctxn = 0;
+		d1_id_t committed_version = 0;
 		struct d1_entry_result entry;
 
 		check(rollback_one(s, admission, 0, 2, res.entries[0].txn,
-				   false, 0, NULL) == D1_OK,
+				   &(struct rollback_expect){ 0 },
+				   NULL) == D1_OK,
 		      "the second write is cancelled too");
-		check(commit_chunk(s, admission, 1, 3, payload_a,
-				   sizeof(payload_a),
-				   &(struct d1_guard){ .never_written = true },
-				   0, &ctxn) != 0,
-		      "a chunk is committed");
-		check(rollback_one(s, admission, 1, 3, ctxn, false, 0,
+		committed_version = commit_chunk(
+			s, admission, 1, 3, payload_a, sizeof(payload_a),
+			&(struct d1_guard){ .never_written = true }, 0, &ctxn);
+		check(committed_version != 0, "a chunk is committed");
+		check(rollback_one(s, admission, 1, 3, ctxn,
+				   &(struct rollback_expect){
+					   .visible_present = true,
+					   .visible = committed_version },
 				   &entry) == D1_STALE_AUTH,
 		      "committed data needs custody, not ownership");
 		check(d1_store_visible(s, &object, 1, &visible),
 		      "and is still visible");
 	}
+
+	d1_store_free(s);
+}
+
+/*
+ * Rollback expectations are expected states, and the right a rollback
+ * needs follows the phase it finds.
+ */
+static void test_rollback_predicates(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_entry_result entry;
+	struct d1_guard guard;
+	static uint8_t data[16];
+	d1_id_t writer_adm, repair_adm, v1, v2, txn1, txn2, custody, visible;
+
+	memset(data, 0x91, sizeof(data));
+	fill_uuid(&store_uuid, 0x13);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	writer_adm = d1_fixture_admit(s, &object, 11,
+				      D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	/* REPAIR only: no WRITE at all. */
+	repair_adm = d1_fixture_admit(s, &object, 11, D1_RIGHT_REPAIR);
+
+	v1 = commit_chunk(s, writer_adm, 0, 1, data, sizeof(data),
+			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+	d1_store_guard(s, &object, 0, &guard);
+	v2 = commit_chunk(s, writer_adm, 0, 2, data, sizeof(data), &guard, v1,
+			  &txn2);
+	check(v1 != 0 && v2 != 0, "a version is replaced");
+
+	/* A wrong expected predecessor is refused. */
+	check(rollback_one(s, repair_adm, 0, 2, txn2,
+			   &(struct rollback_expect){ .custody_present = true,
+						      .custody = 999,
+						      .visible_present = true,
+						      .visible = v2,
+						      .predecessor_present =
+							      true,
+						      .predecessor = 999999 },
+			   &entry) != D1_OK,
+	      "a wrong expected predecessor is refused");
+	check(d1_store_visible(s, &object, 0, &visible) && visible == v2,
+	      "and changes nothing");
+
+	/* An absent expected-visible option asserts nothing is there. */
+	custody = d1_fixture_custody(s, v2);
+	check(rollback_one(s, repair_adm, 0, 2, txn2,
+			   &(struct rollback_expect){ .custody_present = true,
+						      .custody = custody,
+						      .predecessor_present =
+							      true,
+						      .predecessor = v1 },
+			   &entry) == D1_OWNER_CONFLICT,
+	      "an absent expected-visible option is a mismatch, not a skip");
+	check(entry.guard.generation == guard.generation + 1u,
+	      "and the conflict carries the current guard");
+	check(d1_store_visible(s, &object, 0, &visible) && visible == v2,
+	      "and changes nothing");
+
+	/*
+	 * A REPAIR-only handle with exact custody rolls committed data
+	 * back.  Section 2 asks for REPAIR plus custody, not also WRITE.
+	 */
+	check(rollback_one(s, repair_adm, 0, 2, txn2,
+			   &(struct rollback_expect){ .custody_present = true,
+						      .custody = custody,
+						      .visible_present = true,
+						      .visible = v2,
+						      .predecessor_present =
+							      true,
+						      .predecessor = v1 },
+			   &entry) == D1_OK,
+	      "REPAIR plus exact custody rolls committed data back");
+	check(d1_store_visible(s, &object, 0, &visible) && visible == v1,
+	      "and the predecessor is visible again");
+
+	/* A private cancellation needs WRITE, and a REPAIR handle lacks it. */
+	env_init(&env, s, writer_adm, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	d1_store_guard(s, &object, 0, &guard);
+	write_entry(&env.body.write.entries[0], 0, 11, 3, data, sizeof(data),
+		    true, &guard);
+	d1_store_apply(s, &env, &res);
+	txn1 = res.entries[0].txn;
+	check(txn1 != 0, "a new private transaction is prepared");
+
+	check(rollback_one(s, repair_adm, 0, 3, txn1,
+			   &(struct rollback_expect){ .visible_present = true,
+						      .visible = v1,
+						      .predecessor_present =
+							      true,
+						      .predecessor = v1 },
+			   &entry) == D1_STALE_AUTH,
+	      "a REPAIR-only handle cannot cancel private work");
+	check(rollback_one(s, writer_adm, 0, 3, txn1,
+			   &(struct rollback_expect){ .visible_present = true,
+						      .visible = v1,
+						      .predecessor_present =
+							      true,
+						      .predecessor = v1 },
+			   &entry) == D1_OK,
+	      "and its own writer can");
 
 	d1_store_free(s);
 }
@@ -719,8 +852,15 @@ static void test_sparse_and_rollback_extents(void)
 
 	custody = d1_fixture_custody(s, v4);
 	check(custody != 0, "the fixture issues custody over it");
-	check(rollback_one(s, admission, 3, 3, txn4, true, custody, NULL) ==
-		      D1_OK,
+	check(rollback_one(s, admission, 3, 3, txn4,
+			   &(struct rollback_expect){ .custody_present = true,
+						      .custody = custody,
+						      .visible_present = true,
+						      .visible = v4,
+						      .predecessor_present =
+							      true,
+						      .predecessor = v3 },
+			   NULL) == D1_OK,
 	      "custody rolls the replacement back");
 	check(d1_store_visible(s, &object, 3, &visible) && visible == v3,
 	      "and the predecessor is visible again");
@@ -766,8 +906,15 @@ static void test_rollback_shrinks_eof(void)
 	      "and EOF grows with it");
 
 	custody = d1_fixture_custody(s, v4);
-	check(rollback_one(s, admission, 3, 2, txn4, true, custody, NULL) ==
-		      D1_OK,
+	check(rollback_one(s, admission, 3, 2, txn4,
+			   &(struct rollback_expect){ .custody_present = true,
+						      .custody = custody,
+						      .visible_present = true,
+						      .visible = v4,
+						      .predecessor_present =
+							      true,
+						      .predecessor = v3 },
+			   NULL) == D1_OK,
 	      "the replacement rolls back");
 	check(d1_store_visible(s, &object, 3, &visible) && visible == v3,
 	      "the predecessor is visible");
@@ -809,8 +956,15 @@ static void test_released_predecessor(void)
 	      "the visible version may not");
 
 	custody = d1_fixture_custody(s, v2);
-	check(rollback_one(s, admission, 0, 2, txn2, true, custody, &entry) ==
-		      D1_NO_PREDECESSOR,
+	check(rollback_one(s, admission, 0, 2, txn2,
+			   &(struct rollback_expect){ .custody_present = true,
+						      .custody = custody,
+						      .visible_present = true,
+						      .visible = v2,
+						      .predecessor_present =
+							      true,
+						      .predecessor = v1 },
+			   &entry) == D1_NO_PREDECESSOR,
 	      "a released predecessor is no longer eligible");
 	check(d1_store_visible(s, &object, 0, &visible) && visible == v2,
 	      "and the current data stays exactly where it is");
@@ -1012,8 +1166,15 @@ static void test_release_order_does_not_matter(void)
 		}
 
 		custody = d1_fixture_custody(s, v2);
-		rollback_status[pass] = rollback_one(s, admission, 0, 2, txn2,
-						     true, custody, NULL);
+		rollback_status[pass] = rollback_one(
+			s, admission, 0, 2, txn2,
+			&(struct rollback_expect){ .custody_present = true,
+						   .custody = custody,
+						   .visible_present = true,
+						   .visible = v2,
+						   .predecessor_present = true,
+						   .predecessor = v1 },
+			NULL);
 		d1_store_free(s);
 	}
 
@@ -1301,10 +1462,17 @@ static d1_id_t drive_history(struct d1_store *s, d1_id_t admission)
 
 		d1_store_visible(s, &object, 3, &visible);
 		custody = d1_fixture_custody(s, visible);
+		if (rollback_one(s, admission, 3, 3, txn4,
+				 &(struct rollback_expect){
+					 .custody_present = true,
+					 .custody = custody,
+					 .visible_present = true,
+					 .visible = visible,
+					 .predecessor_present = true,
+					 .predecessor = v3 },
+				 NULL) != D1_OK)
+			return 0;
 	}
-	if (rollback_one(s, admission, 3, 3, txn4, true, custody, NULL) !=
-	    D1_OK)
-		return 0;
 	return v3;
 }
 
@@ -1832,8 +2000,15 @@ static void test_custody_and_release_replay(void)
 			/* Custody bound to the wrong version is a conflict. */
 			custody = d1_fixture_custody(live, v1);
 		}
-		status = rollback_one(live, admission, 0, 2, txn2, true,
-				      custody, &entry);
+		status = rollback_one(
+			live, admission, 0, 2, txn2,
+			&(struct rollback_expect){ .custody_present = true,
+						   .custody = custody,
+						   .visible_present = true,
+						   .visible = v2,
+						   .predecessor_present = true,
+						   .predecessor = v1 },
+			&entry);
 		check(status == (release_case[pass] ? D1_NO_PREDECESSOR :
 						      D1_OWNER_CONFLICT),
 		      "the rollback answers from the fixture state");
@@ -2334,6 +2509,7 @@ int main(void)
 	test_write_refusals();
 	test_phase_order();
 	test_private_rollback();
+	test_rollback_predicates();
 	test_sparse_and_rollback_extents();
 	test_rollback_shrinks_eof();
 	test_released_predecessor();
