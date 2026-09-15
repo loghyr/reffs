@@ -439,33 +439,60 @@ static bool d1_store_pristine(const struct d1_store *s)
  * that has entered a public function and has not yet acquired s->lock.
  * A close that destroyed the store there would leave that caller to
  * lock freed memory, so the arm that opens the interval has to live
- * outside the storage whose lifetime is in question -- which is why it
- * is process-global with a mutex of its own rather than a field of the
- * store.  It is one-shot: it is taken and cleared before it runs, so a
- * hook that makes calls of its own does not re-enter itself.
+ * outside the storage whose lifetime is in question -- which is why the
+ * storage is here, with a mutex of its own, rather than a field of the
+ * store.
+ *
+ * Out of the store is not the same as belonging to no store.  The arm
+ * names its target, and only a call entering that store takes it: an
+ * arm left over from another store or another run is not something an
+ * unrelated call should be made to run, and its argument may not even
+ * be alive any more.  It is one-shot -- taken and cleared before it
+ * runs, so a hook that makes calls of its own does not re-enter itself
+ * -- and it runs with neither lock held.
+ *
+ * Lock order, everywhere: the store's lock first, then this one.  The
+ * runner takes only this one and has let it go before d1_call_enter
+ * reaches for the store's, so the two are never held the other way
+ * round.
  */
 static pthread_mutex_t d1_admit_hook_lock = PTHREAD_MUTEX_INITIALIZER;
+static const struct d1_store *d1_admit_hook_target;
 static void (*d1_admit_hook)(void *);
 static void *d1_admit_hook_arg;
 
-void d1_fixture_before_admission(void (*fn)(void *), void *arg)
+/* With the hook lock held. */
+static void d1_admit_hook_drop(void)
+{
+	d1_admit_hook_target = NULL;
+	d1_admit_hook = NULL;
+	d1_admit_hook_arg = NULL;
+}
+
+/*
+ * Forget an arm aimed at @s.  One place, used by every path that ends a
+ * store's life or its run: recovery entry, logical close, and the
+ * teardown that both ordinary destruction and a crash go through.
+ */
+static void d1_admit_hook_forget(const struct d1_store *s)
 {
 	pthread_mutex_lock(&d1_admit_hook_lock);
-	d1_admit_hook = fn;
-	d1_admit_hook_arg = arg;
+	if (d1_admit_hook_target == s)
+		d1_admit_hook_drop();
 	pthread_mutex_unlock(&d1_admit_hook_lock);
 }
 
-static void d1_run_admit_hook(void)
+static void d1_run_admit_hook(const struct d1_store *s)
 {
-	void (*fn)(void *);
-	void *arg;
+	void (*fn)(void *) = NULL;
+	void *arg = NULL;
 
 	pthread_mutex_lock(&d1_admit_hook_lock);
-	fn = d1_admit_hook;
-	arg = d1_admit_hook_arg;
-	d1_admit_hook = NULL;
-	d1_admit_hook_arg = NULL;
+	if (d1_admit_hook_target == s) {
+		fn = d1_admit_hook;
+		arg = d1_admit_hook_arg;
+		d1_admit_hook_drop();
+	}
 	pthread_mutex_unlock(&d1_admit_hook_lock);
 	if (fn)
 		fn(arg);
@@ -487,7 +514,7 @@ static bool d1_call_enter(struct d1_store *s)
 {
 	bool admitted;
 
-	d1_run_admit_hook();
+	d1_run_admit_hook(s);
 	pthread_mutex_lock(&s->lock);
 	admitted = !s->closed && !s->poisoned;
 	if (admitted)
@@ -544,6 +571,7 @@ uint32_t d1_store_close(struct d1_store *s)
 		}
 	}
 	s->closed = true;
+	d1_admit_hook_forget(s);
 	pthread_mutex_unlock(&s->lock);
 	return D1_OK;
 }
@@ -600,6 +628,7 @@ void d1_store_free(struct d1_store *s)
 {
 	if (!s)
 		return;
+	d1_admit_hook_forget(s);
 	d1_journal_fini(&s->journal);
 	pthread_mutex_destroy(&s->lock);
 	free(s->record);
@@ -629,6 +658,32 @@ void d1_fixture_fail_append_in(struct d1_store *s, uint32_t n)
 	}
 	if (!s->replaying)
 		s->journal.fail_append_in = n;
+	pthread_mutex_unlock(&s->lock);
+}
+
+/*
+ * Arm the door hook for this store.  A null @fn disarms it, and only
+ * ever this store's: an arm aimed at another store is not this
+ * caller's to drop.  The gates are the ones every other fixture arm
+ * obeys -- not a closed or poisoned store, and not during recovery.
+ */
+void d1_fixture_before_admission(struct d1_store *s, void (*fn)(void *),
+				 void *arg)
+{
+	pthread_mutex_lock(&s->lock);
+	if (!d1_store_serving(s) || s->replaying) {
+		pthread_mutex_unlock(&s->lock);
+		return;
+	}
+	pthread_mutex_lock(&d1_admit_hook_lock);
+	if (fn) {
+		d1_admit_hook_target = s;
+		d1_admit_hook = fn;
+		d1_admit_hook_arg = arg;
+	} else if (d1_admit_hook_target == s) {
+		d1_admit_hook_drop();
+	}
+	pthread_mutex_unlock(&d1_admit_hook_lock);
 	pthread_mutex_unlock(&s->lock);
 }
 
@@ -3503,6 +3558,7 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
 	s->before_member = NULL;
 	s->before_member_arg = NULL;
 	s->before_member_ordinal = 0;
+	d1_admit_hook_forget(s);
 	s->replaying = true;
 
 	d1_journal_cursor_init(&c, log, durable, &s->uuid);

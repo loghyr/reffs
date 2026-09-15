@@ -136,13 +136,20 @@ void d1_store_free(struct d1_store *s);
 
 /*
  * Fixture control: run @fn once, in the interval between a public
- * call's first instruction and its admission -- the one interval the
- * store's own lock does not cover, and the one a close races.  @fn
- * runs with no lock held.  The arm is process-global rather than a
- * field of the store, because the store is what may be destroyed while
- * a call is in it, and it is unjournalled.
+ * call's first instruction and its admission on @s -- the one interval
+ * the store's own lock does not cover, and the one a close races.
+ *
+ * The arm's storage is outside the store, because the store is what may
+ * be destroyed while a call is in it, but the arm names @s and only a
+ * call entering @s takes it: a call on another store neither consumes
+ * nor runs it.  @fn runs with no lock held, and a null @fn disarms this
+ * store's arm and no other.  It is unjournalled, one-shot, refused on a
+ * closed or poisoned store and during recovery, and forgotten when @s
+ * is reconstructed, closed or destroyed -- so nothing it was aimed at
+ * outlives the store or the run that armed it.
  */
-void d1_fixture_before_admission(void (*fn)(void *), void *arg);
+void d1_fixture_before_admission(struct d1_store *s, void (*fn)(void *),
+				 void *arg);
 
 /* The current verifier, as a START publishes it. */
 void d1_store_verifier(struct d1_store *s, uint8_t out[D1_VERIFIER_BYTES]);

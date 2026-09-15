@@ -1300,13 +1300,69 @@ static void *run_parked_call(void *arg)
 	return NULL;
 }
 
+/*
+ * Set a caller going and wait until it is parked at the door.
+ *
+ * Every step that can fail is checked, and a step that failed must not
+ * be waited on: there is no worker to signal the condition variable, so
+ * the wait below would never end.  Only what was initialized is
+ * released, and the arm is dropped, so a failed setup leaves the store
+ * exactly as it found it.  @parked_setup_fault fails one step on
+ * purpose, so those paths are executed rather than argued about.
+ */
+static unsigned int parked_setup_fault;
+
+static bool parked_step_fails(unsigned int step)
+{
+	return parked_setup_fault == step;
+}
+
+static bool park_a_caller(struct parked_call *p, struct d1_store *s,
+			  d1_id_t admission, pthread_t *caller)
+{
+	memset(p, 0, sizeof(*p));
+	p->s = s;
+	env_init(&p->env, s, admission, D1_OP_WRITE_BATCH);
+	p->env.body.write.count = 1;
+	p->env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&p->env.body.write.entries[0], 0, 11, 1, payload_a,
+		    sizeof(payload_a), true,
+		    &(struct d1_guard){ .never_written = true });
+
+	if (parked_step_fails(1) || pthread_mutex_init(&p->m, NULL) != 0)
+		return false;
+	if (parked_step_fails(2) || pthread_cond_init(&p->cv, NULL) != 0) {
+		pthread_mutex_destroy(&p->m);
+		return false;
+	}
+	d1_fixture_before_admission(s, park_at_the_door, p);
+	if (parked_step_fails(3) ||
+	    pthread_create(caller, NULL, run_parked_call, p) != 0) {
+		d1_fixture_before_admission(s, NULL, NULL);
+		pthread_cond_destroy(&p->cv);
+		pthread_mutex_destroy(&p->m);
+		return false;
+	}
+	pthread_mutex_lock(&p->m);
+	while (!p->parked)
+		pthread_cond_wait(&p->cv, &p->m);
+	pthread_mutex_unlock(&p->m);
+	return true;
+}
+
 static void test_close_does_not_destroy_under_an_arriving_call(void)
 {
+	static const char *const step[] = {
+		"", "a caller whose mutex will not start is not waited for",
+		"a caller whose condition will not start is not waited for",
+		"a caller whose thread will not start is not waited for"
+	};
 	struct d1_uuid store_uuid;
 	struct d1_store *s;
 	struct parked_call p;
 	pthread_t caller;
-	d1_id_t admission;
+	unsigned int fault;
+	d1_id_t admission, seen;
 
 	fill_uuid(&store_uuid, 0x4e);
 	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -1316,25 +1372,17 @@ static void test_close_does_not_destroy_under_an_arriving_call(void)
 				     D1_RIGHT_READ | D1_RIGHT_WRITE |
 					     D1_RIGHT_SINGLE_WRITER);
 
-	memset(&p, 0, sizeof(p));
-	p.s = s;
-	pthread_mutex_init(&p.m, NULL);
-	pthread_cond_init(&p.cv, NULL);
-	env_init(&p.env, s, admission, D1_OP_WRITE_BATCH);
-	p.env.body.write.count = 1;
-	p.env.body.write.stability = D1_FILE_SYNC;
-	write_entry(&p.env.body.write.entries[0], 0, 11, 1, payload_a,
-		    sizeof(payload_a), true,
-		    &(struct d1_guard){ .never_written = true });
+	/* Each step of the setup, failed on purpose: report, never wait. */
+	for (fault = 1; fault <= 3; fault++) {
+		parked_setup_fault = fault;
+		check(!park_a_caller(&p, s, admission, &caller), step[fault]);
+		check(!p.parked, "and there is no caller to have waited for");
+		parked_setup_fault = 0;
+	}
 
 	/* The caller is inside d1_store_apply and has not been admitted. */
-	d1_fixture_before_admission(park_at_the_door, &p);
-	check(pthread_create(&caller, NULL, run_parked_call, &p) == 0,
-	      "a real caller enters the store");
-	pthread_mutex_lock(&p.m);
-	while (!p.parked)
-		pthread_cond_wait(&p.cv, &p.m);
-	pthread_mutex_unlock(&p.m);
+	check(park_a_caller(&p, s, admission, &caller),
+	      "a real caller enters the store and parks at the door");
 
 	check(d1_store_close(s) == D1_OK,
 	      "a close wins against a call that is not admitted yet");
@@ -1348,12 +1396,200 @@ static void test_close_does_not_destroy_under_an_arriving_call(void)
 	check(p.status == D1_INVALID,
 	      "the arriving call is refused rather than admitted");
 	check(p.out.count == 0, "and it recorded nothing");
-	check(!d1_store_visible(s, &object, 0, &(d1_id_t){ 0 }),
-	      "the closed store published nothing");
+	check(!d1_store_visible(s, &object, 0, &seen),
+	      "and a closed store answers no observer");
 
 	/* Only now, with the caller joined, does the memory go. */
 	check(d1_store_destroy(s) == D1_OK,
 	      "and destruction follows the join, not the close");
+	pthread_cond_destroy(&p.cv);
+	pthread_mutex_destroy(&p.m);
+}
+
+/* A door hook that only counts, for the arms that must not be run. */
+struct door_count {
+	unsigned int fired;
+};
+
+static void count_the_door(void *arg)
+{
+	((struct door_count *)arg)->fired++;
+}
+
+/*
+ * The door arm belongs to the store it was aimed at.
+ *
+ * Its storage has to be outside the store -- that is the whole point of
+ * it, because the store is what a close may destroy underneath an
+ * arriving call.  Outside the store is not the same as belonging to no
+ * store, though.  An arm left over from another store, or from a run
+ * that has ended, is not something an unrelated call should be made to
+ * run: its argument may no longer be alive, and a real callback changes
+ * what the store it fires on goes on to answer.  So the arm names its
+ * target, and every path that ends a store or a run forgets it.
+ */
+static void test_the_door_arm_belongs_to_its_store(void)
+{
+	struct d1_uuid uuid_a, uuid_b;
+	struct d1_store *a, *b, *target;
+	struct door_count seen;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t data[16];
+	const uint8_t *log;
+	size_t len;
+	d1_id_t admit_a, admit_b;
+
+	memset(data, 0x3c, sizeof(data));
+	fill_uuid(&uuid_a, 0x3c);
+	fill_uuid(&uuid_b, 0x4c);
+
+	/* One store's arm is not the next store's to consume. */
+	a = d1_store_open(&uuid_a, CHUNK_BYTES, MAX_FILE_BYTES);
+	b = d1_store_open(&uuid_b, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!a || !b) {
+		d1_store_free(a);
+		d1_store_free(b);
+		return;
+	}
+	admit_a = d1_fixture_admit(a, &object, 11,
+				   D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	admit_b = d1_fixture_admit(b, &object, 11,
+				   D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	memset(&seen, 0, sizeof(seen));
+	d1_fixture_before_admission(a, count_the_door, &seen);
+
+	env_init(&env, b, admit_b, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(b, &env, &res) == D1_OK && seen.fired == 0,
+	      "a call on another store neither runs the arm nor takes it");
+
+	env_init(&env, a, admit_a, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(a, &env, &res) == D1_OK && seen.fired == 1,
+	      "and the store it was aimed at still runs it, once");
+	check(d1_store_apply(a, &env, &res) == D1_OK && seen.fired == 1,
+	      "and only once");
+
+	/*
+	 * A close forgets it, and the proof needs no second store: the
+	 * door runs before the closed fence is read, so an arm left on a
+	 * closed store would fire for a call that is about to be refused.
+	 */
+	memset(&seen, 0, sizeof(seen));
+	d1_fixture_before_admission(a, count_the_door, &seen);
+	check(d1_store_close(a) == D1_OK, "the armed store closes");
+	check(d1_store_apply(a, &env, &res) == D1_INVALID && seen.fired == 0,
+	      "and a call it refuses does not run the arm it forgot");
+	check(d1_store_destroy(a) == D1_OK, "and it is destroyed");
+	d1_store_free(b);
+
+	/*
+	 * Crash teardown forgets it too, and there the hazard is the
+	 * address: whatever is allocated next may be where the store was.
+	 * This host's allocator hands it straight back, so the leg below
+	 * runs; on one that does not, there is nothing to inherit the arm
+	 * and the leg is skipped rather than faked.
+	 */
+	a = d1_store_open(&uuid_a, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (a) {
+		struct d1_store *again;
+
+		memset(&seen, 0, sizeof(seen));
+		d1_fixture_before_admission(a, count_the_door, &seen);
+		d1_store_free(a);
+		again = d1_store_open(&uuid_a, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (again == a) {
+			admit_a = d1_fixture_admit(
+				again, &object, 11,
+				D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+			env_init(&env, again, admit_a, D1_OP_WRITE_BATCH);
+			env.body.write.count = 1;
+			env.body.write.stability = D1_FILE_SYNC;
+			write_entry(&env.body.write.entries[0], 0, 11, 1, data,
+				    sizeof(data), true,
+				    &(struct d1_guard){ .never_written =
+								true });
+			check(d1_store_apply(again, &env, &res) == D1_OK &&
+				      seen.fired == 0,
+			      "and its arm is not inherited with its address");
+		}
+		d1_store_free(again);
+	}
+
+	/* And reconstruction forgets it, as it forgets every other arm. */
+	a = d1_store_open(&uuid_a, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!a)
+		return;
+	d1_store_journal_enable(a);
+	admit_a = d1_fixture_admit(a, &object, 11,
+				   D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	check(commit_chunk(a, admit_a, 0, 1, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "a history to rebuild");
+	log = d1_store_journal(a, &len);
+
+	target = d1_store_open(&uuid_a, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		memset(&seen, 0, sizeof(seen));
+		d1_fixture_before_admission(target, count_the_door, &seen);
+		check(d1_store_replay(target, log, len) == D1_OK &&
+			      seen.fired == 0,
+		      "the rebuild itself does not run it");
+		check(commit_chunk(target, admit_a, 2, 9, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   0, NULL) != 0 &&
+			      seen.fired == 0,
+		      "and the first call after the rebuild does not either");
+		d1_store_free(target);
+	}
+	target = d1_store_open(&uuid_a, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		d1_id_t fresh;
+
+		memset(&seen, 0, sizeof(seen));
+		d1_fixture_before_admission(target, count_the_door, &seen);
+		check(d1_store_reopen(target, log, len) == D1_OK &&
+			      seen.fired == 0,
+		      "nor does the reopen");
+		fresh = d1_fixture_admit(target, &object, 11,
+					 D1_RIGHT_WRITE |
+						 D1_RIGHT_SINGLE_WRITER);
+		check(commit_chunk(target, fresh, 3, 9, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   0, NULL) != 0 &&
+			      seen.fired == 0,
+		      "nor the first call after it");
+		d1_store_free(target);
+	}
+
+	/* Arming is refused where every other fixture arm is refused. */
+	memset(&seen, 0, sizeof(seen));
+	check(d1_store_close(a) == D1_OK, "the armed store closes");
+	d1_fixture_before_admission(a, count_the_door, &seen);
+	check(d1_store_destroy(a) == D1_OK, "and destroys");
+	b = d1_store_open(&uuid_b, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (b) {
+		admit_b = d1_fixture_admit(b, &object, 11,
+					   D1_RIGHT_WRITE |
+						   D1_RIGHT_SINGLE_WRITER);
+		env_init(&env, b, admit_b, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], 0, 11, 1, data,
+			    sizeof(data), true,
+			    &(struct d1_guard){ .never_written = true });
+		check(d1_store_apply(b, &env, &res) == D1_OK && seen.fired == 0,
+		      "an arm refused on a closed store is no arm at all");
+		d1_store_free(b);
+	}
 }
 
 /*
@@ -6705,6 +6941,7 @@ int main(void)
 	test_close_refuses_an_active_call();
 	test_close_does_not_destroy_under_an_arriving_call();
 	test_a_closed_store_answers_nothing();
+	test_the_door_arm_belongs_to_its_store();
 	test_failed_replay_poisons_the_handle();
 	test_custody_needs_a_real_version();
 	test_release_order_does_not_matter();
