@@ -269,13 +269,25 @@ void d1_fixture_fail_next_append(struct d1_store *s)
 	pthread_mutex_lock(&s->lock);
 	/* Faults are disabled throughout recovery, by construction. */
 	if (!s->replaying)
-		s->journal.fail_next = true;
+		s->journal.fail_next_append = true;
 	pthread_mutex_unlock(&s->lock);
 }
 
+void d1_fixture_fail_next_flush(struct d1_store *s)
+{
+	pthread_mutex_lock(&s->lock);
+	if (!s->replaying)
+		s->journal.fail_next_flush = true;
+	pthread_mutex_unlock(&s->lock);
+}
+
+/*
+ * The durable length is what a reader gets, not the append length.  A
+ * test simulating a crash hands replay a smaller one.
+ */
 const uint8_t *d1_store_journal(const struct d1_store *s, size_t *len)
 {
-	*len = s->journal.len;
+	*len = s->journal.durable;
 	return s->journal.buf;
 }
 
@@ -1644,12 +1656,14 @@ void d1_view_close(struct d1_store *s, struct d1_view *v)
  * rather than a promise about it.
  */
 
-#define D1_START_PAYLOAD_BYTES (D1_UUID_BYTES + 8u + 4u + 8u)
+/* previous incarnation, new incarnation, verifier. */
+#define D1_START_PAYLOAD_BYTES (8u + 8u + D1_VERIFIER_BYTES)
 #define D1_CHECKPOINT_PAYLOAD_BYTES (8u + 8u + 8u)
 
 uint32_t d1_store_journal_enable(struct d1_store *s)
 {
 	uint8_t payload[D1_START_PAYLOAD_BYTES];
+	uint8_t verifier[D1_VERIFIER_BYTES];
 	struct d1_cursor cur;
 	uint32_t status = D1_OK;
 
@@ -1658,17 +1672,24 @@ uint32_t d1_store_journal_enable(struct d1_store *s)
 		status = D1_INVALID;
 		goto out;
 	}
-	if (!d1_journal_init(&s->journal)) {
+	if (!d1_journal_init(&s->journal, &s->uuid)) {
 		status = D1_NOSPC;
 		goto out;
 	}
+	/*
+	 * A START header carries its NEW incarnation; every later record
+	 * matches the latest START.  The first one chains from zero.
+	 */
+	d1_journal_set_incarnation(&s->journal, s->incarnation);
+	d1_verifier_of(s->incarnation, verifier);
 	d1_enc_init(&cur, payload, sizeof(payload));
-	d1_enc_uuid(&cur, &s->uuid);
+	d1_enc_u64(&cur, s->incarnation - 1u);
 	d1_enc_u64(&cur, s->incarnation);
-	d1_enc_u32(&cur, s->chunk_bytes);
-	d1_enc_u64(&cur, s->max_file_bytes);
-	if (cur.bad || !d1_journal_append(&s->journal, D1_REC_START, payload,
-					  (uint32_t)cur.len)) {
+	d1_enc_raw(&cur, verifier, sizeof(verifier));
+	if (cur.bad ||
+	    !d1_journal_append(&s->journal, D1_REC_START, payload,
+			       (uint32_t)cur.len) ||
+	    !d1_journal_flush(&s->journal)) {
 		d1_journal_fini(&s->journal);
 		status = D1_IO;
 		goto out;
@@ -1694,8 +1715,10 @@ uint32_t d1_store_checkpoint(struct d1_store *s)
 	d1_enc_u64(&cur, s->next_txn);
 	d1_enc_u64(&cur, s->next_version);
 	d1_enc_u64(&cur, s->index_epoch);
-	if (cur.bad || !d1_journal_append(&s->journal, D1_REC_CONTROL, payload,
-					  (uint32_t)cur.len))
+	if (cur.bad ||
+	    !d1_journal_append(&s->journal, D1_REC_CONTROL, payload,
+			       (uint32_t)cur.len) ||
+	    !d1_journal_flush(&s->journal))
 		status = D1_IO;
 out:
 	pthread_mutex_unlock(&s->lock);
@@ -1724,29 +1747,38 @@ static bool d1_journal_intent(struct d1_store *s, const struct d1_envelope *env,
 				  s->scratch_cap - cur.len);
 	if (!body || cur.len + body > D1_JOURNAL_RECORD_MAX)
 		return false;
-	return d1_journal_append(&s->journal, D1_REC_ENTRY, s->scratch,
-				 (uint32_t)(cur.len + body));
+	/*
+	 * Append and flush together: the frontier advances only when both
+	 * succeed, so a failure at either leaves nothing claimed durable.
+	 */
+	if (!d1_journal_append(&s->journal, D1_REC_ENTRY, s->scratch,
+			       (uint32_t)(cur.len + body)))
+		return false;
+	return d1_journal_flush(&s->journal);
 }
 
 static uint32_t d1_replay_start(struct d1_store *s, const uint8_t *payload,
-				uint32_t len)
+				uint32_t len, uint64_t header_incarnation)
 {
 	struct d1_cursor cur;
-	struct d1_uuid uuid;
-	uint64_t incarnation, max_file_bytes;
-	uint32_t chunk_bytes;
+	uint8_t want[D1_VERIFIER_BYTES];
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	uint64_t previous, fresh;
 
 	d1_dec_init(&cur, payload, len);
-	if (!d1_dec_uuid(&cur, &uuid) || !d1_dec_u64(&cur, &incarnation) ||
-	    !d1_dec_u32(&cur, &chunk_bytes) ||
-	    !d1_dec_u64(&cur, &max_file_bytes) || !d1_dec_finished(&cur))
+	if (!d1_dec_u64(&cur, &previous) || !d1_dec_u64(&cur, &fresh) ||
+	    !d1_dec_raw(&cur, verifier, sizeof(verifier)) ||
+	    !d1_dec_finished(&cur))
 		return D1_INVALID;
-	/* A log only rebuilds the store it was written for. */
-	if (memcmp(&uuid, &s->uuid, sizeof(uuid)) != 0 ||
-	    chunk_bytes != s->chunk_bytes ||
-	    max_file_bytes != s->max_file_bytes)
+	/* Incarnations chain: the first from zero, each later from the last. */
+	if (fresh != previous + 1u || fresh != header_incarnation)
 		return D1_INVALID;
-	s->incarnation = incarnation;
+	if (previous != s->incarnation - 1u && s->incarnation != 1u)
+		return D1_INVALID;
+	d1_verifier_of(fresh, want);
+	if (memcmp(want, verifier, sizeof(want)) != 0)
+		return D1_INVALID;
+	s->incarnation = fresh;
 	return D1_OK;
 }
 
@@ -1801,13 +1833,23 @@ static uint32_t d1_replay_entry(struct d1_store *s, const uint8_t *payload,
 								 D1_OK;
 }
 
-uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t len)
+/*
+ * Rebuild @s from the durable prefix of @log.
+ *
+ * @durable is the length the writer claimed, not the length of the
+ * buffer.  Bytes past it were never claimed and are not read.  Anything
+ * malformed inside it is corruption of data the writer did claim, and
+ * fails closed -- a completed record never quietly disappears, and a
+ * corrupt prefix is never reported as a successful replay.
+ */
+uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
 {
 	struct d1_journal_cursor c;
-	const uint8_t *payload;
-	uint32_t type, plen, status = D1_OK;
-	uint64_t seq, expect = 1;
-	bool saw_start = false;
+	const uint8_t *body;
+	enum d1_journal_read got;
+	uint32_t type, blen, status = D1_OK;
+	uint64_t lsn, incarnation;
+	unsigned int starts = 0;
 
 	pthread_mutex_lock(&s->lock);
 	if (s->journaling || s->replaying) {
@@ -1817,32 +1859,40 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t len)
 	s->replaying = true;
 	pthread_mutex_unlock(&s->lock);
 
-	d1_journal_cursor_init(&c, log, len);
-	while (d1_journal_next(&c, &type, &seq, &payload, &plen)) {
-		/* A gap in the sequence is a log this reader cannot trust. */
-		if (seq != expect) {
+	d1_journal_cursor_init(&c, log, durable, &s->uuid);
+	for (;;) {
+		got = d1_journal_next(&c, &type, &lsn, &incarnation, &body,
+				      &blen);
+		if (got == D1_JOURNAL_CLEAN_END)
+			break;
+		if (got == D1_JOURNAL_CORRUPT) {
+			status = D1_IO;
+			break;
+		}
+		if (!starts && type != D1_REC_START) {
 			status = D1_INVALID;
 			break;
 		}
-		expect++;
-		if (!saw_start && type != D1_REC_START) {
+		/*
+		 * Every record after a START carries that START's
+		 * incarnation; one that does not belongs to a history this
+		 * log is not.
+		 */
+		if (starts && type != D1_REC_START &&
+		    incarnation != s->incarnation) {
 			status = D1_INVALID;
 			break;
 		}
 		switch (type) {
 		case D1_REC_START:
-			if (saw_start) {
-				status = D1_INVALID;
-				break;
-			}
-			saw_start = true;
-			status = d1_replay_start(s, payload, plen);
+			starts++;
+			status = d1_replay_start(s, body, blen, incarnation);
 			break;
 		case D1_REC_ENTRY:
-			status = d1_replay_entry(s, payload, plen);
+			status = d1_replay_entry(s, body, blen);
 			break;
 		case D1_REC_CONTROL:
-			status = d1_replay_checkpoint(s, payload, plen);
+			status = d1_replay_checkpoint(s, body, blen);
 			break;
 		default:
 			status = D1_INVALID;
@@ -1851,7 +1901,7 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t len)
 		if (status != D1_OK)
 			break;
 	}
-	if (status == D1_OK && !saw_start)
+	if (status == D1_OK && !starts)
 		status = D1_INVALID;
 
 	pthread_mutex_lock(&s->lock);

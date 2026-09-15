@@ -216,7 +216,8 @@ uint32_t d1_store_checkpoint(struct d1_store *s);
  * the log's START record names.  Records are applied in order until the
  * durable frontier; what lies past it was never written.
  */
-uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t len);
+uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log,
+			 size_t durable);
 
 /*
  * Fixture fault control: refuse the next journal append.  It is not
@@ -224,5 +225,10 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t len);
  * the run that armed it.
  */
 void d1_fixture_fail_next_append(struct d1_store *s);
+
+/* Fixture fault control: refuse the next flush, so an appended record is
+ * never claimed durable.  Also unjournalled and also disabled during
+ * recovery. */
+void d1_fixture_fail_next_flush(struct d1_store *s);
 
 #endif /* REFFS_D1_STORE_H */

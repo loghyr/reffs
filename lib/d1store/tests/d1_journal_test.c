@@ -5,8 +5,12 @@
  * D1 storage model: journal record framing.
  *
  * What these cases are really asking is whether a reader that arrives
- * after a crash can tell where the writing stopped, using only the
- * bytes -- no separate note about how far the writer got.
+ * after a crash can tell three things apart using only the bytes and
+ * the durable length it is given: a prefix it consumed exactly, a
+ * suffix the writer never claimed, and corruption of data the writer
+ * did claim.  The third must fail closed, including in the last record,
+ * because a completed record quietly disappearing is data loss reported
+ * as success.
  */
 
 #include <stdio.h>
@@ -24,12 +28,44 @@ static void check(bool ok, const char *what)
 	}
 }
 
-static const uint8_t payload_abc[3] = { 0x61, 0x62, 0x63 };
+static struct d1_uuid the_uuid;
+
+static void fill_uuid(struct d1_uuid *u, uint8_t base)
+{
+	unsigned int i;
+
+	for (i = 0; i < D1_UUID_BYTES; i++)
+		u->bytes[i] = (uint8_t)(base + i);
+}
+
+static const uint8_t body_abc[3] = { 0x61, 0x62, 0x63 };
+
+/* Read the whole durable prefix; answer how it ended and how many records. */
+static enum d1_journal_read drain(const struct d1_journal *j, size_t durable,
+				  unsigned int *count)
+{
+	struct d1_journal_cursor c;
+	const uint8_t *body;
+	uint32_t type, len;
+	uint64_t lsn, incarnation;
+	enum d1_journal_read got;
+
+	*count = 0;
+	d1_journal_cursor_init(&c, j->buf, durable, &the_uuid);
+	for (;;) {
+		got = d1_journal_next(&c, &type, &lsn, &incarnation, &body,
+				      &len);
+		if (got != D1_JOURNAL_RECORD)
+			return got;
+		(*count)++;
+	}
+}
 
 /*
- * One record, byte for byte.  The CRC32C comes from a separate
- * implementation of the same reflected polynomial, which reproduces
- * that polynomial's published check value 0xe3069283 for "123456789".
+ * One record, byte for byte, in the layout section 9 fixes.  The CRC32C
+ * comes from a separate implementation of the same reflected
+ * polynomial, which reproduces that polynomial's published check value
+ * 0xe3069283 for "123456789".
  */
 static void test_golden_record(void)
 {
@@ -39,44 +75,89 @@ static void test_golden_record(void)
 		0x31,
 		0x4a,
 		0x31,
+		/* format 1 */
+		0x00,
+		0x01,
 		/* record type START */
 		0x00,
+		0x01,
+		/* header_bytes 56 */
 		0x00,
+		0x00,
+		0x00,
+		0x38,
+		/* total_bytes 63 */
+		0x00,
+		0x00,
+		0x00,
+		0x3f,
+		/* its bitwise complement */
+		0xff,
+		0xff,
+		0xff,
+		0xc0,
+		/* store UUID */
 		0x00,
 		0x01,
-		/* sequence 1 */
-		0x00,
-		0x00,
-		0x00,
-		0x00,
-		0x00,
-		0x00,
-		0x00,
-		0x01,
-		/* payload length 3 */
-		0x00,
-		0x00,
-		0x00,
+		0x02,
 		0x03,
-		/* payload "abc" */
+		0x04,
+		0x05,
+		0x06,
+		0x07,
+		0x08,
+		0x09,
+		0x0a,
+		0x0b,
+		0x0c,
+		0x0d,
+		0x0e,
+		0x0f,
+		/* LSN 1 */
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x01,
+		/* incarnation 1 */
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x01,
+		/* reserved zero */
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		/* body "abc" */
 		0x61,
 		0x62,
 		0x63,
 		/* CRC32C of everything above */
-		0xa6,
-		0xd7,
-		0x61,
-		0xb7,
+		0x4c,
+		0x44,
+		0xe5,
+		0x3c,
 	};
 	struct d1_journal j;
 
-	check(d1_journal_init(&j), "the journal initialises");
-	check(d1_journal_append(&j, D1_REC_START, payload_abc,
-				sizeof(payload_abc)),
+	check(d1_journal_init(&j, &the_uuid), "the journal initialises");
+	d1_journal_set_incarnation(&j, 1);
+	check(d1_journal_append(&j, D1_REC_START, body_abc, sizeof(body_abc)),
 	      "the record appends");
 	check(j.len == sizeof(want), "the record is the expected length");
 	check(j.len == sizeof(want) && memcmp(j.buf, want, sizeof(want)) == 0,
 	      "and is byte for byte the golden record");
+	check(j.durable == 0, "an appended record is not yet durable");
+	check(d1_journal_flush(&j), "the flush succeeds");
+	check(j.durable == j.len, "and claims it");
 	d1_journal_fini(&j);
 }
 
@@ -84,189 +165,215 @@ static void test_round_trip(void)
 {
 	struct d1_journal j;
 	struct d1_journal_cursor c;
-	const uint8_t *payload;
+	const uint8_t *body;
 	uint32_t type, len;
-	uint64_t seq;
+	uint64_t lsn, incarnation;
 	unsigned int n = 0;
 
-	if (!d1_journal_init(&j))
+	if (!d1_journal_init(&j, &the_uuid))
 		return;
-	d1_journal_append(&j, D1_REC_START, payload_abc, sizeof(payload_abc));
-	d1_journal_append(&j, D1_REC_ENTRY, payload_abc, sizeof(payload_abc));
+	d1_journal_set_incarnation(&j, 1);
+	d1_journal_append(&j, D1_REC_START, body_abc, sizeof(body_abc));
+	d1_journal_append(&j, D1_REC_ENTRY, body_abc, sizeof(body_abc));
 	d1_journal_append(&j, D1_REC_CONTROL, NULL, 0);
+	d1_journal_flush(&j);
 
-	d1_journal_cursor_init(&c, j.buf, j.len);
-	while (d1_journal_next(&c, &type, &seq, &payload, &len)) {
+	d1_journal_cursor_init(&c, j.buf, j.durable, &the_uuid);
+	while (d1_journal_next(&c, &type, &lsn, &incarnation, &body, &len) ==
+	       D1_JOURNAL_RECORD) {
 		n++;
-		check(seq == n, "sequences run in order from one");
+		check(lsn == n, "LSNs run in order from one");
+		check(incarnation == 1, "and carry the current incarnation");
 		if (n == 1)
 			check(type == D1_REC_START && len == 3 &&
-				      memcmp(payload, payload_abc, 3) == 0,
+				      memcmp(body, body_abc, 3) == 0,
 			      "the first record round trips");
 		if (n == 3)
 			check(type == D1_REC_CONTROL && len == 0,
-			      "an empty payload is a payload");
+			      "an empty body is a body");
 	}
-	check(n == 3, "every whole record is read back");
+	check(n == 3, "every durable record is read back");
 	d1_journal_fini(&j);
 }
 
-/* A crash in the middle of a write leaves a tail nobody should read. */
-static void test_torn_tail(void)
+/*
+ * The append length is not the durable length.  Bytes the writer never
+ * claimed are simply not read, and the prefix that was claimed ends
+ * cleanly.
+ */
+static void test_unflushed_is_not_read(void)
 {
 	struct d1_journal j;
-	struct d1_journal_cursor c;
-	const uint8_t *payload;
-	uint32_t type, len;
-	uint64_t seq;
-	size_t whole;
 	unsigned int n;
-	size_t cut;
 
-	if (!d1_journal_init(&j))
+	if (!d1_journal_init(&j, &the_uuid))
 		return;
-	d1_journal_append(&j, D1_REC_START, payload_abc, sizeof(payload_abc));
-	whole = j.len;
-	d1_journal_append(&j, D1_REC_ENTRY, payload_abc, sizeof(payload_abc));
+	d1_journal_set_incarnation(&j, 1);
+	d1_journal_append(&j, D1_REC_START, body_abc, sizeof(body_abc));
+	d1_journal_flush(&j);
+	d1_journal_append(&j, D1_REC_ENTRY, body_abc, sizeof(body_abc));
 
-	/* Every cut inside the second record must read back exactly one. */
-	for (cut = whole; cut < j.len; cut++) {
-		struct d1_journal probe = j;
-
-		probe.len = cut;
-		d1_journal_cursor_init(&c, probe.buf, probe.len);
-		n = 0;
-		while (d1_journal_next(&c, &type, &seq, &payload, &len))
-			n++;
-		if (n != 1) {
-			check(false, "a torn record is never read");
-			break;
-		}
-	}
-	check(cut == j.len, "no cut inside the last record yielded it");
-
-	/* The whole log reads both again. */
-	d1_journal_cursor_init(&c, j.buf, j.len);
-	n = 0;
-	while (d1_journal_next(&c, &type, &seq, &payload, &len))
-		n++;
-	check(n == 2, "an untruncated log reads both records");
+	check(j.len > j.durable, "there are appended but unclaimed bytes");
+	check(drain(&j, j.durable, &n) == D1_JOURNAL_CLEAN_END && n == 1,
+	      "the claimed prefix ends cleanly with one record");
+	check(d1_journal_flush(&j), "a later flush claims the rest");
+	check(drain(&j, j.durable, &n) == D1_JOURNAL_CLEAN_END && n == 2,
+	      "and then both records are read");
 	d1_journal_fini(&j);
 }
 
-/* Corruption anywhere in a record stops the read at that record. */
-static void test_corruption_stops_the_read(void)
+/*
+ * Corruption anywhere inside the durable prefix fails closed, including
+ * in its final record.  This is the case that separates a torn suffix
+ * from lost data: the writer claimed these bytes.
+ */
+static void test_durable_corruption_fails_closed(void)
 {
+	struct d1_journal j;
 	size_t at;
-	struct d1_journal probe;
-	struct d1_journal_cursor c;
-	const uint8_t *payload;
-	uint32_t type, len;
-	uint64_t seq;
-	size_t first_len;
-	bool all_stopped = true;
+	unsigned int n;
+	bool all_closed = true;
+	unsigned int bad_at = 0;
 
-	if (!d1_journal_init(&probe))
+	if (!d1_journal_init(&j, &the_uuid))
 		return;
-	d1_journal_append(&probe, D1_REC_START, payload_abc,
-			  sizeof(payload_abc));
-	first_len = probe.len;
-	d1_journal_append(&probe, D1_REC_ENTRY, payload_abc,
-			  sizeof(payload_abc));
+	d1_journal_set_incarnation(&j, 1);
+	d1_journal_append(&j, D1_REC_START, body_abc, sizeof(body_abc));
+	d1_journal_append(&j, D1_REC_ENTRY, body_abc, sizeof(body_abc));
+	d1_journal_flush(&j);
 
-	for (at = first_len; at < probe.len; at++) {
-		unsigned int n = 0;
+	for (at = 0; at < j.durable; at++) {
+		enum d1_journal_read got;
 
-		probe.buf[at] ^= 0xffu;
-		d1_journal_cursor_init(&c, probe.buf, probe.len);
-		while (d1_journal_next(&c, &type, &seq, &payload, &len))
-			n++;
-		probe.buf[at] ^= 0xffu;
-		if (n != 1) {
-			all_stopped = false;
+		j.buf[at] ^= 0xffu;
+		got = drain(&j, j.durable, &n);
+		j.buf[at] ^= 0xffu;
+		if (got != D1_JOURNAL_CORRUPT) {
+			all_closed = false;
+			bad_at = (unsigned int)at;
 			break;
 		}
 	}
-	check(all_stopped,
-	      "a flipped bit anywhere in the last record hides it");
+	if (!all_closed)
+		fprintf(stderr, "first accepted corruption at offset %u\n",
+			bad_at);
+	check(all_closed,
+	      "a flipped bit anywhere in the durable prefix fails closed");
 
-	/* A flipped bit in the first record hides the second one too. */
-	probe.buf[0] ^= 0xffu;
-	d1_journal_cursor_init(&c, probe.buf, probe.len);
-	check(!d1_journal_next(&c, &type, &seq, &payload, &len),
-	      "and a corrupt first record ends the log there");
-	probe.buf[0] ^= 0xffu;
-
-	d1_journal_fini(&probe);
-}
-
-/* An armed fault refuses one append and leaves nothing behind. */
-static void test_fault_leaves_no_residue(void)
-{
-	struct d1_journal j;
-	struct d1_journal_cursor c;
-	const uint8_t *payload;
-	uint32_t type, len;
-	uint64_t seq;
-	size_t before;
-	unsigned int n = 0;
-
-	if (!d1_journal_init(&j))
-		return;
-	d1_journal_append(&j, D1_REC_START, payload_abc, sizeof(payload_abc));
-	before = j.len;
-
-	j.fail_next = true;
-	check(!d1_journal_append(&j, D1_REC_ENTRY, payload_abc,
-				 sizeof(payload_abc)),
-	      "an armed fault refuses the append");
-	check(j.len == before, "and the log is byte for byte unchanged");
-
-	check(d1_journal_append(&j, D1_REC_ENTRY, payload_abc,
-				sizeof(payload_abc)),
-	      "the next append succeeds");
-	d1_journal_cursor_init(&c, j.buf, j.len);
-	while (d1_journal_next(&c, &type, &seq, &payload, &len))
-		n++;
-	check(n == 2, "and exactly the two written records are there");
+	/* Truncating inside the prefix is corruption of it, not an end. */
+	check(drain(&j, j.durable - 1u, &n) == D1_JOURNAL_CORRUPT,
+	      "a durable length inside a record fails closed");
+	check(drain(&j, j.durable, &n) == D1_JOURNAL_CLEAN_END && n == 2,
+	      "and the intact prefix still reads both records");
 	d1_journal_fini(&j);
 }
 
-/* A record claiming more than the model allows is not a record. */
-static void test_oversized_claim(void)
+/* A record is not trusted to say which store or which place it is from. */
+static void test_identity_and_order(void)
 {
 	struct d1_journal j;
 	struct d1_journal_cursor c;
-	const uint8_t *payload;
+	struct d1_uuid other;
+	const uint8_t *body;
 	uint32_t type, len;
-	uint64_t seq;
+	uint64_t lsn, incarnation;
+	unsigned int n;
 
-	if (!d1_journal_init(&j))
+	if (!d1_journal_init(&j, &the_uuid))
 		return;
-	d1_journal_append(&j, D1_REC_START, payload_abc, sizeof(payload_abc));
-	/* Overwrite the declared length with something absurd. */
-	j.buf[16] = 0xffu;
-	j.buf[17] = 0xffu;
-	j.buf[18] = 0xffu;
-	j.buf[19] = 0xffu;
-	d1_journal_cursor_init(&c, j.buf, j.len);
-	check(!d1_journal_next(&c, &type, &seq, &payload, &len),
-	      "a length past the model's limit is refused");
+	d1_journal_set_incarnation(&j, 1);
+	d1_journal_append(&j, D1_REC_START, body_abc, sizeof(body_abc));
+	d1_journal_append(&j, D1_REC_ENTRY, body_abc, sizeof(body_abc));
+	d1_journal_flush(&j);
 
-	check(!d1_journal_append(&j, D1_REC_ENTRY, payload_abc,
-				 D1_JOURNAL_RECORD_MAX + 1u),
-	      "and one that large is never written");
+	fill_uuid(&other, 0x77);
+	d1_journal_cursor_init(&c, j.buf, j.durable, &other);
+	check(d1_journal_next(&c, &type, &lsn, &incarnation, &body, &len) ==
+		      D1_JOURNAL_CORRUPT,
+	      "a log from another store rebuilds nothing");
+
+	/* An LSN that skips is a log with a record missing from the middle. */
+	j.buf[43] = 9;
+	check(drain(&j, j.durable, &n) == D1_JOURNAL_CORRUPT,
+	      "a gap in the LSNs fails closed");
+	j.buf[43] = 1;
+
+	/* The length complement is what catches a corrupted length. */
+	j.buf[15] ^= 0x01u;
+	check(drain(&j, j.durable, &n) == D1_JOURNAL_CORRUPT,
+	      "a length that disagrees with its complement fails closed");
+	j.buf[15] ^= 0x01u;
+	check(drain(&j, j.durable, &n) == D1_JOURNAL_CLEAN_END && n == 2,
+	      "and the restored log reads cleanly again");
+	d1_journal_fini(&j);
+}
+
+/* An armed fault refuses once and leaves nothing behind. */
+static void test_faults_leave_no_residue(void)
+{
+	struct d1_journal j;
+	size_t before_len, before_durable;
+	uint64_t before_lsn;
+	unsigned int n;
+
+	if (!d1_journal_init(&j, &the_uuid))
+		return;
+	d1_journal_set_incarnation(&j, 1);
+	d1_journal_append(&j, D1_REC_START, body_abc, sizeof(body_abc));
+	d1_journal_flush(&j);
+	before_len = j.len;
+	before_durable = j.durable;
+	before_lsn = j.next_lsn;
+
+	j.fail_next_append = true;
+	check(!d1_journal_append(&j, D1_REC_ENTRY, body_abc, sizeof(body_abc)),
+	      "an armed append fault refuses the append");
+	check(j.len == before_len, "the log is byte for byte unchanged");
+	check(j.next_lsn == before_lsn, "and no LSN was consumed");
+
+	/* A flush fault leaves the record appended but never claimed. */
+	check(d1_journal_append(&j, D1_REC_ENTRY, body_abc, sizeof(body_abc)),
+	      "the next append succeeds");
+	j.fail_next_flush = true;
+	check(!d1_journal_flush(&j), "an armed flush fault refuses the flush");
+	check(j.durable == before_durable, "the durable length did not move");
+	check(drain(&j, j.durable, &n) == D1_JOURNAL_CLEAN_END && n == 1,
+	      "so a reader sees only what was claimed");
+
+	check(d1_journal_flush(&j), "the fault is spent");
+	check(drain(&j, j.durable, &n) == D1_JOURNAL_CLEAN_END && n == 2,
+	      "and the record becomes durable");
+	d1_journal_fini(&j);
+}
+
+/* A record larger than the model allows is never written. */
+static void test_oversized_record(void)
+{
+	struct d1_journal j;
+
+	if (!d1_journal_init(&j, &the_uuid))
+		return;
+	d1_journal_set_incarnation(&j, 1);
+	check(!d1_journal_append(&j, D1_REC_START, body_abc,
+				 D1_JOURNAL_RECORD_MAX),
+	      "a body that would exceed the record limit is refused");
+	check(j.len == 0, "and nothing was written");
+	check(!d1_journal_append(&j, 99u, body_abc, sizeof(body_abc)),
+	      "a record type outside the table is refused");
 	d1_journal_fini(&j);
 }
 
 int main(void)
 {
+	fill_uuid(&the_uuid, 0x00);
+
 	test_golden_record();
 	test_round_trip();
-	test_torn_tail();
-	test_corruption_stops_the_read();
-	test_fault_leaves_no_residue();
-	test_oversized_claim();
+	test_unflushed_is_not_read();
+	test_durable_corruption_fails_closed();
+	test_identity_and_order();
+	test_faults_leave_no_residue();
+	test_oversized_record();
 
 	if (failures) {
 		fprintf(stderr, "%u check(s) failed\n", failures);

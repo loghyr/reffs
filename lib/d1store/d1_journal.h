@@ -2,17 +2,22 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * D1 storage model: journal framing.
+ * D1 storage model: journal framing, as section 9 fixes it.
  *
- * The journal is an append-only byte log.  Every record carries its own
- * magic, type, sequence, length and CRC32C trailer, so a reader can
- * tell a whole intact record from a torn tail without being told where
- * the writer stopped -- which is what a reader after a crash actually
- * has.
+ * The simulator keeps an append vector and a SEPARATE durable length.
+ * Flush advances that length, and only ever to a whole record boundary.
+ * That separation is the whole point: bytes past the durable length are
+ * a torn suffix the writer never claimed, while anything wrong inside
+ * the durable prefix is corruption of data the writer did claim, and
+ * the two must not be confused.
  *
- * Reading stops at the first record that is not whole and intact.  That
- * point is the durable frontier: everything before it happened,
- * everything at or after it did not.
+ * So a reader has three outcomes, not two.  It consumed the prefix
+ * exactly; or it found the prefix malformed and fails closed, including
+ * in its final record; or it has another record to hand back.  There is
+ * no outcome in which a completed record quietly disappears.
+ *
+ * This is a declared failure model for tests, not a claim about real
+ * disk atomicity.
  */
 
 #ifndef REFFS_D1_JOURNAL_H
@@ -20,55 +25,83 @@
 
 #include "d1_types.h"
 
-/* magic(4) + type(4) + sequence(8) + length(4) */
-#define D1_JOURNAL_HEADER_BYTES 20u
-/* CRC32C over the header and the payload. */
-#define D1_JOURNAL_TRAILER_BYTES 4u
 #define D1_JOURNAL_MAGIC 0x44314a31u /* "D1J1" */
+#define D1_JOURNAL_FORMAT 1u
+#define D1_JOURNAL_HEADER_BYTES 56u
+#define D1_JOURNAL_TRAILER_BYTES 4u
 
 struct d1_journal {
 	uint8_t *buf;
+	/* Appended bytes, whether or not they are claimed durable. */
 	size_t len;
+	/* Claimed durable bytes; always a whole record boundary. */
+	size_t durable;
 	size_t cap;
-	uint64_t next_seq;
+	/* Strictly increasing from one, globally across the log. */
+	uint64_t next_lsn;
+	/* The incarnation every record after the latest START carries. */
+	uint64_t incarnation;
+	struct d1_uuid store_uuid;
 	/*
-	 * Fixture fault state.  It is deliberately not part of the log:
-	 * a fault is a thing that happened to this run, not a fact about
-	 * the stored data, so it cannot replay and cannot survive.
+	 * Fixture fault state.  Deliberately not in the log: a fault is
+	 * something that happened to this run, not a fact about the stored
+	 * data, so it can neither replay nor survive.
 	 */
-	bool fail_next;
+	bool fail_next_append;
+	bool fail_next_flush;
 };
 
-bool d1_journal_init(struct d1_journal *j);
+bool d1_journal_init(struct d1_journal *j, const struct d1_uuid *store_uuid);
 void d1_journal_fini(struct d1_journal *j);
 
 /*
- * Append one record.  Returns false when the fixture has armed a
- * failure or the log cannot grow; the log is unchanged either way, so
- * a refused append leaves no torn record behind.
+ * Append one record at the current incarnation and the next LSN.
+ * Returns false when a fault is armed, the log cannot grow, or a
+ * counter would overflow.  The log is unchanged either way, so a
+ * refused append leaves no torn record behind and consumes no LSN.
  */
-bool d1_journal_append(struct d1_journal *j, uint32_t type,
-		       const uint8_t *payload, uint32_t len);
+bool d1_journal_append(struct d1_journal *j, uint32_t type, const uint8_t *body,
+		       uint32_t len);
 
-/* Truncate to @len bytes, as a crash in the middle of a write would. */
-void d1_journal_truncate(struct d1_journal *j, size_t len);
+/* Claim everything appended so far as durable.  Whole records only. */
+bool d1_journal_flush(struct d1_journal *j);
+
+/* The incarnation subsequent records carry; START sets it. */
+void d1_journal_set_incarnation(struct d1_journal *j, uint64_t incarnation);
+
+/* What a read of the durable prefix found. */
+enum d1_journal_read {
+	/* Another whole, intact record is available. */
+	D1_JOURNAL_RECORD = 1,
+	/* The durable prefix was consumed exactly. */
+	D1_JOURNAL_CLEAN_END = 2,
+	/*
+	 * Something inside the durable prefix is not a whole intact
+	 * record.  The writer claimed these bytes, so this fails closed;
+	 * it is never reported as a clean end.
+	 */
+	D1_JOURNAL_CORRUPT = 3,
+};
 
 struct d1_journal_cursor {
 	const uint8_t *buf;
-	size_t len;
+	/* The durable length supplied by the caller, never the append length. */
+	size_t durable;
 	size_t at;
+	const struct d1_uuid *expect_uuid;
+	uint64_t last_lsn;
 };
 
-void d1_journal_cursor_init(struct d1_journal_cursor *c, const uint8_t *buf,
-			    size_t len);
-
 /*
- * Advance to the next whole, intact record.  Returns false at the end
- * of the log and at the first record that is torn, mistyped or fails
- * its CRC -- the caller cannot tell those apart, and should not: both
- * mean the same thing, which is that the log ends here.
+ * @expect_uuid is an argument, not something taken from the log: a
+ * record is not trusted to say which store it belongs to.
  */
-bool d1_journal_next(struct d1_journal_cursor *c, uint32_t *type, uint64_t *seq,
-		     const uint8_t **payload, uint32_t *len);
+void d1_journal_cursor_init(struct d1_journal_cursor *c, const uint8_t *buf,
+			    size_t durable, const struct d1_uuid *expect_uuid);
+
+enum d1_journal_read d1_journal_next(struct d1_journal_cursor *c,
+				     uint32_t *type, uint64_t *lsn,
+				     uint64_t *incarnation,
+				     const uint8_t **body, uint32_t *len);
 
 #endif /* REFFS_D1_JOURNAL_H */

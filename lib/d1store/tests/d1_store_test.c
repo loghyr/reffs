@@ -1298,33 +1298,44 @@ static void test_crash_loses_only_the_torn_record(void)
 		d1_store_free(a);
 		return;
 	}
-	/* Cut at a record boundary: everything after it is simply absent. */
+	/*
+	 * A shorter durable length is a crash: the writer had claimed only
+	 * that much, so everything after it is simply absent.
+	 */
 	check(d1_store_replay(after, log, prefix) == D1_OK,
-	      "a log cut at a record boundary replays");
+	      "a log replayed at an earlier durable length replays");
 	check(states_agree(before, after),
 	      "and stops exactly where the writing stopped");
 
 	/*
-	 * Cutting one byte short tears only the final record.  The frontier
-	 * is per record, not per operation: the write and finalize that
-	 * preceded that commit did survive, so the chunk is not visible but
-	 * its guard has moved.
+	 * A durable length falling inside a record is not a torn suffix.
+	 * The writer claimed those bytes, so it is corruption of the
+	 * durable prefix and must fail closed rather than quietly drop the
+	 * record it lands in.
 	 */
 	{
 		struct d1_store *torn =
 			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
-		struct d1_guard guard;
-		d1_id_t seen;
 
 		if (torn) {
-			check(d1_store_replay(torn, log, len - 1) == D1_OK,
-			      "a torn log still replays");
-			check(!d1_store_visible(torn, &object, 2, &seen),
-			      "the torn record never published its chunk");
-			check(d1_store_guard(torn, &object, 2, &guard) &&
-				      !guard.never_written,
-			      "but the records before it did happen");
+			check(d1_store_replay(torn, log, len - 1) == D1_IO,
+			      "a durable length inside a record fails closed");
 			d1_store_free(torn);
+		}
+	}
+
+	/* And corruption of a completed record is never a clean end. */
+	{
+		struct d1_store *bad =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		uint8_t *writable = (uint8_t *)(uintptr_t)log;
+
+		if (bad) {
+			writable[len - 1] ^= 0xffu;
+			check(d1_store_replay(bad, log, len) == D1_IO,
+			      "a corrupt final record fails closed");
+			writable[len - 1] ^= 0xffu;
+			d1_store_free(bad);
 		}
 	}
 
@@ -1408,7 +1419,7 @@ static void test_append_fault_is_unrecorded(void)
 static void test_replay_refuses_a_foreign_log(void)
 {
 	struct d1_uuid mine, theirs;
-	struct d1_store *a, *b, *narrow;
+	struct d1_store *a, *b;
 	const uint8_t *log;
 	size_t len;
 	d1_id_t admission;
@@ -1429,16 +1440,9 @@ static void test_replay_refuses_a_foreign_log(void)
 
 	b = d1_store_open(&theirs, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (b) {
-		check(d1_store_replay(b, log, len) == D1_INVALID,
+		check(d1_store_replay(b, log, len) == D1_IO,
 		      "a log from another store is refused");
 		d1_store_free(b);
-	}
-
-	narrow = d1_store_open(&mine, CHUNK_BYTES / 2, MAX_FILE_BYTES);
-	if (narrow) {
-		check(d1_store_replay(narrow, log, len) == D1_INVALID,
-		      "and so is a store with a different geometry");
-		d1_store_free(narrow);
 	}
 
 	/* A log with no START record is not a log. */
