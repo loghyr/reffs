@@ -3170,6 +3170,22 @@ static uint32_t d1_replay_start(struct d1_store *s, const uint8_t *payload,
 	return D1_OK;
 }
 
+/*
+ * Whether the receipt this record claims is there.
+ *
+ * Replay asks it twice, once on each side of the reducer: a receipt
+ * that was absent before and present after is the one this reduction
+ * created.  The lookup is by object, key and ordinal, so the receipt it
+ * finds is this record's by construction, and the digest in it is the
+ * digest the reducer was handed.
+ */
+static bool d1_record_receipt(struct d1_store *s, const struct d1_envelope *env,
+			      uint32_t ordinal)
+{
+	return d1_receipt_find(s, &env->object.export_uuid, &env->key,
+			       ordinal) != NULL;
+}
+
 static uint32_t d1_replay_entry(struct d1_store *s, const uint8_t *body,
 				uint32_t len)
 {
@@ -3221,8 +3237,25 @@ static uint32_t d1_replay_entry(struct d1_store *s, const uint8_t *body,
 	if (ordinal != d1_key_recorded(s, &env.object.export_uuid, &env.key))
 		return D1_INVALID;
 
+	/*
+	 * A durable record is a claim that an event happened, and the
+	 * event an ENTRY claims is a receipt.  Equal results do not say
+	 * that: a member whose caller binding fails, a member whose key
+	 * already names a different Envelope, an exact repeat answered
+	 * from the receipt it already has and a member that could not
+	 * reserve one all return exactly the result they returned live,
+	 * and the live writer appends none of them.  Accepting one would
+	 * carry the frontier over an event that never happened.  So the
+	 * record is accepted only if reducing it created the receipt the
+	 * record names, which is a question asked on both sides of the
+	 * reducer rather than derived from the status it returned.
+	 */
+	if (d1_record_receipt(s, &env, ordinal))
+		return D1_INVALID;
 	d1_apply_one(s, &env, ordinal, digest, d1_op_rights(env.op),
 		     env.op == D1_OP_COMMIT_BATCH, &computed);
+	if (!d1_record_receipt(s, &env, ordinal))
+		return D1_INVALID;
 	/* Re-execution that disagrees with the log is not this history. */
 	if (!d1_complete_result_equal(&computed, &logged))
 		return D1_INVALID;
@@ -3271,7 +3304,18 @@ static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 		if (!d1_envelope_digest(&env, s->scratch, s->scratch_cap,
 					digest))
 			return D1_INVALID;
+		/*
+		 * The same emission invariant, and the only one a control
+		 * record has: a control operation answers once, so its
+		 * receipt is member zero, and a duplicate of a record the
+		 * writer appended once is answered from that receipt with
+		 * the identical result.  See d1_record_receipt.
+		 */
+		if (d1_record_receipt(s, &env, 0))
+			return D1_INVALID;
 		d1_apply_control(s, &env, digest, &computed);
+		if (!d1_record_receipt(s, &env, 0))
+			return D1_INVALID;
 		if (!d1_complete_result_equal(&computed, &logged))
 			return D1_INVALID;
 		return D1_OK;

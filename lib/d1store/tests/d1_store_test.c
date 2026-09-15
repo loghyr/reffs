@@ -5619,6 +5619,301 @@ static void test_records_must_name_what_they_carry(void)
 }
 
 /*
+ * The result the reducer computes for a member it refuses before the
+ * handler touches anything and before it has taken a receipt: the key,
+ * the refusal, and the verifier the store is at.  Epoch and EOF stay
+ * zero, because the memset that starts the reduction is all that ever
+ * sets them on this path.
+ */
+static void crafted_result(struct d1_complete_result *r,
+			   const struct d1_opkey *key, uint32_t status,
+			   uint32_t disposition, const uint8_t *verifier)
+{
+	memset(r, 0, sizeof(*r));
+	r->key = *key;
+	r->disposition = disposition;
+	r->entry.status = status;
+	r->entry.stability = D1_FILE_SYNC;
+	r->entry.disposition = disposition;
+	memcpy(r->entry.verifier, verifier, D1_VERIFIER_BYTES);
+}
+
+/*
+ * A durable record claims that something happened, and equal results do
+ * not make that claim true.
+ *
+ * A member refused for its caller binding, a member whose key already
+ * names a different Envelope, and an exact repeat of a control the
+ * writer appended once all recompute to exactly the result they
+ * returned live -- and the live writer appends none of them, because
+ * none of them recorded anything.  Each record here carries the result
+ * the reducer really computes, so what refuses it is the question of
+ * whether reducing it created the receipt it names, and not a
+ * disagreement about the answer.
+ */
+static void test_replay_requires_the_record_to_have_happened(void)
+{
+	static const char *const what[] = {
+		"a duplicated control record is refused",
+		"an ENTRY whose caller was never bound is refused",
+		"an ENTRY refused for its key is refused",
+	};
+	unsigned int pass;
+
+	for (pass = 0; pass < 3; pass++) {
+		struct d1_uuid store_uuid;
+		struct d1_store *live, *target;
+		struct d1_envelope env, crafted;
+		struct d1_complete_result made;
+		struct d1_result res;
+		static uint8_t copy[65536];
+		static uint8_t scratch[65536];
+		static uint8_t body[8192];
+		static uint8_t bytes[4096];
+		static uint8_t result[512];
+		static uint8_t data[16];
+		uint8_t digest[D1_DIGEST_BYTES];
+		uint8_t verifier[D1_VERIFIER_BYTES];
+		const uint8_t *log;
+		size_t len, at[16], used, env_len, res_len;
+		unsigned int records;
+		uint32_t blen = 0, type = D1_REC_ENTRY, ordinal = 0;
+		uint64_t lsn;
+		d1_id_t admission, control, txn;
+
+		memset(data, 0x71, sizeof(data));
+		fill_uuid(&store_uuid, (uint8_t)(0x71 + pass));
+		live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!live)
+			return;
+		d1_store_journal_enable(live);
+		d1_store_verifier(live, verifier);
+		admission = d1_fixture_admit(live, &object, 11,
+					     D1_RIGHT_WRITE |
+						     D1_RIGHT_SINGLE_WRITER);
+		env_init(&env, live, admission, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], 0, 11, 1, data,
+			    sizeof(data), true,
+			    &(struct d1_guard){ .never_written = true });
+		check(d1_store_apply(live, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "a one-member batch to build on");
+		txn = res.entries[0].txn;
+
+		if (pass == 0) {
+			/*
+			 * A control operation the reducer records as a
+			 * refusal: a live admission's work cannot be reaped.
+			 * It is a recorded event, so it has a receipt and a
+			 * record, which is what a duplicate needs.
+			 */
+			control = d1_fixture_admit(live, &object, 11,
+						   D1_RIGHT_CONTROL);
+			env_init(&env, live, control, D1_OP_LEASE_REAP);
+			env.body.control.count = 1;
+			env.body.control.txns[0] = txn;
+			env.body.control.old_admission = admission;
+			check(d1_store_apply(live, &env, &res) == D1_OK &&
+				      res.entries[0].status == D1_STALE_AUTH,
+			      "and one control record, recorded as a refusal");
+		}
+
+		log = d1_store_journal(live, &len);
+		records = index_log(log, len, at, 16);
+		lsn = (uint64_t)records + 1u;
+		check(len + 4096u <= sizeof(copy), "the log fits a copy");
+		if (len + 4096u > sizeof(copy)) {
+			d1_store_free(live);
+			return;
+		}
+
+		if (pass == 0) {
+			/* The last record again, under the next LSN. */
+			const uint8_t *last = log + at[records - 1];
+
+			blen = record_bytes(last) - D1_JOURNAL_HEADER_BYTES -
+			       D1_JOURNAL_TRAILER_BYTES;
+			memcpy(body, last + D1_JOURNAL_HEADER_BYTES, blen);
+			type = D1_REC_CONTROL;
+		} else {
+			if (pass == 1) {
+				/* A handle the store never issued. */
+				env_init(&crafted, live, admission + 7u,
+					 D1_OP_WRITE_BATCH);
+				crafted.body.write.count = 1;
+				crafted.body.write.stability = D1_FILE_SYNC;
+				write_entry(&crafted.body.write.entries[0], 1,
+					    11, 2, data, sizeof(data), true,
+					    &(struct d1_guard){ .never_written =
+									true });
+				crafted_result(&made, &crafted.key,
+					       D1_STALE_AUTH, D1_UNRECORDED,
+					       verifier);
+				ordinal = 0;
+			} else {
+				/*
+				 * The recorded key, a changed body, and the
+				 * next ordinal the dense prefix allows.
+				 */
+				crafted = env;
+				crafted.body.write.count = 2;
+				write_entry(&crafted.body.write.entries[1], 1,
+					    11, 2, data, sizeof(data), true,
+					    &(struct d1_guard){ .never_written =
+									true });
+				crafted_result(&made, &crafted.key,
+					       D1_REPLAY_CONFLICT, D1_COMPLETED,
+					       verifier);
+				ordinal = 1;
+			}
+			env_len = d1_envelope_encode(&crafted, bytes,
+						     sizeof(bytes));
+			res_len = d1_complete_result_encode(&made, result,
+							    sizeof(result));
+			check(env_len && res_len, "the crafted record encodes");
+			check(d1_envelope_digest(&crafted, scratch,
+						 sizeof(scratch), digest),
+			      "and carries the digest the store recomputes");
+			if (!env_len || !res_len) {
+				d1_store_free(live);
+				return;
+			}
+			blen = entry_body(body, bytes, (uint32_t)env_len,
+					  ordinal, digest, result,
+					  (uint32_t)res_len);
+			type = D1_REC_ENTRY;
+		}
+
+		memcpy(copy, log, len);
+		used = len + frame_record(copy + len, type, &store_uuid, lsn, 1,
+					  body, blen);
+
+		target =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (target) {
+			check(d1_store_replay(target, copy, used) == D1_INVALID,
+			      what[pass]);
+			d1_store_free(target);
+		}
+		target =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (target) {
+			check(d1_store_replay(target, log, len) == D1_OK,
+			      "while the log as written still rebuilds");
+			check(states_agree(live, target),
+			      "into the same store");
+			d1_store_free(target);
+		}
+		d1_store_free(live);
+	}
+}
+
+/*
+ * The same invariant at the frontier where the reducer runs out of
+ * room.  A member that could not reserve a receipt recorded nothing and
+ * consumed nothing, so a record of it is a record the writer never
+ * appended -- and its result is an honest NOSPC, not a disagreement.
+ */
+static void test_replay_refuses_a_record_that_found_no_room(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *target;
+	struct d1_envelope env;
+	struct d1_complete_result made;
+	struct d1_result res;
+	static uint8_t copy[1u << 19];
+	static uint8_t scratch[65536];
+	static uint8_t body[8192];
+	static uint8_t bytes[4096];
+	static uint8_t result[512];
+	static uint8_t data[8];
+	static size_t at[D1_MAX_RECEIPTS + 8u];
+	uint8_t digest[D1_DIGEST_BYTES];
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	const uint8_t *log;
+	size_t len, used, env_len, res_len;
+	unsigned int i, records;
+	uint32_t blen;
+	uint64_t lsn;
+	bool filled = false;
+	d1_id_t admission;
+
+	memset(data, 0x74, sizeof(data));
+	fill_uuid(&store_uuid, 0x74);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	d1_store_verifier(live, verifier);
+	admission = d1_fixture_admit(live, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	/* Recorded refusals, all of them logged, until there is no room. */
+	memset(&res, 0, sizeof(res));
+	for (i = 0; i < D1_MAX_RECEIPTS + 2u; i++) {
+		env_init(&env, live, admission, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], 0, 11, i + 1u, data,
+			    sizeof(data), true,
+			    &(struct d1_guard){ .generation = 900u + i,
+						.writer = 11 });
+		d1_store_apply(live, &env, &res);
+		if (res.entries[0].status == D1_NOSPC) {
+			filled = true;
+			break;
+		}
+		if (res.entries[0].status != D1_GUARDED)
+			break;
+	}
+	check(filled && res.entries[0].disposition == D1_UNRECORDED,
+	      "the receipt table fills and the next member is UNRECORDED");
+	if (!filled) {
+		d1_store_free(live);
+		return;
+	}
+
+	/* @env is that member: it answered NOSPC and was never logged. */
+	crafted_result(&made, &env.key, D1_NOSPC, D1_UNRECORDED, verifier);
+	env_len = d1_envelope_encode(&env, bytes, sizeof(bytes));
+	res_len = d1_complete_result_encode(&made, result, sizeof(result));
+	check(env_len && res_len &&
+		      d1_envelope_digest(&env, scratch, sizeof(scratch),
+					 digest),
+	      "the record it would have written encodes");
+	log = d1_store_journal(live, &len);
+	records = index_log(log, len, at, D1_MAX_RECEIPTS + 8u);
+	lsn = (uint64_t)records + 1u;
+	check(len + 4096u <= sizeof(copy), "and the full log fits a copy");
+	if (!env_len || !res_len || len + 4096u > sizeof(copy)) {
+		d1_store_free(live);
+		return;
+	}
+	blen = entry_body(body, bytes, (uint32_t)env_len, 0, digest, result,
+			  (uint32_t)res_len);
+	memcpy(copy, log, len);
+	used = len + frame_record(copy + len, D1_REC_ENTRY, &store_uuid, lsn, 1,
+				  body, blen);
+
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, copy, used) == D1_INVALID,
+		      "a record of a member that found no room is refused");
+		d1_store_free(target);
+	}
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, log, len) == D1_OK,
+		      "while the log as written still rebuilds");
+		check(states_agree(live, target), "into the same store");
+		d1_store_free(target);
+	}
+	d1_store_free(live);
+}
+
+/*
  * The one failure that happens before the log has a frontier: the START
  * that opens it.
  *
@@ -5737,6 +6032,8 @@ int main(void)
 	test_concurrent_callers_cannot_splice_a_key();
 	test_replay_refuses_a_spliced_key();
 	test_records_must_name_what_they_carry();
+	test_replay_requires_the_record_to_have_happened();
+	test_replay_refuses_a_record_that_found_no_room();
 	test_start_can_fail_to_become_durable();
 	test_caller_binding_is_settled_first();
 	test_control_envelopes_replay();
