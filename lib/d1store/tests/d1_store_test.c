@@ -15,6 +15,7 @@
 #include "config.h"
 #endif
 
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -1196,6 +1197,7 @@ static void test_view_is_stable(void)
 	d1_view_close(s, after);
 	check(d1_store_close(s) == D1_OK,
 	      "and the close succeeds once nothing is outstanding");
+	check(d1_store_destroy(s) == D1_OK, "and then it is destroyed");
 }
 
 /*
@@ -1230,6 +1232,9 @@ static void test_close_refuses_an_active_call(void)
 			   NULL) != 0,
 	      "there is something to read");
 
+	check(d1_store_destroy(s) == D1_BUSY,
+	      "destroying a store that was never closed is refused");
+
 	/* A call is admitted and has not returned. */
 	d1_fixture_call_enter(s);
 	check(d1_store_close(s) == D1_BUSY,
@@ -1249,6 +1254,106 @@ static void test_close_refuses_an_active_call(void)
 	d1_fixture_call_leave(s);
 	check(d1_store_close(s) == D1_OK,
 	      "and the close succeeds once the call has returned");
+	check(d1_store_destroy(s) == D1_OK, "and then it is destroyed");
+}
+
+/*
+ * A close wins the race with a call that has not been admitted yet, and
+ * the call still lands somewhere valid.
+ *
+ * The fixture pair above holds what a paused call holds, but it can
+ * only pause a call that was already admitted.  The interval this one
+ * needs is the earlier one: a real thread inside d1_store_apply which
+ * has not yet reached the lock where calls are counted.  A close that
+ * freed the store there left that thread to lock destroyed memory,
+ * which is why a close no longer frees.  The thread is joined before
+ * the store is destroyed, because that is the destroy contract.
+ */
+struct parked_call {
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result out;
+	uint32_t status;
+	pthread_mutex_t m;
+	pthread_cond_t cv;
+	bool parked;
+	bool resume;
+};
+
+static void park_at_the_door(void *arg)
+{
+	struct parked_call *p = arg;
+
+	pthread_mutex_lock(&p->m);
+	p->parked = true;
+	pthread_cond_signal(&p->cv);
+	while (!p->resume)
+		pthread_cond_wait(&p->cv, &p->m);
+	pthread_mutex_unlock(&p->m);
+}
+
+static void *run_parked_call(void *arg)
+{
+	struct parked_call *p = arg;
+
+	p->status = d1_store_apply(p->s, &p->env, &p->out);
+	return NULL;
+}
+
+static void test_close_does_not_destroy_under_an_arriving_call(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct parked_call p;
+	pthread_t caller;
+	d1_id_t admission;
+
+	fill_uuid(&store_uuid, 0x4e);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+
+	memset(&p, 0, sizeof(p));
+	p.s = s;
+	pthread_mutex_init(&p.m, NULL);
+	pthread_cond_init(&p.cv, NULL);
+	env_init(&p.env, s, admission, D1_OP_WRITE_BATCH);
+	p.env.body.write.count = 1;
+	p.env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&p.env.body.write.entries[0], 0, 11, 1, payload_a,
+		    sizeof(payload_a), true,
+		    &(struct d1_guard){ .never_written = true });
+
+	/* The caller is inside d1_store_apply and has not been admitted. */
+	d1_fixture_before_admission(park_at_the_door, &p);
+	check(pthread_create(&caller, NULL, run_parked_call, &p) == 0,
+	      "a real caller enters the store");
+	pthread_mutex_lock(&p.m);
+	while (!p.parked)
+		pthread_cond_wait(&p.cv, &p.m);
+	pthread_mutex_unlock(&p.m);
+
+	check(d1_store_close(s) == D1_OK,
+	      "a close wins against a call that is not admitted yet");
+
+	/* It resumes, and it must land on a store that is still there. */
+	pthread_mutex_lock(&p.m);
+	p.resume = true;
+	pthread_cond_signal(&p.cv);
+	pthread_mutex_unlock(&p.m);
+	check(pthread_join(caller, NULL) == 0, "and the caller is joined");
+	check(p.status == D1_INVALID,
+	      "the arriving call is refused rather than admitted");
+	check(p.out.count == 0, "and it recorded nothing");
+	check(!d1_store_visible(s, &object, 0, &(d1_id_t){ 0 }),
+	      "the closed store published nothing");
+
+	/* Only now, with the caller joined, does the memory go. */
+	check(d1_store_destroy(s) == D1_OK,
+	      "and destruction follows the join, not the close");
 }
 
 /*
@@ -1355,6 +1460,7 @@ static void test_failed_replay_poisons_the_handle(void)
 	check(badlen == 0, "and no journal bytes");
 
 	check(d1_store_close(bad) == D1_OK, "but it still closes");
+	check(d1_store_destroy(bad) == D1_OK, "and is destroyed");
 
 	d1_store_free(live);
 }
@@ -5593,6 +5699,7 @@ int main(void)
 	test_released_predecessor();
 	test_view_is_stable();
 	test_close_refuses_an_active_call();
+	test_close_does_not_destroy_under_an_arriving_call();
 	test_failed_replay_poisons_the_handle();
 	test_custody_needs_a_real_version();
 	test_release_order_does_not_matter();

@@ -83,17 +83,33 @@ struct d1_result {
 struct d1_store *d1_store_open(const struct d1_uuid *store_uuid,
 			       uint32_t chunk_bytes, uint64_t max_file_bytes);
 /*
- * Normal close.  Returns D1_BUSY while any view is outstanding or any
+ * Logical close.  Returns D1_BUSY while any view is outstanding or any
  * call has been admitted and not yet returned: a view's bytes and a
  * part-finished call's state both live in the store, so closing under
  * either is a use-after-free with a friendly name.
  *
- * On D1_OK the store is gone and the caller drops its pointer.  This
- * cannot protect a caller from using a handle it has already closed --
- * that is the caller's responsibility, and is a different thing from
- * the calls this refuses to close under, which were admitted first.
+ * On D1_OK the store stops admitting calls and every later one fails
+ * closed, but the allocation is still there.  That is deliberate.  A
+ * caller which has entered a public function and has not yet reached
+ * the lock is not counted anywhere, and freeing the store here would
+ * leave it to lock destroyed memory; leaving the allocation alive lets
+ * it arrive, find the store closed, and be refused.  Closing twice is
+ * D1_OK, and closing does not free.
  */
 uint32_t d1_store_close(struct d1_store *s);
+
+/*
+ * Ordinary destruction, after a successful close.  Returns D1_BUSY for
+ * a store that is not closed, because such a store is still admitting
+ * calls.  Otherwise the memory goes and the caller drops its pointer.
+ *
+ * The precondition this cannot check, and the owner must meet, is that
+ * every thread which may still be inside a public call has been
+ * excluded and joined -- including one parked between a public
+ * function's first instruction and its admission.  A close makes that
+ * wait finite: the parked caller is refused as soon as it runs.
+ */
+uint32_t d1_store_destroy(struct d1_store *s);
 
 /*
  * Fixture controls that hold what a paused call holds.  This model is
@@ -108,9 +124,21 @@ void d1_fixture_call_leave(struct d1_store *s);
 /*
  * Crash teardown: destroy the whole simulated world, views included,
  * as a power loss would.  This is what crash tests use.  It is NOT a
- * normal close, and nothing may hold a view across it and then read.
+ * normal close and NOT an ordinary destruction: it asks nothing, it
+ * refuses nothing, and nothing may hold a view across it and then
+ * read.  A live store torn down this way is a store that lost power.
  */
 void d1_store_free(struct d1_store *s);
+
+/*
+ * Fixture control: run @fn once, in the interval between a public
+ * call's first instruction and its admission -- the one interval the
+ * store's own lock does not cover, and the one a close races.  @fn
+ * runs with no lock held.  The arm is process-global rather than a
+ * field of the store, because the store is what may be destroyed while
+ * a call is in it, and it is unjournalled.
+ */
+void d1_fixture_before_admission(void (*fn)(void *), void *arg);
 
 /* The current verifier, as a START publishes it. */
 void d1_store_verifier(struct d1_store *s, uint8_t out[D1_VERIFIER_BYTES]);

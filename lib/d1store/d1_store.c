@@ -424,16 +424,61 @@ static bool d1_store_pristine(const struct d1_store *s)
 }
 
 /*
+ * Fixture control: park a call at the door.
+ *
+ * This is the one interval the store's own lock cannot cover: a caller
+ * that has entered a public function and has not yet acquired s->lock.
+ * A close that destroyed the store there would leave that caller to
+ * lock freed memory, so the arm that opens the interval has to live
+ * outside the storage whose lifetime is in question -- which is why it
+ * is process-global with a mutex of its own rather than a field of the
+ * store.  It is one-shot: it is taken and cleared before it runs, so a
+ * hook that makes calls of its own does not re-enter itself.
+ */
+static pthread_mutex_t d1_admit_hook_lock = PTHREAD_MUTEX_INITIALIZER;
+static void (*d1_admit_hook)(void *);
+static void *d1_admit_hook_arg;
+
+void d1_fixture_before_admission(void (*fn)(void *), void *arg)
+{
+	pthread_mutex_lock(&d1_admit_hook_lock);
+	d1_admit_hook = fn;
+	d1_admit_hook_arg = arg;
+	pthread_mutex_unlock(&d1_admit_hook_lock);
+}
+
+static void d1_run_admit_hook(void)
+{
+	void (*fn)(void *);
+	void *arg;
+
+	pthread_mutex_lock(&d1_admit_hook_lock);
+	fn = d1_admit_hook;
+	arg = d1_admit_hook_arg;
+	d1_admit_hook = NULL;
+	d1_admit_hook_arg = NULL;
+	pthread_mutex_unlock(&d1_admit_hook_lock);
+	if (fn)
+		fn(arg);
+}
+
+/*
  * Admit a call, unless the store has been closed.
  *
  * A call is bracketed rather than a lock interval, because a call is
  * not a lock interval: an ordinary batch deliberately releases the lock
  * between members.
+ *
+ * The bracket starts here, which is after the caller entered the public
+ * function: a close may win the race with a caller that has not reached
+ * this lock.  That is why a close does not destroy the store -- see
+ * d1_store_close.
  */
 static bool d1_call_enter(struct d1_store *s)
 {
 	bool admitted;
 
+	d1_run_admit_hook();
 	pthread_mutex_lock(&s->lock);
 	admitted = !s->closed && !s->poisoned;
 	if (admitted)
@@ -451,7 +496,7 @@ static void d1_call_leave(struct d1_store *s)
 }
 
 /*
- * Normal close.
+ * Logical close: fence the store, and do not destroy it.
  *
  * A view's bytes live in the store, and so does the state an admitted
  * call is part way through; closing under either is not a close, it is
@@ -459,10 +504,18 @@ static void d1_call_leave(struct d1_store *s)
  *
  * Close admission and call admission are settled under the same lock,
  * so a call cannot be admitted after the close has decided to proceed
- * and a close cannot proceed after a call has been admitted.  What this
- * does NOT do, and cannot, is stop a caller from using a handle it has
- * already closed: once this returns D1_OK the store is gone, and using
- * the pointer afterwards is the caller's error.
+ * and a close cannot proceed after a call has been admitted.  That is
+ * the whole of what the lock settles, and it is less than it looks: a
+ * caller which has entered a public function but has not yet reached
+ * d1_call_enter's lock is counted nowhere, and a close which freed the
+ * store would leave it to lock destroyed memory.  The ownership
+ * protocol therefore has to begin outside the storage it protects, and
+ * the smallest way to do that is not to free here at all.
+ *
+ * So this returns with the allocation intact and every later call
+ * failing closed.  d1_store_destroy is where the memory goes, and its
+ * precondition -- the owner has excluded and joined every caller -- is
+ * one only the owner can state.  Closing twice is not an error.
  */
 uint32_t d1_store_close(struct d1_store *s)
 {
@@ -483,6 +536,30 @@ uint32_t d1_store_close(struct d1_store *s)
 	}
 	s->closed = true;
 	pthread_mutex_unlock(&s->lock);
+	return D1_OK;
+}
+
+/*
+ * Ordinary destruction, after a successful close.
+ *
+ * What this can check, it checks: a store which was never closed is
+ * still admitting calls, so destroying it is refused.  What it cannot
+ * check is the caller that is between the public function's first
+ * instruction and d1_call_enter's lock, because nothing in the store
+ * knows about it yet.  That one is the owner's to exclude and join,
+ * and stating it is the reason this boundary has a name of its own.
+ */
+uint32_t d1_store_destroy(struct d1_store *s)
+{
+	bool ready;
+
+	if (!s)
+		return D1_OK;
+	pthread_mutex_lock(&s->lock);
+	ready = s->closed && !s->active_calls;
+	pthread_mutex_unlock(&s->lock);
+	if (!ready)
+		return D1_BUSY;
 	d1_store_free(s);
 	return D1_OK;
 }
