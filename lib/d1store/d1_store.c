@@ -61,6 +61,11 @@ struct d1_txn {
 	uint32_t phase;
 	uint32_t mode;
 	uint32_t stability;
+	/*
+	 * The read epoch an owner view must present to select this
+	 * transaction's version.  Recovery re-admission grants a new one.
+	 */
+	uint64_t read_epoch;
 	bool predecessor_present;
 	d1_id_t predecessor;
 	/* The guard this transaction installed when it was admitted. */
@@ -81,15 +86,28 @@ struct d1_object {
 	struct d1_chunk chunks[D1_MAX_CHUNKS];
 };
 
+/*
+ * One row of the fixture authority table.  Section 2 names the fields;
+ * they are here because the bindings a call checks are exactly these,
+ * and a handle that carried only a writer and some flags could not
+ * answer "same principal, same issuer" when recovery re-admission asks.
+ */
 struct d1_admission {
 	bool used;
 	d1_id_t id;
+	struct d1_uuid issuer;
 	struct d1_objkey object;
+	struct d1_uuid principal;
 	uint32_t writer;
+	uint8_t stateid[16];
+	uint8_t session[16];
+	uint64_t lease_epoch;
+	uint64_t authority_epoch;
+	uint64_t fence_sequence;
+	uint64_t incarnation;
 	uint32_t rights;
 	bool revoked;
 	bool expired;
-	uint64_t incarnation;
 };
 
 /* (export UUID, cohort, writer, co_id) -> one object, chunk and version. */
@@ -163,6 +181,14 @@ struct d1_store {
 	struct d1_view views[D1_MAX_VIEWS];
 	d1_id_t next_custody;
 
+	/*
+	 * Encoding scratch owned by this store and used only under its own
+	 * lock.  Nothing is shared between stores, so two of them encoding
+	 * at once cannot record each other's request identity.
+	 */
+	uint8_t *scratch;
+	size_t scratch_cap;
+
 	struct d1_journal journal;
 	bool journaling;
 	/*
@@ -205,7 +231,14 @@ struct d1_store *d1_store_open(const struct d1_uuid *store_uuid,
 	s = calloc(1, sizeof(*s));
 	if (!s)
 		return NULL;
+	s->scratch_cap = D1_ENVELOPE_MAX;
+	s->scratch = calloc(1, s->scratch_cap);
+	if (!s->scratch) {
+		free(s);
+		return NULL;
+	}
 	if (pthread_mutex_init(&s->lock, NULL) != 0) {
+		free(s->scratch);
 		free(s);
 		return NULL;
 	}
@@ -227,6 +260,7 @@ void d1_store_free(struct d1_store *s)
 		return;
 	d1_journal_fini(&s->journal);
 	pthread_mutex_destroy(&s->lock);
+	free(s->scratch);
 	free(s);
 }
 
@@ -287,15 +321,18 @@ static uint32_t d1_object_slot(const struct d1_store *s,
 	return (uint32_t)(o - s->objects);
 }
 
-d1_id_t d1_fixture_admit(struct d1_store *s, const struct d1_objkey *object,
-			 uint32_t writer, uint32_t rights)
+d1_id_t d1_fixture_admit_full(struct d1_store *s,
+			      const struct d1_objkey *object,
+			      const struct d1_fixture_authority *auth)
 {
+	d1_id_t id = 0;
 	uint32_t i;
 
 	/* Reserved writer IDs are never issued. */
-	if (writer == D1_WRITER_RESERVED_LOW ||
-	    writer == D1_WRITER_RESERVED_HIGH)
+	if (auth->writer == D1_WRITER_RESERVED_LOW ||
+	    auth->writer == D1_WRITER_RESERVED_HIGH)
 		return 0;
+	pthread_mutex_lock(&s->lock);
 	for (i = 0; i < D1_MAX_ADMISSIONS; i++) {
 		struct d1_admission *a = &s->admissions[i];
 
@@ -304,13 +341,44 @@ d1_id_t d1_fixture_admit(struct d1_store *s, const struct d1_objkey *object,
 		memset(a, 0, sizeof(*a));
 		a->used = true;
 		a->id = s->next_admission++;
+		a->issuer = auth->issuer;
 		a->object = *object;
-		a->writer = writer;
-		a->rights = rights;
+		a->principal = auth->principal;
+		a->writer = auth->writer;
+		memcpy(a->stateid, auth->stateid, sizeof(a->stateid));
+		memcpy(a->session, auth->session, sizeof(a->session));
+		a->lease_epoch = auth->lease_epoch;
+		a->authority_epoch = auth->authority_epoch;
+		a->fence_sequence = auth->fence_sequence;
+		a->rights = auth->rights;
 		a->incarnation = s->incarnation;
-		return a->id;
+		id = a->id;
+		break;
 	}
-	return 0;
+	pthread_mutex_unlock(&s->lock);
+	return id;
+}
+
+/*
+ * The common case: one issuer, and a principal derived from the writer
+ * so that two handles for the same writer are the same principal and
+ * two for different writers are not.  Tests that need a specific
+ * binding use the full form.
+ */
+d1_id_t d1_fixture_admit(struct d1_store *s, const struct d1_objkey *object,
+			 uint32_t writer, uint32_t rights)
+{
+	struct d1_fixture_authority auth;
+	unsigned int i;
+
+	memset(&auth, 0, sizeof(auth));
+	for (i = 0; i < D1_UUID_BYTES; i++) {
+		auth.issuer.bytes[i] = (uint8_t)(0xf0u + i);
+		auth.principal.bytes[i] = (uint8_t)(writer + i);
+	}
+	auth.writer = writer;
+	auth.rights = rights;
+	return d1_fixture_admit_full(s, object, &auth);
 }
 
 static struct d1_admission *d1_admission_find(struct d1_store *s, d1_id_t id)
@@ -327,24 +395,32 @@ static struct d1_admission *d1_admission_find(struct d1_store *s, d1_id_t id)
 
 void d1_fixture_revoke(struct d1_store *s, d1_id_t admission)
 {
-	struct d1_admission *a = d1_admission_find(s, admission);
+	struct d1_admission *a;
 
+	pthread_mutex_lock(&s->lock);
+	a = d1_admission_find(s, admission);
 	if (a)
 		a->revoked = true;
+	pthread_mutex_unlock(&s->lock);
 }
 
 void d1_fixture_expire(struct d1_store *s, d1_id_t admission)
 {
-	struct d1_admission *a = d1_admission_find(s, admission);
+	struct d1_admission *a;
 
+	pthread_mutex_lock(&s->lock);
+	a = d1_admission_find(s, admission);
 	if (a)
 		a->expired = true;
+	pthread_mutex_unlock(&s->lock);
 }
 
 d1_id_t d1_fixture_custody(struct d1_store *s, d1_id_t version)
 {
+	d1_id_t id = 0;
 	uint32_t i;
 
+	pthread_mutex_lock(&s->lock);
 	for (i = 0; i < D1_MAX_CUSTODY; i++) {
 		struct d1_custody *c = &s->custody[i];
 
@@ -353,9 +429,11 @@ d1_id_t d1_fixture_custody(struct d1_store *s, d1_id_t version)
 		c->used = true;
 		c->id = s->next_custody++;
 		c->version = version;
-		return c->id;
+		id = c->id;
+		break;
 	}
-	return 0;
+	pthread_mutex_unlock(&s->lock);
+	return id;
 }
 
 static struct d1_custody *d1_custody_find(struct d1_store *s, d1_id_t id)
@@ -490,11 +568,11 @@ static struct d1_receipt *d1_receipt_add(struct d1_store *s,
 	return NULL;
 }
 
-bool d1_store_visible(const struct d1_store *s, const struct d1_objkey *object,
-		      uint64_t index, d1_id_t *version)
+static bool d1_visible_locked(struct d1_store *s,
+			      const struct d1_objkey *object, uint64_t index,
+			      d1_id_t *version)
 {
-	const struct d1_object *o =
-		d1_object_find((struct d1_store *)(uintptr_t)s, object);
+	const struct d1_object *o = d1_object_find(s, object);
 
 	if (!o || index >= D1_MAX_CHUNKS || !o->chunks[index].visible_present)
 		return false;
@@ -502,11 +580,10 @@ bool d1_store_visible(const struct d1_store *s, const struct d1_objkey *object,
 	return true;
 }
 
-bool d1_store_guard(const struct d1_store *s, const struct d1_objkey *object,
-		    uint64_t index, struct d1_guard *guard)
+static bool d1_guard_locked(struct d1_store *s, const struct d1_objkey *object,
+			    uint64_t index, struct d1_guard *guard)
 {
-	const struct d1_object *o =
-		d1_object_find((struct d1_store *)(uintptr_t)s, object);
+	const struct d1_object *o = d1_object_find(s, object);
 
 	if (!o || index >= D1_MAX_CHUNKS)
 		return false;
@@ -520,10 +597,10 @@ bool d1_store_guard(const struct d1_store *s, const struct d1_objkey *object,
  * stored, so a rollback that restores a shorter version cannot leave a
  * stale high-water mark behind.
  */
-uint64_t d1_store_eof(const struct d1_store *s, const struct d1_objkey *object)
+static uint64_t d1_eof_locked(struct d1_store *s,
+			      const struct d1_objkey *object)
 {
-	struct d1_store *m = (struct d1_store *)(uintptr_t)s;
-	const struct d1_object *o = d1_object_find(m, object);
+	const struct d1_object *o = d1_object_find(s, object);
 	uint64_t eof = 0;
 	uint32_t i;
 
@@ -535,7 +612,7 @@ uint64_t d1_store_eof(const struct d1_store *s, const struct d1_objkey *object)
 
 		if (!o->chunks[i].visible_present)
 			continue;
-		v = d1_version_find(m, o->chunks[i].visible);
+		v = d1_version_find(s, o->chunks[i].visible);
 		if (!v)
 			continue;
 		if (!d1_mul_u64(i, s->chunk_bytes, &start))
@@ -551,46 +628,69 @@ uint64_t d1_store_eof(const struct d1_store *s, const struct d1_objkey *object)
 /*
  * Release one predecessor's retention root.
  *
- * Eligible only when nothing depends on it: no chunk makes it visible,
- * no uncommitted transaction names it, no read pin holds it, and it has
- * not been released already.  What this changes is what a later
- * rollback may restore; it reports nothing about bytes.
+ * Eligibility is a question about durable state alone: the version is
+ * not visible, no uncommitted transaction is that version or records it
+ * as its predecessor, and it has not been released already.  Live read
+ * pins are deliberately NOT part of this test -- a pin keeps the
+ * immutable bytes alive for the view that holds it, and says nothing
+ * about whether a future rollback may still reach the version.  Making
+ * release depend on pins would make the durable history depend on the
+ * order in which views happened to close.
+ *
+ * Physical reclamation is a declared no-op in this model: bytes are
+ * retained conservatively for the life of the store.  That is a stated
+ * limitation of the model's capacity, not a licence to answer the
+ * logical question differently.
  */
 bool d1_fixture_release_predecessor(struct d1_store *s, d1_id_t version)
 {
-	struct d1_version *v = d1_version_find(s, version);
+	struct d1_version *v;
 	uint32_t i, c;
+	bool ok = false;
 
-	if (!v || v->released || v->pins)
-		return false;
+	pthread_mutex_lock(&s->lock);
+	v = d1_version_find(s, version);
+	if (!v || v->released)
+		goto out;
 	for (i = 0; i < D1_MAX_OBJECTS; i++) {
 		if (!s->objects[i].used)
 			continue;
 		for (c = 0; c < D1_MAX_CHUNKS; c++)
 			if (s->objects[i].chunks[c].visible_present &&
 			    s->objects[i].chunks[c].visible == version)
-				return false;
+				goto out;
 	}
 	for (i = 0; i < D1_MAX_TXNS; i++) {
 		const struct d1_txn *t = &s->txns[i];
 
-		if (!t->used || t->version != version)
+		if (!t->used)
 			continue;
-		if (t->phase == D1_PHASE_PREPARED ||
-		    t->phase == D1_PHASE_FINALIZED)
-			return false;
+		if (t->phase != D1_PHASE_PREPARED &&
+		    t->phase != D1_PHASE_FINALIZED)
+			continue;
+		/*
+		 * An uncommitted transaction that would restore this version
+		 * on cancellation still depends on it, which is a different
+		 * question from whether the version is itself private.
+		 */
+		if (t->version == version)
+			goto out;
+		if (t->predecessor_present && t->predecessor == version)
+			goto out;
 	}
 	v->released = true;
-	return true;
+	ok = true;
+out:
+	pthread_mutex_unlock(&s->lock);
+	return ok;
 }
 
-uint32_t d1_store_holes(const struct d1_store *s,
-			const struct d1_objkey *object, struct d1_interval *out,
-			uint32_t max)
+static uint32_t d1_holes_locked(struct d1_store *s,
+				const struct d1_objkey *object,
+				struct d1_interval *out, uint32_t max)
 {
-	struct d1_store *m = (struct d1_store *)(uintptr_t)s;
-	const struct d1_object *o = d1_object_find(m, object);
-	uint64_t eof = d1_store_eof(s, object);
+	const struct d1_object *o = d1_object_find(s, object);
+	uint64_t eof = d1_eof_locked(s, object);
 	uint64_t at = 0;
 	uint32_t n = 0;
 	uint32_t i;
@@ -608,7 +708,7 @@ uint32_t d1_store_holes(const struct d1_store *s,
 
 		if (!o->chunks[i].visible_present)
 			continue;
-		v = d1_version_find(m, o->chunks[i].visible);
+		v = d1_version_find(s, o->chunks[i].visible);
 		if (!v)
 			continue;
 		if (!d1_mul_u64(i, s->chunk_bytes, &start) ||
@@ -1066,57 +1166,29 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 {
 	const struct d1_control_batch *cb = &env->body.control;
 	struct d1_object *o = d1_object_find(s, &env->object);
-	struct d1_admission *old, *fresh;
+	struct d1_admission *old, *fresh = NULL;
+	struct d1_txn *named[D1_BATCH_ENTRIES_MAX];
 	uint32_t i;
 
-	if (cb->count > D1_BATCH_ENTRIES_MAX)
-		return D1_INVALID;
-
-	if (env->op == D1_OP_RECOVERY_ADMIT) {
-		if (cb->count != 0)
-			return D1_INVALID;
-		old = d1_admission_find(s, cb->old_admission);
-		if (!old || memcmp(&old->object, &env->object,
-				   sizeof(old->object)) != 0)
-			return D1_STALE_AUTH;
-		if (cb->new_admission_present) {
-			fresh = d1_admission_find(s, cb->new_admission);
-			if (!fresh || fresh->revoked || fresh->expired)
-				return D1_STALE_AUTH;
-			if (memcmp(&fresh->object, &env->object,
-				   sizeof(fresh->object)) != 0)
-				return D1_STALE_AUTH;
-			if (fresh->id == old->id)
-				return D1_INVALID;
-			/*
-			 * The old admission is finished the moment a new one
-			 * takes over, whatever state it was in.
-			 */
-			old->revoked = true;
-		}
-		/* A read epoch the store has never reached is not a replay. */
-		if (cb->read_epoch_present && cb->read_epoch > s->index_epoch)
-			return D1_INVALID;
-		d1_store_verifier(s, res->verifier);
-		return D1_OK;
-	}
-
-	/* lease_reap */
-	if (cb->count == 0)
-		return D1_INVALID;
+	(void)a;
 	if (!o)
-		return D1_INVALID;
-	if (cb->new_admission_present || cb->read_epoch_present)
 		return D1_INVALID;
 	old = d1_admission_find(s, cb->old_admission);
 	if (!old ||
 	    memcmp(&old->object, &env->object, sizeof(old->object)) != 0)
 		return D1_STALE_AUTH;
+	/*
+	 * Reaping is for work whose lease is gone.  Whether the named
+	 * handle is still live is a question about the request's own
+	 * authority, so it is settled before its members are examined.
+	 */
+	if (env->op == D1_OP_LEASE_REAP && !old->expired)
+		return D1_STALE_AUTH;
 
 	/*
-	 * Every named member is validated before any of them is cancelled,
-	 * so a reap that names one member it may not touch changes nothing
-	 * at all.
+	 * The whole request is validated before anything is revoked or
+	 * rebound.  A semantic error that had already revoked the old
+	 * handle would be a mutation on a failure path.
 	 */
 	for (i = 0; i < cb->count; i++) {
 		struct d1_txn *t = d1_txn_find(s, cb->txns[i]);
@@ -1130,9 +1202,44 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 			return D1_BAD_PHASE;
 		if (t->admission != old->id)
 			return D1_OWNER_CONFLICT;
+		named[i] = t;
 	}
+
+	if (env->op == D1_OP_RECOVERY_ADMIT) {
+		fresh = d1_admission_find(s, cb->new_admission);
+		if (!fresh || fresh->revoked || fresh->expired)
+			return D1_STALE_AUTH;
+		/*
+		 * Re-admission moves work between handles for the same
+		 * principal on the same object: unchanged owner, object and
+		 * issuer binding, as section 2 requires.
+		 */
+		if (memcmp(&fresh->object, &env->object,
+			   sizeof(fresh->object)) != 0)
+			return D1_STALE_AUTH;
+		if (fresh->writer != old->writer)
+			return D1_STALE_AUTH;
+		if (memcmp(&fresh->issuer, &old->issuer,
+			   sizeof(fresh->issuer)) != 0 ||
+		    memcmp(&fresh->principal, &old->principal,
+			   sizeof(fresh->principal)) != 0)
+			return D1_STALE_AUTH;
+		/* A read epoch the store has never reached is not a recovery. */
+		if (cb->read_epoch > s->index_epoch)
+			return D1_INVALID;
+
+		for (i = 0; i < cb->count; i++) {
+			named[i]->admission = fresh->id;
+			named[i]->read_epoch = cb->read_epoch;
+		}
+		old->revoked = true;
+		d1_store_verifier(s, res->verifier);
+		return D1_OK;
+	}
+
+	/* lease_reap */
 	for (i = 0; i < cb->count; i++) {
-		struct d1_txn *t = d1_txn_find(s, cb->txns[i]);
+		struct d1_txn *t = named[i];
 		struct d1_chunk *chunk = &o->chunks[t->index];
 
 		if (chunk->pending_present && chunk->pending == t->id) {
@@ -1141,7 +1248,6 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 		}
 		t->phase = D1_PHASE_ROLLED_BACK;
 	}
-	(void)a;
 	res->phase = D1_PHASE_ROLLED_BACK;
 	d1_store_verifier(s, res->verifier);
 	return D1_OK;
@@ -1185,8 +1291,19 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		return D1_UNSUPPORTED;
 	}
 
-	if (!d1_envelope_digest(env, digest))
+	/*
+	 * Shape first.  A request whose counts, lengths, tags or members
+	 * are outside the canonical form is refused before anything reads
+	 * a payload, hashes a byte or touches the store.
+	 */
+	if (!d1_envelope_validate(env))
 		return D1_INVALID;
+	pthread_mutex_lock(&s->lock);
+	if (!d1_envelope_digest(env, s->scratch, s->scratch_cap, digest)) {
+		pthread_mutex_unlock(&s->lock);
+		return D1_INVALID;
+	}
+	pthread_mutex_unlock(&s->lock);
 
 	commit = env->op == D1_OP_COMMIT_BATCH;
 	switch (env->op) {
@@ -1237,7 +1354,7 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 			d1_store_verifier(s, out->entries[i].verifier);
 		}
 		out->index_epoch = s->index_epoch;
-		out->eof = d1_store_eof(s, &env->object);
+		out->eof = d1_eof_locked(s, &env->object);
 		return D1_OK;
 	}
 
@@ -1315,7 +1432,7 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 
 	pthread_mutex_lock(&s->lock);
 	out->index_epoch = s->index_epoch;
-	out->eof = d1_store_eof(s, &env->object);
+	out->eof = d1_eof_locked(s, &env->object);
 	pthread_mutex_unlock(&s->lock);
 	return D1_OK;
 }
@@ -1437,7 +1554,7 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 		v->version[i] = ver->id;
 	}
 
-	v->eof = d1_store_eof(s, object);
+	v->eof = d1_eof_locked(s, object);
 	*out = v;
 	status = D1_OK;
 out:
@@ -1594,20 +1711,20 @@ out:
 static bool d1_journal_intent(struct d1_store *s, const struct d1_envelope *env,
 			      const struct d1_admission *a)
 {
-	static uint8_t payload[D1_JOURNAL_RECORD_MAX];
 	struct d1_cursor cur;
 	size_t body;
 
-	d1_enc_init(&cur, payload, sizeof(payload));
+	/* The store's own scratch, under the store's own lock. */
+	d1_enc_init(&cur, s->scratch, s->scratch_cap);
 	d1_enc_u32(&cur, a->writer);
 	d1_enc_u32(&cur, a->rights);
 	if (cur.bad)
 		return false;
-	body = d1_envelope_encode(env, payload + cur.len,
-				  sizeof(payload) - cur.len);
-	if (!body)
+	body = d1_envelope_encode(env, s->scratch + cur.len,
+				  s->scratch_cap - cur.len);
+	if (!body || cur.len + body > D1_JOURNAL_RECORD_MAX)
 		return false;
-	return d1_journal_append(&s->journal, D1_REC_ENTRY, payload,
+	return d1_journal_append(&s->journal, D1_REC_ENTRY, s->scratch,
 				 (uint32_t)(cur.len + body));
 }
 
@@ -1741,4 +1858,53 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t len)
 	s->replaying = false;
 	pthread_mutex_unlock(&s->lock);
 	return status;
+}
+
+/*
+ * Public observers.  They take the model lock, so a caller reading
+ * state while another thread mutates it sees one consistent answer
+ * rather than a half-applied one.  The reducer uses the unlocked forms
+ * above, because it already holds the lock.
+ */
+bool d1_store_visible(struct d1_store *s, const struct d1_objkey *object,
+		      uint64_t index, d1_id_t *version)
+{
+	bool found;
+
+	pthread_mutex_lock(&s->lock);
+	found = d1_visible_locked(s, object, index, version);
+	pthread_mutex_unlock(&s->lock);
+	return found;
+}
+
+bool d1_store_guard(struct d1_store *s, const struct d1_objkey *object,
+		    uint64_t index, struct d1_guard *guard)
+{
+	bool found;
+
+	pthread_mutex_lock(&s->lock);
+	found = d1_guard_locked(s, object, index, guard);
+	pthread_mutex_unlock(&s->lock);
+	return found;
+}
+
+uint64_t d1_store_eof(struct d1_store *s, const struct d1_objkey *object)
+{
+	uint64_t eof;
+
+	pthread_mutex_lock(&s->lock);
+	eof = d1_eof_locked(s, object);
+	pthread_mutex_unlock(&s->lock);
+	return eof;
+}
+
+uint32_t d1_store_holes(struct d1_store *s, const struct d1_objkey *object,
+			struct d1_interval *out, uint32_t max)
+{
+	uint32_t n;
+
+	pthread_mutex_lock(&s->lock);
+	n = d1_holes_locked(s, object, out, max);
+	pthread_mutex_unlock(&s->lock);
+	return n;
 }

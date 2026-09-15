@@ -12,12 +12,16 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "d1_digest.h"
 #include "d1_envelope.h"
 
 static unsigned int failures;
+
+/* The digest scratch is the caller's; the model keeps none. */
+static uint8_t *scratch;
 
 static void check(bool ok, const char *what)
 {
@@ -295,8 +299,11 @@ static void test_digest_binds_every_field(void)
 	uint8_t other[D1_DIGEST_BYTES];
 	unsigned int i;
 
+	if (!scratch)
+		return;
 	make_write(&env);
-	check(d1_envelope_digest(&env, base), "digest computes");
+	check(d1_envelope_digest(&env, scratch, D1_ENVELOPE_MAX, base),
+	      "digest computes");
 
 	for (i = 0; i < 10; i++) {
 		struct d1_envelope v;
@@ -345,7 +352,8 @@ static void test_digest_binds_every_field(void)
 			what = "stability";
 			break;
 		}
-		check(d1_envelope_digest(&v, other), "variant digest computes");
+		check(d1_envelope_digest(&v, scratch, D1_ENVELOPE_MAX, other),
+		      "variant digest computes");
 		if (memcmp(base, other, sizeof(base)) == 0) {
 			failures++;
 			fprintf(stderr, "FAIL: digest does not bind the %s\n",
@@ -358,7 +366,8 @@ static void test_digest_binds_every_field(void)
 		struct d1_envelope again;
 
 		make_write(&again);
-		check(d1_envelope_digest(&again, other) &&
+		check(d1_envelope_digest(&again, scratch, D1_ENVELOPE_MAX,
+					 other) &&
 			      memcmp(base, other, sizeof(base)) == 0,
 		      "the same request has the same digest");
 	}
@@ -450,8 +459,14 @@ static void test_lifecycle_and_control(void)
 	env.body.lifecycle.range_end = 2;
 	env.body.lifecycle.count = 2;
 	env.body.lifecycle.entries[0].index = 0;
+	env.body.lifecycle.entries[0].owner.cohort = 5;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = 1;
 	env.body.lifecycle.entries[0].txn = 11;
 	env.body.lifecycle.entries[1].index = 1;
+	env.body.lifecycle.entries[1].owner.cohort = 5;
+	env.body.lifecycle.entries[1].owner.writer = 11;
+	env.body.lifecycle.entries[1].owner.co_id = 2;
 	env.body.lifecycle.entries[1].txn = 12;
 	env.body.lifecycle.entries[1].predecessor_present = true;
 	env.body.lifecycle.entries[1].predecessor = 4;
@@ -489,6 +504,11 @@ static void test_lifecycle_and_control(void)
 
 int main(void)
 {
+	scratch = calloc(1, D1_ENVELOPE_MAX);
+	if (!scratch) {
+		fprintf(stderr, "FAIL: no scratch\n");
+		return 1;
+	}
 	test_golden_write_envelope();
 	test_round_trip();
 	test_digest_binds_every_field();
@@ -499,6 +519,7 @@ int main(void)
 		fprintf(stderr, "%u check(s) failed\n", failures);
 		return 1;
 	}
+	free(scratch);
 	printf("d1_envelope_test: all checks passed\n");
 	return 0;
 }

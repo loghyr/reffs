@@ -16,9 +16,6 @@
 #include "d1_digest.h"
 #include "d1_envelope.h"
 
-/* The largest envelope the declared limits allow, with room to frame. */
-#define D1_ENVELOPE_MAX (D1_BATCH_PAYLOAD_MAX + 65536u)
-
 static void d1_enc_opt_guard(struct d1_cursor *c, bool present,
 			     const struct d1_guard *g)
 {
@@ -227,6 +224,142 @@ static bool d1_dec_control(struct d1_cursor *c, struct d1_control_batch *k)
 	       d1_dec_opt_u64(c, &k->read_epoch_present, &k->read_epoch);
 }
 
+static bool d1_count_ok(uint32_t count)
+{
+	return count >= D1_BATCH_ENTRIES_MIN && count <= D1_BATCH_ENTRIES_MAX;
+}
+
+static bool d1_stability_ok(uint32_t stability)
+{
+	return stability == D1_UNSTABLE || stability == D1_DATA_SYNC ||
+	       stability == D1_FILE_SYNC;
+}
+
+static bool d1_checksum_shape_ok(const struct d1_checksum *s)
+{
+	if (s->alg != D1_CKSUM_CRC32 && s->alg != D1_CKSUM_CRC32C)
+		return false;
+	/* Both declared algorithms are four big-endian digest bytes. */
+	return s->len == 4u && s->len <= sizeof(s->digest);
+}
+
+static bool d1_writer_ok(uint32_t writer)
+{
+	return writer != D1_WRITER_RESERVED_LOW &&
+	       writer != D1_WRITER_RESERVED_HIGH;
+}
+
+static bool d1_validate_write(const struct d1_write_batch *w)
+{
+	uint64_t aggregate = 0;
+	uint32_t i, j;
+
+	if (!d1_count_ok(w->count) || !d1_stability_ok(w->stability))
+		return false;
+	for (i = 0; i < w->count; i++) {
+		const struct d1_write_entry *e = &w->entries[i];
+
+		if (!e->payload || e->payload_len < 1u ||
+		    e->payload_len > D1_CHUNK_BYTES_MAX)
+			return false;
+		if (!d1_checksum_shape_ok(&e->checksum))
+			return false;
+		if (!d1_writer_ok(e->owner.writer))
+			return false;
+		if (!d1_add_u64(aggregate, e->payload_len, &aggregate) ||
+		    aggregate > D1_BATCH_PAYLOAD_MAX)
+			return false;
+		/* One batch never names one chunk twice. */
+		for (j = 0; j < i; j++)
+			if (w->entries[j].index == e->index)
+				return false;
+	}
+	return true;
+}
+
+static bool d1_validate_lifecycle(const struct d1_lifecycle_batch *l)
+{
+	uint32_t i, j;
+
+	if (!d1_count_ok(l->count) || l->range_begin >= l->range_end)
+		return false;
+	for (i = 0; i < l->count; i++) {
+		const struct d1_lifecycle_entry *e = &l->entries[i];
+
+		if (e->index < l->range_begin || e->index >= l->range_end)
+			return false;
+		if (e->txn == 0)
+			return false;
+		if (!d1_writer_ok(e->owner.writer))
+			return false;
+		for (j = 0; j < i; j++)
+			if (l->entries[j].index == e->index ||
+			    l->entries[j].txn == e->txn)
+				return false;
+	}
+	return true;
+}
+
+static bool d1_validate_rollback(const struct d1_rollback_batch *r)
+{
+	uint32_t i, j;
+
+	if (!d1_count_ok(r->count) || r->range_begin >= r->range_end)
+		return false;
+	for (i = 0; i < r->count; i++) {
+		const struct d1_rollback_entry *e = &r->entries[i];
+
+		if (e->index < r->range_begin || e->index >= r->range_end)
+			return false;
+		if (e->txn == 0)
+			return false;
+		if (!d1_writer_ok(e->owner.writer))
+			return false;
+		if (e->visible_present && e->visible == 0)
+			return false;
+		if (e->predecessor_present && e->predecessor == 0)
+			return false;
+		if (e->custody_present && e->custody == 0)
+			return false;
+		for (j = 0; j < i; j++)
+			if (r->entries[j].index == e->index ||
+			    r->entries[j].txn == e->txn)
+				return false;
+	}
+	return true;
+}
+
+/*
+ * Both control operations name the exact transactions they act on.
+ * recovery_admit additionally names the new admission and the read
+ * epoch it grants; lease_reap names neither, and a request carrying a
+ * field its operation has no use for is a different request.
+ */
+static bool d1_validate_control(uint32_t op, const struct d1_control_batch *k)
+{
+	uint32_t i, j;
+
+	if (!d1_count_ok(k->count) || k->old_admission == 0)
+		return false;
+	for (i = 0; i < k->count; i++) {
+		if (k->txns[i] == 0)
+			return false;
+		for (j = 0; j < i; j++)
+			if (k->txns[j] == k->txns[i])
+				return false;
+	}
+	if (op == D1_OP_RECOVERY_ADMIT) {
+		if (!k->new_admission_present || k->new_admission == 0)
+			return false;
+		if (k->new_admission == k->old_admission)
+			return false;
+		if (!k->read_epoch_present)
+			return false;
+		return true;
+	}
+	return !k->new_admission_present && !k->read_epoch_present;
+}
+
 /* Whether this slice can express a body for @op at all. */
 static bool d1_op_known(uint32_t op)
 {
@@ -243,11 +376,33 @@ static bool d1_op_known(uint32_t op)
 	}
 }
 
+bool d1_envelope_validate(const struct d1_envelope *env)
+{
+	if (!d1_op_known(env->op))
+		return false;
+	switch (env->op) {
+	case D1_OP_WRITE_BATCH:
+		return d1_validate_write(&env->body.write);
+	case D1_OP_FINALIZE_BATCH:
+	case D1_OP_COMMIT_BATCH:
+		return d1_validate_lifecycle(&env->body.lifecycle);
+	case D1_OP_ROLLBACK_BATCH:
+		return d1_validate_rollback(&env->body.rollback);
+	default:
+		return d1_validate_control(env->op, &env->body.control);
+	}
+}
+
 size_t d1_envelope_encode(const struct d1_envelope *env, void *buf, size_t cap)
 {
 	struct d1_cursor c;
 
-	if (!d1_op_known(env->op))
+	/*
+	 * Nothing is read out of the typed request until its shape has
+	 * been checked, so an over-long count or digest length cannot walk
+	 * off the end of a fixed array on the way to being encoded.
+	 */
+	if (!d1_envelope_validate(env))
 		return 0;
 	d1_enc_init(&c, buf, cap);
 	d1_enc_objkey(&c, &env->object);
@@ -307,16 +462,27 @@ bool d1_envelope_decode(const void *buf, size_t len, struct d1_envelope *env)
 	if (!ok)
 		return false;
 	/* A trailing byte is a different request, not this one. */
-	return d1_dec_finished(&c);
+	if (!d1_dec_finished(&c))
+		return false;
+	/*
+	 * The decoder accepts exactly the envelopes the encoder can write:
+	 * one test, applied on both sides, so there is no shape that
+	 * survives one direction and not the other.
+	 */
+	return d1_envelope_validate(env);
 }
 
-bool d1_envelope_digest(const struct d1_envelope *env,
-			uint8_t out[D1_DIGEST_BYTES])
+bool d1_envelope_digest(const struct d1_envelope *env, void *scratch,
+			size_t cap, uint8_t out[D1_DIGEST_BYTES])
 {
-	static uint8_t scratch[D1_ENVELOPE_MAX];
 	size_t len;
 
-	len = d1_envelope_encode(env, scratch, sizeof(scratch));
+	/*
+	 * The scratch is the caller's.  A buffer shared between stores is
+	 * protected by no single store's lock, and two callers hashing at
+	 * once would each record the other's request identity.
+	 */
+	len = d1_envelope_encode(env, scratch, cap);
 	if (!len)
 		return false;
 	d1_request_digest(scratch, len, out);

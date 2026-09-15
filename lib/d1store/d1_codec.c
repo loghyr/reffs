@@ -158,6 +158,15 @@ void d1_enc_opkey(struct d1_cursor *c, const struct d1_opkey *k)
 
 void d1_enc_checksum(struct d1_cursor *c, const struct d1_checksum *s)
 {
+	/*
+	 * The digest array is fixed, so a caller-supplied length past it is
+	 * refused here rather than read.  A typed struct owning its own
+	 * input does not authorise reading past its own fields.
+	 */
+	if (s->len > sizeof(s->digest)) {
+		c->bad = true;
+		return;
+	}
 	d1_enc_u32(c, s->alg);
 	d1_enc_bytes(c, s->digest, s->len);
 }

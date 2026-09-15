@@ -80,6 +80,32 @@ uint64_t d1_store_incarnation(const struct d1_store *s);
  * Fixture controls.  These are the harness, not wire operations and not
  * a control plane: an admitted data caller cannot reach them.
  */
+/*
+ * One row of the fixture authority table, as section 2 names it.  The
+ * bindings a call checks are exactly these fields, so they exist rather
+ * than being implied by a writer ID and some flags.
+ */
+struct d1_fixture_authority {
+	struct d1_uuid issuer;
+	struct d1_uuid principal;
+	uint8_t stateid[16];
+	uint8_t session[16];
+	uint32_t writer;
+	uint32_t rights;
+	uint64_t lease_epoch;
+	uint64_t authority_epoch;
+	uint64_t fence_sequence;
+};
+
+d1_id_t d1_fixture_admit_full(struct d1_store *s,
+			      const struct d1_objkey *object,
+			      const struct d1_fixture_authority *auth);
+
+/*
+ * The common case: one issuer, and a principal derived from the writer,
+ * so two handles for one writer share a principal and two for different
+ * writers do not.
+ */
 d1_id_t d1_fixture_admit(struct d1_store *s, const struct d1_objkey *object,
 			 uint32_t writer, uint32_t rights);
 void d1_fixture_revoke(struct d1_store *s, d1_id_t admission);
@@ -111,11 +137,11 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 			struct d1_result *out);
 
 /* What the model currently makes visible, for the oracles to ask. */
-bool d1_store_visible(const struct d1_store *s, const struct d1_objkey *object,
+bool d1_store_visible(struct d1_store *s, const struct d1_objkey *object,
 		      uint64_t index, d1_id_t *version);
-bool d1_store_guard(const struct d1_store *s, const struct d1_objkey *object,
+bool d1_store_guard(struct d1_store *s, const struct d1_objkey *object,
 		    uint64_t index, struct d1_guard *guard);
-uint64_t d1_store_eof(const struct d1_store *s, const struct d1_objkey *object);
+uint64_t d1_store_eof(struct d1_store *s, const struct d1_objkey *object);
 
 /* One interval of the object's extent map. */
 struct d1_interval {
@@ -129,9 +155,8 @@ struct d1_interval {
  * it is a different answer, and is never reported here.  Returns how
  * many intervals were written.
  */
-uint32_t d1_store_holes(const struct d1_store *s,
-			const struct d1_objkey *object, struct d1_interval *out,
-			uint32_t max);
+uint32_t d1_store_holes(struct d1_store *s, const struct d1_objkey *object,
+			struct d1_interval *out, uint32_t max);
 
 struct d1_view;
 

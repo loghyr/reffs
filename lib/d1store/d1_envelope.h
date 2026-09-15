@@ -128,7 +128,24 @@ size_t d1_envelope_encode(const struct d1_envelope *env, void *buf, size_t cap);
 bool d1_envelope_decode(const void *buf, size_t len, struct d1_envelope *env);
 
 /* SHA-256 of the domain bytes followed by the canonical encoding. */
-bool d1_envelope_digest(const struct d1_envelope *env,
-			uint8_t out[D1_DIGEST_BYTES]);
+/*
+ * The largest envelope the declared limits allow, with room to frame.
+ * A caller that needs to encode or digest one owns a buffer this size;
+ * the model keeps no shared scratch, because a buffer shared between
+ * stores is protected by no single store's lock.
+ */
+#define D1_ENVELOPE_MAX (D1_BATCH_PAYLOAD_MAX + 65536u)
+
+/*
+ * Whether this typed envelope is one the canonical form can express.
+ * Counts, lengths, tags, options, aggregate bytes and duplicate members
+ * are all checked here, before anything reads a payload or writes a
+ * byte.  The decoder applies the same test, so the two agree on exactly
+ * which envelopes exist.
+ */
+bool d1_envelope_validate(const struct d1_envelope *env);
+
+bool d1_envelope_digest(const struct d1_envelope *env, void *scratch,
+			size_t cap, uint8_t out[D1_DIGEST_BYTES]);
 
 #endif /* REFFS_D1_ENVELOPE_H */

@@ -441,7 +441,12 @@ static void test_phase_order(void)
 	check(!d1_store_visible(s, &object, 0, &visible),
 	      "and publishes nothing");
 
-	/* An index outside the named range is not this call's member. */
+	/*
+	 * An index outside the named range makes the request malformed, so
+	 * it is refused for the whole operation before any member is
+	 * evaluated -- section 2's "wrong vector returns INVALID before
+	 * member mutation".
+	 */
 	env_init(&env, s, admission, D1_OP_FINALIZE_BATCH);
 	env.body.lifecycle.range_begin = 2;
 	env.body.lifecycle.range_end = 3;
@@ -452,9 +457,11 @@ static void test_phase_order(void)
 	env.body.lifecycle.entries[0].owner.co_id = 1;
 	env.body.lifecycle.entries[0].txn = txn;
 	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
-	d1_store_apply(s, &env, &res);
-	check(res.entries[0].status == D1_INVALID,
+	check(d1_store_apply(s, &env, &res) == D1_INVALID,
 	      "a member outside the named range is refused");
+	check(res.count == 0, "and no member result is produced");
+	check(!d1_store_visible(s, &object, 0, &visible),
+	      "and nothing was published");
 
 	d1_store_free(s);
 }
@@ -901,12 +908,19 @@ static void test_view_is_stable(void)
 		      memcmp(got, first, sizeof(first)) == 0,
 	      "and still reads its bytes");
 
-	/* E2: what the view pins cannot be released underneath it. */
-	check(!d1_fixture_release_predecessor(s, v1),
-	      "a pinned predecessor is not releasable");
-	d1_view_close(s, view);
+	/*
+	 * E4: logical release asks a question about durable state.  A live
+	 * pin keeps the immutable bytes alive for the view that holds it;
+	 * it does not decide whether a future rollback may reach the
+	 * version.  Making release depend on pins would make the durable
+	 * history depend on when a reader happened to close.
+	 */
 	check(d1_fixture_release_predecessor(s, v1),
-	      "and becomes releasable once the view closes");
+	      "an eligible predecessor releases while a view pins it");
+	check(d1_view_read(view, 0, got, sizeof(got), &got_len) == D1_OK &&
+		      memcmp(got, first, sizeof(first)) == 0,
+	      "and the pinned view still reads its own bytes");
+	d1_view_close(s, view);
 
 	/* A view opened after the commit sees the new version. */
 	check(d1_view_open(s, &object, admission, D1_SELECT_ORDINARY, NULL, 0,
@@ -919,47 +933,68 @@ static void test_view_is_stable(void)
 	d1_store_free(s);
 }
 
-/* E5: a version pinned twice needs both pins dropped. */
-static void test_view_unpin_order(void)
+/*
+ * E5: release-before-unpin and unpin-before-release are the same
+ * history.  Two stores run the same operations in the two orders and
+ * must agree on the release disposition and on what a later rollback
+ * finds.
+ */
+static void test_release_order_does_not_matter(void)
 {
-	struct d1_uuid store_uuid;
-	struct d1_store *s;
-	struct d1_view *a = NULL, *b = NULL;
-	struct d1_guard guard;
-	static uint8_t data[32];
-	d1_id_t admission, v1, v2;
+	static const bool release_first[] = { true, false };
+	unsigned int pass;
+	bool released[2] = { false, false };
+	uint32_t rollback_status[2] = { 0, 0 };
 
-	memset(data, 0xc3, sizeof(data));
-	fill_uuid(&store_uuid, 0x55);
-	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
-	if (!s)
-		return;
-	admission = d1_fixture_admit(s, &object, 11,
-				     D1_RIGHT_READ | D1_RIGHT_WRITE |
-					     D1_RIGHT_SINGLE_WRITER);
+	for (pass = 0; pass < 2; pass++) {
+		struct d1_uuid store_uuid;
+		struct d1_store *s;
+		struct d1_view *view = NULL;
+		struct d1_guard guard;
+		static uint8_t data[32];
+		d1_id_t admission, v1, v2, txn2, custody;
 
-	v1 = commit_chunk(s, admission, 0, 1, data, sizeof(data),
-			  &(struct d1_guard){ .never_written = true }, 0, NULL);
-	check(d1_view_open(s, &object, admission, D1_SELECT_ORDINARY, NULL, 0,
-			   1, &a) == D1_OK,
-	      "the first view opens");
-	check(d1_view_open(s, &object, admission, D1_SELECT_ORDINARY, NULL, 0,
-			   1, &b) == D1_OK,
-	      "the second view opens");
+		memset(data, 0xc3, sizeof(data));
+		fill_uuid(&store_uuid, (uint8_t)(0x55 + pass));
+		s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!s)
+			return;
+		admission = d1_fixture_admit(s, &object, 11,
+					     D1_RIGHT_READ | D1_RIGHT_WRITE |
+						     D1_RIGHT_REPAIR |
+						     D1_RIGHT_SINGLE_WRITER);
 
-	d1_store_guard(s, &object, 0, &guard);
-	v2 = commit_chunk(s, admission, 0, 2, data, sizeof(data), &guard, v1,
-			  NULL);
-	check(v2 != 0, "a new version displaces it");
+		v1 = commit_chunk(s, admission, 0, 1, data, sizeof(data),
+				  &(struct d1_guard){ .never_written = true },
+				  0, NULL);
+		check(d1_view_open(s, &object, admission, D1_SELECT_ORDINARY,
+				   NULL, 0, 1, &view) == D1_OK,
+		      "a view pins the version");
+		d1_store_guard(s, &object, 0, &guard);
+		v2 = commit_chunk(s, admission, 0, 2, data, sizeof(data),
+				  &guard, v1, &txn2);
+		check(v1 != 0 && v2 != 0, "a new version displaces it");
 
-	d1_view_close(s, a);
-	check(!d1_fixture_release_predecessor(s, v1),
-	      "one of two pins dropped is not enough");
-	d1_view_close(s, b);
-	check(d1_fixture_release_predecessor(s, v1),
-	      "the last pin dropped makes it releasable");
+		if (release_first[pass]) {
+			released[pass] = d1_fixture_release_predecessor(s, v1);
+			d1_view_close(s, view);
+		} else {
+			d1_view_close(s, view);
+			released[pass] = d1_fixture_release_predecessor(s, v1);
+		}
 
-	d1_store_free(s);
+		custody = d1_fixture_custody(s, v2);
+		rollback_status[pass] = rollback_one(s, admission, 0, 2, txn2,
+						     true, custody, NULL);
+		d1_store_free(s);
+	}
+
+	check(released[0] && released[1],
+	      "the release succeeds in either order");
+	check(rollback_status[0] == rollback_status[1],
+	      "and a later rollback finds the same thing either way");
+	check(rollback_status[0] == D1_NO_PREDECESSOR,
+	      "which is that the released predecessor is gone");
 }
 
 /* E3: an owner may select its own finalized version. */
@@ -1094,7 +1129,7 @@ static void test_view_holes_and_admission(void)
 }
 
 /* Do the model's state agree, as far as anything can observe it? */
-static bool states_agree(const struct d1_store *a, const struct d1_store *b)
+static bool states_agree(struct d1_store *a, struct d1_store *b)
 {
 	struct d1_interval ha[D1_MAX_INTERVALS], hb[D1_MAX_INTERVALS];
 	uint32_t na, nb, i;
@@ -1421,7 +1456,13 @@ static void test_replay_refuses_a_foreign_log(void)
 	d1_store_free(a);
 }
 
-/* recovery_admit: one admission takes over from another. */
+/*
+ * recovery_admit: the work moves, not just the handle.
+ *
+ * The point of re-admission is that a caller which has been away can
+ * carry on with the transactions it left behind.  Proving a new handle
+ * can write a fresh chunk proves nothing about that.
+ */
 static void test_recovery_admit(void)
 {
 	struct d1_uuid store_uuid;
@@ -1430,7 +1471,7 @@ static void test_recovery_admit(void)
 	struct d1_result res;
 	uint8_t verifier[D1_VERIFIER_BYTES];
 	static uint8_t data[16];
-	d1_id_t control, old, fresh;
+	d1_id_t control, old, fresh, txn;
 
 	memset(data, 0x61, sizeof(data));
 	fill_uuid(&store_uuid, 0xdd);
@@ -1444,27 +1485,49 @@ static void test_recovery_admit(void)
 				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
 	d1_store_verifier(s, verifier);
 
-	/* The old admission works until it is superseded. */
+	/* Work left behind under the old admission. */
 	env_init(&env, s, old, D1_OP_WRITE_BATCH);
 	env.body.write.count = 1;
 	env.body.write.stability = D1_FILE_SYNC;
 	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
 		    true, &(struct d1_guard){ .never_written = true });
 	d1_store_apply(s, &env, &res);
-	check(res.entries[0].status == D1_OK, "the old admission can write");
+	check(res.entries[0].status == D1_OK,
+	      "the old admission prepares work");
+	txn = res.entries[0].txn;
 
 	env_init(&env, s, control, D1_OP_RECOVERY_ADMIT);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = txn;
 	env.body.control.old_admission = old;
 	env.body.control.new_admission_present = true;
 	env.body.control.new_admission = fresh;
+	env.body.control.read_epoch_present = true;
+	env.body.control.read_epoch = 0;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
-	      "recovery admits the new admission");
+	      "recovery re-admits the named transaction");
 	check(res.count == 1, "and answers once for the whole operation");
 	check(memcmp(res.entries[0].verifier, verifier, sizeof(verifier)) == 0,
 	      "and returns the verifier as it now stands");
 
-	/* The superseded admission is finished. */
+	/* The whole point: the new admission can finish the old work. */
+	env_init(&env, s, fresh, D1_OP_FINALIZE_BATCH);
+	env.body.lifecycle.range_begin = 0;
+	env.body.lifecycle.range_end = 1;
+	env.body.lifecycle.count = 1;
+	env.body.lifecycle.entries[0].index = 0;
+	env.body.lifecycle.entries[0].owner.cohort = 1;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = 1;
+	env.body.lifecycle.entries[0].txn = txn;
+	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_FINALIZED,
+	      "the recovered admission finalizes the recovered transaction");
+
+	/* The superseded handle is finished. */
 	env_init(&env, s, old, D1_OP_WRITE_BATCH);
 	env.body.write.count = 1;
 	env.body.write.stability = D1_FILE_SYNC;
@@ -1476,27 +1539,96 @@ static void test_recovery_admit(void)
 	check(res.entries[0].disposition == D1_UNRECORDED,
 	      "and leaves no receipt behind");
 
-	/* The new one can. */
-	env_init(&env, s, fresh, D1_OP_WRITE_BATCH);
+	d1_store_free(s);
+}
+
+/* An invalid recovery request changes nothing, including the old handle. */
+static void test_recovery_admit_is_atomic(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t data[16];
+	d1_id_t control, old, fresh, stranger, txn, other_txn;
+
+	memset(data, 0x62, sizeof(data));
+	fill_uuid(&store_uuid, 0xdf);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	control = d1_fixture_admit(s, &object, 11, D1_RIGHT_CONTROL);
+	old = d1_fixture_admit(s, &object, 11,
+			       D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	fresh = d1_fixture_admit(s, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	stranger = d1_fixture_admit(s, &object, 12, D1_RIGHT_WRITE);
+
+	env_init(&env, s, old, D1_OP_WRITE_BATCH);
 	env.body.write.count = 1;
 	env.body.write.stability = D1_FILE_SYNC;
-	write_entry(&env.body.write.entries[0], 1, 11, 3, data, sizeof(data),
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
 		    true, &(struct d1_guard){ .never_written = true });
 	d1_store_apply(s, &env, &res);
-	check(res.entries[0].status == D1_OK, "the new admission can");
+	txn = res.entries[0].txn;
 
-	/* A read epoch the store has never reached is not a recovery. */
+	env_init(&env, s, stranger, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 12, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(s, &env, &res);
+	other_txn = res.entries[0].txn;
+	check(txn != 0 && other_txn != 0, "two admissions prepare work");
+
+	/* A read epoch the store has never reached. */
 	env_init(&env, s, control, D1_OP_RECOVERY_ADMIT);
-	env.body.control.old_admission = fresh;
+	env.body.control.count = 1;
+	env.body.control.txns[0] = txn;
+	env.body.control.old_admission = old;
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = fresh;
 	env.body.control.read_epoch_present = true;
 	env.body.control.read_epoch = 1000000;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_INVALID,
 	      "an epoch from the future is refused");
 
+	/* Naming somebody else's transaction. */
+	env_init(&env, s, control, D1_OP_RECOVERY_ADMIT);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = other_txn;
+	env.body.control.old_admission = old;
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = fresh;
+	env.body.control.read_epoch_present = true;
+	env.body.control.read_epoch = 0;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OWNER_CONFLICT,
+	      "a transaction of another admission is refused");
+
+	/*
+	 * Neither refusal may have revoked anything on the way to failing:
+	 * the old admission still works.
+	 */
+	env_init(&env, s, old, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 2, 11, 3, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(s, &env, &res);
+	check(res.entries[0].status == D1_OK,
+	      "a refused recovery revoked nothing");
+
 	/* An admission nobody issued cannot be recovered from. */
 	env_init(&env, s, control, D1_OP_RECOVERY_ADMIT);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = txn;
 	env.body.control.old_admission = 9999;
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = fresh;
+	env.body.control.read_epoch_present = true;
+	env.body.control.read_epoch = 0;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_STALE_AUTH,
 	      "an unknown admission is refused");
@@ -1504,7 +1636,7 @@ static void test_recovery_admit(void)
 	d1_store_free(s);
 }
 
-/* lease_reap: cancelling the work of an owner that is gone. */
+/* lease_reap: cancelling the work of an owner whose lease is gone. */
 static void test_lease_reap(void)
 {
 	struct d1_uuid store_uuid;
@@ -1513,7 +1645,7 @@ static void test_lease_reap(void)
 	struct d1_result res;
 	struct d1_guard before, after;
 	static uint8_t data[24];
-	d1_id_t control, writer, other, txn_a, txn_b, committed, visible;
+	d1_id_t control, writer, other, txn_a, txn_b, visible;
 
 	memset(data, 0x71, sizeof(data));
 	fill_uuid(&store_uuid, 0xee);
@@ -1525,7 +1657,6 @@ static void test_lease_reap(void)
 				  D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
 	other = d1_fixture_admit(s, &object, 12, D1_RIGHT_WRITE);
 
-	/* Two prepared transactions on different chunks. */
 	env_init(&env, s, writer, D1_OP_WRITE_BATCH);
 	env.body.write.count = 1;
 	env.body.write.stability = D1_FILE_SYNC;
@@ -1543,51 +1674,53 @@ static void test_lease_reap(void)
 	check(txn_a != 0 && txn_b != 0, "two transactions are prepared");
 	d1_store_guard(s, &object, 0, &before);
 
-	/* One committed transaction, which a reap may not touch. */
-	committed = 0;
-	check(commit_chunk(s, writer, 4, 3, data, sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   &committed) != 0,
-	      "a third chunk is committed");
+	/* A live lease keeps its own work. */
+	env_init(&env, s, control, D1_OP_LEASE_REAP);
+	env.body.control.old_admission = writer;
+	env.body.control.count = 1;
+	env.body.control.txns[0] = txn_a;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "a live admission's work is not reapable");
+
+	d1_fixture_expire(s, writer);
+
+	/* Reaping needs the control right, not the write right. */
+	env_init(&env, s, writer, D1_OP_LEASE_REAP);
+	env.body.control.old_admission = writer;
+	env.body.control.count = 1;
+	env.body.control.txns[0] = txn_a;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "a writer cannot reap");
 
 	/*
-	 * A reap naming one member it may not touch cancels none of them:
-	 * every member is validated before any is cancelled.
+	 * Every named member is validated before any is cancelled, so a
+	 * reap naming one member it may not touch changes nothing.
 	 */
 	env_init(&env, s, control, D1_OP_LEASE_REAP);
 	env.body.control.old_admission = writer;
 	env.body.control.count = 2;
 	env.body.control.txns[0] = txn_a;
-	env.body.control.txns[1] = committed;
+	env.body.control.txns[1] = 999999;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
-		      res.entries[0].status == D1_BAD_PHASE,
-	      "a committed member is refused");
-	check(d1_store_visible(s, &object, 4, &visible),
-	      "and the committed chunk is untouched");
+		      res.entries[0].status == D1_INVALID,
+	      "a member that is not a transaction refuses the whole reap");
 
 	env_init(&env, s, control, D1_OP_LEASE_REAP);
 	env.body.control.old_admission = writer;
 	env.body.control.count = 1;
 	env.body.control.txns[0] = txn_a;
-	/* The first chunk's transaction is still there to reap. */
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "the surviving member was not cancelled by the refusal");
 	check(res.entries[0].phase == D1_PHASE_ROLLED_BACK,
 	      "the reaped transaction is ROLLED_BACK");
 
-	/* The chunk is free again, at the next generation, not the old one. */
+	/* The guard does not move back when work is reaped. */
 	check(d1_store_guard(s, &object, 0, &after) &&
 		      after.generation == before.generation,
 	      "the reap did not move the guard back");
-	env_init(&env, s, writer, D1_OP_WRITE_BATCH);
-	env.body.write.count = 1;
-	env.body.write.stability = D1_FILE_SYNC;
-	write_entry(&env.body.write.entries[0], 0, 11, 4, data, sizeof(data),
-		    true, &after);
-	d1_store_apply(s, &env, &res);
-	check(res.entries[0].status == D1_OK,
-	      "and the chunk takes a new transaction");
 
 	/* A reap may only cancel what its own admission prepared. */
 	env_init(&env, s, control, D1_OP_LEASE_REAP);
@@ -1595,17 +1728,145 @@ static void test_lease_reap(void)
 	env.body.control.count = 1;
 	env.body.control.txns[0] = txn_b;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
-		      res.entries[0].status == D1_OWNER_CONFLICT,
-	      "another admission's transaction is not this reap's to cancel");
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "another live admission cannot be reaped either");
 
-	/* Reaping needs the control right, not the write right. */
-	env_init(&env, s, writer, D1_OP_LEASE_REAP);
-	env.body.control.old_admission = writer;
+	d1_fixture_expire(s, other);
+	env_init(&env, s, control, D1_OP_LEASE_REAP);
+	env.body.control.old_admission = other;
 	env.body.control.count = 1;
 	env.body.control.txns[0] = txn_b;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
-		      res.entries[0].status == D1_STALE_AUTH,
-	      "a writer cannot reap");
+		      res.entries[0].status == D1_OWNER_CONFLICT,
+	      "another admission's transaction is not this reap's to cancel");
+	check(!d1_store_visible(s, &object, 1, &visible),
+	      "and nothing was published for it");
+
+	d1_store_free(s);
+}
+
+/*
+ * Malformed typed requests.
+ *
+ * The store's only entry point takes a typed envelope, so the decoder's
+ * bounds are not what protects it: every in-tree caller builds one by
+ * hand.  A request whose counts, lengths or members are outside the
+ * canonical form must be refused before anything reads a payload or
+ * hashes a byte, and refused without reading past a fixed array.
+ */
+static void test_malformed_requests_are_refused(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t data[16];
+	d1_id_t admission, visible;
+
+	memset(data, 0x81, sizeof(data));
+	fill_uuid(&store_uuid, 0x12);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	/* A digest length past the fixed digest array. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	env.body.write.entries[0].checksum.len = 4096;
+	check(d1_store_apply(s, &env, &res) == D1_INVALID,
+	      "a digest length past its array is refused, not read");
+
+	/* A count past the entry vector. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = D1_BATCH_ENTRIES_MAX + 1u;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_INVALID,
+	      "a count past the entry vector is refused");
+
+	/* An empty batch is not a batch. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 0;
+	env.body.write.stability = D1_FILE_SYNC;
+	check(d1_store_apply(s, &env, &res) == D1_INVALID,
+	      "an empty batch is refused");
+
+	/* A stability outside the three. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = 99;
+	write_entry(&env.body.write.entries[0], 0, 11, 3, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_INVALID,
+	      "a stability outside the three is refused");
+
+	/* One batch naming one chunk twice. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 2;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 4, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	write_entry(&env.body.write.entries[1], 0, 11, 5, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_INVALID,
+	      "a batch naming one chunk twice is refused");
+
+	/* A reserved writer ID cannot own anything. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 0, 6, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_INVALID,
+	      "a reserved writer ID is refused");
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 0xffffffffu, 7, data,
+		    sizeof(data), true,
+		    &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_INVALID,
+	      "and so is the other reserved writer ID");
+
+	/* An unsupported checksum algorithm. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 8, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	env.body.write.entries[0].checksum.alg = 77;
+	check(d1_store_apply(s, &env, &res) == D1_INVALID,
+	      "an unsupported checksum algorithm is refused");
+
+	/* A control request carrying a field its operation has no use for. */
+	env_init(&env, s, admission, D1_OP_LEASE_REAP);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = 1;
+	env.body.control.old_admission = admission;
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = 2;
+	check(d1_store_apply(s, &env, &res) == D1_INVALID,
+	      "a reap naming a new admission is a different request");
+
+	/* A recovery request missing the epoch it exists to grant. */
+	env_init(&env, s, admission, D1_OP_RECOVERY_ADMIT);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = 1;
+	env.body.control.old_admission = admission;
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = 2;
+	check(d1_store_apply(s, &env, &res) == D1_INVALID,
+	      "a recovery granting no read epoch is refused");
+
+	check(!d1_store_visible(s, &object, 0, &visible),
+	      "and none of them wrote anything");
+	check(d1_store_eof(s, &object) == 0, "nor moved EOF");
 
 	d1_store_free(s);
 }
@@ -1616,6 +1877,7 @@ int main(void)
 	fill_uuid(&object.object_uuid, 0x40);
 	fill_uuid(&origin, 0x50);
 
+	test_malformed_requests_are_refused();
 	test_ordinary_lifecycle();
 	test_activation();
 	test_owner_collision();
@@ -1626,7 +1888,7 @@ int main(void)
 	test_rollback_shrinks_eof();
 	test_released_predecessor();
 	test_view_is_stable();
-	test_view_unpin_order();
+	test_release_order_does_not_matter();
 	test_view_owner_selection();
 	test_view_holes_and_admission();
 	test_replay_reproduces_the_store();
@@ -1634,6 +1896,7 @@ int main(void)
 	test_append_fault_is_unrecorded();
 	test_replay_refuses_a_foreign_log();
 	test_recovery_admit();
+	test_recovery_admit_is_atomic();
 	test_lease_reap();
 	test_unsupported();
 
