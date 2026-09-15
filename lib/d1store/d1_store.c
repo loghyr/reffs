@@ -1606,6 +1606,18 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 		    memcmp(&fresh->principal, &old->principal,
 			   sizeof(fresh->principal)) != 0)
 			return D1_STALE_AUTH;
+		/*
+		 * The fresh handle's rights are deliberately not checked
+		 * against the work being moved.  Recovery re-binds pending
+		 * and finalized transactions to a live handle; what that
+		 * handle may then do with them is the ordinary authority
+		 * question, asked at each later operation.  So a recovery
+		 * onto a READ-only handle succeeds and its FINALIZE is then
+		 * refused STALE_AUTH, which is recoverable by admitting
+		 * again.  Refusing here instead would make recovery assert
+		 * an intent the request does not carry.  The memo does not
+		 * settle this; the choice is stated rather than implied.
+		 */
 		/* A read epoch the store has never reached is not a recovery. */
 		if (cb->read_epoch > s->index_epoch)
 			return D1_INVALID;
