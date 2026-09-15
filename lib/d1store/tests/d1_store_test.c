@@ -3095,6 +3095,34 @@ static void test_refusal_consumes_no_capacity(void)
 	      "a valid write to a fresh object still has room for it");
 	check(d1_store_visible(s, &keys[D1_MAX_OBJECTS], 0, &seen),
 	      "and publishes");
+	/*
+	 * And it is the first transaction and version the store ever
+	 * issued: the refusals took no IDs either.
+	 */
+	check(res.entries[0].txn == 1 && res.entries[0].version == 1,
+	      "taking the first IDs, so the refusals consumed none");
+
+	/*
+	 * The owner association is free too.  A refused write must not
+	 * leave its owner claimed, or the caller could never use it again.
+	 */
+	memset(&env, 0, sizeof(env));
+	env.object = keys[0];
+	env.admission = admissions[0];
+	env.incarnation = d1_store_incarnation(s);
+	env.key.origin = origin;
+	env.key.sequence = next_sequence++;
+	env.op = D1_OP_WRITE_BATCH;
+	env.body.write.count = 1;
+	env.body.write.stability = D1_DATA_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	d1_store_apply(s, &env, &res);
+	check(res.entries[0].status == D1_OK,
+	      "the owner the refused write named is free to use");
+	check(d1_store_visible(s, &keys[0], 0, &seen),
+	      "and the object it could not create is created now");
 
 	d1_store_free(s);
 }
