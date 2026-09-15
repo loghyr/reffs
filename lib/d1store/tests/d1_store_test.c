@@ -1471,6 +1471,115 @@ static void test_failed_replay_poisons_the_handle(void)
 	d1_store_free(live);
 }
 
+/*
+ * A logical close is a fence, and a fence every public entry point is
+ * on the same side of.
+ *
+ * The allocation stays alive after a close so that a caller arriving at
+ * the door finds a store rather than freed memory -- but what it finds
+ * is a store that answers nothing.  The header promises that everything
+ * after a successful close fails closed, and an observer that kept
+ * answering would be the one thing that did not: a version, an EOF or a
+ * journal read back between the close and the owner's destroy is read
+ * from a store its caller has already given up.
+ */
+static void test_a_closed_store_answers_nothing(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *other;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_guard guard;
+	struct d1_interval holes[4];
+	static uint8_t data[16];
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	const uint8_t *log;
+	size_t len, after = 1;
+	unsigned int i;
+	bool zero = true;
+	d1_id_t admission, seen;
+
+	memset(data, 0x2e, sizeof(data));
+	fill_uuid(&store_uuid, 0x2e);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+	check(commit_chunk(s, admission, 0, 1, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "a store with something to answer about");
+	/* An index fault leaves an overlay, so those two have answers too. */
+	d1_fixture_fail_next_index(s);
+	check(commit_chunk(s, admission, 1, 2, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "and a materialized pointer left behind by a fault");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_store_guard(s, &object, 0, &guard) &&
+		      d1_store_eof(s, &object) != 0 &&
+		      d1_store_incarnation(s) != 0 &&
+		      d1_store_overlay_active(s),
+	      "every observer has an answer while it is open");
+	log = d1_store_journal(s, &len);
+	check(log && len, "and a journal");
+
+	check(d1_store_close(s) == D1_OK, "it closes");
+
+	/* Every public observer, one by one. */
+	check(!d1_store_visible(s, &object, 0, &seen),
+	      "a closed store makes nothing visible");
+	check(!d1_store_guard(s, &object, 0, &guard),
+	      "it has no guard to give");
+	check(d1_store_eof(s, &object) == 0, "no EOF");
+	check(d1_store_holes(s, &object, holes, 4) == 0, "no extents");
+	check(!d1_store_materialized(s, &object, 1, &seen),
+	      "no materialized pointer");
+	check(!d1_store_overlay_active(s), "no overlay");
+	check(d1_store_incarnation(s) == 0, "no incarnation");
+	d1_store_verifier(s, verifier);
+	for (i = 0; i < D1_VERIFIER_BYTES; i++)
+		zero = zero && verifier[i] == 0;
+	check(zero, "a zero verifier");
+	(void)d1_store_journal(s, &after);
+	check(after == 0, "and no journal bytes");
+
+	/* And every entry point that would change it, or open a view. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 2, 11, 3, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_INVALID,
+	      "it applies nothing");
+	ordinary_sel(&sel);
+	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
+			   &view) == D1_INVALID,
+	      "it opens no view");
+	check(d1_store_journal_enable(s) == D1_INVALID, "it starts no journal");
+	check(d1_fixture_admit(s, &object, 12, D1_RIGHT_WRITE) == 0,
+	      "and the fixture installs no authority in it");
+
+	check(d1_store_close(s) == D1_OK, "closing it again is not an error");
+	check(d1_store_destroy(s) == D1_OK, "and it destroys");
+
+	/* A closed store is not a recovery target either. */
+	other = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (other) {
+		check(d1_store_close(other) == D1_OK, "a fresh store closes");
+		check(d1_store_replay(other, log, len) == D1_INVALID,
+		      "and is no target for a rebuild");
+		check(d1_store_reopen(other, log, len) == D1_INVALID,
+		      "nor for a reopen");
+		check(d1_store_destroy(other) == D1_OK, "it destroys too");
+	}
+}
+
 /* Fixture custody names a version that exists. */
 static void test_custody_needs_a_real_version(void)
 {
@@ -6595,6 +6704,7 @@ int main(void)
 	test_view_is_stable();
 	test_close_refuses_an_active_call();
 	test_close_does_not_destroy_under_an_arriving_call();
+	test_a_closed_store_answers_nothing();
 	test_failed_replay_poisons_the_handle();
 	test_custody_needs_a_real_version();
 	test_release_order_does_not_matter();

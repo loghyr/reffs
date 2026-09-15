@@ -89,12 +89,14 @@ struct d1_store *d1_store_open(const struct d1_uuid *store_uuid,
  * either is a use-after-free with a friendly name.
  *
  * On D1_OK the store stops admitting calls and every later one fails
- * closed, but the allocation is still there.  That is deliberate.  A
+ * closed -- the observers included, which answer as if they knew
+ * nothing -- but the allocation is still there.  That is deliberate.  A
  * caller which has entered a public function and has not yet reached
  * the lock is not counted anywhere, and freeing the store here would
  * leave it to lock destroyed memory; leaving the allocation alive lets
- * it arrive, find the store closed, and be refused.  Closing twice is
- * D1_OK, and closing does not free.
+ * it arrive, find the store closed, and be refused.  Read what you mean
+ * to read before you close.  Closing twice is D1_OK, and closing does
+ * not free.
  */
 uint32_t d1_store_close(struct d1_store *s);
 
@@ -112,11 +114,13 @@ uint32_t d1_store_close(struct d1_store *s);
 uint32_t d1_store_destroy(struct d1_store *s);
 
 /*
- * Fixture controls that hold what a paused call holds.  This model is
- * single threaded, so a test cannot stop a real call part way through;
- * between these two the store is in the state it is in between two
- * members of an ordinary batch, which is the window a close must not
- * slip through.
+ * Fixture controls that hold what a paused call holds.  Between these
+ * two the store is in the state it is in between two members of an
+ * ordinary batch, which is the window a close must not slip through,
+ * and they hold it without a thread.  A test that needs a real caller
+ * stopped at a real point uses d1_fixture_before_admission or
+ * d1_fixture_before_member instead; the model serialises on one mutex
+ * and does not require its caller to be single threaded.
  */
 void d1_fixture_call_enter(struct d1_store *s);
 void d1_fixture_call_leave(struct d1_store *s);

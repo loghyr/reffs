@@ -296,23 +296,30 @@ static void d1_verifier_of(uint64_t incarnation, uint8_t out[D1_VERIFIER_BYTES])
 /*
  * Whether this handle may still answer for the model.
  *
- * A rebuild that stopped part way left state that is neither the logged
- * history nor an empty store; a reopen that rebuilt and then failed to
- * start its new journal left a store nothing is recording.  Either way
- * the handle is finished, and "serves nothing" has to mean the
- * observers too.  A version, an EOF, a guard or a verifier read out of
- * a history the model rejected is precisely the value a caller would
- * mistake for the state of the store, so every public observer answers
- * as if it knew nothing, and only teardown remains.
+ * Two ways it stops.  A rebuild that stopped part way left state that
+ * is neither the logged history nor an empty store, and a reopen that
+ * rebuilt and then failed to start its new journal left a store nothing
+ * is recording; either way the handle is poisoned.  And a logical close
+ * fences the store: it stops admitting calls, and what it promises is
+ * that everything after it fails closed.
+ *
+ * "Serves nothing" has to mean the observers in both cases.  A version,
+ * an EOF, a guard or a verifier read out of a history the model
+ * rejected is precisely the value a caller would mistake for the state
+ * of the store; and a value read after a close is read from a store the
+ * caller has already given up, in the window before its owner destroys
+ * it.  So every public observer answers as if it knew nothing, and the
+ * fixture may change nothing, and only teardown remains.
  *
  * There is deliberately no diagnostic back door here.  A test that
  * wants to look at a partial reduction reads the state before it
  * poisons the handle, which is what the reduction is being compared
- * against anyway.
+ * against anyway; a test that wants to look at a store reads it before
+ * closing it.
  */
 static bool d1_store_serving(const struct d1_store *s)
 {
-	return !s->poisoned;
+	return !s->poisoned && !s->closed;
 }
 
 void d1_store_verifier(struct d1_store *s, uint8_t out[D1_VERIFIER_BYTES])
@@ -600,21 +607,10 @@ void d1_store_free(struct d1_store *s)
 	free(s);
 }
 
-/*
- * Whether the fixture may change this store at all.
- *
- * A poisoned handle serves nothing, and that includes the harness: a
- * half-rebuilt store is not a place to install authority.
- */
-static bool d1_fixture_may_mutate(const struct d1_store *s)
-{
-	return d1_store_serving(s) && !s->closed;
-}
-
 void d1_fixture_fail_next_append(struct d1_store *s)
 {
 	pthread_mutex_lock(&s->lock);
-	if (!d1_fixture_may_mutate(s)) {
+	if (!d1_store_serving(s)) {
 		pthread_mutex_unlock(&s->lock);
 		return;
 	}
@@ -627,7 +623,7 @@ void d1_fixture_fail_next_append(struct d1_store *s)
 void d1_fixture_fail_append_in(struct d1_store *s, uint32_t n)
 {
 	pthread_mutex_lock(&s->lock);
-	if (!d1_fixture_may_mutate(s)) {
+	if (!d1_store_serving(s)) {
 		pthread_mutex_unlock(&s->lock);
 		return;
 	}
@@ -640,7 +636,7 @@ void d1_fixture_before_member(struct d1_store *s, uint32_t ordinal,
 			      void (*fn)(void *), void *arg)
 {
 	pthread_mutex_lock(&s->lock);
-	if (!d1_fixture_may_mutate(s)) {
+	if (!d1_store_serving(s)) {
 		pthread_mutex_unlock(&s->lock);
 		return;
 	}
@@ -681,7 +677,7 @@ static void d1_run_member_hook(struct d1_store *s, uint32_t ordinal)
 void d1_fixture_fail_next_flush(struct d1_store *s)
 {
 	pthread_mutex_lock(&s->lock);
-	if (!d1_fixture_may_mutate(s)) {
+	if (!d1_store_serving(s)) {
 		pthread_mutex_unlock(&s->lock);
 		return;
 	}
@@ -2832,7 +2828,7 @@ static bool d1_release_locked(struct d1_store *s, d1_id_t version)
 void d1_fixture_fail_next_index(struct d1_store *s)
 {
 	pthread_mutex_lock(&s->lock);
-	if (!d1_fixture_may_mutate(s)) {
+	if (!d1_store_serving(s)) {
 		pthread_mutex_unlock(&s->lock);
 		return;
 	}
@@ -2846,7 +2842,7 @@ bool d1_store_overlay_active(struct d1_store *s)
 	bool active;
 
 	pthread_mutex_lock(&s->lock);
-	active = s->overlay_active;
+	active = d1_store_serving(s) && s->overlay_active;
 	pthread_mutex_unlock(&s->lock);
 	return active;
 }
@@ -2908,7 +2904,7 @@ d1_id_t d1_fixture_admit_full(struct d1_store *s,
 	request.auth = *auth;
 
 	pthread_mutex_lock(&s->lock);
-	if (!d1_fixture_may_mutate(s)) {
+	if (!d1_store_serving(s)) {
 		pthread_mutex_unlock(&s->lock);
 		return 0;
 	}
@@ -2961,7 +2957,7 @@ void d1_fixture_revoke(struct d1_store *s, d1_id_t admission)
 	request.admission = admission;
 
 	pthread_mutex_lock(&s->lock);
-	if (!d1_fixture_may_mutate(s)) {
+	if (!d1_store_serving(s)) {
 		pthread_mutex_unlock(&s->lock);
 		return;
 	}
@@ -2989,7 +2985,7 @@ void d1_fixture_expire(struct d1_store *s, d1_id_t admission)
 	request.admission = admission;
 
 	pthread_mutex_lock(&s->lock);
-	if (!d1_fixture_may_mutate(s)) {
+	if (!d1_store_serving(s)) {
 		pthread_mutex_unlock(&s->lock);
 		return;
 	}
@@ -3018,7 +3014,7 @@ d1_id_t d1_fixture_custody(struct d1_store *s, d1_id_t version)
 	request.version = version;
 
 	pthread_mutex_lock(&s->lock);
-	if (!d1_fixture_may_mutate(s)) {
+	if (!d1_store_serving(s)) {
 		pthread_mutex_unlock(&s->lock);
 		return 0;
 	}
@@ -3051,7 +3047,7 @@ bool d1_fixture_release_predecessor(struct d1_store *s, d1_id_t version)
 	request.version = version;
 
 	pthread_mutex_lock(&s->lock);
-	if (!d1_fixture_may_mutate(s)) {
+	if (!d1_store_serving(s)) {
 		pthread_mutex_unlock(&s->lock);
 		return false;
 	}
