@@ -6734,7 +6734,6 @@ static void test_lifecycle_options_are_canonical(void)
 	static uint8_t bytes[4096];
 	static uint8_t other[4096];
 	static uint8_t result[512];
-	static uint8_t scratch[65536];
 	uint8_t digest[D1_DIGEST_BYTES];
 	uint8_t verifier[D1_VERIFIER_BYTES];
 	const uint8_t *log;
@@ -6774,13 +6773,28 @@ static void test_lifecycle_options_are_canonical(void)
 	env.body.lifecycle.entries[0].txn = txn;
 	env.body.lifecycle.entries[0].predecessor_present = true;
 	env.body.lifecycle.entries[0].predecessor = 0;
+	/*
+	 * A prior verifier that does not match, so that if validation ever
+	 * stopped refusing this body the reducer would answer a recorded
+	 * STALE_AUTH -- a refusal decided before any handler touches the
+	 * result, which is a result this test can state exactly.
+	 */
 	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+	env.body.lifecycle.prior_verifier[0] ^= 0xffu;
 	check(!d1_envelope_validate(&env),
 	      "a present predecessor of zero is not a canonical request");
 	check(d1_store_apply(live, &env, &res) == D1_INVALID,
 	      "and the call is refused before anything reads the body");
 	check(d1_envelope_encode(&env, bytes, sizeof(bytes)) == 0,
 	      "and the encoder will not write one");
+
+	/*
+	 * A key of its own from here on.  If validation ever stopped
+	 * refusing this body, the call above would have recorded one
+	 * under the key it was built with, and the crafted record would
+	 * then be a repeat rather than the thing being tested.
+	 */
+	env.key.sequence = next_sequence++;
 
 	/*
 	 * Two canonical encodings that differ only in the ID say where the
@@ -6814,7 +6828,14 @@ static void test_lifecycle_options_are_canonical(void)
 	check(!d1_envelope_decode(bytes, env_len, &decoded),
 	      "and the same bytes with the ID zeroed do not");
 
-	/* A record carrying them is refused before the reducer runs. */
+	/*
+	 * And a record carrying them is refused before the reducer runs.
+	 * The record has to be one the reducer would otherwise accept, or
+	 * it would be refused for the wrong reason: its digest is taken
+	 * over the bytes actually in it rather than over a sibling
+	 * encoding, and its logged result is the one the reducer computes
+	 * for the body those bytes decode to.
+	 */
 	log = d1_store_journal(live, &len);
 	records = index_log(log, len, at, 16);
 	check(records >= 3 && len + 4096u <= sizeof(copy),
@@ -6826,10 +6847,8 @@ static void test_lifecycle_options_are_canonical(void)
 	split_entry(&parts, log + at[records - 1]);
 	check(d1_complete_result_decode(parts.result, parts.result_len, &base),
 	      "and its recorded result decodes");
-	env.body.lifecycle.entries[0].predecessor = 0x5a5au;
-	check(d1_envelope_digest(&env, scratch, sizeof(scratch), digest),
-	      "the canonical form digests");
-	crafted_result(&made, &env.key, D1_STALE_AUTH, D1_UNRECORDED, verifier);
+	d1_request_digest(bytes, env_len, digest);
+	refusal_result(&made, &base, &env.key, D1_STALE_AUTH);
 	res_len = d1_complete_result_encode(&made, result, sizeof(result));
 	if (!res_len) {
 		d1_store_free(live);
