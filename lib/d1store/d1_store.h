@@ -30,6 +30,7 @@
 #define D1_MAX_OWNERS 256u
 #define D1_MAX_CUSTODY 32u
 #define D1_MAX_INTERVALS 64u
+#define D1_MAX_VIEWS 32u
 
 struct d1_store;
 
@@ -131,5 +132,42 @@ struct d1_interval {
 uint32_t d1_store_holes(const struct d1_store *s,
 			const struct d1_objkey *object, struct d1_interval *out,
 			uint32_t max);
+
+struct d1_view;
+
+/*
+ * Open a read view over [range_begin, range_end) of @object.
+ *
+ * The view decides once, at open, which version each chunk resolves to,
+ * and pins it.  What it reads afterwards is what it decided, whatever
+ * later commits or rollbacks do to the pointers -- that is what a view
+ * is for.  ORDINARY selection takes the visible version; OWNER takes
+ * @owner's own finalized version where it has one, and the visible
+ * version everywhere else.
+ *
+ * Every selected payload is verified against its stored checksum here.
+ * A failure rejects the whole view rather than one entry: this model
+ * has no per-entry read result to put one in.
+ */
+uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
+		      d1_id_t admission, uint32_t selection,
+		      const struct d1_owner *owner, uint64_t range_begin,
+		      uint64_t range_end, struct d1_view **out);
+
+/*
+ * Read from the view.  Holes inside the view's EOF read as zeros; a
+ * read starting at or past it returns zero bytes.
+ */
+uint32_t d1_view_read(struct d1_view *v, uint64_t offset, uint8_t *buf,
+		      uint32_t len, uint32_t *out_len);
+
+/* Which version the view selected for one chunk, if any. */
+bool d1_view_version(const struct d1_view *v, uint64_t index, d1_id_t *ver);
+
+/* The EOF the view saw when it opened. */
+uint64_t d1_view_eof(const struct d1_view *v);
+
+/* Drop the view's pins.  The view is gone once this returns. */
+void d1_view_close(struct d1_store *s, struct d1_view *v);
 
 #endif /* REFFS_D1_STORE_H */

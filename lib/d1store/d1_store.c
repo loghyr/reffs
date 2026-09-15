@@ -101,6 +101,21 @@ struct d1_owner_assoc {
 	d1_id_t version;
 };
 
+/*
+ * A read view.  It holds one pinned version per chunk of its range and
+ * the EOF it saw, so what it reads is what it decided at open.
+ */
+struct d1_view {
+	bool used;
+	struct d1_store *store;
+	uint32_t object;
+	uint64_t range_begin;
+	uint64_t range_end;
+	uint64_t eof;
+	bool present[D1_MAX_CHUNKS];
+	d1_id_t version[D1_MAX_CHUNKS];
+};
+
 /* Repair custody over one exact version. */
 struct d1_custody {
 	bool used;
@@ -144,6 +159,7 @@ struct d1_store {
 	struct d1_owner_assoc owners[D1_MAX_OWNERS];
 	struct d1_receipt receipts[D1_MAX_RECEIPTS];
 	struct d1_custody custody[D1_MAX_CUSTODY];
+	struct d1_view views[D1_MAX_VIEWS];
 	d1_id_t next_custody;
 };
 
@@ -1099,4 +1115,200 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	out->eof = d1_store_eof(s, &env->object);
 	pthread_mutex_unlock(&s->lock);
 	return D1_OK;
+}
+
+/*
+ * Whether @a may read @object.  Reads are checked against the same
+ * admission table as writes; a revoked or expired admission cannot open
+ * a view, and one issued for a different object cannot either.
+ */
+static uint32_t d1_read_admission(struct d1_store *s, d1_id_t admission,
+				  const struct d1_objkey *object)
+{
+	struct d1_admission *a = d1_admission_find(s, admission);
+
+	if (!a || a->revoked || a->expired)
+		return D1_STALE_AUTH;
+	if (memcmp(&a->object, object, sizeof(*object)) != 0)
+		return D1_STALE_AUTH;
+	if ((a->rights & D1_RIGHT_READ) != D1_RIGHT_READ)
+		return D1_STALE_AUTH;
+	return D1_OK;
+}
+
+/* The owner's own finalized version on this chunk, if it has one. */
+static struct d1_version *d1_own_finalized(struct d1_store *s,
+					   const struct d1_chunk *c,
+					   const struct d1_owner *owner)
+{
+	struct d1_txn *t;
+
+	if (!owner || !c->pending_present)
+		return NULL;
+	t = d1_txn_find(s, c->pending);
+	if (!t || t->phase != D1_PHASE_FINALIZED)
+		return NULL;
+	if (t->owner.cohort != owner->cohort ||
+	    t->owner.writer != owner->writer || t->owner.co_id != owner->co_id)
+		return NULL;
+	return d1_version_find(s, t->version);
+}
+
+static void d1_view_unpin(struct d1_store *s, struct d1_view *v)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_CHUNKS; i++) {
+		struct d1_version *ver;
+
+		if (!v->present[i])
+			continue;
+		ver = d1_version_find(s, v->version[i]);
+		if (ver && ver->pins)
+			ver->pins--;
+		v->present[i] = false;
+	}
+}
+
+uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
+		      d1_id_t admission, uint32_t selection,
+		      const struct d1_owner *owner, uint64_t range_begin,
+		      uint64_t range_end, struct d1_view **out)
+{
+	struct d1_object *o;
+	struct d1_view *v = NULL;
+	uint32_t status, i;
+
+	*out = NULL;
+	if (selection != D1_SELECT_ORDINARY && selection != D1_SELECT_OWNER)
+		return D1_INVALID;
+	if (range_begin >= range_end || range_end > D1_MAX_CHUNKS)
+		return D1_INVALID;
+
+	pthread_mutex_lock(&s->lock);
+	status = d1_read_admission(s, admission, object);
+	if (status != D1_OK)
+		goto out;
+	o = d1_object_find(s, object);
+	if (!o) {
+		status = D1_INVALID;
+		goto out;
+	}
+	for (i = 0; i < D1_MAX_VIEWS && !v; i++)
+		if (!s->views[i].used)
+			v = &s->views[i];
+	if (!v) {
+		status = D1_NOSPC;
+		goto out;
+	}
+
+	memset(v, 0, sizeof(*v));
+	v->used = true;
+	v->store = s;
+	v->object = d1_object_slot(s, o);
+	v->range_begin = range_begin;
+	v->range_end = range_end;
+
+	for (i = (uint32_t)range_begin; i < (uint32_t)range_end; i++) {
+		struct d1_chunk *c = &o->chunks[i];
+		struct d1_version *ver = NULL;
+
+		if (selection == D1_SELECT_OWNER)
+			ver = d1_own_finalized(s, c, owner);
+		if (!ver && c->visible_present)
+			ver = d1_version_find(s, c->visible);
+		if (!ver)
+			continue;
+		/*
+		 * A view that would hand back bytes it cannot vouch for is
+		 * not opened at all.
+		 */
+		if (!d1_checksum_verify(&ver->checksum, ver->bytes, ver->len)) {
+			d1_view_unpin(s, v);
+			v->used = false;
+			status = D1_CHECKSUM;
+			goto out;
+		}
+		ver->pins++;
+		v->present[i] = true;
+		v->version[i] = ver->id;
+	}
+
+	v->eof = d1_store_eof(s, object);
+	*out = v;
+	status = D1_OK;
+out:
+	pthread_mutex_unlock(&s->lock);
+	return status;
+}
+
+bool d1_view_version(const struct d1_view *v, uint64_t index, d1_id_t *ver)
+{
+	if (index >= D1_MAX_CHUNKS || !v->present[index])
+		return false;
+	*ver = v->version[index];
+	return true;
+}
+
+uint64_t d1_view_eof(const struct d1_view *v)
+{
+	return v->eof;
+}
+
+uint32_t d1_view_read(struct d1_view *v, uint64_t offset, uint8_t *buf,
+		      uint32_t len, uint32_t *out_len)
+{
+	struct d1_store *s = v->store;
+	uint64_t at = offset;
+	uint32_t done = 0;
+
+	*out_len = 0;
+	if (!v->used || !s)
+		return D1_INVALID;
+	if (offset >= v->eof || len == 0)
+		return D1_OK;
+	/* The view's own EOF bounds the read, not the store's current one. */
+	if (v->eof - offset < (uint64_t)len)
+		len = (uint32_t)(v->eof - offset);
+
+	pthread_mutex_lock(&s->lock);
+	while (done < len) {
+		uint64_t index = at / s->chunk_bytes;
+		uint32_t within = (uint32_t)(at % s->chunk_bytes);
+		uint32_t span = s->chunk_bytes - within;
+		struct d1_version *ver = NULL;
+
+		if (span > len - done)
+			span = len - done;
+		if (index < D1_MAX_CHUNKS && v->present[index])
+			ver = d1_version_find(s, v->version[index]);
+		/*
+		 * A hole inside the view's EOF is zeros, and so is the part
+		 * of a chunk past a partial image.  Both are answers, not
+		 * short reads.
+		 */
+		memset(buf + done, 0, span);
+		if (ver && within < ver->len) {
+			uint32_t have = ver->len - within;
+
+			if (have > span)
+				have = span;
+			memcpy(buf + done, ver->bytes + within, have);
+		}
+		done += span;
+		at += span;
+	}
+	pthread_mutex_unlock(&s->lock);
+	*out_len = done;
+	return D1_OK;
+}
+
+void d1_view_close(struct d1_store *s, struct d1_view *v)
+{
+	if (!v)
+		return;
+	pthread_mutex_lock(&s->lock);
+	d1_view_unpin(s, v);
+	v->used = false;
+	pthread_mutex_unlock(&s->lock);
 }

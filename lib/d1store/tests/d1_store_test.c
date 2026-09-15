@@ -791,6 +791,288 @@ static void test_released_predecessor(void)
 	d1_store_free(s);
 }
 
+/* Write and finalize one chunk, stopping short of commit. */
+static d1_id_t finalize_chunk(struct d1_store *s, d1_id_t admission,
+			      uint64_t index, uint32_t co_id,
+			      const uint8_t *data, uint32_t len,
+			      const struct d1_guard *expected,
+			      d1_id_t predecessor, d1_id_t *txn_out)
+{
+	struct d1_envelope env;
+	struct d1_result res;
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	d1_id_t txn, version;
+
+	d1_store_verifier(s, verifier);
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], index, 11, co_id, data, len,
+		    true, expected);
+	if (d1_store_apply(s, &env, &res) != D1_OK ||
+	    res.entries[0].status != D1_OK)
+		return 0;
+	txn = res.entries[0].txn;
+	version = res.entries[0].version;
+
+	env_init(&env, s, admission, D1_OP_FINALIZE_BATCH);
+	env.body.lifecycle.range_begin = index;
+	env.body.lifecycle.range_end = index + 1;
+	env.body.lifecycle.count = 1;
+	env.body.lifecycle.entries[0].index = index;
+	env.body.lifecycle.entries[0].owner.cohort = 1;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = co_id;
+	env.body.lifecycle.entries[0].txn = txn;
+	env.body.lifecycle.entries[0].predecessor_present = predecessor != 0;
+	env.body.lifecycle.entries[0].predecessor = predecessor;
+	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+	if (d1_store_apply(s, &env, &res) != D1_OK ||
+	    res.entries[0].status != D1_OK)
+		return 0;
+	if (txn_out)
+		*txn_out = txn;
+	return version;
+}
+
+/* E: a view decides once, and keeps what it decided. */
+static void test_view_is_stable(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_view *view = NULL, *after = NULL;
+	struct d1_guard guard;
+	static uint8_t first[64];
+	static uint8_t second[64];
+	uint8_t got[64];
+	uint32_t got_len;
+	d1_id_t admission, v1, v2, seen;
+
+	memset(first, 0xa1, sizeof(first));
+	memset(second, 0xb2, sizeof(second));
+	fill_uuid(&store_uuid, 0x44);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+
+	v1 = commit_chunk(s, admission, 0, 1, first, sizeof(first),
+			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+	check(v1 != 0, "the first version commits");
+
+	check(d1_view_open(s, &object, admission, D1_SELECT_ORDINARY, NULL, 0,
+			   1, &view) == D1_OK,
+	      "a view opens over the committed chunk");
+	check(d1_view_read(view, 0, got, sizeof(got), &got_len) == D1_OK &&
+		      got_len == sizeof(first) &&
+		      memcmp(got, first, sizeof(first)) == 0,
+	      "and reads what was committed");
+
+	/* E1: a later commit does not reach back into the open view. */
+	d1_store_guard(s, &object, 0, &guard);
+	v2 = commit_chunk(s, admission, 0, 2, second, sizeof(second), &guard,
+			  v1, NULL);
+	check(v2 != 0 && v2 != v1, "a second version commits over it");
+	check(d1_view_version(view, 0, &seen) && seen == v1,
+	      "the open view still names the version it chose");
+	check(d1_view_read(view, 0, got, sizeof(got), &got_len) == D1_OK &&
+		      memcmp(got, first, sizeof(first)) == 0,
+	      "and still reads its bytes");
+
+	/* E2: what the view pins cannot be released underneath it. */
+	check(!d1_fixture_release_predecessor(s, v1),
+	      "a pinned predecessor is not releasable");
+	d1_view_close(s, view);
+	check(d1_fixture_release_predecessor(s, v1),
+	      "and becomes releasable once the view closes");
+
+	/* A view opened after the commit sees the new version. */
+	check(d1_view_open(s, &object, admission, D1_SELECT_ORDINARY, NULL, 0,
+			   1, &after) == D1_OK,
+	      "a later view opens");
+	check(d1_view_version(after, 0, &seen) && seen == v2,
+	      "and names the newer version");
+	d1_view_close(s, after);
+
+	d1_store_free(s);
+}
+
+/* E5: a version pinned twice needs both pins dropped. */
+static void test_view_unpin_order(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_view *a = NULL, *b = NULL;
+	struct d1_guard guard;
+	static uint8_t data[32];
+	d1_id_t admission, v1, v2;
+
+	memset(data, 0xc3, sizeof(data));
+	fill_uuid(&store_uuid, 0x55);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+
+	v1 = commit_chunk(s, admission, 0, 1, data, sizeof(data),
+			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+	check(d1_view_open(s, &object, admission, D1_SELECT_ORDINARY, NULL, 0,
+			   1, &a) == D1_OK,
+	      "the first view opens");
+	check(d1_view_open(s, &object, admission, D1_SELECT_ORDINARY, NULL, 0,
+			   1, &b) == D1_OK,
+	      "the second view opens");
+
+	d1_store_guard(s, &object, 0, &guard);
+	v2 = commit_chunk(s, admission, 0, 2, data, sizeof(data), &guard, v1,
+			  NULL);
+	check(v2 != 0, "a new version displaces it");
+
+	d1_view_close(s, a);
+	check(!d1_fixture_release_predecessor(s, v1),
+	      "one of two pins dropped is not enough");
+	d1_view_close(s, b);
+	check(d1_fixture_release_predecessor(s, v1),
+	      "the last pin dropped makes it releasable");
+
+	d1_store_free(s);
+}
+
+/* E3: an owner may select its own finalized version. */
+static void test_view_owner_selection(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_view *own = NULL, *ordinary = NULL;
+	struct d1_guard guard;
+	static uint8_t committed[48];
+	static uint8_t pending[48];
+	uint8_t got[48];
+	uint32_t got_len;
+	struct d1_owner owner = { .cohort = 1, .writer = 11, .co_id = 2 };
+	d1_id_t admission, v1, v2, seen;
+
+	memset(committed, 0xd4, sizeof(committed));
+	memset(pending, 0xe5, sizeof(pending));
+	fill_uuid(&store_uuid, 0x66);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+
+	v1 = commit_chunk(s, admission, 0, 1, committed, sizeof(committed),
+			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+	d1_store_guard(s, &object, 0, &guard);
+	v2 = finalize_chunk(s, admission, 0, 2, pending, sizeof(pending),
+			    &guard, v1, NULL);
+	check(v1 != 0 && v2 != 0, "one version commits and one finalizes");
+
+	check(d1_view_open(s, &object, admission, D1_SELECT_OWNER, &owner, 0, 1,
+			   &own) == D1_OK,
+	      "an owner view opens");
+	check(d1_view_version(own, 0, &seen) && seen == v2,
+	      "and selects the owner's own finalized version");
+	check(d1_view_read(own, 0, got, sizeof(got), &got_len) == D1_OK &&
+		      memcmp(got, pending, sizeof(pending)) == 0,
+	      "and reads its bytes");
+
+	check(d1_view_open(s, &object, admission, D1_SELECT_ORDINARY, NULL, 0,
+			   1, &ordinary) == D1_OK,
+	      "an ordinary view opens alongside it");
+	check(d1_view_version(ordinary, 0, &seen) && seen == v1,
+	      "and still sees only what is committed");
+
+	/* Another owner's view falls back to the committed version. */
+	{
+		struct d1_view *other = NULL;
+		struct d1_owner stranger = { .cohort = 1,
+					     .writer = 11,
+					     .co_id = 99 };
+
+		check(d1_view_open(s, &object, admission, D1_SELECT_OWNER,
+				   &stranger, 0, 1, &other) == D1_OK,
+		      "a different owner's view opens");
+		check(d1_view_version(other, 0, &seen) && seen == v1,
+		      "and does not see somebody else's finalized version");
+		d1_view_close(s, other);
+	}
+
+	d1_view_close(s, own);
+	d1_view_close(s, ordinary);
+	d1_store_free(s);
+}
+
+/* Holes, EOF and the admission a read needs. */
+static void test_view_holes_and_admission(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_view *view = NULL;
+	static uint8_t data[100];
+	uint8_t got[256];
+	uint32_t got_len, i;
+	d1_id_t admission, writeonly;
+
+	memset(data, 0xf6, sizeof(data));
+	fill_uuid(&store_uuid, 0x77);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+	writeonly = d1_fixture_admit(s, &object, 12, D1_RIGHT_WRITE);
+
+	/* Only chunk 1 is written, so chunk 0 is a hole below EOF. */
+	check(commit_chunk(s, admission, 1, 1, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "the sparse chunk commits");
+	check(d1_view_open(s, &object, admission, D1_SELECT_ORDINARY, NULL, 0,
+			   2, &view) == D1_OK,
+	      "a view opens across the hole");
+	check(d1_view_eof(view) == CHUNK_BYTES + sizeof(data),
+	      "the view records the EOF it saw");
+
+	check(d1_view_read(view, 0, got, sizeof(got), &got_len) == D1_OK &&
+		      got_len == sizeof(got),
+	      "a read inside the hole is not short");
+	for (i = 0; i < sizeof(got); i++)
+		if (got[i] != 0)
+			break;
+	check(i == sizeof(got), "and the hole reads as zeros");
+
+	check(d1_view_read(view, d1_view_eof(view), got, sizeof(got),
+			   &got_len) == D1_OK &&
+		      got_len == 0,
+	      "a read at EOF returns nothing");
+
+	/* The tail of a partial image is zeros, not the next chunk. */
+	check(d1_view_read(view, CHUNK_BYTES + sizeof(data) - 1, got, 16,
+			   &got_len) == D1_OK &&
+		      got_len == 1 && got[0] == 0xf6,
+	      "the last byte of the image is the image");
+
+	d1_view_close(s, view);
+
+	{
+		struct d1_view *denied = NULL;
+
+		check(d1_view_open(s, &object, writeonly, D1_SELECT_ORDINARY,
+				   NULL, 0, 1, &denied) == D1_STALE_AUTH,
+		      "an admission without READ cannot open a view");
+		check(denied == NULL, "and gets no view");
+	}
+
+	d1_store_free(s);
+}
+
 int main(void)
 {
 	fill_uuid(&object.export_uuid, 0x30);
@@ -806,6 +1088,10 @@ int main(void)
 	test_sparse_and_rollback_extents();
 	test_rollback_shrinks_eof();
 	test_released_predecessor();
+	test_view_is_stable();
+	test_view_unpin_order();
+	test_view_owner_selection();
+	test_view_holes_and_admission();
 	test_unsupported();
 
 	if (failures) {
