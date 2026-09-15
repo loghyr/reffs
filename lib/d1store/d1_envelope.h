@@ -146,6 +146,12 @@ bool d1_envelope_decode(const void *buf, size_t len, struct d1_envelope *env);
  */
 bool d1_envelope_validate(const struct d1_envelope *env);
 
+/*
+ * How many members this envelope's body declares.  A control operation
+ * answers once for the whole of it, so it declares one.
+ */
+uint32_t d1_envelope_member_count(const struct d1_envelope *env);
+
 bool d1_envelope_digest(const struct d1_envelope *env, void *scratch,
 			size_t cap, uint8_t out[D1_DIGEST_BYTES]);
 

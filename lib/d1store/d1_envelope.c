@@ -11,6 +11,10 @@
  * the envelope does.
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include <string.h>
 
 #include "d1_digest.h"
@@ -390,6 +394,25 @@ bool d1_envelope_validate(const struct d1_envelope *env)
 		return d1_validate_rollback(&env->body.rollback);
 	default:
 		return d1_validate_control(env->op, &env->body.control);
+	}
+}
+
+uint32_t d1_envelope_member_count(const struct d1_envelope *env)
+{
+	switch (env->op) {
+	case D1_OP_WRITE_BATCH:
+		return env->body.write.count;
+	case D1_OP_FINALIZE_BATCH:
+	case D1_OP_COMMIT_BATCH:
+		return env->body.lifecycle.count;
+	case D1_OP_ROLLBACK_BATCH:
+		return env->body.rollback.count;
+	case D1_OP_RECOVERY_ADMIT:
+	case D1_OP_LEASE_REAP:
+		/* A control answers once, for the whole operation. */
+		return 1u;
+	default:
+		return 0u;
 	}
 }
 

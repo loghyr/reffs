@@ -1,6 +1,10 @@
 /* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -117,6 +121,8 @@ bool d1_journal_adopt(struct d1_journal *j, const uint8_t *log, size_t durable,
 	j->len = durable;
 	j->durable = durable;
 	j->next_lsn = next_lsn;
+	/* The adopted prefix is the durable point, so a rollback returns here. */
+	j->durable_lsn = next_lsn;
 	return true;
 }
 

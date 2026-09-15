@@ -17,6 +17,10 @@
  * publishes owner, payload, extent, guard and receipt together.
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -338,6 +342,55 @@ struct d1_store *d1_store_open(const struct d1_uuid *store_uuid,
 }
 
 /*
+ * Whether this store is still exactly as it was opened.
+ *
+ * Reconstruction begins empty, so a target that already holds state
+ * cannot be reduced into: the history would be applied on top of data
+ * it does not describe, and the result would be neither the logged
+ * store nor the one that was there.  This is a precondition, checked
+ * before anything is touched, rather than an attempt to replace an
+ * active store -- a reconstruction target is exclusively owned by the
+ * caller doing the reconstruction.
+ */
+static bool d1_store_pristine(const struct d1_store *s)
+{
+	uint32_t i;
+
+	if (s->incarnation != 1u || s->index_epoch != 0u)
+		return false;
+	if (s->next_txn != 1u || s->next_version != 1u ||
+	    s->next_admission != 1u || s->next_custody != 1u)
+		return false;
+	if (s->journaling || s->replayed_lsn)
+		return false;
+	for (i = 0; i < D1_MAX_OBJECTS; i++)
+		if (s->objects[i].used)
+			return false;
+	for (i = 0; i < D1_MAX_ADMISSIONS; i++)
+		if (s->admissions[i].used)
+			return false;
+	for (i = 0; i < D1_MAX_TXNS; i++)
+		if (s->txns[i].used)
+			return false;
+	for (i = 0; i < D1_MAX_VERSIONS; i++)
+		if (s->versions[i].used)
+			return false;
+	for (i = 0; i < D1_MAX_RECEIPTS; i++)
+		if (s->receipts[i].used)
+			return false;
+	for (i = 0; i < D1_MAX_CUSTODY; i++)
+		if (s->custody[i].used)
+			return false;
+	for (i = 0; i < D1_MAX_OWNERS; i++)
+		if (s->owners[i].used)
+			return false;
+	for (i = 0; i < D1_MAX_VIEWS; i++)
+		if (s->views[i].used)
+			return false;
+	return true;
+}
+
+/*
  * Admit a call, unless the store has been closed.
  *
  * A call is bracketed rather than a lock interval, because a call is
@@ -411,7 +464,7 @@ uint32_t d1_store_close(struct d1_store *s)
  */
 void d1_fixture_call_enter(struct d1_store *s)
 {
-	(void)d1_call_enter(s);
+	d1_call_enter(s);
 }
 
 void d1_fixture_call_leave(struct d1_store *s)
@@ -435,9 +488,25 @@ void d1_store_free(struct d1_store *s)
 	free(s);
 }
 
+/*
+ * Whether the fixture may change this store at all.
+ *
+ * A poisoned handle serves nothing, and that includes the harness: a
+ * half-rebuilt store is not a place to install authority.  Observers
+ * still answer, so a caller can look at what it has before dropping it.
+ */
+static bool d1_fixture_may_mutate(const struct d1_store *s)
+{
+	return !s->poisoned && !s->closed;
+}
+
 void d1_fixture_fail_next_append(struct d1_store *s)
 {
 	pthread_mutex_lock(&s->lock);
+	if (!d1_fixture_may_mutate(s)) {
+		pthread_mutex_unlock(&s->lock);
+		return;
+	}
 	/* Faults are disabled throughout recovery, by construction. */
 	if (!s->replaying)
 		s->journal.fail_append_in = 1u;
@@ -447,6 +516,10 @@ void d1_fixture_fail_next_append(struct d1_store *s)
 void d1_fixture_fail_append_in(struct d1_store *s, uint32_t n)
 {
 	pthread_mutex_lock(&s->lock);
+	if (!d1_fixture_may_mutate(s)) {
+		pthread_mutex_unlock(&s->lock);
+		return;
+	}
 	if (!s->replaying)
 		s->journal.fail_append_in = n;
 	pthread_mutex_unlock(&s->lock);
@@ -455,6 +528,10 @@ void d1_fixture_fail_append_in(struct d1_store *s, uint32_t n)
 void d1_fixture_fail_next_flush(struct d1_store *s)
 {
 	pthread_mutex_lock(&s->lock);
+	if (!d1_fixture_may_mutate(s)) {
+		pthread_mutex_unlock(&s->lock);
+		return;
+	}
 	if (!s->replaying)
 		s->journal.fail_next_flush = true;
 	pthread_mutex_unlock(&s->lock);
@@ -949,9 +1026,6 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 
 	/* An owner names one version, and only an exact replay reuses it. */
 	assoc = d1_owner_find(s, &env->object.export_uuid, &e->owner);
-	if (assoc &&
-	    (assoc->object != d1_object_slot(s, o) || assoc->index != e->index))
-		return D1_OWNER_CONFLICT;
 	if (assoc)
 		return D1_OWNER_CONFLICT;
 
@@ -960,11 +1034,25 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 		if (!single_writer)
 			return D1_INVALID;
 	} else {
-		if (e->expected.never_written != chunk->guard.never_written ||
-		    (!chunk->guard.never_written &&
-		     (e->expected.generation != chunk->guard.generation ||
-		      e->expected.writer != chunk->guard.writer)))
+		/*
+		 * The never-written chunk accepts the initial guard, and the
+		 * initial guard is (0,0).  The numbers are in the request
+		 * and in its canonical bytes whether or not the chunk has
+		 * been written, so matching the boolean alone accepted every
+		 * numeric pair as if the fields were not there.  Its first
+		 * successful write still takes generation 0 and the granted
+		 * writer; that is a different statement about the result.
+		 */
+		if (e->expected.never_written != chunk->guard.never_written)
 			return D1_GUARDED;
+		if (e->expected.never_written) {
+			if (e->expected.generation != 0u ||
+			    e->expected.writer != 0u)
+				return D1_GUARDED;
+		} else if (e->expected.generation != chunk->guard.generation ||
+			   e->expected.writer != chunk->guard.writer) {
+			return D1_GUARDED;
+		}
 	}
 
 	/* One uncommitted transaction per chunk in this first model. */
@@ -1556,6 +1644,48 @@ static bool d1_binding_ok(struct d1_store *s, const struct d1_envelope *env)
 }
 
 /*
+ * Whether this operation key is already recorded under a different
+ * request.
+ *
+ * The receipt key includes the entry ordinal, but the digest binds the
+ * whole Envelope, and section 8 says a new lease or admission cannot
+ * change an old request body under the old key.  Checking only the
+ * ordinal being executed let a changed retry take effect for the
+ * members the interrupted original had not reached: the key ended up
+ * holding two receipts with two different digests, and the original
+ * request could never be finished.
+ *
+ * So the question is asked of the key, not of one ordinal, and it is
+ * asked before any member runs.  A key with no recorded member at all
+ * is still unbound and available.
+ */
+static bool d1_key_conflicts(struct d1_store *s,
+			     const struct d1_uuid *export_uuid,
+			     const struct d1_opkey *key,
+			     const uint8_t digest[D1_DIGEST_BYTES])
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_RECEIPTS; i++) {
+		const struct d1_receipt *r = &s->receipts[i];
+
+		if (!r->used)
+			continue;
+		if (memcmp(&r->export_uuid, export_uuid,
+			   sizeof(*export_uuid)) != 0)
+			continue;
+		if (memcmp(&r->key.origin, &key->origin, sizeof(key->origin)) !=
+			    0 ||
+		    r->key.sequence != key->sequence ||
+		    r->key.ordinal != key->ordinal)
+			continue;
+		if (memcmp(r->digest, digest, D1_DIGEST_BYTES) != 0)
+			return true;
+	}
+	return false;
+}
+
+/*
  * Reserve a receipt slot before anything mutates.
  *
  * Section 8 makes an inability to record a receipt an UNRECORDED
@@ -1912,6 +2042,28 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	}
 	pthread_mutex_unlock(&s->lock);
 
+	/*
+	 * If this key is recorded under a different request, no member of
+	 * this one runs.  The recorded request keeps its receipts and can
+	 * still be finished by its own exact retry.
+	 */
+	pthread_mutex_lock(&s->lock);
+	if (d1_key_conflicts(s, &env->object.export_uuid, &env->key, digest)) {
+		pthread_mutex_unlock(&s->lock);
+		for (i = 0; i < count; i++) {
+			struct d1_entry_result *res = &out->entries[i];
+
+			memset(res, 0, sizeof(*res));
+			res->status = D1_REPLAY_CONFLICT;
+			res->stability = D1_FILE_SYNC;
+			res->disposition = D1_COMPLETED;
+			d1_store_verifier(s, res->verifier);
+		}
+		d1_call_leave(s);
+		return D1_OK;
+	}
+	pthread_mutex_unlock(&s->lock);
+
 	if (need == D1_RIGHT_CONTROL) {
 		pthread_mutex_lock(&s->lock);
 		d1_apply_control(s, env, digest, &complete);
@@ -2004,48 +2156,57 @@ static uint32_t d1_read_admission(struct d1_store *s, d1_id_t admission,
 }
 
 /*
- * The version a named private transaction offers for this chunk.
+ * Resolve and validate the whole OWNER vector, before anything is
+ * selected or pinned.
  *
- * An owner triple is not an authorisation token.  The transaction must
- * be this caller's -- admitted under the very handle opening the view --
- * and the caller must present the read epoch that was granted for it.
- * PREPARED is never selectable; only FINALIZED work is.
+ * Section 6: one inadmissible member fails the WHOLE view.  Checking a
+ * member only when its chunk comes up made that depend on order -- a
+ * later member naming the same chunk was never reached, so
+ * [FINALIZED, COMMITTED] passed and [COMMITTED, FINALIZED] did not.
+ * The same vector cannot be admissible one way round and not the other.
+ *
+ * An owner triple is not an authorisation token either: every named
+ * transaction must be this caller's, under the handle opening the view
+ * and the epoch granted for it.  PREPARED is never selectable, and this
+ * model does not substitute a COMMITTED member -- a view that wants
+ * committed data asks for an ordinary one.  Ordinary visible versions
+ * still fill the chunks the vector does not name.
  */
-static uint32_t d1_owner_selection(struct d1_store *s,
-				   const struct d1_selection_spec *sel,
-				   const struct d1_admission *a,
-				   uint32_t object, uint64_t index,
-				   struct d1_version **out)
+static uint32_t d1_owner_resolve(struct d1_store *s,
+				 const struct d1_selection_spec *sel,
+				 const struct d1_admission *a, uint32_t object,
+				 bool *present, d1_id_t *chosen)
 {
-	uint32_t i;
+	uint32_t i, j;
 
-	*out = NULL;
 	for (i = 0; i < sel->count; i++) {
 		struct d1_txn *t = d1_txn_find(s, sel->txns[i]);
 		struct d1_version *v;
 
-		if (!t)
-			return D1_INVALID;
-		if (t->object != object)
+		/* One vector never names one transaction twice. */
+		for (j = 0; j < i; j++)
+			if (sel->txns[j] == sel->txns[i])
+				return D1_INVALID;
+		if (!t || t->object != object || t->index >= D1_MAX_CHUNKS)
 			return D1_INVALID;
 		if (t->owner.cohort != sel->owners[i].cohort ||
 		    t->owner.writer != sel->owners[i].writer ||
 		    t->owner.co_id != sel->owners[i].co_id)
 			return D1_OWNER_CONFLICT;
-		/* Somebody else's private work is not selectable at all. */
 		if (t->admission != a->id)
 			return D1_STALE_AUTH;
 		if (t->read_epoch != sel->read_epoch)
 			return D1_STALE_AUTH;
-		if (t->index != index)
-			continue;
 		if (t->phase != D1_PHASE_FINALIZED)
 			return D1_BAD_PHASE;
+		/* Two members resolving to one chunk is not a selection. */
+		if (present[t->index])
+			return D1_INVALID;
 		v = d1_version_find(s, t->version);
 		if (!v)
 			return D1_INVALID;
-		*out = v;
-		return D1_OK;
+		present[t->index] = true;
+		chosen[t->index] = v->id;
 	}
 	return D1_OK;
 }
@@ -2074,6 +2235,10 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 	struct d1_admission *a = NULL;
 	struct d1_object *o;
 	struct d1_view *v = NULL;
+	/* The version each chunk resolves to, settled before anything is
+	 * pinned. */
+	bool chosen_present[D1_MAX_CHUNKS] = { false };
+	d1_id_t chosen[D1_MAX_CHUNKS] = { 0 };
 	uint64_t first, last;
 	uint32_t status, i;
 
@@ -2113,6 +2278,16 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 		status = D1_INVALID;
 		goto out;
 	}
+	/*
+	 * The whole selection is settled before a view slot is taken, so a
+	 * refused vector leaves no view and no pins to clean up.
+	 */
+	if (sel->selection == D1_SELECT_OWNER) {
+		status = d1_owner_resolve(s, sel, a, d1_object_slot(s, o),
+					  chosen_present, chosen);
+		if (status != D1_OK)
+			goto out;
+	}
 	for (i = 0; i < D1_MAX_VIEWS && !v; i++)
 		if (!s->views[i].used)
 			v = &s->views[i];
@@ -2141,20 +2316,8 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 		struct d1_version *ver = NULL;
 		uint64_t start, end;
 
-		if (sel->selection == D1_SELECT_OWNER) {
-			status = d1_owner_selection(s, sel, a, v->object, i,
-						    &ver);
-			if (status != D1_OK) {
-				/*
-				 * A wrong owner, a stale epoch or another
-				 * caller's transaction fails the whole view.
-				 * There is no falling back to committed data.
-				 */
-				d1_view_unpin(s, v);
-				v->used = false;
-				goto out;
-			}
-		}
+		if (chosen_present[i])
+			ver = d1_version_find(s, chosen[i]);
 		if (!ver && c->visible_present)
 			ver = d1_version_find(s, c->visible);
 		if (!ver)
@@ -2425,6 +2588,10 @@ static bool d1_release_locked(struct d1_store *s, d1_id_t version)
 void d1_fixture_fail_next_index(struct d1_store *s)
 {
 	pthread_mutex_lock(&s->lock);
+	if (!d1_fixture_may_mutate(s)) {
+		pthread_mutex_unlock(&s->lock);
+		return;
+	}
 	if (!s->replaying)
 		s->fail_next_index = true;
 	pthread_mutex_unlock(&s->lock);
@@ -2497,6 +2664,10 @@ d1_id_t d1_fixture_admit_full(struct d1_store *s,
 	request.auth = *auth;
 
 	pthread_mutex_lock(&s->lock);
+	if (!d1_fixture_may_mutate(s)) {
+		pthread_mutex_unlock(&s->lock);
+		return 0;
+	}
 	id = d1_admit_locked(s, object, auth);
 	memset(&result, 0, sizeof(result));
 	result.id = id;
@@ -2546,6 +2717,10 @@ void d1_fixture_revoke(struct d1_store *s, d1_id_t admission)
 	request.admission = admission;
 
 	pthread_mutex_lock(&s->lock);
+	if (!d1_fixture_may_mutate(s)) {
+		pthread_mutex_unlock(&s->lock);
+		return;
+	}
 	a = d1_admission_find(s, admission);
 	before = a ? a->revoked : false;
 	memset(&result, 0, sizeof(result));
@@ -2570,6 +2745,10 @@ void d1_fixture_expire(struct d1_store *s, d1_id_t admission)
 	request.admission = admission;
 
 	pthread_mutex_lock(&s->lock);
+	if (!d1_fixture_may_mutate(s)) {
+		pthread_mutex_unlock(&s->lock);
+		return;
+	}
 	a = d1_admission_find(s, admission);
 	before = a ? a->expired : false;
 	memset(&result, 0, sizeof(result));
@@ -2595,6 +2774,10 @@ d1_id_t d1_fixture_custody(struct d1_store *s, d1_id_t version)
 	request.version = version;
 
 	pthread_mutex_lock(&s->lock);
+	if (!d1_fixture_may_mutate(s)) {
+		pthread_mutex_unlock(&s->lock);
+		return 0;
+	}
 	id = d1_custody_locked(s, version);
 	memset(&result, 0, sizeof(result));
 	result.id = id;
@@ -2624,6 +2807,10 @@ bool d1_fixture_release_predecessor(struct d1_store *s, d1_id_t version)
 	request.version = version;
 
 	pthread_mutex_lock(&s->lock);
+	if (!d1_fixture_may_mutate(s)) {
+		pthread_mutex_unlock(&s->lock);
+		return false;
+	}
 	ok = d1_release_locked(s, version);
 	memset(&result, 0, sizeof(result));
 	result.id = version;
@@ -2687,7 +2874,14 @@ uint32_t d1_store_journal_enable(struct d1_store *s)
 	uint32_t status = D1_OK;
 
 	pthread_mutex_lock(&s->lock);
-	if (s->journaling) {
+	/*
+	 * A log describes everything the store did.  Enabling it on a
+	 * store that has already done unlogged work would produce a log
+	 * that cannot rebuild its own store, so the baseline has to be the
+	 * one the first START describes.
+	 */
+	if (s->journaling || s->poisoned || s->closed ||
+	    !d1_store_pristine(s)) {
 		status = D1_INVALID;
 		goto out;
 	}
@@ -2766,7 +2960,15 @@ static uint32_t d1_replay_entry(struct d1_store *s, const uint8_t *body,
 		return D1_INVALID;
 	if (!d1_complete_result_decode(result_bytes, result_len, &logged))
 		return D1_INVALID;
-	if (ordinal >= D1_BATCH_ENTRIES_MAX)
+	/*
+	 * The record category has to agree with what it carries.  An ENTRY
+	 * is one member of an ordinary batch, so a control operation in
+	 * one is a record the live encoder cannot emit, and an ordinal
+	 * past the body's own count names a member that does not exist.
+	 */
+	if (d1_op_rights(env.op) == D1_RIGHT_CONTROL)
+		return D1_INVALID;
+	if (ordinal >= d1_envelope_member_count(&env))
 		return D1_INVALID;
 
 	/* The store computes the digest; it never trusts a logged one. */
@@ -2803,8 +3005,21 @@ static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 	    !d1_dec_finished(&cur))
 		return D1_INVALID;
 
+	/*
+	 * The outer tag is checked before anything is dispatched on it.
+	 * It used to be compared against D1_CTL_ENVELOPE and otherwise
+	 * ignored, so a record carrying any other value -- including one
+	 * no encoder can produce -- was reduced on the strength of its
+	 * inner tag alone.
+	 */
+	if (kind < D1_CTL_ENVELOPE || kind > D1_CTL_RELEASE)
+		return D1_INVALID;
+
 	if (kind == D1_CTL_ENVELOPE) {
 		if (!d1_envelope_decode(request_bytes, request_len, &env))
+			return D1_INVALID;
+		/* A CONTROL record carries a control operation. */
+		if (d1_op_rights(env.op) != D1_RIGHT_CONTROL)
 			return D1_INVALID;
 		if (!d1_complete_result_decode(result_bytes, result_len,
 					       &logged))
@@ -2819,6 +3034,9 @@ static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 	}
 
 	if (!d1_control_request_decode(request_bytes, request_len, &request))
+		return D1_INVALID;
+	/* And the outer tag agrees with the schema it actually carries. */
+	if (request.kind != kind)
 		return D1_INVALID;
 	if (!d1_control_result_decode(result_bytes, result_len, &logged_ctl))
 		return D1_INVALID;
@@ -2880,10 +3098,31 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
 	unsigned int starts = 0;
 
 	pthread_mutex_lock(&s->lock);
-	if (s->journaling || s->replaying || s->poisoned) {
+	if (s->replaying || s->poisoned || s->closed) {
 		pthread_mutex_unlock(&s->lock);
 		return D1_INVALID;
 	}
+	/*
+	 * The target must be exactly as it was opened.  Refusing here
+	 * changes nothing, which is the point: a store that was rejected
+	 * is still the store it was, and is not poisoned.
+	 */
+	if (!d1_store_pristine(s) || s->active_calls) {
+		pthread_mutex_unlock(&s->lock);
+		return D1_INVALID;
+	}
+	/*
+	 * Section 9: clear every fault arm before replay, and admit no new
+	 * one until it ends.  Suppressing a fault during reduction is not
+	 * the same as resetting the harness world -- an arm set before
+	 * reconstruction used to survive it and fire on the first live
+	 * operation afterwards, which is an unjournalled control changing
+	 * post-recovery behaviour.
+	 */
+	s->fail_next_index = false;
+	s->overlay_active = false;
+	s->journal.fail_append_in = 0;
+	s->journal.fail_next_flush = false;
 	s->replaying = true;
 
 	d1_journal_cursor_init(&c, log, durable, &s->uuid);

@@ -11,10 +11,16 @@
  * publish in a single step says so in its own result.
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include <stdio.h>
 #include <string.h>
 
+#include "d1_control.h"
 #include "d1_digest.h"
+#include "d1_journal.h"
 #include "d1_store.h"
 
 static unsigned int failures;
@@ -1066,6 +1072,33 @@ static d1_id_t finalize_chunk(struct d1_store *s, d1_id_t admission,
 	if (txn_out)
 		*txn_out = txn;
 	return version;
+}
+
+/* Finalize a transaction that already exists, and report how it went. */
+static uint32_t finalize_txn(struct d1_store *s, d1_id_t admission,
+			     uint64_t index, uint32_t writer, uint32_t co_id,
+			     d1_id_t txn)
+{
+	struct d1_envelope env;
+	struct d1_result res;
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	uint32_t status;
+
+	d1_store_verifier(s, verifier);
+	env_init(&env, s, admission, D1_OP_FINALIZE_BATCH);
+	env.body.lifecycle.range_begin = index;
+	env.body.lifecycle.range_end = index + 1;
+	env.body.lifecycle.count = 1;
+	env.body.lifecycle.entries[0].index = index;
+	env.body.lifecycle.entries[0].owner.cohort = 1;
+	env.body.lifecycle.entries[0].owner.writer = writer;
+	env.body.lifecycle.entries[0].owner.co_id = co_id;
+	env.body.lifecycle.entries[0].txn = txn;
+	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+	status = d1_store_apply(s, &env, &res);
+	if (status != D1_OK)
+		return status;
+	return res.entries[0].status;
 }
 
 /* An ordinary selection over a byte range. */
@@ -2451,15 +2484,16 @@ static void test_undone_event_never_becomes_durable(void)
 		admission = d1_fixture_admit(live, &object, 11,
 					     D1_RIGHT_WRITE | D1_RIGHT_CONTROL |
 						     D1_RIGHT_SINGLE_WRITER);
-		(void)d1_store_journal(live, &before);
 
-		d1_fixture_fail_next_flush(live);
 		switch (kind) {
 		case 0:
 			/* An ordinary ENTRY event. */
+			(void)d1_store_journal(live, &before);
+			d1_fixture_fail_next_flush(live);
 			env_init(&env, live, admission, D1_OP_WRITE_BATCH);
 			env.body.write.count = 1;
 			env.body.write.stability = D1_FILE_SYNC;
+			env.body.write.activate = true;
 			write_entry(&env.body.write.entries[0], 0, 11, 1, data,
 				    sizeof(data), true,
 				    &(struct d1_guard){ .never_written =
@@ -2467,29 +2501,93 @@ static void test_undone_event_never_becomes_durable(void)
 			d1_store_apply(live, &env, &res);
 			check(res.entries[0].disposition == D1_UNRECORDED,
 			      "the entry event is UNRECORDED");
+			(void)d1_store_journal(live, &len);
+			check(len == before, "and claims no durable bytes");
+			check(!d1_store_visible(live, &object, 0, &seen),
+			      "and published nothing");
 			break;
-		case 1:
-			/* An envelope-borne control event. */
-			env_init(&env, live, admission, D1_OP_LEASE_REAP);
+		case 1: {
+			/*
+			 * An envelope-borne control that really transitions
+			 * something.  A recovery_admit moves work from an
+			 * expired handle to a live one, and the move is
+			 * observable: only the handle that owns the work can
+			 * finalize it.  An invalid control would be refused
+			 * before it ever reached the journal, and so would
+			 * prove nothing about the undo.
+			 */
+			d1_id_t old, fresh, txn;
+
+			old = d1_fixture_admit(live, &object, 11,
+					       D1_RIGHT_WRITE |
+						       D1_RIGHT_SINGLE_WRITER);
+			fresh = d1_fixture_admit(
+				live, &object, 11,
+				D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+			env_init(&env, live, old, D1_OP_WRITE_BATCH);
+			env.body.write.count = 1;
+			env.body.write.stability = D1_FILE_SYNC;
+			write_entry(&env.body.write.entries[0], 1, 11, 1, data,
+				    sizeof(data), true,
+				    &(struct d1_guard){ .never_written =
+								true });
+			check(d1_store_apply(live, &env, &res) == D1_OK &&
+				      res.entries[0].status == D1_OK,
+			      "an expiring handle leaves prepared work");
+			txn = res.entries[0].txn;
+			d1_fixture_expire(live, old);
+
+			env_init(&env, live, admission, D1_OP_RECOVERY_ADMIT);
 			env.body.control.count = 1;
-			env.body.control.txns[0] = 1;
-			env.body.control.old_admission = admission;
+			env.body.control.txns[0] = txn;
+			env.body.control.old_admission = old;
+			env.body.control.new_admission_present = true;
+			env.body.control.new_admission = fresh;
+			env.body.control.read_epoch_present = true;
+			env.body.control.read_epoch = 0;
+
+			(void)d1_store_journal(live, &before);
+			d1_fixture_fail_next_flush(live);
 			d1_store_apply(live, &env, &res);
 			check(res.entries[0].disposition == D1_UNRECORDED,
 			      "the control event is UNRECORDED");
+			(void)d1_store_journal(live, &len);
+			check(len == before, "and claims no durable bytes");
+
+			/*
+			 * The transition it would have made is not there:
+			 * the new handle still does not own the work.  This
+			 * is the assertion the journal undo has to earn --
+			 * without it the publication stands in memory and
+			 * the finalize below succeeds.
+			 */
+			check(finalize_txn(live, fresh, 1, 11, 1, txn) ==
+				      D1_STALE_AUTH,
+			      "and the work did not move to the new handle");
+
+			/* The same control, unobstructed, does move it. */
+			check(d1_store_apply(live, &env, &res) == D1_OK &&
+				      res.entries[0].status == D1_OK,
+			      "the same control succeeds once nothing fails");
+			check(finalize_txn(live, fresh, 1, 11, 1, txn) == D1_OK,
+			      "and then the new handle owns the work");
 			break;
+		}
 		default:
 			/* A fixture control event. */
+			(void)d1_store_journal(live, &before);
+			d1_fixture_fail_next_flush(live);
 			control = d1_fixture_admit(live, &object, 12,
 						   D1_RIGHT_READ);
 			check(control == 0,
 			      "the fixture control event is refused");
+			(void)d1_store_journal(live, &len);
+			check(len == before, "and claims no durable bytes");
 			break;
 		}
-		(void)d1_store_journal(live, &len);
-		check(len == before, "and claims no durable bytes");
 
 		/* Something unrelated now succeeds and flushes. */
+		(void)d1_store_journal(live, &before);
 		extra = d1_fixture_admit(live, &object, 13, D1_RIGHT_READ);
 		check(extra != 0, "an unrelated control event succeeds");
 		log = d1_store_journal(live, &len);
@@ -3189,8 +3287,6 @@ static void test_bound_authority_refusal_is_recorded(void)
 	check(d1_store_apply(live, &changed, &res) == D1_OK &&
 		      res.entries[0].status == D1_REPLAY_CONFLICT,
 	      "a new handle cannot change the body under the old key");
-	check(!d1_store_visible(live, &object, 0, &writer) || true,
-	      "and nothing was written for it");
 
 	/* A fresh key under the right handle works. */
 	env_init(&changed, live, writer, D1_OP_WRITE_BATCH);
@@ -3340,6 +3436,824 @@ static void test_control_envelopes_replay(void)
 
 	d1_store_free(rebuilt);
 	d1_store_free(live);
+}
+
+/*
+ * A control acts on every transaction it names, or on none of them.
+ *
+ * A recovery_admit that names a transaction it may not move refuses the
+ * whole request, and the members ahead of the bad one stay where they
+ * were.  A refusal is still a recorded event, so the retry has to see
+ * the same thing.
+ */
+static void test_control_members_are_all_or_nothing(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	const uint8_t *log;
+	size_t len;
+	static uint8_t data[16];
+	d1_id_t control, old, fresh, other, first, second;
+
+	memset(data, 0x41, sizeof(data));
+	fill_uuid(&store_uuid, 0x5d);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	check(d1_store_journal_enable(live) == D1_OK, "journalling starts");
+	control = d1_fixture_admit(live, &object, 11, D1_RIGHT_CONTROL);
+	old = d1_fixture_admit(live, &object, 11,
+			       D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	fresh = d1_fixture_admit(live, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	other = d1_fixture_admit(live, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	/* One prepared transaction under each of two handles. */
+	env_init(&env, live, old, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the expiring handle prepares work");
+	first = res.entries[0].txn;
+
+	env_init(&env, live, other, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and another handle prepares its own");
+	second = res.entries[0].txn;
+
+	d1_fixture_expire(live, old);
+
+	/* A request naming both: the second is not the old handle's. */
+	env_init(&env, live, control, D1_OP_RECOVERY_ADMIT);
+	env.body.control.count = 2;
+	env.body.control.txns[0] = first;
+	env.body.control.txns[1] = second;
+	env.body.control.old_admission = old;
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = fresh;
+	env.body.control.read_epoch_present = true;
+	env.body.control.read_epoch = 0;
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status != D1_OK,
+	      "a control naming work it may not move is refused");
+	check(res.entries[0].disposition == D1_COMPLETED,
+	      "and the refusal is recorded");
+	check(finalize_txn(live, fresh, 0, 11, 1, first) == D1_STALE_AUTH,
+	      "and the member ahead of the bad one did not move");
+	check(finalize_txn(live, other, 1, 11, 2, second) == D1_OK,
+	      "while the one it had no business with is untouched");
+
+	/* The exact retry answers from the record. */
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status != D1_OK &&
+		      res.entries[0].disposition == D1_COMPLETED,
+	      "and the retry returns the recorded refusal");
+
+	/* And the admissible request still moves what it names. */
+	env_init(&env, live, control, D1_OP_RECOVERY_ADMIT);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = first;
+	env.body.control.old_admission = old;
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = fresh;
+	env.body.control.read_epoch_present = true;
+	env.body.control.read_epoch = 0;
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the request without the bad member succeeds");
+	check(finalize_txn(live, fresh, 0, 11, 1, first) == D1_OK,
+	      "and the work is the new handle's");
+
+	log = d1_store_journal(live, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "the refusal and the success both rebuild");
+		check(states_agree(live, rebuilt), "into the same store");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(live);
+}
+
+/*
+ * Reconstruction begins empty, and says so rather than reducing on top
+ * of whatever it finds.
+ *
+ * A history applied to a populated target produces neither the logged
+ * store nor the one that was there.  The refusal comes before anything
+ * is touched, so a rejected target is still exactly the store it was --
+ * and is not poisoned, because nothing was half-applied.
+ */
+static void test_replay_requires_a_pristine_target(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *source, *populated, *fresh;
+	const uint8_t *start_only;
+	const uint8_t *full;
+	size_t start_len, full_len;
+	static uint8_t data[8];
+	d1_id_t admission, seen_before, seen_after;
+
+	memset(data, 0x2a, sizeof(data));
+	fill_uuid(&store_uuid, 0x51);
+
+	/* A START-only log, and a longer one from the same store. */
+	source = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!source)
+		return;
+	check(d1_store_journal_enable(source) == D1_OK, "journalling starts");
+	start_only = d1_store_journal(source, &start_len);
+	check(start_len > 0, "the START record is durable");
+	{
+		static uint8_t saved[4096];
+
+		check(start_len <= sizeof(saved), "the START record is small");
+		memcpy(saved, start_only, start_len);
+		admission = d1_fixture_admit(source, &object, 11,
+					     D1_RIGHT_WRITE |
+						     D1_RIGHT_SINGLE_WRITER);
+		check(commit_chunk(source, admission, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   0, NULL) != 0,
+		      "and the source goes on to commit");
+		full = d1_store_journal(source, &full_len);
+
+		/* A target that has already done work of its own. */
+		populated =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!populated) {
+			d1_store_free(source);
+			return;
+		}
+		admission = d1_fixture_admit(populated, &object, 11,
+					     D1_RIGHT_WRITE |
+						     D1_RIGHT_SINGLE_WRITER);
+		check(commit_chunk(populated, admission, 0, 1, data,
+				   sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   0, NULL) != 0,
+		      "the target has data of its own");
+		check(d1_store_visible(populated, &object, 0, &seen_before),
+		      "which is visible");
+
+		check(d1_store_replay(populated, saved, start_len) ==
+			      D1_INVALID,
+		      "a START-only history is refused by a populated target");
+		check(d1_store_replay(populated, full, full_len) == D1_INVALID,
+		      "and so is a longer one");
+		check(d1_store_visible(populated, &object, 0, &seen_after) &&
+			      seen_after == seen_before,
+		      "and the target still holds exactly what it had");
+		/* Refused, not poisoned: it still works. */
+		check(d1_store_eof(populated, &object) == sizeof(data),
+		      "and still answers");
+		check(d1_fixture_admit(populated, &object, 12, D1_RIGHT_READ) !=
+			      0,
+		      "and still admits");
+		d1_store_free(populated);
+
+		/* A correct fresh target still reconstructs. */
+		fresh = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (fresh) {
+			check(d1_store_replay(fresh, full, full_len) == D1_OK,
+			      "a fresh target reconstructs it");
+			check(states_agree(source, fresh),
+			      "into the same store");
+			/* And a second reconstruction is refused. */
+			check(d1_store_replay(fresh, full, full_len) ==
+				      D1_INVALID,
+			      "but it cannot be reconstructed into twice");
+			d1_store_free(fresh);
+		}
+	}
+
+	d1_store_free(source);
+}
+
+/*
+ * A log describes everything its store did, so journalling cannot start
+ * after the store has already done something.
+ */
+static void test_journal_enable_requires_a_pristine_store(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *poisoned;
+	static uint8_t data[8];
+	d1_id_t admission;
+
+	memset(data, 0x2b, sizeof(data));
+	fill_uuid(&store_uuid, 0x52);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	check(admission != 0, "an admission is issued without a journal");
+	check(d1_store_journal_enable(s) == D1_INVALID,
+	      "journalling cannot start once authority exists unlogged");
+	d1_store_free(s);
+
+	/* Nor on a store whose rebuild failed. */
+	{
+		struct d1_store *live;
+		const uint8_t *log;
+		size_t len;
+		uint8_t *writable;
+
+		fill_uuid(&store_uuid, 0x53);
+		live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!live)
+			return;
+		d1_store_journal_enable(live);
+		admission = d1_fixture_admit(live, &object, 11,
+					     D1_RIGHT_WRITE |
+						     D1_RIGHT_SINGLE_WRITER);
+		commit_chunk(live, admission, 0, 1, data, sizeof(data),
+			     &(struct d1_guard){ .never_written = true }, 0,
+			     NULL);
+		log = d1_store_journal(live, &len);
+
+		poisoned =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (poisoned) {
+			writable = (uint8_t *)(uintptr_t)log;
+			writable[len - 1] ^= 0xffu;
+			check(d1_store_replay(poisoned, log, len) == D1_IO,
+			      "a corrupt log fails the rebuild");
+			writable[len - 1] ^= 0xffu;
+			check(d1_store_journal_enable(poisoned) == D1_INVALID,
+			      "and a poisoned handle cannot start a journal");
+			check(d1_fixture_admit(poisoned, &object, 11,
+					       D1_RIGHT_READ) == 0,
+			      "nor accept fixture authority");
+			check(d1_fixture_custody(poisoned, 1) == 0,
+			      "nor issue custody");
+			d1_store_free(poisoned);
+		}
+		d1_store_free(live);
+	}
+}
+
+/*
+ * The never-written chunk accepts the initial guard, and the initial
+ * guard is (0,0).  Those numbers are in the request and in its
+ * canonical bytes whether or not the chunk has been written.
+ */
+static void test_initial_guard_is_zero_zero(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res, again;
+	struct d1_guard guard;
+	static uint8_t data[8];
+	unsigned int pass;
+	d1_id_t admission, seen;
+
+	memset(data, 0x2c, sizeof(data));
+	fill_uuid(&store_uuid, 0x54);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	/* Generation and writer, each wrong on its own. */
+	for (pass = 0; pass < 2; pass++) {
+		struct d1_guard expected = { .never_written = true };
+
+		if (pass == 0)
+			expected.generation = 123;
+		else
+			expected.writer = 987;
+
+		env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], 0, 11, pass + 1u, data,
+			    sizeof(data), true, &expected);
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_GUARDED,
+		      "a never-written predicate that is not (0,0) is refused");
+		check(res.entries[0].disposition == D1_COMPLETED,
+		      "and the refusal is recorded");
+		check(res.entries[0].guard.never_written,
+		      "and carries the current guard");
+		check(!res.entries[0].txn_present &&
+			      !res.entries[0].version_present,
+		      "and reserved nothing");
+		check(!d1_store_guard(s, &object, 0, &guard),
+		      "and left the object uncreated");
+
+		/* The exact retry answers from the recorded refusal. */
+		check(d1_store_apply(s, &env, &again) == D1_OK &&
+			      again.entries[0].status == D1_GUARDED &&
+			      again.entries[0].disposition == D1_COMPLETED,
+		      "and the exact retry returns it");
+	}
+
+	/* The initial guard itself is accepted, and its result is (0, 11). */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_DATA_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 0, 11, 3, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the initial guard (0,0) is accepted");
+	check(res.entries[0].guard.generation == 0 &&
+		      res.entries[0].guard.writer == 11 &&
+		      !res.entries[0].guard.never_written,
+	      "and the first success is generation 0 with the granted writer");
+	check(d1_store_visible(s, &object, 0, &seen), "and it publishes");
+
+	d1_store_free(s);
+}
+
+/* An owner whose writer is not the granted one is a binding failure. */
+static void test_writer_must_be_the_granted_one(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_guard guard;
+	static uint8_t data[8];
+	d1_id_t admission, seen;
+
+	memset(data, 0x2d, sizeof(data));
+	fill_uuid(&store_uuid, 0x55);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	/* A valid, unreserved writer ID that is simply not this one. */
+	write_entry(&env.body.write.entries[0], 0, 12, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "an owner naming another writer is a binding failure");
+	check(res.entries[0].disposition == D1_COMPLETED,
+	      "recorded like any other semantic error");
+	check(!d1_store_guard(s, &object, 0, &guard),
+	      "and the object it touched is not there");
+	check(!d1_store_visible(s, &object, 0, &seen), "and nothing wrote");
+
+	d1_store_free(s);
+}
+
+/*
+ * The whole OWNER vector is admissible, or the view is not opened.
+ *
+ * Validating a member only when its chunk came up made admissibility
+ * depend on order: a later member naming the same chunk was never
+ * reached.  The same vector cannot be good one way round and bad the
+ * other, and a refused vector must leave no view and no pins.
+ */
+static void test_owner_vector_is_validated_whole(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
+	struct d1_guard guard;
+	static uint8_t data[32];
+	d1_id_t admission, v1, t1, t2, custody;
+	unsigned int pass;
+
+	memset(data, 0x3a, sizeof(data));
+	fill_uuid(&store_uuid, 0x56);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+
+	v1 = commit_chunk(s, admission, 0, 1, data, sizeof(data),
+			  &(struct d1_guard){ .never_written = true }, 0, &t1);
+	d1_store_guard(s, &object, 0, &guard);
+	check(finalize_chunk(s, admission, 0, 2, data, sizeof(data), &guard, v1,
+			     &t2) != 0,
+	      "a committed and a finalized transaction share a chunk");
+
+	/* Both orders of the same vector answer the same way. */
+	for (pass = 0; pass < 2; pass++) {
+		memset(&sel, 0, sizeof(sel));
+		sel.selection = D1_SELECT_OWNER;
+		sel.count = 2;
+		sel.txns[0] = pass ? t1 : t2;
+		sel.txns[1] = pass ? t2 : t1;
+		sel.owners[0].cohort = 1;
+		sel.owners[0].writer = 11;
+		sel.owners[0].co_id = pass ? 1 : 2;
+		sel.owners[1].cohort = 1;
+		sel.owners[1].writer = 11;
+		sel.owners[1].co_id = pass ? 2 : 1;
+		check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
+				   &view) == D1_BAD_PHASE,
+		      "a committed member fails the view whichever order it is in");
+		check(view == NULL, "and no view is returned");
+	}
+
+	/* Two members resolving to one chunk is not a selection. */
+	{
+		d1_id_t t3;
+		struct d1_guard g2;
+
+		/* Cancel the finalized one so the chunk is free again. */
+		check(rollback_one(s, admission, 0, 2, t2,
+				   &(struct rollback_expect){
+					   .visible_present = true,
+					   .visible = v1,
+					   .predecessor_present = true,
+					   .predecessor = v1 },
+				   NULL) == D1_OK,
+		      "the finalized transaction is cancelled");
+		d1_store_guard(s, &object, 0, &g2);
+		check(finalize_chunk(s, admission, 0, 3, data, sizeof(data),
+				     &g2, v1, &t3) != 0,
+		      "and a new one finalizes on the same chunk");
+
+		memset(&sel, 0, sizeof(sel));
+		sel.selection = D1_SELECT_OWNER;
+		sel.count = 2;
+		sel.txns[0] = t3;
+		sel.txns[1] = t3;
+		sel.owners[0].cohort = 1;
+		sel.owners[0].writer = 11;
+		sel.owners[0].co_id = 3;
+		sel.owners[1] = sel.owners[0];
+		check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
+				   &view) == D1_INVALID,
+		      "a vector naming one transaction twice is refused");
+		check(view == NULL, "with no view");
+
+		/* And the good single-member vector still works. */
+		owner_sel(&sel, t3, 11, 3, 0);
+		check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
+				   &view) == D1_OK,
+		      "while the admissible vector opens");
+		d1_view_close(s, view);
+		view = NULL;
+
+		/*
+		 * A refused vector leaves no pins: the version it would have
+		 * pinned is still releasable once nothing else holds it.
+		 */
+		custody = d1_fixture_custody(s, v1);
+		check(custody != 0, "custody is available");
+	}
+
+	d1_store_free(s);
+}
+
+/*
+ * A record's outer tag is checked before anything is dispatched on it,
+ * and has to agree with the schema it carries.
+ *
+ * These records cannot come from the live encoder.  Each is built by
+ * copying a valid log, changing one field and recomputing that record's
+ * CRC, so the semantic decoder is tested rather than the checksum.
+ */
+static void test_record_tags_are_validated(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *target;
+	static uint8_t copy[65536];
+	const uint8_t *log;
+	size_t len, at;
+	static uint8_t data[8];
+	d1_id_t admission;
+	uint32_t total, crc;
+	unsigned int pass;
+
+	memset(data, 0x3b, sizeof(data));
+	fill_uuid(&store_uuid, 0x57);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	admission = d1_fixture_admit(live, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	check(commit_chunk(live, admission, 0, 1, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "a history with a CONTROL and several ENTRYs");
+	log = d1_store_journal(live, &len);
+	check(len <= sizeof(copy), "the log fits the fixture buffer");
+	if (len > sizeof(copy)) {
+		d1_store_free(live);
+		return;
+	}
+
+	/*
+	 * The second record is the fixture ADMIT control.  Its body begins
+	 * with the outer kind, at the first byte after the 56-byte header.
+	 */
+	memcpy(copy, log, len);
+	total = ((uint32_t)copy[12] << 24) | ((uint32_t)copy[13] << 16) |
+		((uint32_t)copy[14] << 8) | (uint32_t)copy[15];
+	at = total;
+
+	for (pass = 0; pass < 2; pass++) {
+		uint32_t body = (uint32_t)(at + D1_JOURNAL_HEADER_BYTES);
+		uint32_t record_total;
+
+		memcpy(copy, log, len);
+		record_total = ((uint32_t)copy[at + 12] << 24) |
+			       ((uint32_t)copy[at + 13] << 16) |
+			       ((uint32_t)copy[at + 14] << 8) |
+			       (uint32_t)copy[at + 15];
+		if (pass == 0) {
+			/* An outer kind no encoder can produce. */
+			copy[body + 0] = 0xde;
+			copy[body + 1] = 0xad;
+			copy[body + 2] = 0xbe;
+			copy[body + 3] = 0xef;
+		} else {
+			/* A known outer kind that is not the inner one. */
+			copy[body + 0] = 0;
+			copy[body + 1] = 0;
+			copy[body + 2] = 0;
+			copy[body + 3] = (uint8_t)D1_CTL_RELEASE;
+		}
+		/* Recompute the record's CRC so only the tag is wrong. */
+		crc = d1_crc32c(copy + at,
+				record_total - D1_JOURNAL_TRAILER_BYTES);
+		copy[at + record_total - 4] = (uint8_t)(crc >> 24);
+		copy[at + record_total - 3] = (uint8_t)(crc >> 16);
+		copy[at + record_total - 2] = (uint8_t)(crc >> 8);
+		copy[at + record_total - 1] = (uint8_t)crc;
+
+		target =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (target) {
+			check(d1_store_replay(target, copy, len) == D1_INVALID,
+			      pass == 0 ?
+				      "an unknown outer control tag is refused" :
+				      "a mismatched outer control tag is refused");
+			d1_store_free(target);
+		}
+	}
+
+	/* The untouched log still rebuilds, so the fixture is honest. */
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, log, len) == D1_OK,
+		      "and the unmodified log still rebuilds");
+		check(states_agree(live, target), "into the same store");
+		d1_store_free(target);
+	}
+
+	d1_store_free(live);
+}
+
+/*
+ * A changed body cannot splice itself into an operation key that is
+ * already recorded, and cannot stop the original from finishing.
+ */
+static void test_operation_key_binds_the_whole_envelope(void)
+{
+	static const unsigned int where[] = { 2, 3 };
+	unsigned int pass;
+
+	for (pass = 0; pass < 2; pass++) {
+		struct d1_uuid store_uuid;
+		struct d1_store *live, *rebuilt;
+		struct d1_envelope env, changed;
+		struct d1_result res;
+		const uint8_t *log;
+		size_t len;
+		static uint8_t data[16];
+		static uint8_t other[16];
+		d1_id_t admission, spare, visible;
+		unsigned int i;
+
+		memset(data, 0x3c, sizeof(data));
+		memset(other, 0x3d, sizeof(other));
+		fill_uuid(&store_uuid, (uint8_t)(0x58 + pass));
+		live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!live)
+			return;
+		d1_store_journal_enable(live);
+		admission = d1_fixture_admit(live, &object, 11,
+					     D1_RIGHT_WRITE |
+						     D1_RIGHT_SINGLE_WRITER);
+		spare = d1_fixture_admit(live, &object, 11,
+					 D1_RIGHT_WRITE |
+						 D1_RIGHT_SINGLE_WRITER);
+
+		env_init(&env, live, admission, D1_OP_WRITE_BATCH);
+		env.body.write.count = 3;
+		env.body.write.stability = D1_DATA_SYNC;
+		env.body.write.activate = true;
+		for (i = 0; i < 3; i++)
+			write_entry(&env.body.write.entries[i], i, 11, i + 1u,
+				    data, sizeof(data), true,
+				    &(struct d1_guard){ .never_written =
+								true });
+
+		/*
+		 * Interrupt once a member is already recorded: after the
+		 * first, then at the last.  A batch that recorded nothing
+		 * leaves the key free, which is its own test.
+		 */
+		d1_fixture_fail_append_in(live, where[pass]);
+		check(d1_store_apply(live, &env, &res) == D1_OK,
+		      "the batch runs and is interrupted");
+		check(res.entries[where[pass] - 2u].disposition == D1_COMPLETED,
+		      "the members before the fault are recorded");
+		check(res.entries[where[pass] - 1u].disposition ==
+			      D1_UNRECORDED,
+		      "and the one it was aimed at is not");
+
+		/* A changed later payload under the same key. */
+		changed = env;
+		write_entry(&changed.body.write.entries[2], 2, 11, 3, other,
+			    sizeof(other), true,
+			    &(struct d1_guard){ .never_written = true });
+		check(d1_store_apply(live, &changed, &res) == D1_OK,
+		      "a changed retry is answered");
+		for (i = 0; i < 3; i++)
+			check(res.entries[i].status == D1_REPLAY_CONFLICT,
+			      "and every member conflicts");
+		check(!res.entries[2].txn_present, "and none of them executed");
+
+		/* A changed admission under the same key, likewise. */
+		changed = env;
+		changed.admission = spare;
+		check(d1_store_apply(live, &changed, &res) == D1_OK &&
+			      res.entries[0].status == D1_REPLAY_CONFLICT,
+		      "and so does a changed admission");
+
+		/* The original exact request can still be finished. */
+		check(d1_store_apply(live, &env, &res) == D1_OK,
+		      "the original exact retry runs");
+		for (i = 0; i < 3; i++)
+			check(res.entries[i].status == D1_OK,
+			      "and every member of it succeeds");
+		for (i = 0; i < 3; i++)
+			check(d1_store_visible(live, &object, i, &visible),
+			      "so every chunk is visible");
+
+		/* And the history it wrote rebuilds. */
+		log = d1_store_journal(live, &len);
+		rebuilt =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (rebuilt) {
+			check(d1_store_replay(rebuilt, log, len) == D1_OK,
+			      "the log rebuilds");
+			check(states_agree(live, rebuilt),
+			      "into the same store");
+			d1_store_free(rebuilt);
+		}
+		d1_store_free(live);
+	}
+}
+
+/* A key with nothing recorded under it is still free. */
+static void test_unused_key_is_not_bound(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env, changed;
+	struct d1_result res;
+	static uint8_t data[16];
+	static uint8_t other[16];
+	d1_id_t admission, visible;
+
+	memset(data, 0x3e, sizeof(data));
+	memset(other, 0x3f, sizeof(other));
+	fill_uuid(&store_uuid, 0x5a);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_DATA_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+
+	/* The only member fails to become durable, so nothing is recorded. */
+	d1_fixture_fail_next_flush(s);
+	d1_store_apply(s, &env, &res);
+	check(res.entries[0].disposition == D1_UNRECORDED,
+	      "the only member is UNRECORDED");
+
+	/* A different body may therefore use that key. */
+	changed = env;
+	write_entry(&changed.body.write.entries[0], 0, 11, 2, other,
+		    sizeof(other), true,
+		    &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &changed, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a key with no recorded member is still free");
+	check(d1_store_visible(s, &object, 0, &visible), "and it publishes");
+
+	d1_store_free(s);
+}
+
+/* Fault arms do not survive a reconstruction or a reopen. */
+static void test_recovery_clears_fault_arms(void)
+{
+	static const bool use_reopen[] = { false, true };
+	unsigned int pass;
+
+	for (pass = 0; pass < 2; pass++) {
+		struct d1_uuid store_uuid;
+		struct d1_store *live, *target;
+		const uint8_t *log;
+		size_t len, before, after;
+		static uint8_t data[8];
+		d1_id_t admission, fresh, seen;
+
+		memset(data, 0x40, sizeof(data));
+		fill_uuid(&store_uuid, (uint8_t)(0x5b + pass));
+		live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!live)
+			return;
+		d1_store_journal_enable(live);
+		admission = d1_fixture_admit(live, &object, 11,
+					     D1_RIGHT_WRITE |
+						     D1_RIGHT_SINGLE_WRITER);
+		check(commit_chunk(live, admission, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   0, NULL) != 0,
+		      "a history to rebuild");
+		log = d1_store_journal(live, &len);
+
+		target =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!target) {
+			d1_store_free(live);
+			return;
+		}
+		/* Every arm the harness has, set before the rebuild. */
+		d1_fixture_fail_next_index(target);
+		d1_fixture_fail_next_append(target);
+		d1_fixture_fail_next_flush(target);
+
+		if (use_reopen[pass])
+			check(d1_store_reopen(target, log, len) == D1_OK,
+			      "the store reopens");
+		else
+			check(d1_store_replay(target, log, len) == D1_OK,
+			      "the store rebuilds");
+		check(!d1_store_overlay_active(target),
+		      "and no fault fired during it");
+
+		/* The first operation afterwards is ordinary. */
+		if (use_reopen[pass]) {
+			fresh = d1_fixture_admit(
+				target, &object, 11,
+				D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+			check(fresh != 0, "a fresh handle is admitted");
+			(void)d1_store_journal(target, &before);
+			check(commit_chunk(target, fresh, 2, 9, data,
+					   sizeof(data),
+					   &(struct d1_guard){ .never_written =
+								       true },
+					   0, NULL) != 0,
+			      "and its first commit succeeds");
+			(void)d1_store_journal(target, &after);
+			check(after > before,
+			      "with its events actually claimed");
+			check(!d1_store_overlay_active(target),
+			      "and no index fault fired");
+			check(d1_store_visible(target, &object, 2, &seen),
+			      "and it published");
+		} else {
+			check(!d1_store_overlay_active(target),
+			      "and the arm did not survive the rebuild");
+		}
+
+		d1_store_free(target);
+		d1_store_free(live);
+	}
 }
 
 /*
@@ -3942,6 +4856,16 @@ int main(void)
 	test_undone_event_never_becomes_durable();
 	test_retry_after_flush_fault_agrees_with_replay();
 	test_repair_only_rollback_replays();
+	test_control_members_are_all_or_nothing();
+	test_replay_requires_a_pristine_target();
+	test_journal_enable_requires_a_pristine_store();
+	test_initial_guard_is_zero_zero();
+	test_writer_must_be_the_granted_one();
+	test_owner_vector_is_validated_whole();
+	test_record_tags_are_validated();
+	test_operation_key_binds_the_whole_envelope();
+	test_unused_key_is_not_bound();
+	test_recovery_clears_fault_arms();
 	test_control_envelopes_replay();
 	test_custody_and_release_replay();
 	test_replay_refuses_a_foreign_log();
