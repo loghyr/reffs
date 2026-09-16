@@ -1254,18 +1254,79 @@ static void test_view_is_stable(void)
  * A batch releases the lock between members so the next one is
  * revalidated against what the last one left.  A close that ran in that
  * gap saw no views, freed the store, and left the caller to lock a
- * destroyed mutex.  The fixture pair holds exactly what a paused call
- * holds, without a thread; the real caller is parked in the test after
- * this one.
+ * destroyed mutex.
+ *
+ * This used to be held by a pair of fixture calls that entered and left
+ * the bracket without a thread.  They were an ownership pair the caller
+ * had to get right and nothing checked: leaving on one store gave back
+ * a hold taken on another, so a real worker's hold could be handed away
+ * and its store closed and destroyed underneath it.  The hold is a real
+ * worker's now, parked between two members of its own batch, which is
+ * the state the fixture pair was standing in for anyway.
  */
+struct parked_member {
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result out;
+	uint32_t status;
+	pthread_mutex_t m;
+	pthread_cond_t cv;
+	bool parked;
+	bool resume;
+	/* Which primitive failed inside the worker, if one did. */
+	unsigned int err;
+};
+
+static void hold_between_members(void *arg)
+{
+	struct parked_member *p = arg;
+
+	if (pthread_mutex_lock(&p->m) != 0) {
+		p->err = 1;
+		return;
+	}
+	p->parked = true;
+	if (pthread_cond_signal(&p->cv) != 0)
+		p->err = 2;
+	while (!p->resume && !p->err)
+		if (pthread_cond_wait(&p->cv, &p->m) != 0)
+			p->err = 3;
+	if (pthread_mutex_unlock(&p->m) != 0)
+		p->err = 4;
+}
+
+static void *run_batch(void *arg)
+{
+	struct parked_member *p = arg;
+
+	p->status = d1_store_apply(p->s, &p->env, &p->out);
+	return NULL;
+}
+
+/* Let a parked worker go, whether or not anything else went well. */
+static void release_parked_member(struct parked_member *p)
+{
+	if (pthread_mutex_lock(&p->m) != 0) {
+		p->err = 5;
+		return;
+	}
+	p->resume = true;
+	if (pthread_cond_signal(&p->cv) != 0)
+		p->err = 6;
+	if (pthread_mutex_unlock(&p->m) != 0)
+		p->err = 7;
+}
+
 static void test_close_refuses_an_active_call(void)
 {
 	struct d1_uuid store_uuid;
 	struct d1_store *s;
 	struct d1_selection_spec sel;
 	struct d1_view *view = NULL;
+	struct parked_member p;
+	pthread_t worker;
 	static uint8_t data[16];
-	d1_id_t admission;
+	d1_id_t admission, seen;
 
 	memset(data, 0x5a, sizeof(data));
 	fill_uuid(&store_uuid, 0x41);
@@ -1283,8 +1344,70 @@ static void test_close_refuses_an_active_call(void)
 	check(d1_store_destroy(s) == D1_BUSY,
 	      "destroying a store that was never closed is refused");
 
-	/* A call is admitted and has not returned. */
-	d1_fixture_call_enter(s);
+	/*
+	 * A two-member batch, parked in the gap between them.  Member 0
+	 * activates as it writes, so while the worker is held the store
+	 * shows the first index published and the second untouched: the
+	 * call is admitted, and it is between members.
+	 */
+	memset(&p, 0, sizeof(p));
+	p.s = s;
+	env_init(&p.env, s, admission, D1_OP_WRITE_BATCH);
+	p.env.body.write.count = 2;
+	p.env.body.write.stability = D1_FILE_SYNC;
+	p.env.body.write.activate = true;
+	write_entry(&p.env.body.write.entries[0], 1, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	write_entry(&p.env.body.write.entries[1], 2, 11, 3, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+
+	if (pthread_mutex_init(&p.m, NULL) != 0) {
+		check(false, "the worker's mutex starts");
+		d1_store_free(s);
+		return;
+	}
+	if (pthread_cond_init(&p.cv, NULL) != 0) {
+		check(false, "the worker's condition starts");
+		check(pthread_mutex_destroy(&p.m) == 0, "and is released");
+		d1_store_free(s);
+		return;
+	}
+	d1_fixture_before_member(s, 1, hold_between_members, &p);
+	if (pthread_create(&worker, NULL, run_batch, &p) != 0) {
+		check(false, "the worker starts");
+		d1_fixture_before_member(s, 1, NULL, NULL);
+		check(pthread_cond_destroy(&p.cv) == 0,
+		      "its condition is released");
+		check(pthread_mutex_destroy(&p.m) == 0, "and its mutex");
+		d1_store_free(s);
+		return;
+	}
+	if (pthread_mutex_lock(&p.m) != 0) {
+		p.err = 8;
+	} else {
+		while (!p.parked && !p.err)
+			if (pthread_cond_wait(&p.cv, &p.m) != 0)
+				p.err = 9;
+		if (pthread_mutex_unlock(&p.m) != 0)
+			p.err = 10;
+	}
+	if (p.err) {
+		check(false, "the worker parks between members");
+		release_parked_member(&p);
+		check(pthread_join(worker, NULL) == 0, "and is joined anyway");
+		check(pthread_cond_destroy(&p.cv) == 0,
+		      "its condition is released");
+		check(pthread_mutex_destroy(&p.m) == 0, "and its mutex");
+		d1_store_free(s);
+		return;
+	}
+
+	check(d1_store_visible(s, &object, 1, &seen),
+	      "member 0 of the parked batch has published");
+	check(!d1_store_visible(s, &object, 2, &seen),
+	      "and member 1 has not run yet");
+
+	/* The worker's own hold. */
 	check(d1_store_close(s) == D1_BUSY,
 	      "a close during an admitted call is refused");
 
@@ -1295,14 +1418,34 @@ static void test_close_refuses_an_active_call(void)
 	      "a view opens while the call is in flight");
 	check(d1_store_close(s) == D1_BUSY, "and the close is still refused");
 	d1_view_close(view);
+	view = NULL;
 	check(d1_store_close(s) == D1_BUSY,
 	      "closing the view is not enough while the call is in flight");
 
-	/* The call returns; now the close succeeds. */
-	d1_fixture_call_leave(s);
+	/* The call returns, and it returns a real result. */
+	release_parked_member(&p);
+	check(pthread_join(worker, NULL) == 0, "the worker is joined");
+	check(p.err == 0, "with every primitive inside it succeeding");
+	check(p.status == D1_OK && p.out.count == 2 &&
+		      p.out.entries[0].status == D1_OK &&
+		      p.out.entries[1].status == D1_OK,
+	      "and both members of its batch completed");
+	check(d1_store_visible(s, &object, 2, &seen),
+	      "so member 1 published after the release");
+
+	/* And a view alone still holds the store open, for its own reason. */
+	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
+			   &view) == D1_OK,
+	      "a view opens again with no call in flight");
+	check(d1_store_close(s) == D1_BUSY,
+	      "and the close is refused for the view alone");
+	d1_view_close(view);
+
 	check(d1_store_close(s) == D1_OK,
 	      "and the close succeeds once the call has returned");
 	check(d1_store_destroy(s) == D1_OK, "and then it is destroyed");
+	check(pthread_cond_destroy(&p.cv) == 0, "the condition is destroyed");
+	check(pthread_mutex_destroy(&p.m) == 0, "and the mutex with it");
 }
 
 /*

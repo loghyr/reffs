@@ -114,18 +114,6 @@ uint32_t d1_store_close(struct d1_store *s);
 uint32_t d1_store_destroy(struct d1_store *s);
 
 /*
- * Fixture controls that hold what a paused call holds.  Between these
- * two the store is in the state it is in between two members of an
- * ordinary batch, which is the window a close must not slip through,
- * and they hold it without a thread.  A test that needs a real caller
- * stopped at a real point uses d1_fixture_before_admission or
- * d1_fixture_before_member instead; the model serialises on one mutex
- * and does not require its caller to be single threaded.
- */
-void d1_fixture_call_enter(struct d1_store *s);
-void d1_fixture_call_leave(struct d1_store *s);
-
-/*
  * Crash teardown: destroy the whole simulated world, views included,
  * as a power loss would.  This is what crash tests use.  It is NOT a
  * normal close and NOT an ordinary destruction: it asks nothing, it
