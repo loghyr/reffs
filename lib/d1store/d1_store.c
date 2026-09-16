@@ -2617,8 +2617,21 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 				   sel->selection == D1_SELECT_OWNER, &a);
 	if (status != D1_OK)
 		goto out;
+	/*
+	 * An object nobody has written yet is an object at EOF zero, not a
+	 * missing one.  This API has no create: the store's geometry and
+	 * the admission are the whole of an object's existence before its
+	 * first write, and section 3 gives it initial EOF zero.  So an
+	 * ordinary view of it opens, captures that zero, holds no extent
+	 * and reads no bytes -- and takes no object slot, because a read
+	 * is not journalled and a read that spent model capacity would be
+	 * a read that changed the store.
+	 *
+	 * OWNER selection is the other question: it names transactions,
+	 * and an object with no writes has none to name.
+	 */
 	o = d1_object_find(s, object);
-	if (!o) {
+	if (!o && sel->selection == D1_SELECT_OWNER) {
 		status = D1_INVALID;
 		goto out;
 	}
@@ -2652,7 +2665,8 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 	memset(v, 0, sizeof(*v));
 	v->used = true;
 	v->store = s;
-	v->object = d1_object_slot(s, o);
+	/* No slot to name when the object has not been created. */
+	v->object = o ? d1_object_slot(s, o) : D1_MAX_OBJECTS;
 	v->range_begin = byte_begin;
 	v->range_end = byte_end;
 
@@ -2664,7 +2678,7 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 	 * are verified and pinned -- a view does not keep alive bytes it
 	 * cannot return.
 	 */
-	for (i = 0; i < D1_MAX_CHUNKS; i++) {
+	for (i = 0; o && i < D1_MAX_CHUNKS; i++) {
 		struct d1_chunk *c = &o->chunks[i];
 		struct d1_version *ver = NULL;
 		uint64_t start, end;

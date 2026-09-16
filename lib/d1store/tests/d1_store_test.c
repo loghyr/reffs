@@ -2743,6 +2743,112 @@ static void test_the_chunk_table_is_capacity(void)
 	d1_store_free(s);
 }
 
+/*
+ * An object nobody has written yet can still be read.
+ *
+ * Section 3 gives a new object initial EOF zero, and this API has no
+ * create: the store's geometry and the admission are the whole of an
+ * object's existence before its first write.  An ordinary view of one
+ * used to be refused as if the object were missing, which made the
+ * initial state the one state a reader could not observe.  It opens
+ * now, at EOF zero, with nothing to read -- and it takes no object
+ * slot, because a read is not journalled and a read that spent model
+ * capacity would be a read that changed the store.
+ */
+static void test_the_empty_object_can_be_read(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_objkey keys[D1_MAX_OBJECTS + 1u];
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t data[16];
+	static uint8_t got[32];
+	unsigned int i;
+	uint32_t got_len = 1;
+	d1_id_t admissions[D1_MAX_OBJECTS + 1u];
+	d1_id_t seen;
+
+	memset(data, 0x26, sizeof(data));
+	fill_uuid(&store_uuid, 0x26);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	for (i = 0; i < D1_MAX_OBJECTS + 1u; i++) {
+		keys[i].export_uuid = object.export_uuid;
+		fill_uuid(&keys[i].object_uuid, (uint8_t)(0xc0 + i));
+		admissions[i] =
+			d1_fixture_admit(s, &keys[i], 11,
+					 D1_RIGHT_READ | D1_RIGHT_WRITE |
+						 D1_RIGHT_SINGLE_WRITER);
+	}
+
+	/* The initial state is a state, and it can be observed. */
+	ordinary_sel(&sel);
+	check(d1_view_open(s, &keys[0], admissions[0], &sel, 0, CHUNK_BYTES,
+			   &view) == D1_OK,
+	      "an ordinary view of an object with no writes opens");
+	if (view) {
+		check(d1_view_eof(view) == 0, "at EOF zero");
+		check(!d1_view_version(view, 0, &seen),
+		      "with no version in it");
+		check(d1_view_read(view, 0, got, sizeof(got), &got_len) ==
+				      D1_OK &&
+			      got_len == 0,
+		      "and reads no bytes, as a read at EOF does");
+		d1_view_close(s, view);
+		view = NULL;
+	}
+
+	/* OWNER selection is the other question, and still has no answer. */
+	memset(&sel, 0, sizeof(sel));
+	sel.selection = D1_SELECT_OWNER;
+	sel.count = 1;
+	sel.txns[0] = 1;
+	check(d1_view_open(s, &keys[0], admissions[0], &sel, 0, CHUNK_BYTES,
+			   &view) == D1_INVALID,
+	      "an owner view over transactions that do not exist does not");
+
+	/*
+	 * And every object slot is still free: the reads above created
+	 * nothing, so all D1_MAX_OBJECTS of them can still be taken by a
+	 * write, and only the one past them runs out.
+	 */
+	ordinary_sel(&sel);
+	for (i = 0; i < D1_MAX_OBJECTS + 1u; i++) {
+		if (d1_view_open(s, &keys[i], admissions[i], &sel, 0,
+				 CHUNK_BYTES, &view) != D1_OK)
+			continue;
+		d1_view_close(s, view);
+		view = NULL;
+	}
+	for (i = 0; i < D1_MAX_OBJECTS; i++) {
+		env_init(&env, s, admissions[i], D1_OP_WRITE_BATCH);
+		env.object = keys[i];
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], 0, 11, i + 1u, data,
+			    sizeof(data), true,
+			    &(struct d1_guard){ .never_written = true });
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "every object slot is still free for a write");
+	}
+	env_init(&env, s, admissions[D1_MAX_OBJECTS], D1_OP_WRITE_BATCH);
+	env.object = keys[D1_MAX_OBJECTS];
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 9, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_NOSPC,
+	      "and only the one past them runs out of slots");
+
+	d1_store_free(s);
+}
+
 /* H: the log rebuilds the store that wrote it. */
 static void test_replay_reproduces_the_store(void)
 {
@@ -4194,10 +4300,22 @@ static void test_refusal_consumes_no_capacity(void)
 		check(!res.entries[0].txn_present &&
 			      !res.entries[0].version_present,
 		      "and no transaction or version was taken");
+		/*
+		 * And it reads as the untouched object it still is: an
+		 * ordinary view of an object with no writes opens, and a
+		 * refused write must leave one exactly that empty.
+		 */
 		ordinary_sel(&sel);
 		check(d1_view_open(s, &keys[i], admissions[i], &sel, 0,
-				   CHUNK_BYTES, &view) == D1_INVALID,
-		      "and the object cannot be opened for reading");
+				   CHUNK_BYTES, &view) == D1_OK,
+		      "and the object reads as the empty one it still is");
+		if (view) {
+			check(d1_view_eof(view) == 0 &&
+				      !d1_view_version(view, 0, &seen),
+			      "with no EOF and no version in it");
+			d1_view_close(s, view);
+			view = NULL;
+		}
 
 		/* The refusal is a receipt: the exact retry answers from it. */
 		d1_store_apply(s, &env, &again);
@@ -7480,6 +7598,7 @@ int main(void)
 	test_the_door_arm_belongs_to_its_store();
 	test_an_owner_names_a_cohort();
 	test_the_chunk_table_is_capacity();
+	test_the_empty_object_can_be_read();
 	test_a_journal_snapshot_is_a_value();
 	test_a_journal_snapshot_can_find_no_memory();
 	test_snapshots_run_beside_appends_and_a_close();
