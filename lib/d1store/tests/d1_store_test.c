@@ -584,6 +584,42 @@ static void test_unsupported(void)
 	d1_store_free(s);
 }
 
+/*
+ * The same number, named at another store.
+ *
+ * A handle is a C value bound to one live store; a client's is a bare
+ * u64 on the wire.  A client that comes back after a restart presents
+ * the number it was given to whatever store is serving now, and this is
+ * that: not the old handle, but the old number, at the store that has
+ * to decide what it means.
+ */
+static d1_admission_id renamed_admission(struct d1_store *s, d1_admission_id id)
+{
+	return d1_fixture_admission_handle(s, d1_admission_raw(id));
+}
+
+static d1_txn_id renamed_txn(struct d1_store *s, d1_txn_id id)
+{
+	return d1_fixture_txn_handle(s, d1_txn_raw(id));
+}
+
+static d1_version_id renamed_version(struct d1_store *s, d1_version_id id)
+{
+	return d1_fixture_version_handle(s, d1_version_raw(id));
+}
+
+/*
+ * Whether two histories agree about a version.
+ *
+ * By value, not as handles: a rebuild is a different live store, so its
+ * handles are its own, and the raw number is what the log carried and
+ * all it carried.
+ */
+static bool same_version_value(d1_version_id a, d1_version_id b)
+{
+	return d1_version_raw(a) == d1_version_raw(b);
+}
+
 /* Write, finalize and commit one chunk, and answer its version. */
 static d1_version_id commit_chunk(struct d1_store *s, d1_admission_id admission,
 				  uint64_t index, uint32_t co_id,
@@ -1970,7 +2006,8 @@ static void test_the_door_arm_belongs_to_its_store(void)
 			      seen.fired == 0,
 		      "the rebuild itself does not run it");
 		check(d1_version_live(commit_chunk(
-			      target, admit_a, 2, 9, data, sizeof(data),
+			      target, renamed_admission(target, admit_a), 2, 9,
+			      data, sizeof(data),
 			      &(struct d1_guard){ .never_written = true },
 			      d1_version_none(), NULL)) &&
 			      seen.fired == 0,
@@ -3702,6 +3739,224 @@ static void test_the_empty_object_can_be_read(void)
 }
 
 /*
+ * A copy of a handle's bytes is not a handle of another domain.
+ *
+ * Distinct C types stop a caller writing the substitution down, and
+ * that is worth having, but it is a compile-time fact about one
+ * expression and not a property of the value.  The four wrappers had
+ * the same layout and public fields, so a memcpy from an admission into
+ * a version, or a literal assembled from an admission's number, made
+ * the version the compiler had refused to make -- and the first
+ * admission and the first version are both one, so it selected a real
+ * row and took custody of it.
+ *
+ * The value carries its domain now, and a resolver asks for it before
+ * it chooses a table.  Bytes copied out of an admission still say
+ * admission; a literal says nothing at all.
+ */
+static void test_a_handle_keeps_its_domain_through_a_copy(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	static uint8_t data[16];
+	d1_admission_id admission;
+	d1_version_id version, copied, literal;
+
+	memset(data, 0x37, sizeof(data));
+	fill_uuid(&store_uuid, 0x37);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	version = commit_chunk(s, admission, 0, 1, data, sizeof(data),
+			       &(struct d1_guard){ .never_written = true },
+			       d1_version_none(), NULL);
+	check(d1_admission_raw(admission) == 1 && d1_version_raw(version) == 1,
+	      "the first admission and the first version are both one");
+
+	/* The positive control: the store's own version takes custody. */
+	check(d1_custody_live(d1_fixture_custody(s, version)),
+	      "the version this store issued names its row");
+
+	/* The blind review's memcpy, byte for byte. */
+	memset(&copied, 0, sizeof(copied));
+	memcpy(&copied, &admission,
+	       sizeof(copied) < sizeof(admission) ? sizeof(copied) :
+						    sizeof(admission));
+	check(d1_version_raw(copied) == d1_version_raw(version),
+	      "an admission's bytes carry the same number as the version");
+	check(!d1_custody_live(d1_fixture_custody(s, copied)),
+	      "and still name nothing in the version table");
+
+	/* And the literal assembled from the number a caller can read. */
+	literal = (d1_version_id){ .raw = d1_admission_raw(admission) };
+	check(d1_version_raw(literal) == d1_version_raw(version),
+	      "a literal carries the same number too");
+	check(!d1_custody_live(d1_fixture_custody(s, literal)),
+	      "and names nothing either");
+
+	/* The store's own handle is unharmed by any of it. */
+	check(d1_custody_live(d1_fixture_custody(s, version)),
+	      "while the store's own handle still names its row");
+
+	d1_store_free(s);
+}
+
+/*
+ * Two live stores of one name are two stores.
+ *
+ * The UUID is a store's durable name -- what a journal carries and what
+ * a rebuild checks -- and it is not a name for one live object.  This
+ * model opens two objects of one name on purpose: a source and a
+ * pristine target for its own log.  They have separate locks, tables
+ * and counters, they count to the same numbers, and they can be granted
+ * different authority over the same object.  A handle from one of them
+ * must not select a row in the other, and a durable name cannot tell
+ * them apart, so a handle carries the live object that issued it.
+ */
+static void test_two_live_stores_of_one_name_are_two_stores(void)
+{
+	struct d1_uuid shared_uuid;
+	struct d1_store *a, *b;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
+	static uint8_t data[16];
+	d1_admission_id read_a, write_b;
+	d1_version_id v_b, seen;
+
+	memset(data, 0x38, sizeof(data));
+	fill_uuid(&shared_uuid, 0x38);
+	a = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	b = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!a || !b) {
+		d1_store_free(a);
+		d1_store_free(b);
+		return;
+	}
+
+	/* One name, two objects, two different grants, one number. */
+	read_a = d1_fixture_admit(a, &object, 11, D1_RIGHT_READ);
+	write_b = d1_fixture_admit(b, &object, 11,
+				   D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	check(d1_admission_raw(read_a) == d1_admission_raw(write_b),
+	      "two stores of one name count to the same admission");
+	check(!d1_admission_eq(read_a, write_b),
+	      "and it is not the same admission");
+
+	/* A's read-only handle, presented to B, which granted a writer. */
+	env_init(&env, b, read_a, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "A's handle authorizes nothing in B, one name or not");
+	check(res.entries[0].disposition == D1_UNRECORDED,
+	      "recording nothing there");
+	check(!d1_store_visible(b, &object, 0, &seen),
+	      "and publishing nothing there");
+
+	/* B's own handle, the same request, does the work. */
+	env.admission = write_b;
+	env.key.sequence = next_sequence++;
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "while B's own handle does the work");
+	v_b = res.entries[0].version;
+
+	/* Nor does A's handle read there. */
+	ordinary_sel(&sel);
+	check(d1_view_open(b, &object, read_a, &sel, 0, CHUNK_BYTES, &view) ==
+		      D1_STALE_AUTH,
+	      "nor does it open a view there");
+
+	/* And B's version is B's, in a store that never wrote it. */
+	check(!d1_custody_live(d1_fixture_custody(a, v_b)),
+	      "B's version takes no custody in A");
+	check(d1_custody_live(d1_fixture_custody(b, v_b)),
+	      "and takes custody in B");
+
+	d1_store_free(a);
+	d1_store_free(b);
+}
+
+/*
+ * A handle a decoder made names nothing, whatever the store is called.
+ *
+ * A decoder reads a number out of canonical bytes and has no store to
+ * bind it to.  Replay binds it, to the store it is rebuilding, and
+ * until then the value names nothing anywhere -- including in a store
+ * opened under the all-zero name, which is a store like any other and
+ * not a wildcard.
+ */
+static void test_a_decoded_handle_names_no_store(void)
+{
+	struct d1_uuid store_uuid, zero_uuid;
+	struct d1_store *s, *zero;
+	struct d1_envelope env, decoded;
+	struct d1_result res;
+	uint8_t bytes[D1_ENVELOPE_MAX];
+	size_t len;
+	static uint8_t data[16];
+	d1_admission_id admission;
+	d1_version_id seen;
+
+	memset(data, 0x39, sizeof(data));
+	fill_uuid(&store_uuid, 0x39);
+	memset(&zero_uuid, 0, sizeof(zero_uuid));
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	zero = d1_store_open(&zero_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s || !zero) {
+		d1_store_free(s);
+		d1_store_free(zero);
+		return;
+	}
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	check(d1_admission_raw(admission) == 1, "a handle to put on the wire");
+
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	len = d1_envelope_encode(&env, bytes, sizeof(bytes));
+	check(len != 0, "which encodes");
+
+	memset(&decoded, 0, sizeof(decoded));
+	check(d1_envelope_decode(bytes, len, &decoded),
+	      "and decodes back to the same request");
+	check(d1_admission_raw(decoded.admission) == 1,
+	      "carrying the number and nothing else");
+
+	/*
+	 * The zero-named store admits its own first handle at the same
+	 * number, so the only thing that can separate them is the issuer.
+	 */
+	(void)d1_fixture_admit(zero, &object, 11,
+			       D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	decoded.incarnation = d1_store_incarnation(zero);
+	check(d1_store_apply(zero, &decoded, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "a decoded handle authorizes nothing in the zero-named store");
+	check(!d1_store_visible(zero, &object, 0, &seen),
+	      "and publishes nothing there");
+	check(!d1_custody_live(
+		      d1_fixture_custody(zero, (d1_version_id){ .raw = 1 })),
+	      "nor does an untyped value with the same number");
+
+	d1_store_free(s);
+	d1_store_free(zero);
+}
+
+/*
  * A handle names one kind of thing, in one store.
  *
  * Every store starts each of its counters at one, so two stores' first
@@ -3710,8 +3965,8 @@ static void test_the_empty_object_can_be_read(void)
  * resolved the number against its own unrelated authority row and did
  * the work; an admission passed where a version belongs was resolved as
  * a version, and issued custody over it.  Neither is reachable now: the
- * type settles which table is asked, the issuing store settles whose
- * table it is, and a handle carries both.
+ * handle carries the domain, which settles which table is asked, and
+ * the live store that issued it, which settles whose table.
  *
  * What a caller can still do is name any number for the store it is
  * talking to, because that is all the wire carries.  A number the store
@@ -3889,9 +4144,11 @@ static void test_a_handle_names_its_own_kind(void)
  *
  * A journal carries values and no provenance at all, so a decoded
  * record names nothing until the store rebuilding it adopts the values
- * as its own.  A store reopened from its own log is the same store --
- * the same UUID, which is this model's name for one -- so the handles
- * it issued before the reopen still name its rows afterwards.
+ * as its own.  What it adopts them for is the store doing the
+ * rebuilding: a rebuild is a second live store, with its own tables and
+ * its own token, even when it carries the name the log was written
+ * under.  So the two agree about every value the log carried and about
+ * nothing else, and the source's handles are not the rebuild's.
  */
 static void test_replay_rebuilds_the_same_handles(void)
 {
@@ -3925,10 +4182,15 @@ static void test_replay_rebuilds_the_same_handles(void)
 		      "the log rebuilds a store of the same name");
 		check(d1_store_visible(rebuilt, &object, 0, &seen),
 		      "which has the version the log recorded");
-		check(d1_version_eq(seen, v1),
-		      "and it is the same handle, not merely the same number");
-		check(d1_custody_live(d1_fixture_custody(rebuilt, v1)),
-		      "so a handle issued before the rebuild still names it");
+		check(same_version_value(seen, v1),
+		      "carrying the value the log carried");
+		check(!d1_version_eq(seen, v1),
+		      "and not the source's handle, which is the source's");
+		check(d1_custody_live(d1_fixture_custody(
+			      rebuilt, renamed_version(rebuilt, v1))),
+		      "so the rebuild names that value in its own table");
+		check(!d1_custody_live(d1_fixture_custody(rebuilt, v1)),
+		      "while the source's handle names nothing there");
 		d1_store_free(rebuilt);
 	}
 
@@ -4677,12 +4939,12 @@ static void test_index_fault_serves_the_overlay(void)
 			      "and the fault did not replay with it");
 			/* Unjournalled harness state, so it cannot. */
 			check(d1_store_visible(rebuilt, &object, 0, &seen) &&
-				      d1_version_eq(seen, v2),
+				      same_version_value(seen, v2),
 			      "and the rebuilt store sees the committed "
 			      "version");
 			check(d1_store_materialized(rebuilt, &object, 0,
 						    &stale) &&
-				      d1_version_eq(stale, v2),
+				      same_version_value(stale, v2),
 			      "with its materialized index in agreement");
 			d1_store_free(rebuilt);
 		}
@@ -4924,7 +5186,7 @@ static void test_retry_after_flush_fault_agrees_with_replay(void)
 	check(d1_store_replay(rebuilt, log, len) == D1_OK, "the log rebuilds");
 	check(d1_store_visible(live, &object, 0, &seen_live) &&
 		      d1_store_visible(rebuilt, &object, 0, &seen_rebuilt) &&
-		      d1_version_eq(seen_live, seen_rebuilt),
+		      same_version_value(seen_live, seen_rebuilt),
 	      "and agrees on the retried version");
 	check(states_agree(live, rebuilt), "and on everything else");
 
@@ -5133,6 +5395,13 @@ static void test_reopen_fences_owner_reads(void)
 	check(d1_store_reopen(reopened, log, len) == D1_OK,
 	      "the store reopens");
 
+	/*
+	 * The client comes back holding numbers, which is all it was ever
+	 * given, and presents them to the store serving now.
+	 */
+	admission = renamed_admission(reopened, admission);
+	txn = renamed_txn(reopened, txn);
+
 	/* The old handle is fenced for reads as well as for mutations. */
 	owner_sel(&sel, txn, 11, 1, 0);
 	check(d1_view_open(reopened, &object, admission, &sel, 0, CHUNK_BYTES,
@@ -5224,6 +5493,10 @@ static void test_recovery_target_must_be_current(void)
 		return;
 	}
 	d1_store_reopen(reopened, log, len);
+	/* The numbers the client kept, presented to the store serving now. */
+	old_a = renamed_admission(reopened, old_a);
+	old_b = renamed_admission(reopened, old_b);
+	txn = renamed_txn(reopened, txn);
 	control = d1_fixture_admit(reopened, &object, 11, D1_RIGHT_CONTROL);
 
 	env_init(&env, reopened, control, D1_OP_RECOVERY_ADMIT);
@@ -5728,6 +6001,18 @@ static void test_control_envelopes_replay(void)
 		memcpy(env.body.lifecycle.prior_verifier, verifier,
 		       sizeof(verifier));
 		d1_store_apply(live, &env, &live_res);
+		/*
+		 * The same request at the rebuilt store, named at it: the
+		 * numbers are the ones the log carried, and the store they
+		 * are presented to is the one that has to resolve them.
+		 */
+		env.admission = renamed_admission(rebuilt, fresh);
+		env.incarnation = d1_store_incarnation(rebuilt);
+		env.body.lifecycle.entries[0].txn =
+			renamed_txn(rebuilt, txn_recovered);
+		d1_store_verifier(rebuilt, verifier);
+		memcpy(env.body.lifecycle.prior_verifier, verifier,
+		       sizeof(verifier));
 		d1_store_apply(rebuilt, &env, &rebuilt_res);
 		check(live_res.entries[0].status == D1_OK &&
 			      rebuilt_res.entries[0].status ==
@@ -6618,13 +6903,15 @@ static void test_recovery_clears_fault_arms(void)
 			 * so reading the flag after the rebuild is not an
 			 * oracle for it.  The first eligible operation
 			 * afterwards is -- and after a read-only rebuild the
-			 * log's own handle is the one that can make it.
+			 * log's own admission, named at the target, is the
+			 * one that can make it.
 			 */
 			check(!d1_store_overlay_active(target),
 			      "and the arm did not survive the rebuild");
 			check(d1_version_live(commit_chunk(
-				      target, admission, 2, 9, data,
-				      sizeof(data),
+				      target,
+				      renamed_admission(target, admission), 2,
+				      9, data, sizeof(data),
 				      &(struct d1_guard){ .never_written =
 								  true },
 				      d1_version_none(), NULL)),
@@ -6730,7 +7017,7 @@ static void test_custody_and_release_replay(void)
 		check(d1_store_replay(rebuilt, log, len) == D1_OK,
 		      "the log replays without diverging");
 		check(d1_store_visible(rebuilt, &object, 0, &rebuilt_visible) &&
-			      d1_version_eq(rebuilt_visible, live_visible),
+			      same_version_value(rebuilt_visible, live_visible),
 		      "and the rebuilt store sees the same version");
 		check(states_agree(live, rebuilt),
 		      "and agrees with the store that wrote it");
@@ -7458,9 +7745,20 @@ static void test_replay_refuses_a_spliced_key(void)
 			}
 			d1_store_journal_enable(other);
 			second = d1_fixture_admit(other, &object, 11, rights);
-			check(d1_admission_eq(second, admission),
-			      "the second store admits the same handle");
+			/*
+			 * The same number, and not the same handle: two
+			 * live stores of one name count alike and are two
+			 * stores.  The splice needs the number to match,
+			 * because that is what the record carries.
+			 */
+			check(d1_admission_raw(second) ==
+				      d1_admission_raw(admission),
+			      "the second store counts to the same number");
+			check(!d1_admission_eq(second, admission),
+			      "and it is not the same handle");
 			changed = env;
+			changed.admission = second;
+			changed.incarnation = d1_store_incarnation(other);
 			write_entry(&changed.body.write.entries[1], 1, 11, 2,
 				    theirs, sizeof(theirs), true,
 				    &(struct d1_guard){ .never_written =
@@ -8967,6 +9265,9 @@ int main(void)
 	test_an_owner_names_a_cohort();
 	test_the_chunk_table_is_capacity();
 	test_a_handle_names_its_own_store();
+	test_a_handle_keeps_its_domain_through_a_copy();
+	test_two_live_stores_of_one_name_are_two_stores();
+	test_a_decoded_handle_names_no_store();
 	test_a_handle_names_its_own_kind();
 	test_replay_rebuilds_the_same_handles();
 	test_geometry_is_asked_before_the_object_table();

@@ -21,7 +21,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 
 /* Uninterpreted 16-byte identity, never parsed by the model. */
 #define D1_UUID_BYTES 16
@@ -169,7 +168,7 @@ struct d1_uuid {
 };
 
 /*
- * A typed identifier, and the store that issued it.
+ * A handle: one canonical value, one domain, one issuing instance.
  *
  * Section 3 makes version, transaction, cohort, custody, episode, pin
  * and admission handles disjoint typed IDs, and one u64 is what the
@@ -181,51 +180,166 @@ struct d1_uuid {
  * parameter the number arrived in, so an admission passed where a
  * version belongs was resolved as a version.
  *
- * So the canonical value keeps its u64 and gains two things that never
- * reach the encoding.  The type is the C type: these are different
- * structs, and neither the compiler nor a lookup will take one for
- * another.  The provenance is the issuing store's UUID, which is this
- * model's own name for a store -- the same name a journal carries and a
- * rebuild checks, so a handle survives a reopen of the store that
- * issued it and is refused by any other.  It is an exact identity, not
- * a hash or a partition of the value: nothing is derived, nothing can
- * collide that the model does not already treat as one store, and
- * there is no counter to wrap or restart.
+ * Distinct C types alone did not close either hole.  The structs had
+ * the same layout and public fields, so a memcpy from an admission
+ * into a version, or a compound literal assembled from an admission's
+ * fields, made a version the compiler had refused to make; and the
+ * issuing store's UUID is a durable name for a store rather than a
+ * name for one live instance of it, so two stores opened at once under
+ * one UUID -- which this model does deliberately, a source and a
+ * pristine replay target -- aliased each other's handles.
  *
- * Zero is absent, as it always was, and an absent handle has no issuer.
+ * So the canonical value keeps its u64 and the C model keeps three
+ * separate things apart:
+ *
+ *   the canonical identity  the raw u64, the only part encoded;
+ *   the handle domain       which table the value names, as a runtime
+ *                           kind every resolver checks before it
+ *                           chooses a table;
+ *   the runtime issuer      which live store object issued or adopted
+ *                           the value, as a process-local instance
+ *                           token.
+ *
+ * Neither the kind nor the token reaches the encoding, and neither is
+ * durable: an in-memory handle does not survive a process restart, and
+ * nothing in a journal names either one.  The token is not a store
+ * identity -- the UUID still is -- it is API provenance, and it exists
+ * because two live objects of one UUID have separate locks, tables and
+ * counters and can evolve apart.
+ *
+ * The canonical value stays a public field, because it is the one part
+ * of a handle a caller legitimately reads and compares -- it is what a
+ * receipt carries and what two histories agree about.  The kind and the
+ * token are private, named with a leading underscore, and hidden in the
+ * sense that matters: they survive an ordinary copy of the whole value
+ * and they are checked before the handle selects anything, so a memcpy
+ * of an admission into a version carries the admission's kind and names
+ * nothing, and a literal assembled from an admission's exposed value
+ * carries no kind at all and names nothing either.
+ *
+ * Zero is absent, as it always was, and an absent handle has no domain
+ * and no issuer.
  */
+
+/*
+ * The handle domains the store issues.  The cohort is not among them:
+ * it names the caller's own cohort, the store never issues one and
+ * nothing resolves one against a table, so its C type is the whole of
+ * its domain.
+ */
+enum d1_handle_kind {
+	D1_HANDLE_NONE = 0,
+	D1_HANDLE_ADMISSION = 1,
+	D1_HANDLE_TXN = 2,
+	D1_HANDLE_VERSION = 3,
+	D1_HANDLE_CUSTODY = 4,
+};
+
 typedef struct d1_admission_id {
 	uint64_t raw;
-	/* The issuing store's UUID; zero when the handle is absent. */
-	struct d1_uuid store;
+	/*
+	 * Which table this value may name; see d1_handle_kind.  Zero for
+	 * a handle nothing typed: an absent one, a decoder's output, or
+	 * bytes copied out of another domain's handle, all of which name
+	 * nothing anywhere.
+	 */
+	uint32_t _kind;
+	/*
+	 * The live store object that issued or adopted this value, or
+	 * zero for one no live store has -- an absent handle, or a value
+	 * a decoder has just read out of a log and replay has not yet
+	 * bound to the store it is rebuilding.
+	 */
+	uint64_t _instance;
 } d1_admission_id;
 
 typedef struct d1_txn_id {
 	uint64_t raw;
-	/* The issuing store's UUID; zero when the handle is absent. */
-	struct d1_uuid store;
+	/*
+	 * Which table this value may name; see d1_handle_kind.  Zero for
+	 * a handle nothing typed: an absent one, a decoder's output, or
+	 * bytes copied out of another domain's handle, all of which name
+	 * nothing anywhere.
+	 */
+	uint32_t _kind;
+	/*
+	 * The live store object that issued or adopted this value, or
+	 * zero for one no live store has -- an absent handle, or a value
+	 * a decoder has just read out of a log and replay has not yet
+	 * bound to the store it is rebuilding.
+	 */
+	uint64_t _instance;
 } d1_txn_id;
 
 typedef struct d1_version_id {
 	uint64_t raw;
-	/* The issuing store's UUID; zero when the handle is absent. */
-	struct d1_uuid store;
+	/*
+	 * Which table this value may name; see d1_handle_kind.  Zero for
+	 * a handle nothing typed: an absent one, a decoder's output, or
+	 * bytes copied out of another domain's handle, all of which name
+	 * nothing anywhere.
+	 */
+	uint32_t _kind;
+	/*
+	 * The live store object that issued or adopted this value, or
+	 * zero for one no live store has -- an absent handle, or a value
+	 * a decoder has just read out of a log and replay has not yet
+	 * bound to the store it is rebuilding.
+	 */
+	uint64_t _instance;
 } d1_version_id;
 
 typedef struct d1_custody_id {
 	uint64_t raw;
-	/* The issuing store's UUID; zero when the handle is absent. */
-	struct d1_uuid store;
+	/*
+	 * Which table this value may name; see d1_handle_kind.  Zero for
+	 * a handle nothing typed: an absent one, a decoder's output, or
+	 * bytes copied out of another domain's handle, all of which name
+	 * nothing anywhere.
+	 */
+	uint32_t _kind;
+	/*
+	 * The live store object that issued or adopted this value, or
+	 * zero for one no live store has -- an absent handle, or a value
+	 * a decoder has just read out of a log and replay has not yet
+	 * bound to the store it is rebuilding.
+	 */
+	uint64_t _instance;
 } d1_custody_id;
 
 /*
  * The cohort is a typed handle too, and the one the store never issues:
- * it names the caller's own cohort, so it has no issuer and only its
- * type keeps it apart from the others.
+ * it names the caller's own cohort, so it has no domain to confuse and
+ * no issuer to check, and only its type keeps it apart from the others.
  */
 typedef struct d1_cohort_id {
 	uint64_t raw;
 } d1_cohort_id;
+
+/*
+ * The canonical value of a handle: the one part of it the wire and the
+ * journal carry, and the only part two stores that ran the same history
+ * agree about.
+ */
+static inline uint64_t d1_admission_raw(d1_admission_id id)
+{
+	return id.raw;
+}
+
+static inline uint64_t d1_txn_raw(d1_txn_id id)
+{
+	return id.raw;
+}
+
+static inline uint64_t d1_version_raw(d1_version_id id)
+{
+	return id.raw;
+}
+
+static inline uint64_t d1_custody_raw(d1_custody_id id)
+{
+	return id.raw;
+}
 
 /*
  * The absent handle of each kind.  Zero names nothing and is issued by
@@ -235,33 +349,41 @@ typedef struct d1_cohort_id {
  */
 static inline d1_admission_id d1_admission_none(void)
 {
-	d1_admission_id id = { 0, { { 0 } } };
+	d1_admission_id id = { 0, D1_HANDLE_NONE, 0 };
 
 	return id;
 }
 
 static inline d1_txn_id d1_txn_none(void)
 {
-	d1_txn_id id = { 0, { { 0 } } };
+	d1_txn_id id = { 0, D1_HANDLE_NONE, 0 };
 
 	return id;
 }
 
 static inline d1_version_id d1_version_none(void)
 {
-	d1_version_id id = { 0, { { 0 } } };
+	d1_version_id id = { 0, D1_HANDLE_NONE, 0 };
 
 	return id;
 }
 
 static inline d1_custody_id d1_custody_none(void)
 {
-	d1_custody_id id = { 0, { { 0 } } };
+	d1_custody_id id = { 0, D1_HANDLE_NONE, 0 };
 
 	return id;
 }
 
-/* Whether a handle names anything: zero is absent, everywhere. */
+/*
+ * Whether a handle names anything: zero is absent, everywhere.
+ *
+ * This asks about the canonical value alone, because that is the
+ * question the canonical form can answer -- a decoder reading a log
+ * produces a handle with no issuer, and it is still a request to name
+ * something.  Whether the thing it names is in this store is the
+ * resolver's question, not this one.
+ */
 static inline bool d1_admission_live(d1_admission_id id)
 {
 	return id.raw != 0;
@@ -288,32 +410,39 @@ static inline bool d1_cohort_live(d1_cohort_id id)
 }
 
 /*
- * Whether two handles are the same handle: the same value, issued by
- * the same store.  Two stores' first admissions are both one and are
- * not the same admission.
+ * Whether two handles are the same handle: the same value, of the same
+ * domain, from the same live store.  Two stores' first admissions are
+ * both one and are not the same admission, and neither are a store's
+ * and its replay target's.
+ *
+ * This is the identity of a live C handle, not of a logical one.  Two
+ * stores that ran the same history hold the same canonical values under
+ * different tokens, so an oracle asking whether two histories agree
+ * compares the raw values -- which is what the log carries and all it
+ * carries.
  */
 static inline bool d1_admission_eq(d1_admission_id a, d1_admission_id b)
 {
-	return a.raw == b.raw &&
-	       memcmp(a.store.bytes, b.store.bytes, D1_UUID_BYTES) == 0;
+	return a.raw == b.raw && a._kind == b._kind &&
+	       a._instance == b._instance;
 }
 
 static inline bool d1_txn_eq(d1_txn_id a, d1_txn_id b)
 {
-	return a.raw == b.raw &&
-	       memcmp(a.store.bytes, b.store.bytes, D1_UUID_BYTES) == 0;
+	return a.raw == b.raw && a._kind == b._kind &&
+	       a._instance == b._instance;
 }
 
 static inline bool d1_version_eq(d1_version_id a, d1_version_id b)
 {
-	return a.raw == b.raw &&
-	       memcmp(a.store.bytes, b.store.bytes, D1_UUID_BYTES) == 0;
+	return a.raw == b.raw && a._kind == b._kind &&
+	       a._instance == b._instance;
 }
 
 static inline bool d1_custody_eq(d1_custody_id a, d1_custody_id b)
 {
-	return a.raw == b.raw &&
-	       memcmp(a.store.bytes, b.store.bytes, D1_UUID_BYTES) == 0;
+	return a.raw == b.raw && a._kind == b._kind &&
+	       a._instance == b._instance;
 }
 
 /* The CAS guard of one chunk: (generation, writer), plus never-written. */

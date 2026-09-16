@@ -193,6 +193,12 @@ struct d1_store {
 	 * could block on the outside world happens under it.
 	 */
 	pthread_mutex_t lock;
+	/*
+	 * This live object's runtime token: what a handle it issued
+	 * carries, and what a resolver compares before it reads a table.
+	 * A reopen keeps it, because a reopen is the same object.
+	 */
+	uint64_t instance;
 	struct d1_uuid uuid;
 	uint32_t chunk_bytes;
 	uint64_t max_file_bytes;
@@ -344,15 +350,52 @@ uint64_t d1_store_incarnation(struct d1_store *s)
 	return incarnation;
 }
 
+/*
+ * The next live store object's token.
+ *
+ * This names one live C object for as long as it exists, and nothing
+ * else.  It is not a store identity -- the UUID is that, and it is what
+ * a journal carries and a rebuild checks.  This exists because two live
+ * objects may share a UUID: the model deliberately opens a source and a
+ * pristine replay target of the same name at once, and they have
+ * separate locks, tables and counters.  A handle from one of them must
+ * not select a row in the other.
+ *
+ * Zero is reserved for "no live store", so a decoded handle that replay
+ * has not adopted names nothing anywhere.  The counter only ever
+ * ascends, so no token is reused while a handle carrying it can still
+ * be presented, and open fails rather than wrap.  None of it is
+ * durable: a token means nothing after this process ends, and an
+ * in-memory handle does not survive that either.
+ */
+static pthread_mutex_t d1_instance_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t d1_next_instance = 1;
+
+static uint64_t d1_instance_take(void)
+{
+	uint64_t token = 0;
+
+	pthread_mutex_lock(&d1_instance_lock);
+	if (d1_next_instance != 0)
+		token = d1_next_instance++;
+	pthread_mutex_unlock(&d1_instance_lock);
+	return token;
+}
+
 struct d1_store *d1_store_open(const struct d1_uuid *store_uuid,
 			       uint32_t chunk_bytes, uint64_t max_file_bytes)
 {
 	struct d1_store *s;
+	uint64_t token;
 
 	if (chunk_bytes < D1_CHUNK_BYTES_MIN ||
 	    chunk_bytes > D1_CHUNK_BYTES_MAX)
 		return NULL;
 	if (max_file_bytes == 0)
+		return NULL;
+	/* No token, no store: a handle with no issuer names nothing. */
+	token = d1_instance_take();
+	if (!token)
 		return NULL;
 	s = calloc(1, sizeof(*s));
 	if (!s)
@@ -373,6 +416,7 @@ struct d1_store *d1_store_open(const struct d1_uuid *store_uuid,
 		free(s);
 		return NULL;
 	}
+	s->instance = token;
 	s->uuid = *store_uuid;
 	s->chunk_bytes = chunk_bytes;
 	s->max_file_bytes = max_file_bytes;
@@ -856,12 +900,19 @@ static uint32_t d1_object_slot(const struct d1_store *s,
 /*
  * Turn one of this store's counter values into a handle of this store.
  *
- * These four are the only places a raw number becomes a bound handle,
- * and they are static to this file: a caller outside has no way to make
- * one, so every handle a caller holds came from the store that issued
- * it.  Replay uses the same constructors to adopt a decoded log's
- * values for the store it is rebuilding, which is what makes a
+ * These four are the only places inside the store where a raw number
+ * becomes a bound handle: they stamp the domain, so a resolver knows
+ * which table the value may name, and this object's token, so it knows
+ * whose table.  Replay uses the same constructors to adopt a decoded
+ * log's values for the store it is rebuilding, which is what makes a
  * reconstructed handle the rebuilding store's own.
+ *
+ * They are not the only way a caller reaches them.  The four public
+ * d1_fixture_*_handle constructors pass a caller's raw number straight
+ * through, deliberately: on the wire a handle is a bare u64, so a
+ * client can always name any number for the store it is talking to, and
+ * the fixture models exactly that and nothing more.  What it cannot do
+ * is name another store's row or another domain's table.
  */
 static d1_admission_id d1_admission_of(const struct d1_store *s, uint64_t raw)
 {
@@ -869,7 +920,8 @@ static d1_admission_id d1_admission_of(const struct d1_store *s, uint64_t raw)
 
 	if (raw) {
 		id.raw = raw;
-		id.store = s->uuid;
+		id._kind = D1_HANDLE_ADMISSION;
+		id._instance = s->instance;
 	}
 	return id;
 }
@@ -880,7 +932,8 @@ static d1_txn_id d1_txn_of(const struct d1_store *s, uint64_t raw)
 
 	if (raw) {
 		id.raw = raw;
-		id.store = s->uuid;
+		id._kind = D1_HANDLE_TXN;
+		id._instance = s->instance;
 	}
 	return id;
 }
@@ -891,7 +944,8 @@ static d1_version_id d1_version_of(const struct d1_store *s, uint64_t raw)
 
 	if (raw) {
 		id.raw = raw;
-		id.store = s->uuid;
+		id._kind = D1_HANDLE_VERSION;
+		id._instance = s->instance;
 	}
 	return id;
 }
@@ -902,26 +956,42 @@ static d1_custody_id d1_custody_of(const struct d1_store *s, uint64_t raw)
 
 	if (raw) {
 		id.raw = raw;
-		id.store = s->uuid;
+		id._kind = D1_HANDLE_CUSTODY;
+		id._instance = s->instance;
 	}
 	return id;
 }
 
 /*
- * A handle names a row here only if this store issued it.
+ * Whether a handle is one this live store issued or adopted, of the
+ * domain the caller is presenting it as.
  *
- * The type settles which table is asked, and the issuer settles whose
- * table it is: a handle another store issued names nothing here, even
- * when both stores have counted to the same number, and a value nothing
- * issued names nothing either.
+ * The C type settles which parameter a value may be passed as, and the
+ * compiler enforces that much.  It does not survive a copy of the
+ * bytes, so the kind is asked again here; and a durable store name does
+ * not tell two live objects of that name apart, so the token is asked
+ * too.  A handle another live store issued names nothing here, even
+ * when both have counted to the same number and carry the same UUID,
+ * and a value nothing issued -- a decoder's output replay has not
+ * adopted, or a literal with no kind at all -- names nothing either.
+ */
+static bool d1_handle_ours(const struct d1_store *s, uint64_t raw,
+			   uint32_t kind, uint64_t instance, uint32_t want)
+{
+	return raw != 0 && kind == want && instance != 0 &&
+	       instance == s->instance;
+}
+
+/*
+ * A handle names a row here only if this store issued or adopted it.
  */
 static struct d1_admission *d1_admission_find(struct d1_store *s,
 					      d1_admission_id id)
 {
 	uint32_t i;
 
-	if (!d1_admission_live(id) ||
-	    memcmp(id.store.bytes, s->uuid.bytes, D1_UUID_BYTES) != 0)
+	if (!d1_handle_ours(s, id.raw, id._kind, id._instance,
+			    D1_HANDLE_ADMISSION))
 		return NULL;
 	for (i = 0; i < D1_MAX_ADMISSIONS; i++)
 		if (s->admissions[i].used && s->admissions[i].id == id.raw)
@@ -933,8 +1003,8 @@ static struct d1_custody *d1_custody_find(struct d1_store *s, d1_custody_id id)
 {
 	uint32_t i;
 
-	if (!d1_custody_live(id) ||
-	    memcmp(id.store.bytes, s->uuid.bytes, D1_UUID_BYTES) != 0)
+	if (!d1_handle_ours(s, id.raw, id._kind, id._instance,
+			    D1_HANDLE_CUSTODY))
 		return NULL;
 	for (i = 0; i < D1_MAX_CUSTODY; i++)
 		if (s->custody[i].used && s->custody[i].id == id.raw)
@@ -946,8 +1016,7 @@ static struct d1_txn *d1_txn_find(struct d1_store *s, d1_txn_id id)
 {
 	uint32_t i;
 
-	if (!d1_txn_live(id) ||
-	    memcmp(id.store.bytes, s->uuid.bytes, D1_UUID_BYTES) != 0)
+	if (!d1_handle_ours(s, id.raw, id._kind, id._instance, D1_HANDLE_TXN))
 		return NULL;
 	for (i = 0; i < D1_MAX_TXNS; i++)
 		if (s->txns[i].used && s->txns[i].id == id.raw)
@@ -959,8 +1028,8 @@ static struct d1_version *d1_version_find(struct d1_store *s, d1_version_id id)
 {
 	uint32_t i;
 
-	if (!d1_version_live(id) ||
-	    memcmp(id.store.bytes, s->uuid.bytes, D1_UUID_BYTES) != 0)
+	if (!d1_handle_ours(s, id.raw, id._kind, id._instance,
+			    D1_HANDLE_VERSION))
 		return NULL;
 	for (i = 0; i < D1_MAX_VERSIONS; i++)
 		if (s->versions[i].used && s->versions[i].id == id.raw)
