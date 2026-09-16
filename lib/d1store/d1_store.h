@@ -365,8 +365,23 @@ void d1_view_close(struct d1_store *s, struct d1_view *v);
  */
 uint32_t d1_store_journal_enable(struct d1_store *s);
 
-/* The journal bytes, for a test to truncate, corrupt or replay. */
-const uint8_t *d1_store_journal(const struct d1_store *s, size_t *len);
+/*
+ * A snapshot of the durable journal, for a test to truncate, corrupt or
+ * replay.  The bytes are copied under the store's lock and belong to
+ * the caller, who releases them with free(): they are a value and not a
+ * window, so an append that grows the store's own buffer does not move
+ * them, and they outlive the close and the destruction of the store
+ * they came from.
+ *
+ * D1_OK writes the snapshot and its length.  A live store with an empty
+ * journal is D1_OK, length zero and a null pointer, which free()
+ * accepts.  D1_INVALID is a closed or poisoned store, which answers
+ * nothing, as every other observer does.  D1_NOSPC is a snapshot that
+ * could not be allocated; nothing of the store moved, so asking again
+ * is ordinary.
+ */
+uint32_t d1_store_journal_snapshot(struct d1_store *s, uint8_t **out,
+				   size_t *len);
 
 /*
  * Rebuild a store from a log, read-only: no new records are written.
@@ -456,6 +471,14 @@ void d1_fixture_fail_next_flush(struct d1_store *s);
  * recovery.
  */
 void d1_fixture_fail_next_index(struct d1_store *s);
+
+/*
+ * Fixture fault control: refuse the next journal snapshot, as an
+ * allocation failure would.  It is not journalled, it does not survive
+ * a rebuild or a reopen, and it is refused on a closed or poisoned
+ * store and during recovery, like every other arm.
+ */
+void d1_fixture_fail_next_snapshot(struct d1_store *s);
 
 /* Whether an index fault has left a materialized pointer behind. */
 bool d1_store_overlay_active(struct d1_store *s);

@@ -17,6 +17,7 @@
 
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "d1_control.h"
@@ -26,12 +27,58 @@
 
 static unsigned int failures;
 
+/*
+ * The durable journal, as bytes this file owns.
+ *
+ * The store hands back a snapshot the caller must free.  Rather than
+ * unwind an allocation on every early return, the harness keeps the
+ * last four and frees the fifth-oldest as it goes: four, because the
+ * most any one test holds at once is two, and because a rotation that
+ * frees too early is caught immediately by AddressSanitizer rather than
+ * quietly read.  journal_release_all() empties it at the end of main.
+ */
+static uint8_t *held_journals[4];
+static unsigned int held_next;
+
+static const uint8_t *journal_of(struct d1_store *s, size_t *len)
+{
+	uint8_t *out = NULL;
+
+	*len = 0;
+	(void)d1_store_journal_snapshot(s, &out, len);
+	free(held_journals[held_next]);
+	held_journals[held_next] = out;
+	held_next = (held_next + 1u) % 4u;
+	return out;
+}
+
+static void journal_release_all(void)
+{
+	unsigned int i;
+
+	for (i = 0; i < 4u; i++) {
+		free(held_journals[i]);
+		held_journals[i] = NULL;
+	}
+}
+
 static void check(bool ok, const char *what)
 {
 	if (!ok) {
 		failures++;
 		fprintf(stderr, "FAIL: %s\n", what);
 	}
+}
+
+static uint32_t get_be32(const uint8_t *p)
+{
+	return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+	       ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+static uint32_t record_bytes(const uint8_t *r)
+{
+	return get_be32(r + 12);
 }
 
 #define CHUNK_BYTES 4096u
@@ -1534,7 +1581,7 @@ static void test_the_door_arm_belongs_to_its_store(void)
 			   &(struct d1_guard){ .never_written = true }, 0,
 			   NULL) != 0,
 	      "a history to rebuild");
-	log = d1_store_journal(a, &len);
+	log = journal_of(a, &len);
 
 	target = d1_store_open(&uuid_a, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (target) {
@@ -1645,7 +1692,7 @@ static void test_failed_replay_poisons_the_handle(void)
 			   NULL) != 0,
 	      "and a third, past a hole");
 
-	log = d1_store_journal(live, &len);
+	log = journal_of(live, &len);
 	bad = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (!bad) {
 		d1_store_free(live);
@@ -1698,7 +1745,7 @@ static void test_failed_replay_poisons_the_handle(void)
 	 * the gate and without it.  The line records the state, and the
 	 * matrix says the gate has no killing test.
 	 */
-	(void)d1_store_journal(bad, &badlen);
+	(void)journal_of(bad, &badlen);
 	check(badlen == 0, "and no journal bytes, gate or no gate");
 
 	check(d1_store_close(bad) == D1_OK, "but it still closes");
@@ -1762,7 +1809,7 @@ static void test_a_closed_store_answers_nothing(void)
 		      d1_store_incarnation(s) != 0 &&
 		      d1_store_overlay_active(s),
 	      "every observer has an answer while it is open");
-	log = d1_store_journal(s, &len);
+	log = journal_of(s, &len);
 	check(log && len, "and a journal");
 
 	check(d1_store_close(s) == D1_OK, "it closes");
@@ -1782,7 +1829,7 @@ static void test_a_closed_store_answers_nothing(void)
 	for (i = 0; i < D1_VERIFIER_BYTES; i++)
 		zero = zero && verifier[i] == 0;
 	check(zero, "a zero verifier");
-	(void)d1_store_journal(s, &after);
+	(void)journal_of(s, &after);
 	check(after == 0, "and no journal bytes");
 
 	/* And every entry point that would change it, or open a view. */
@@ -2216,6 +2263,251 @@ static d1_id_t drive_history(struct d1_store *s, d1_id_t admission)
 	return v3;
 }
 
+/*
+ * A journal snapshot is a value, not a window on the store.
+ *
+ * The observer this replaced returned the store's own buffer, and no
+ * lock could have made that safe: the pointer stayed interesting after
+ * the lock was dropped, and the next append may reallocate the buffer
+ * underneath it.  What the caller gets now is bytes of its own, so the
+ * store may grow, close and be destroyed without touching them.
+ */
+static void test_a_journal_snapshot_is_a_value(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *target;
+	static uint8_t data[64];
+	static uint8_t kept[1u << 18];
+	uint8_t *snap = NULL, *again = NULL;
+	size_t len = 0, grown = 0, after = 1;
+	unsigned int i;
+	d1_id_t admission;
+
+	memset(data, 0x21, sizeof(data));
+	fill_uuid(&store_uuid, 0x21);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+
+	/* A live store that has logged nothing has an empty snapshot. */
+	check(d1_store_journal_snapshot(s, &snap, &len) == D1_OK &&
+		      snap == NULL && len == 0,
+	      "a live store with no journal snapshots to nothing");
+	free(snap);
+
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	check(commit_chunk(s, admission, 0, 1, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "a history to snapshot");
+
+	check(d1_store_journal_snapshot(s, &snap, &len) == D1_OK && snap &&
+		      len && len <= sizeof(kept),
+	      "the snapshot is taken");
+	if (!snap || len > sizeof(kept)) {
+		free(snap);
+		d1_store_free(s);
+		return;
+	}
+	memcpy(kept, snap, len);
+
+	/*
+	 * Enough further writes to take the journal past its first buffer
+	 * and make it move.  The snapshot must not move with it.
+	 */
+	for (i = 1; i < 20u; i++)
+		(void)commit_chunk(s, admission, i, i + 1u, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   0, NULL);
+	check(d1_store_journal_snapshot(s, &again, &grown) == D1_OK &&
+		      grown > len,
+	      "the store's own journal grows past it");
+	check(memcmp(snap, kept, len) == 0,
+	      "and the snapshot taken before it is byte for byte what it was");
+	free(again);
+
+	/* A closed store answers no snapshot, and the old one is untouched. */
+	check(d1_store_close(s) == D1_OK, "the store closes");
+	check(d1_store_journal_snapshot(s, &again, &after) == D1_INVALID &&
+		      again == NULL && after == 0,
+	      "a closed store snapshots nothing");
+	check(memcmp(snap, kept, len) == 0,
+	      "and the close did not reach into the snapshot either");
+	check(d1_store_destroy(s) == D1_OK, "the store is destroyed");
+	check(memcmp(snap, kept, len) == 0,
+	      "and the snapshot outlives the store it came from");
+
+	/* And it is still a log: it rebuilds a store of its own. */
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		d1_id_t seen;
+
+		check(d1_store_replay(target, snap, len) == D1_OK,
+		      "the snapshot replays after its store is gone");
+		check(d1_store_visible(target, &object, 0, &seen),
+		      "into the state it was taken at");
+		d1_store_free(target);
+	}
+	free(snap);
+}
+
+/* A snapshot that finds no memory says so, and changes nothing. */
+static void test_a_journal_snapshot_can_find_no_memory(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	static uint8_t data[16];
+	uint8_t *snap = NULL;
+	size_t len = 1, again = 0;
+	d1_id_t admission;
+
+	memset(data, 0x22, sizeof(data));
+	fill_uuid(&store_uuid, 0x22);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	check(commit_chunk(s, admission, 0, 1, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "a history to fail to snapshot");
+
+	d1_fixture_fail_next_snapshot(s);
+	check(d1_store_journal_snapshot(s, &snap, &len) == D1_NOSPC &&
+		      snap == NULL && len == 0,
+	      "a snapshot with no memory for it is refused");
+	check(d1_store_journal_snapshot(s, &snap, &again) == D1_OK && snap &&
+		      again != 0,
+	      "and nothing of the store moved, so the next one is ordinary");
+	free(snap);
+	d1_store_free(s);
+}
+
+/*
+ * Snapshots taken beside a store that is being appended to and closed.
+ *
+ * This is the case the old observer could not survive, and the one
+ * ThreadSanitizer is pointed at: the reader runs for the whole of a
+ * run of writes and a close, and every snapshot it gets back must be a
+ * whole number of whole records -- never a buffer the store was in the
+ * middle of moving, and never a length from the other side of a flush.
+ */
+struct snapper {
+	struct d1_store *s;
+	unsigned int taken;
+	unsigned int refused;
+	unsigned int torn;
+	bool stop;
+	pthread_mutex_t m;
+};
+
+static bool snapshot_is_whole(const uint8_t *buf, size_t len)
+{
+	size_t off = 0;
+
+	while (off < len) {
+		uint32_t total;
+
+		if (len - off <
+		    D1_JOURNAL_HEADER_BYTES + D1_JOURNAL_TRAILER_BYTES)
+			return false;
+		total = record_bytes(buf + off);
+		if (total < D1_JOURNAL_HEADER_BYTES +
+				    D1_JOURNAL_TRAILER_BYTES ||
+		    total > len - off)
+			return false;
+		off += total;
+	}
+	return true;
+}
+
+static void *take_snapshots(void *arg)
+{
+	struct snapper *sn = arg;
+
+	for (;;) {
+		uint8_t *buf = NULL;
+		size_t len = 0;
+		bool stop;
+
+		if (d1_store_journal_snapshot(sn->s, &buf, &len) == D1_OK) {
+			if (!snapshot_is_whole(buf, len))
+				sn->torn++;
+			sn->taken++;
+		} else {
+			sn->refused++;
+		}
+		free(buf);
+		if (pthread_mutex_lock(&sn->m) != 0)
+			break;
+		stop = sn->stop;
+		if (pthread_mutex_unlock(&sn->m) != 0)
+			break;
+		if (stop)
+			break;
+	}
+	return NULL;
+}
+
+static void test_snapshots_run_beside_appends_and_a_close(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct snapper sn;
+	pthread_t reader;
+	static uint8_t data[64];
+	unsigned int i;
+	d1_id_t admission;
+
+	memset(data, 0x23, sizeof(data));
+	fill_uuid(&store_uuid, 0x23);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	memset(&sn, 0, sizeof(sn));
+	sn.s = s;
+	if (pthread_mutex_init(&sn.m, NULL) != 0) {
+		check(false, "the snapshot reader's mutex starts");
+		d1_store_free(s);
+		return;
+	}
+	if (pthread_create(&reader, NULL, take_snapshots, &sn) != 0) {
+		check(false, "the snapshot reader starts");
+		(void)pthread_mutex_destroy(&sn.m);
+		d1_store_free(s);
+		return;
+	}
+
+	/* Enough writes to grow the journal buffer more than once. */
+	for (i = 0; i < 40u; i++)
+		(void)commit_chunk(s, admission, i % D1_MAX_CHUNKS, i + 1u,
+				   data, sizeof(data),
+				   i < D1_MAX_CHUNKS ?
+					   &(struct d1_guard){ .never_written =
+								       true } :
+					   NULL,
+				   0, NULL);
+	check(d1_store_close(s) == D1_OK, "the store closes under the reader");
+
+	check(pthread_mutex_lock(&sn.m) == 0, "the reader is told to stop");
+	sn.stop = true;
+	check(pthread_mutex_unlock(&sn.m) == 0, "and released");
+	check(pthread_join(reader, NULL) == 0, "and joined");
+
+	check(sn.taken + sn.refused > 0, "the reader took snapshots");
+	check(sn.torn == 0, "and not one of them was a torn journal");
+	check(d1_store_destroy(s) == D1_OK, "then the store is destroyed");
+	check(pthread_mutex_destroy(&sn.m) == 0, "and the reader's mutex");
+}
+
 /* H: the log rebuilds the store that wrote it. */
 static void test_replay_reproduces_the_store(void)
 {
@@ -2236,7 +2528,7 @@ static void test_replay_reproduces_the_store(void)
 					     D1_RIGHT_SINGLE_WRITER);
 	check(drive_history(a, admission) != 0, "the history is written");
 
-	log = d1_store_journal(a, &len);
+	log = journal_of(a, &len);
 	check(len > 0, "the log has bytes");
 
 	b = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -2252,7 +2544,7 @@ static void test_replay_reproduces_the_store(void)
 	{
 		size_t blen = 1;
 
-		(void)d1_store_journal(b, &blen);
+		(void)journal_of(b, &blen);
 		check(blen == 0, "a replayed store has written no log");
 	}
 
@@ -2283,13 +2575,13 @@ static void test_crash_loses_only_the_torn_record(void)
 			   &(struct d1_guard){ .never_written = true }, 0,
 			   NULL) != 0,
 	      "the first chunk commits");
-	(void)d1_store_journal(a, &prefix);
+	(void)journal_of(a, &prefix);
 
 	check(commit_chunk(a, admission, 2, 2, data, sizeof(data),
 			   &(struct d1_guard){ .never_written = true }, 0,
 			   NULL) != 0,
 	      "the second chunk commits");
-	log = d1_store_journal(a, &len);
+	log = journal_of(a, &len);
 	check(len > prefix, "and the log grew");
 
 	/*
@@ -2400,7 +2692,7 @@ static void test_append_fault_is_unrecorded(void)
 	d1_store_journal_enable(s);
 	admission = d1_fixture_admit(s, &object, 11,
 				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
-	(void)d1_store_journal(s, &before);
+	(void)journal_of(s, &before);
 
 	d1_fixture_fail_next_append(s);
 	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
@@ -2413,7 +2705,7 @@ static void test_append_fault_is_unrecorded(void)
 	check(res.entries[0].status == D1_IO,
 	      "the entry reports the failure to record");
 	check(res.entries[0].disposition == D1_UNRECORDED, "and is UNRECORDED");
-	(void)d1_store_journal(s, &after);
+	(void)journal_of(s, &after);
 	check(after == before, "the log did not grow");
 	check(!d1_store_guard(s, &object, 0, &guard),
 	      "the object was never even created");
@@ -2431,14 +2723,14 @@ static void test_append_fault_is_unrecorded(void)
 	first_txn = res.entries[0].txn;
 	check(first_txn == 1,
 	      "and consumes the first transaction ID, not the second");
-	(void)d1_store_journal(s, &after);
+	(void)journal_of(s, &after);
 	check(after > before, "and the log grew this time");
 	check(d1_store_guard(s, &object, 0, &guard) && !guard.never_written,
 	      "and the chunk now has a guard");
 
 	/* A flush that does not happen is the same kind of nothing. */
 	d1_fixture_fail_next_flush(s);
-	(void)d1_store_journal(s, &before);
+	(void)journal_of(s, &before);
 	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
 	env.body.write.count = 1;
 	env.body.write.stability = D1_FILE_SYNC;
@@ -2447,7 +2739,7 @@ static void test_append_fault_is_unrecorded(void)
 	d1_store_apply(s, &env, &res);
 	check(res.entries[0].disposition == D1_UNRECORDED,
 	      "an unflushed event is UNRECORDED too");
-	(void)d1_store_journal(s, &after);
+	(void)journal_of(s, &after);
 	check(after == before, "and claims no new durable bytes");
 	check(d1_store_guard(s, &object, 1, &guard) && guard.never_written,
 	      "and left the chunk alone");
@@ -2788,7 +3080,7 @@ static void test_reopen_fences_and_repeats(void)
 	txn = res.entries[0].txn;
 	check(txn != 0, "there is pending work to recover");
 	d1_store_verifier(a, verifier_before);
-	log = d1_store_journal(a, &len);
+	log = journal_of(a, &len);
 
 	b = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (!b) {
@@ -2828,7 +3120,7 @@ static void test_reopen_fences_and_repeats(void)
 	      "and a handle from this incarnation can");
 
 	/* Reopening again is ordinary. */
-	log = d1_store_journal(b, &len);
+	log = journal_of(b, &len);
 	c = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (c) {
 		check(d1_store_reopen(c, log, len) == D1_OK,
@@ -2917,7 +3209,7 @@ static void test_index_fault_serves_the_overlay(void)
 		const uint8_t *log;
 		size_t len;
 
-		log = d1_store_journal(s, &len);
+		log = journal_of(s, &len);
 		rebuilt =
 			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 		if (rebuilt) {
@@ -2982,7 +3274,7 @@ static void test_undone_event_never_becomes_durable(void)
 		switch (kind) {
 		case 0:
 			/* An ordinary ENTRY event. */
-			(void)d1_store_journal(live, &before);
+			(void)journal_of(live, &before);
 			d1_fixture_fail_next_flush(live);
 			env_init(&env, live, admission, D1_OP_WRITE_BATCH);
 			env.body.write.count = 1;
@@ -2995,7 +3287,7 @@ static void test_undone_event_never_becomes_durable(void)
 			d1_store_apply(live, &env, &res);
 			check(res.entries[0].disposition == D1_UNRECORDED,
 			      "the entry event is UNRECORDED");
-			(void)d1_store_journal(live, &len);
+			(void)journal_of(live, &len);
 			check(len == before, "and claims no durable bytes");
 			check(!d1_store_visible(live, &object, 0, &seen),
 			      "and published nothing");
@@ -3040,12 +3332,12 @@ static void test_undone_event_never_becomes_durable(void)
 			env.body.control.read_epoch_present = true;
 			env.body.control.read_epoch = 0;
 
-			(void)d1_store_journal(live, &before);
+			(void)journal_of(live, &before);
 			d1_fixture_fail_next_flush(live);
 			d1_store_apply(live, &env, &res);
 			check(res.entries[0].disposition == D1_UNRECORDED,
 			      "the control event is UNRECORDED");
-			(void)d1_store_journal(live, &len);
+			(void)journal_of(live, &len);
 			check(len == before, "and claims no durable bytes");
 
 			/*
@@ -3069,22 +3361,22 @@ static void test_undone_event_never_becomes_durable(void)
 		}
 		default:
 			/* A fixture control event. */
-			(void)d1_store_journal(live, &before);
+			(void)journal_of(live, &before);
 			d1_fixture_fail_next_flush(live);
 			control = d1_fixture_admit(live, &object, 12,
 						   D1_RIGHT_READ);
 			check(control == 0,
 			      "the fixture control event is refused");
-			(void)d1_store_journal(live, &len);
+			(void)journal_of(live, &len);
 			check(len == before, "and claims no durable bytes");
 			break;
 		}
 
 		/* Something unrelated now succeeds and flushes. */
-		(void)d1_store_journal(live, &before);
+		(void)journal_of(live, &before);
 		extra = d1_fixture_admit(live, &object, 13, D1_RIGHT_READ);
 		check(extra != 0, "an unrelated control event succeeds");
-		log = d1_store_journal(live, &len);
+		log = journal_of(live, &len);
 		check(len > before, "and does claim bytes");
 
 		rebuilt =
@@ -3157,7 +3449,7 @@ static void test_retry_after_flush_fault_agrees_with_replay(void)
 	check(res.entries[0].status == D1_OK && res.entries[0].activated,
 	      "the exact retry executes");
 
-	log = d1_store_journal(live, &len);
+	log = journal_of(live, &len);
 	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (!rebuilt) {
 		d1_store_free(live);
@@ -3236,7 +3528,7 @@ static void test_repair_only_rollback_replays(void)
 	check(d1_store_visible(live, &object, 0, &seen) && seen == v1,
 	      "and the predecessor is visible");
 
-	log = d1_store_journal(live, &len);
+	log = journal_of(live, &len);
 	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (!rebuilt) {
 		d1_store_free(live);
@@ -3283,7 +3575,7 @@ static void test_repair_only_rollback_replays(void)
 					   NULL) == D1_OWNER_CONFLICT,
 			      "and its refusal is a conflict");
 
-			log = d1_store_journal(second, &len);
+			log = journal_of(second, &len);
 			second_rebuilt = d1_store_open(&other_uuid, CHUNK_BYTES,
 						       MAX_FILE_BYTES);
 			if (second_rebuilt) {
@@ -3345,7 +3637,7 @@ static void test_reopen_fences_owner_reads(void)
 	d1_view_close(live, view);
 	view = NULL;
 
-	log = d1_store_journal(live, &len);
+	log = journal_of(live, &len);
 	reopened = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (!reopened) {
 		d1_store_free(live);
@@ -3434,7 +3726,7 @@ static void test_recovery_target_must_be_current(void)
 	txn = res.entries[0].txn;
 	check(txn != 0 && old_b != 0, "there is work and a second old handle");
 
-	log = d1_store_journal(live, &len);
+	log = journal_of(live, &len);
 	reopened = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (!reopened) {
 		d1_store_free(live);
@@ -3795,7 +4087,7 @@ static void test_bound_authority_refusal_is_recorded(void)
 	      "a new key under a WRITE handle works");
 
 	/* The recorded refusal survives a rebuild. */
-	log = d1_store_journal(live, &len);
+	log = journal_of(live, &len);
 	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (rebuilt) {
 		check(d1_store_replay(rebuilt, log, len) == D1_OK,
@@ -3890,7 +4182,7 @@ static void test_control_envelopes_replay(void)
 		      res.entries[0].status == D1_STALE_AUTH,
 	      "a live admission's work is refused");
 
-	log = d1_store_journal(live, &len);
+	log = journal_of(live, &len);
 	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (!rebuilt) {
 		d1_store_free(live);
@@ -4029,7 +4321,7 @@ static void test_control_members_are_all_or_nothing(void)
 	check(finalize_txn(live, fresh, 0, 11, 1, first) == D1_OK,
 	      "and the work is the new handle's");
 
-	log = d1_store_journal(live, &len);
+	log = journal_of(live, &len);
 	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (rebuilt) {
 		check(d1_store_replay(rebuilt, log, len) == D1_OK,
@@ -4067,7 +4359,7 @@ static void test_replay_requires_a_pristine_target(void)
 	if (!source)
 		return;
 	check(d1_store_journal_enable(source) == D1_OK, "journalling starts");
-	start_only = d1_store_journal(source, &start_len);
+	start_only = journal_of(source, &start_len);
 	check(start_len > 0, "the START record is durable");
 	{
 		static uint8_t saved[4096];
@@ -4081,7 +4373,7 @@ static void test_replay_requires_a_pristine_target(void)
 				   &(struct d1_guard){ .never_written = true },
 				   0, NULL) != 0,
 		      "and the source goes on to commit");
-		full = d1_store_journal(source, &full_len);
+		full = journal_of(source, &full_len);
 
 		/* A target that has already done work of its own. */
 		populated =
@@ -4176,7 +4468,7 @@ static void test_journal_enable_requires_a_pristine_store(void)
 		commit_chunk(live, admission, 0, 1, data, sizeof(data),
 			     &(struct d1_guard){ .never_written = true }, 0,
 			     NULL);
-		log = d1_store_journal(live, &len);
+		log = journal_of(live, &len);
 
 		poisoned =
 			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -4463,7 +4755,7 @@ static void test_record_tags_are_validated(void)
 			   &(struct d1_guard){ .never_written = true }, 0,
 			   NULL) != 0,
 	      "a history with a CONTROL and several ENTRYs");
-	log = d1_store_journal(live, &len);
+	log = journal_of(live, &len);
 	check(len <= sizeof(copy), "the log fits the fixture buffer");
 	if (len > sizeof(copy)) {
 		d1_store_free(live);
@@ -4621,7 +4913,7 @@ static void test_operation_key_binds_the_whole_envelope(void)
 			      "so every chunk is visible");
 
 		/* And the history it wrote rebuilds. */
-		log = d1_store_journal(live, &len);
+		log = journal_of(live, &len);
 		rebuilt =
 			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 		if (rebuilt) {
@@ -4715,7 +5007,7 @@ static void test_recovery_clears_fault_arms(void)
 				   &(struct d1_guard){ .never_written = true },
 				   0, NULL) != 0,
 		      "a history to rebuild");
-		log = d1_store_journal(live, &len);
+		log = journal_of(live, &len);
 
 		target =
 			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -4745,14 +5037,14 @@ static void test_recovery_clears_fault_arms(void)
 				target, &object, 11,
 				D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
 			check(fresh != 0, "a fresh handle is admitted");
-			(void)d1_store_journal(target, &before);
+			(void)journal_of(target, &before);
 			check(commit_chunk(target, fresh, 2, 9, data,
 					   sizeof(data),
 					   &(struct d1_guard){ .never_written =
 								       true },
 					   0, NULL) != 0,
 			      "and its first commit succeeds");
-			(void)d1_store_journal(target, &after);
+			(void)journal_of(target, &after);
 			check(after > before,
 			      "with its events actually claimed");
 			check(!d1_store_overlay_active(target),
@@ -4860,7 +5152,7 @@ static void test_custody_and_release_replay(void)
 			      live_visible == v2,
 		      "and the current data stays where it is");
 
-		log = d1_store_journal(live, &len);
+		log = journal_of(live, &len);
 		rebuilt =
 			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 		if (!rebuilt) {
@@ -4901,7 +5193,7 @@ static void test_replay_refuses_a_foreign_log(void)
 				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
 	commit_chunk(a, admission, 0, 1, data, sizeof(data),
 		     &(struct d1_guard){ .never_written = true }, 0, NULL);
-	log = d1_store_journal(a, &len);
+	log = journal_of(a, &len);
 
 	b = d1_store_open(&theirs, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (b) {
@@ -5443,7 +5735,7 @@ static void test_concurrent_callers_cannot_splice_a_key(void)
 	check(!d1_store_visible(s, &object, 1, &seen),
 	      "and a private write published nothing either way");
 
-	log = d1_store_journal(s, &len);
+	log = journal_of(s, &len);
 	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (rebuilt) {
 		check(d1_store_replay(rebuilt, log, len) == D1_OK,
@@ -5469,17 +5761,7 @@ static void put_be64(uint8_t *p, uint64_t v)
 	put_be32(p + 4, (uint32_t)v);
 }
 
-static uint32_t get_be32(const uint8_t *p)
-{
-	return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
-	       ((uint32_t)p[2] << 8) | (uint32_t)p[3];
-}
-
 /* The framed length of the record at @r. */
-static uint32_t record_bytes(const uint8_t *r)
-{
-	return get_be32(r + 12);
-}
 
 /* Where each record of a durable log begins. */
 static unsigned int index_log(const uint8_t *log, size_t len, size_t *at,
@@ -5570,7 +5852,7 @@ static void test_replay_refuses_a_spliced_key(void)
 			      res.entries[1].status ==
 				      (pass == 1 ? D1_GUARDED : D1_OK),
 		      "a two-member batch under one key");
-		log = d1_store_journal(live, &len);
+		log = journal_of(live, &len);
 		records = index_log(log, len, at, 16);
 		check(records == 4, "logs a START, a control and two entries");
 
@@ -5598,7 +5880,7 @@ static void test_replay_refuses_a_spliced_key(void)
 			check(d1_store_apply(other, &changed, &res) == D1_OK &&
 				      res.entries[1].status == D1_OK,
 			      "and records the changed body under that key");
-			log_b = d1_store_journal(other, &len_b);
+			log_b = journal_of(other, &len_b);
 			records_b = index_log(log_b, len_b, at_b, 16);
 		} else {
 			other = NULL;
@@ -5885,7 +6167,7 @@ static void test_records_must_name_what_they_carry(void)
 		check(d1_store_apply(live, &env, &res) == D1_OK &&
 			      res.entries[0].status == D1_OK,
 		      "a one-member batch to build on");
-		log = d1_store_journal(live, &len);
+		log = journal_of(live, &len);
 		records = index_log(log, len, at, 8);
 		check(records == 3 && len <= sizeof(copy),
 		      "logged as a START, a control and one entry");
@@ -6080,7 +6362,7 @@ static void test_replay_requires_the_record_to_have_happened(void)
 			      "and one control record, recorded as a refusal");
 		}
 
-		log = d1_store_journal(live, &len);
+		log = journal_of(live, &len);
 		records = index_log(log, len, at, 16);
 		lsn = (uint64_t)records + 1u;
 		check(len + 4096u <= sizeof(copy), "the log fits a copy");
@@ -6243,7 +6525,7 @@ static void test_replay_refuses_a_record_that_found_no_room(void)
 		      d1_envelope_digest(&env, scratch, sizeof(scratch),
 					 digest),
 	      "the record it would have written encodes");
-	log = d1_store_journal(live, &len);
+	log = journal_of(live, &len);
 	records = index_log(log, len, at, D1_MAX_RECEIPTS + 8u);
 	lsn = (uint64_t)records + 1u;
 	check(len + 4096u <= sizeof(copy), "and the full log fits a copy");
@@ -6345,7 +6627,7 @@ static void test_a_batch_stops_at_its_first_unrecorded_member(void)
 	      "and member 1 is unrecorded with it");
 	check(!late.fired, "the batch never reached the gap before member 1");
 
-	log = d1_store_journal(live, &len);
+	log = journal_of(live, &len);
 	records = index_log(log, len, at, 8);
 	check(records == 1, "so nothing but the START is in the log");
 
@@ -6366,7 +6648,7 @@ static void test_a_batch_stops_at_its_first_unrecorded_member(void)
 		      res.entries[1].status == D1_OK,
 	      "and the exact retry completes both members");
 
-	log = d1_store_journal(live, &len);
+	log = journal_of(live, &len);
 	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (target) {
 		check(d1_store_replay(target, log, len) == D1_OK,
@@ -6507,7 +6789,7 @@ static void test_fixture_control_records_are_canonical(void)
 			d1_fixture_revoke(live, admission);
 		}
 
-		log = d1_store_journal(live, &len);
+		log = journal_of(live, &len);
 		records = index_log(log, len, at, 16);
 		which = find_control(log, at, records, kinds[pass]);
 		check(which >= 0, "the record it wrote is in the log");
@@ -6628,7 +6910,7 @@ static void test_fixture_records_carry_an_outcome_that_was_logged(void)
 		      "a history to append to");
 
 		/* The live writer really does append nothing for these. */
-		(void)d1_store_journal(live, &len);
+		(void)journal_of(live, &len);
 		memset(&request, 0, sizeof(request));
 		if (pass == 0) {
 			request.kind = D1_CTL_ADMIT;
@@ -6649,7 +6931,7 @@ static void test_fixture_records_carry_an_outcome_that_was_logged(void)
 			check(d1_fixture_custody(live, request.version) == 0,
 			      "custody over no version is never issued");
 		}
-		log = d1_store_journal(live, &after);
+		log = journal_of(live, &after);
 		check(after == len, "and the refusal was not journalled");
 
 		memset(&result, 0, sizeof(result));
@@ -6689,7 +6971,7 @@ static void test_fixture_records_carry_an_outcome_that_was_logged(void)
 
 			check(d1_store_reopen(target, copy, used) == D1_INVALID,
 			      "and a reopen over it fails");
-			(void)d1_store_journal(target, &adopted);
+			(void)journal_of(target, &adopted);
 			check(adopted == 0,
 			      "with no journal of its own to carry the LSN");
 			d1_store_free(target);
@@ -6836,7 +7118,7 @@ static void test_lifecycle_options_are_canonical(void)
 	 * encoding, and its logged result is the one the reducer computes
 	 * for the body those bytes decode to.
 	 */
-	log = d1_store_journal(live, &len);
+	log = journal_of(live, &len);
 	records = index_log(log, len, at, 16);
 	check(records >= 3 && len + 4096u <= sizeof(copy),
 	      "the log holds the write, and fits a copy");
@@ -6911,7 +7193,7 @@ static void test_start_can_fail_to_become_durable(void)
 		else
 			check(d1_store_journal_enable(s) == D1_IO,
 			      "a START that cannot be appended fails");
-		(void)d1_store_journal(s, &len);
+		(void)journal_of(s, &len);
 		check(len == 0, "with nothing claimed durable");
 		check(!d1_store_visible(s, &object, 0, &seen),
 		      "and the store untouched");
@@ -6926,7 +7208,7 @@ static void test_start_can_fail_to_become_durable(void)
 				   &(struct d1_guard){ .never_written = true },
 				   0, NULL) != 0,
 		      "which then records ordinary work");
-		log = d1_store_journal(s, &len);
+		log = journal_of(s, &len);
 		rebuilt =
 			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 		if (rebuilt) {
@@ -6961,6 +7243,9 @@ int main(void)
 	test_close_does_not_destroy_under_an_arriving_call();
 	test_a_closed_store_answers_nothing();
 	test_the_door_arm_belongs_to_its_store();
+	test_a_journal_snapshot_is_a_value();
+	test_a_journal_snapshot_can_find_no_memory();
+	test_snapshots_run_beside_appends_and_a_close();
 	test_failed_replay_poisons_the_handle();
 	test_custody_needs_a_real_version();
 	test_release_order_does_not_matter();
@@ -7013,6 +7298,8 @@ int main(void)
 	test_recovery_admit_is_atomic();
 	test_lease_reap();
 	test_unsupported();
+
+	journal_release_all();
 
 	if (failures) {
 		fprintf(stderr, "%u check(s) failed\n", failures);

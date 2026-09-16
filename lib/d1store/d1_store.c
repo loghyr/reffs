@@ -234,6 +234,8 @@ struct d1_store {
 	 */
 	bool overlay_active;
 	bool fail_next_index;
+	/* One-shot: the next journal snapshot finds no memory. */
+	bool fail_next_snapshot;
 	/*
 	 * The fixture's window on a gap a batch leaves between two of its
 	 * members -- and, at ordinal zero, on the gap between deciding
@@ -745,14 +747,57 @@ void d1_fixture_fail_next_flush(struct d1_store *s)
  * The durable length is what a reader gets, not the append length.  A
  * test simulating a crash hands replay a smaller one.
  */
-const uint8_t *d1_store_journal(const struct d1_store *s, size_t *len)
+/*
+ * Hand back the durable journal, as bytes the caller owns.
+ *
+ * The old form of this returned the store's own buffer and a length,
+ * and it was the one public observer that never took the lock.  No
+ * amount of locking could have saved it: the pointer it handed out
+ * stayed interesting after the lock was dropped, and the next append
+ * may reallocate the buffer underneath it.  A reader beside an
+ * appending call could hold a pointer realloc was about to move, a
+ * length from the other side of a flush, or read the fence while a
+ * close was writing it.
+ *
+ * So the bytes are copied under the lock and the copy belongs to the
+ * caller, who releases it with free().  What comes back is a value, not
+ * a window: it does not change when the store does, and it outlives the
+ * close and the destruction of the store it came from.  A live store
+ * with an empty journal is D1_OK with a length of zero and no
+ * allocation, and free(NULL) is a no-op, so a caller's release path
+ * does not have to know which it got.
+ */
+uint32_t d1_store_journal_snapshot(struct d1_store *s, uint8_t **out,
+				   size_t *len)
 {
+	uint8_t *copy = NULL;
+	size_t n;
+
+	*out = NULL;
+	*len = 0;
+	pthread_mutex_lock(&s->lock);
 	if (!d1_store_serving(s)) {
-		*len = 0;
-		return NULL;
+		pthread_mutex_unlock(&s->lock);
+		return D1_INVALID;
 	}
-	*len = s->journal.durable;
-	return s->journal.buf;
+	n = s->journal.durable;
+	if (n) {
+		bool starved = s->fail_next_snapshot;
+
+		s->fail_next_snapshot = false;
+		if (!starved)
+			copy = malloc(n);
+		if (!copy) {
+			/* Nothing of the store moved, so ask again. */
+			pthread_mutex_unlock(&s->lock);
+			return D1_NOSPC;
+		}
+		memcpy(copy, s->journal.buf, n);
+	}
+	pthread_mutex_unlock(&s->lock);
+	*out = copy;
+	*len = n;
+	return D1_OK;
 }
 
 static struct d1_object *d1_object_find(struct d1_store *s,
@@ -2880,6 +2925,23 @@ static bool d1_release_locked(struct d1_store *s, d1_id_t version)
 	return true;
 }
 
+/*
+ * Fixture fault control: the next journal snapshot finds no memory.
+ * The snapshot is the one observer that has to allocate, so this is the
+ * only way to reach its failure answer on purpose.
+ */
+void d1_fixture_fail_next_snapshot(struct d1_store *s)
+{
+	pthread_mutex_lock(&s->lock);
+	if (!d1_store_serving(s)) {
+		pthread_mutex_unlock(&s->lock);
+		return;
+	}
+	if (!s->replaying)
+		s->fail_next_snapshot = true;
+	pthread_mutex_unlock(&s->lock);
+}
+
 void d1_fixture_fail_next_index(struct d1_store *s)
 {
 	pthread_mutex_lock(&s->lock);
@@ -3552,6 +3614,7 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
 	 * post-recovery behaviour.
 	 */
 	s->fail_next_index = false;
+	s->fail_next_snapshot = false;
 	s->overlay_active = false;
 	s->journal.fail_append_in = 0;
 	s->journal.fail_next_flush = false;
