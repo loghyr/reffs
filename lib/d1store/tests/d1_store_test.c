@@ -3379,12 +3379,215 @@ static void test_geometry_is_asked_before_the_object_table(void)
 	target = d1_store_open(&store_uuid, CHUNK_BYTES,
 			       (uint64_t)D1_MAX_CHUNKS * CHUNK_BYTES);
 	if (target && log) {
+		bool same = true;
+
 		len = after;
 		check(d1_store_replay(target, log, len) == D1_OK,
 		      "and the log replays");
-		check(states_agree(s, target), "into the same store");
+		/*
+		 * Over the objects this test actually wrote.  Asking about
+		 * the file-scope object, which it never touches, would be
+		 * answered the same way by an empty store.
+		 */
+		for (i = 0; i < D1_MAX_OBJECTS + 1u; i++)
+			same = same && object_states_agree(s, target, &keys[i]);
+		check(same, "into the same store");
 		d1_store_free(target);
 	}
+	d1_store_free(s);
+}
+
+/*
+ * What a request is wrong about does not depend on how full the store
+ * is.
+ *
+ * Five of a write's answers depend on the request and the grant it came
+ * with and on nothing else: a multi-writer grant may not ask for
+ * activation, it may not omit the guard predicate, the writer must be
+ * the granted one, the checksum must verify, and an owner already bound
+ * elsewhere is a conflict.  All five used to be asked after the object
+ * and chunk tables had been consulted, so with room they were semantic
+ * refusals with receipts and with the tables full the identical request
+ * became NOSPC and retryable -- the same request, two different kinds
+ * of wrong, decided by capacity.
+ *
+ * Both tables are full here: every object slot is taken, and the index
+ * asked for is past the chunk table on a geometry that reaches well
+ * beyond it.
+ */
+static void test_a_requests_shape_does_not_depend_on_room(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_objkey keys[D1_MAX_OBJECTS + 1u];
+	struct d1_envelope env;
+	struct d1_result res, again;
+	static uint8_t data[16];
+	unsigned int i;
+	d1_admission_id admissions[D1_MAX_OBJECTS + 1u];
+	d1_admission_id multi;
+
+	memset(data, 0x35, sizeof(data));
+	fill_uuid(&store_uuid, 0x35);
+	/* A geometry far larger than the fixed chunk table. */
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	check((uint64_t)D1_MAX_CHUNKS * CHUNK_BYTES < MAX_FILE_BYTES,
+	      "the geometry reaches past the chunk table");
+	for (i = 0; i < D1_MAX_OBJECTS + 1u; i++) {
+		keys[i].export_uuid = object.export_uuid;
+		fill_uuid(&keys[i].object_uuid, (uint8_t)(0x50 + i));
+		admissions[i] = d1_fixture_admit(
+			s, &keys[i], 11,
+			D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	}
+	multi = d1_fixture_admit(s, &keys[D1_MAX_OBJECTS], 12, D1_RIGHT_WRITE);
+
+	/* Every object slot taken. */
+	for (i = 0; i < D1_MAX_OBJECTS; i++) {
+		env_init(&env, s, admissions[i], D1_OP_WRITE_BATCH);
+		env.object = keys[i];
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], 0, 11, i + 1u, data,
+			    sizeof(data), true,
+			    &(struct d1_guard){ .never_written = true });
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "every object slot is taken");
+	}
+
+	/* A multi-writer grant asking to activate, past the table. */
+	env_init(&env, s, multi, D1_OP_WRITE_BATCH);
+	env.object = keys[D1_MAX_OBJECTS];
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], D1_MAX_CHUNKS, 12, 41, data,
+		    sizeof(data), true,
+		    &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_INVALID &&
+		      res.entries[0].disposition == D1_COMPLETED,
+	      "a multi-writer request to activate is malformed, table or not");
+	check(!res.entries[0].txn_present && !res.entries[0].version_present,
+	      "and spends no ID");
+	check(d1_store_apply(s, &env, &again) == D1_OK &&
+		      again.entries[0].status == D1_INVALID &&
+		      again.entries[0].disposition == D1_COMPLETED,
+	      "and its exact retry answers from the record it left");
+
+	/* A writer that is not the granted one, past the table. */
+	env_init(&env, s, admissions[D1_MAX_OBJECTS], D1_OP_WRITE_BATCH);
+	env.object = keys[D1_MAX_OBJECTS];
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], D1_MAX_CHUNKS, 99, 42, data,
+		    sizeof(data), true,
+		    &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH &&
+		      res.entries[0].disposition == D1_COMPLETED,
+	      "a writer that is not the granted one is refused, table or not");
+	check(d1_store_apply(s, &env, &again) == D1_OK &&
+		      again.entries[0].status == D1_STALE_AUTH &&
+		      again.entries[0].disposition == D1_COMPLETED,
+	      "and it too answers from its record on retry");
+
+	/* A checksum that does not verify, past the table. */
+	env_init(&env, s, admissions[D1_MAX_OBJECTS], D1_OP_WRITE_BATCH);
+	env.object = keys[D1_MAX_OBJECTS];
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], D1_MAX_CHUNKS, 11, 43, data,
+		    sizeof(data), true,
+		    &(struct d1_guard){ .never_written = true });
+	env.body.write.entries[0].checksum.digest[0] ^= 0xffu;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_CHECKSUM &&
+		      res.entries[0].disposition == D1_COMPLETED,
+	      "a checksum that does not verify is refused, table or not");
+
+	/* And a well-formed one past the table is still out of room. */
+	env_init(&env, s, admissions[D1_MAX_OBJECTS], D1_OP_WRITE_BATCH);
+	env.object = keys[D1_MAX_OBJECTS];
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], D1_MAX_CHUNKS, 11, 44, data,
+		    sizeof(data), true,
+		    &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_NOSPC &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "while a well-formed request past the table is out of room");
+
+	d1_store_free(s);
+}
+
+/*
+ * A chunk holds a chunk.
+ *
+ * The declared chunk size bounds one entry's payload, and the check
+ * that says so had no test: deleting it let an image of twice the chunk
+ * size through, EOF moved to the end of it, and a read of the tail
+ * answered zeros rather than the bytes the caller supplied.  A payload
+ * one byte over is otherwise canonical and well inside the file, so
+ * nothing else refuses it.
+ */
+static void test_a_payload_fits_its_chunk(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res, again;
+	static uint8_t data[CHUNK_BYTES + 1u];
+	d1_admission_id admission;
+	d1_version_id seen;
+
+	memset(data, 0x36, sizeof(data));
+	fill_uuid(&store_uuid, 0x36);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	check((uint64_t)sizeof(data) < MAX_FILE_BYTES,
+	      "one byte over a chunk is well inside the file");
+
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK,
+	      "a payload one byte over the chunk applies");
+	check(res.entries[0].status == D1_INVALID &&
+		      res.entries[0].disposition == D1_COMPLETED,
+	      "and is malformed");
+	check(!res.entries[0].txn_present && !res.entries[0].version_present,
+	      "spending no transaction and no version");
+	check(!d1_store_visible(s, &object, 0, &seen), "and changing nothing");
+	check(d1_store_eof(s, &object) == 0, "not even the EOF");
+	check(d1_store_apply(s, &env, &again) == D1_OK &&
+		      again.entries[0].status == D1_INVALID &&
+		      again.entries[0].disposition == D1_COMPLETED,
+	      "and its exact retry answers from the record it left");
+
+	/* A payload of exactly one chunk is the one that fits. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 0, 11, 2, data, CHUNK_BYTES,
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and exactly one chunk is accepted");
+	check(d1_store_eof(s, &object) == CHUNK_BYTES,
+	      "with the EOF the payload gives it");
+
 	d1_store_free(s);
 }
 
@@ -8767,6 +8970,8 @@ int main(void)
 	test_a_handle_names_its_own_kind();
 	test_replay_rebuilds_the_same_handles();
 	test_geometry_is_asked_before_the_object_table();
+	test_a_requests_shape_does_not_depend_on_room();
+	test_a_payload_fits_its_chunk();
 	test_the_empty_object_can_be_read();
 	test_a_journal_snapshot_is_a_value();
 	test_a_journal_snapshot_can_find_no_memory();

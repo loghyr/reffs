@@ -1217,18 +1217,22 @@ static bool d1_chunk_empty(struct d1_store *s __attribute__((unused)),
 }
 
 /* The activation table of the memo, as a predicate. */
-static bool d1_activation_allowed(bool single_writer, bool flag,
-				  uint32_t stability, bool empty, bool *invalid)
+/*
+ * Whether asking for activation is a request this grant may make.
+ *
+ * This half depends on the request and the grant alone -- a
+ * multi-writer request may not ask for activation at all -- so it is
+ * asked before anything is looked up.  Whether the activation actually
+ * happens depends on the chunk, and is the other half below.
+ */
+static bool d1_activation_asked_wrongly(bool single_writer, bool flag)
 {
-	*invalid = false;
-	if (!flag)
-		return false;
-	if (!single_writer) {
-		/* A multi-writer request may not ask for activation at all. */
-		*invalid = true;
-		return false;
-	}
-	if (stability == D1_UNSTABLE)
+	return flag && !single_writer;
+}
+
+static bool d1_activation_allowed(bool flag, uint32_t stability, bool empty)
+{
+	if (!flag || stability == D1_UNSTABLE)
 		return false;
 	return empty;
 }
@@ -1325,14 +1329,14 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 		  const struct d1_write_entry *e, struct d1_admission *a,
 		  struct d1_entry_result *res, struct d1_undo *u)
 {
-	struct d1_object *o = d1_object_find(s, &env->object);
+	struct d1_object *o;
 	struct d1_owner_assoc *assoc;
 	struct d1_chunk *chunk;
 	struct d1_txn *txn = NULL;
 	struct d1_version *ver = NULL;
 	uint64_t start, end;
 	bool single_writer = (a->rights & D1_RIGHT_SINGLE_WRITER) != 0;
-	bool activate, invalid;
+	bool activate;
 	uint32_t i;
 
 	/*
@@ -1350,6 +1354,42 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 		return D1_INVALID;
 	if (e->payload_len < 1 || e->payload_len > s->chunk_bytes)
 		return D1_INVALID;
+	/*
+	 * Section 2 puts "writer-bearing input must match its granted
+	 * writer ID" with the export/object/principal bindings, so a
+	 * mismatch is a binding failure rather than a malformed request.
+	 * The shape of the field was already checked before the store saw
+	 * it; what fails here is whose writer it is.
+	 */
+	if (e->owner.writer != a->writer)
+		return D1_STALE_AUTH;
+	if (e->owner.writer == D1_WRITER_RESERVED_LOW ||
+	    e->owner.writer == D1_WRITER_RESERVED_HIGH)
+		return D1_INVALID;
+	/* An absent guard predicate is only a single writer's to omit. */
+	if (!e->guard_check && !single_writer)
+		return D1_INVALID;
+	/* And a multi-writer request may not ask for activation at all. */
+	if (d1_activation_asked_wrongly(single_writer,
+					env->body.write.activate))
+		return D1_INVALID;
+	if (!d1_checksum_verify(&e->checksum, e->payload, e->payload_len))
+		return D1_CHECKSUM;
+	/* An owner names one version, and only an exact replay reuses it. */
+	assoc = d1_owner_find(s, &env->object.export_uuid, &e->owner);
+	if (assoc)
+		return D1_OWNER_CONFLICT;
+
+	/*
+	 * Everything above depends on the request and the grant it came
+	 * with, and nothing else.  Asking any of it after the tables were
+	 * consulted made a malformed request's answer depend on how full
+	 * an internal table happened to be: with room it was a recorded
+	 * semantic refusal, and with the table full the identical request
+	 * became NOSPC and retryable.  From here on the answers do depend
+	 * on the store, so from here on the store is asked.
+	 */
+	o = d1_object_find(s, &env->object);
 	if (!o) {
 		/* First touch of an object creates it, and a refusal
 		 * afterwards must leave it uncreated. */
@@ -1363,40 +1403,18 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 	 * object by max_file_bytes, and this model keeps a fixed table
 	 * that may not reach that far; a write the declared geometry
 	 * allows is therefore a request the model has no room for, not a
-	 * malformed one.  Saying INVALID here recorded a receipt for a
-	 * request that was never wrong, and redefined the geometry the
-	 * store was opened with.  NOSPC is the answer, and the caller
-	 * above turns it into an UNRECORDED member: no receipt, no
-	 * durable ID, no owner association, and nothing in the log.
+	 * malformed one.  NOSPC is the answer, and the caller above turns
+	 * it into an UNRECORDED member: no receipt, no durable ID, no
+	 * owner association, and nothing in the log.
 	 */
 	if (e->index >= D1_MAX_CHUNKS)
 		return D1_NOSPC;
-	/*
-	 * Section 2 puts "writer-bearing input must match its granted
-	 * writer ID" with the export/object/principal bindings, so a
-	 * mismatch is a binding failure rather than a malformed request.
-	 * The shape of the field was already checked before the store saw
-	 * it; what fails here is whose writer it is.
-	 */
-	if (e->owner.writer != a->writer)
-		return D1_STALE_AUTH;
-	if (e->owner.writer == D1_WRITER_RESERVED_LOW ||
-	    e->owner.writer == D1_WRITER_RESERVED_HIGH)
-		return D1_INVALID;
 
 	chunk = &o->chunks[e->index];
 	res->guard = chunk->guard;
 
-	/* An owner names one version, and only an exact replay reuses it. */
-	assoc = d1_owner_find(s, &env->object.export_uuid, &e->owner);
-	if (assoc)
-		return D1_OWNER_CONFLICT;
-
-	/* The guard predicate.  Absent is only a single writer's to omit. */
-	if (!e->guard_check) {
-		if (!single_writer)
-			return D1_INVALID;
-	} else {
+	/* The guard predicate itself is a question about the chunk. */
+	if (e->guard_check) {
 		/*
 		 * The never-written chunk accepts the initial guard, and the
 		 * initial guard is (0,0).  The numbers are in the request
@@ -1422,15 +1440,9 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 	if (chunk->pending_present)
 		return D1_GUARDED;
 
-	if (!d1_checksum_verify(&e->checksum, e->payload, e->payload_len))
-		return D1_CHECKSUM;
-
-	activate = d1_activation_allowed(single_writer,
-					 env->body.write.activate,
+	activate = d1_activation_allowed(env->body.write.activate,
 					 env->body.write.stability,
-					 d1_chunk_empty(s, chunk), &invalid);
-	if (invalid)
-		return D1_INVALID;
+					 d1_chunk_empty(s, chunk));
 
 	for (i = 0; i < D1_MAX_TXNS && !txn; i++)
 		if (!s->txns[i].used)
