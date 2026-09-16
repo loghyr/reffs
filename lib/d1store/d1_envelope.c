@@ -253,6 +253,25 @@ static bool d1_writer_ok(uint32_t writer)
 	       writer != D1_WRITER_RESERVED_HIGH;
 }
 
+/*
+ * The shape of an owner, wherever a request carries one.
+ *
+ * Section 3 makes zero the absent value of a typed ID, and the cohort
+ * is one: an owner that names cohort zero names no cohort, so it is not
+ * an owner at all and the request that carries it is malformed.  The
+ * writer has its two reserved values, which are a different rule for a
+ * different field.  The co_id is neither -- it is an opaque u32 the
+ * model only ever compares -- so zero is an ordinary value there and is
+ * not refused.
+ *
+ * Three request shapes carry an owner, and all three ask this, so a
+ * shape cannot be repaired in one place and left malformed in another.
+ */
+static bool d1_owner_ok(const struct d1_owner *o)
+{
+	return o->cohort != 0 && d1_writer_ok(o->writer);
+}
+
 static bool d1_validate_write(const struct d1_write_batch *w)
 {
 	uint64_t aggregate = 0;
@@ -268,7 +287,7 @@ static bool d1_validate_write(const struct d1_write_batch *w)
 			return false;
 		if (!d1_checksum_shape_ok(&e->checksum))
 			return false;
-		if (!d1_writer_ok(e->owner.writer))
+		if (!d1_owner_ok(&e->owner))
 			return false;
 		if (!d1_add_u64(aggregate, e->payload_len, &aggregate) ||
 		    aggregate > D1_BATCH_PAYLOAD_MAX)
@@ -294,7 +313,7 @@ static bool d1_validate_lifecycle(const struct d1_lifecycle_batch *l)
 			return false;
 		if (e->txn == 0)
 			return false;
-		if (!d1_writer_ok(e->owner.writer))
+		if (!d1_owner_ok(&e->owner))
 			return false;
 		/*
 		 * A typed ID of zero is the absent one, so an option that
@@ -327,7 +346,7 @@ static bool d1_validate_rollback(const struct d1_rollback_batch *r)
 			return false;
 		if (e->txn == 0)
 			return false;
-		if (!d1_writer_ok(e->owner.writer))
+		if (!d1_owner_ok(&e->owner))
 			return false;
 		if (e->visible_present && e->visible == 0)
 			return false;

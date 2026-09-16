@@ -2508,6 +2508,132 @@ static void test_snapshots_run_beside_appends_and_a_close(void)
 	check(pthread_mutex_destroy(&sn.m) == 0, "and the reader's mutex");
 }
 
+/*
+ * A cohort of zero is no cohort, so it is no owner either.
+ *
+ * Section 3 makes zero the absent value of a typed ID, and the cohort
+ * is one.  The shape check asked only about the writer, so a canonical
+ * one-entry write naming cohort zero validated, took a transaction and
+ * a version, answered D1_OK, was appended and replayed -- a request
+ * built out of an absent handle, recorded as history.  The co_id beside
+ * it is an opaque u32 and zero is an ordinary value there; this is
+ * about the typed one.
+ *
+ * All three request shapes that carry an owner ask the same question,
+ * so all three are asked here, and the write is followed to the end:
+ * nothing of the store moved and nothing reached the log.
+ */
+static void test_an_owner_names_a_cohort(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env, decoded;
+	struct d1_result res;
+	struct d1_guard guard;
+	static uint8_t data[16];
+	static uint8_t bytes[4096];
+	static uint8_t other[4096];
+	size_t before = 0, after = 1, env_len, other_len, i;
+	size_t first = 0, last = 0;
+	d1_id_t admission, txn, seen;
+
+	memset(data, 0x24, sizeof(data));
+	fill_uuid(&store_uuid, 0x24);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	(void)journal_of(s, &before);
+
+	/* A write whose only fault is the absent cohort. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_envelope_validate(&env), "the request is otherwise canonical");
+	env.body.write.entries[0].owner.cohort = 0;
+	check(!d1_envelope_validate(&env),
+	      "a write owner with no cohort is not a canonical request");
+	check(d1_store_apply(s, &env, &res) == D1_INVALID,
+	      "and the call is refused before anything reads the body");
+	check(d1_envelope_encode(&env, bytes, sizeof(bytes)) == 0,
+	      "and the encoder will not write one");
+	check(!d1_store_visible(s, &object, 0, &seen) &&
+		      !d1_store_guard(s, &object, 0, &guard) &&
+		      d1_store_eof(s, &object) == 0,
+	      "nothing of the store moved");
+	(void)journal_of(s, &after);
+	check(after == before, "and nothing reached the log");
+
+	/* The decoder refuses the bytes too, not only the encoder. */
+	env.body.write.entries[0].owner.cohort = 0x5a5au;
+	env_len = d1_envelope_encode(&env, bytes, sizeof(bytes));
+	env.body.write.entries[0].owner.cohort = 0xa5a5u;
+	other_len = d1_envelope_encode(&env, other, sizeof(other));
+	check(env_len != 0 && env_len == other_len,
+	      "two canonical forms of it encode to one length");
+	if (!env_len || env_len != other_len) {
+		d1_store_free(s);
+		return;
+	}
+	for (i = 0; i < env_len; i++) {
+		if (bytes[i] == other[i])
+			continue;
+		if (!last)
+			first = i;
+		last = i;
+	}
+	check(last != 0 && last + 1u - first <= 8u,
+	      "and differ in nothing but that ID");
+	check(d1_envelope_decode(bytes, env_len, &decoded),
+	      "the canonical encoding decodes");
+	for (i = first; i <= last; i++)
+		bytes[i] = 0;
+	check(!d1_envelope_decode(bytes, env_len, &decoded),
+	      "and the same bytes with the cohort zeroed do not");
+
+	/* The same question of the other two shapes that carry an owner. */
+	env.body.write.entries[0].owner.cohort = 1;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the write with a cohort succeeds");
+	txn = res.entries[0].txn;
+
+	env_init(&env, s, admission, D1_OP_FINALIZE_BATCH);
+	env.body.lifecycle.range_begin = 0;
+	env.body.lifecycle.range_end = 1;
+	env.body.lifecycle.count = 1;
+	env.body.lifecycle.entries[0].index = 0;
+	env.body.lifecycle.entries[0].owner.cohort = 0;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = 2;
+	env.body.lifecycle.entries[0].txn = txn;
+	d1_store_verifier(s, env.body.lifecycle.prior_verifier);
+	check(!d1_envelope_validate(&env) &&
+		      d1_store_apply(s, &env, &res) == D1_INVALID &&
+		      d1_envelope_encode(&env, bytes, sizeof(bytes)) == 0,
+	      "a lifecycle owner with no cohort is refused the same way");
+
+	env_init(&env, s, admission, D1_OP_ROLLBACK_BATCH);
+	env.body.rollback.range_begin = 0;
+	env.body.rollback.range_end = 1;
+	env.body.rollback.count = 1;
+	env.body.rollback.entries[0].index = 0;
+	env.body.rollback.entries[0].owner.cohort = 0;
+	env.body.rollback.entries[0].owner.writer = 11;
+	env.body.rollback.entries[0].owner.co_id = 2;
+	env.body.rollback.entries[0].txn = txn;
+	check(!d1_envelope_validate(&env) &&
+		      d1_store_apply(s, &env, &res) == D1_INVALID &&
+		      d1_envelope_encode(&env, bytes, sizeof(bytes)) == 0,
+	      "and so is a rollback owner with no cohort");
+
+	d1_store_free(s);
+}
+
 /* H: the log rebuilds the store that wrote it. */
 static void test_replay_reproduces_the_store(void)
 {
@@ -7243,6 +7369,7 @@ int main(void)
 	test_close_does_not_destroy_under_an_arriving_call();
 	test_a_closed_store_answers_nothing();
 	test_the_door_arm_belongs_to_its_store();
+	test_an_owner_names_a_cohort();
 	test_a_journal_snapshot_is_a_value();
 	test_a_journal_snapshot_can_find_no_memory();
 	test_snapshots_run_beside_appends_and_a_close();
