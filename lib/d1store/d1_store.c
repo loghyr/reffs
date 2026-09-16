@@ -1399,23 +1399,37 @@ static void d1_undo_apply(struct d1_store *s, struct d1_undo *u)
 }
 
 /*
- * The guard a chunk carries now, without creating anything.
+ * The guard of the chunk an owner is already bound to.
  *
- * A request refused before the object is looked up still has to be told
- * what it was refused against, and a chunk of an object nothing has
- * written yet carries the initial guard.
+ * An owner conflict is not about the chunk the refused request named:
+ * it is about the one the owner already belongs to, which is where the
+ * caller's own earlier write went.  Section 5 gives the result the
+ * current CAS guard, and telling the caller about the chunk it was
+ * refused *for* rather than the one it is bound *to* says nothing it
+ * could act on -- a never-written chunk it may not have, instead of the
+ * live generation of the chunk it does.
+ *
+ * The association's coordinates are the store's own, not a caller's, so
+ * they are checked here rather than trusted: an association that named
+ * a slot outside the tables would be an internal fault, and reading
+ * past them would turn it into a worse one.  A conflict whose
+ * coordinates do not hold up answers with the initial guard, which is
+ * what a caller learns nothing false from.
  */
-static struct d1_guard d1_guard_at(struct d1_store *s,
-				   const struct d1_objkey *key, uint64_t index)
+static struct d1_guard d1_owner_guard(const struct d1_store *s,
+				      const struct d1_owner_assoc *assoc)
 {
-	const struct d1_object *o = d1_object_find(s, key);
+	const struct d1_object *o;
 	struct d1_guard guard;
 
 	memset(&guard, 0, sizeof(guard));
 	guard.never_written = true;
-	if (o && index < D1_MAX_CHUNKS)
-		guard = o->chunks[index].guard;
-	return guard;
+	if (assoc->object >= D1_MAX_OBJECTS || assoc->index >= D1_MAX_CHUNKS)
+		return guard;
+	o = &s->objects[assoc->object];
+	if (!o->used)
+		return guard;
+	return o->chunks[assoc->index].guard;
 }
 
 static uint32_t
@@ -1474,16 +1488,17 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 	if (assoc) {
 		/*
 		 * Section 5: an OWNER_CONFLICT result carries the current
-		 * CAS guard.  The answer is still independent of how full
-		 * the object table is -- the chunk is read, never created,
-		 * and an object that does not exist yet has the guard a
-		 * never-written chunk has, which is what the caller would
-		 * have been refused against.  A zeroed guard decodes as
-		 * "written, generation 0, writer 0", which is a different
-		 * and wrong answer, and it is durable: the receipt is
-		 * replayed and compared on every rebuild.
+		 * CAS guard -- of the chunk the owner is bound to, which
+		 * is the one the caller can do something about.  The
+		 * answer is still independent of how full the object table
+		 * is: the bound chunk already exists, because the binding
+		 * came from a write that took it, and nothing is created
+		 * to read it.  A zeroed guard decodes as "written,
+		 * generation 0, writer 0", which is a different and wrong
+		 * answer, and it is durable: the receipt is replayed and
+		 * compared on every rebuild.
 		 */
-		res->guard = d1_guard_at(s, &env->object, e->index);
+		res->guard = d1_owner_guard(s, assoc);
 		return D1_OWNER_CONFLICT;
 	}
 

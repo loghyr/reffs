@@ -332,8 +332,9 @@ static void test_owner_collision(void)
 	struct d1_uuid store_uuid;
 	struct d1_store *s;
 	struct d1_envelope env;
-	struct d1_result res;
-	d1_admission_id admission;
+	struct d1_result res, again;
+	struct d1_objkey other_key;
+	d1_admission_id admission, other;
 	d1_version_id visible;
 
 	fill_uuid(&store_uuid, 0xb0);
@@ -346,11 +347,30 @@ static void test_owner_collision(void)
 	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
 	env.body.write.count = 1;
 	env.body.write.stability = D1_FILE_SYNC;
+	/* Activated, so the chunk is free for the next write below. */
+	env.body.write.activate = true;
 	write_entry(&env.body.write.entries[0], 0, 11, 1, payload_a,
 		    sizeof(payload_a), true,
 		    &(struct d1_guard){ .never_written = true });
 	d1_store_apply(s, &env, &res);
 	check(res.entries[0].status == D1_OK, "the first write succeeds");
+
+	/*
+	 * A second write to chunk 0 under a different owner, so the chunk
+	 * the first owner is bound to has a guard nothing else has: the
+	 * attempted chunk 2 is never-written, and chunk 0 is now at
+	 * generation one.
+	 */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 2, payload_b,
+		    sizeof(payload_b), true,
+		    &(struct d1_guard){ .generation = 0, .writer = 11 });
+	d1_store_apply(s, &env, &res);
+	check(res.entries[0].status == D1_OK &&
+		      res.entries[0].guard.generation == 1,
+	      "a second write advances chunk 0 to generation one");
 
 	/* C1: the same owner on another chunk is a conflict. */
 	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
@@ -365,16 +385,32 @@ static void test_owner_collision(void)
 	check(!d1_store_visible(s, &object, 2, &visible),
 	      "and writes nothing there");
 	/*
-	 * Section 5: the receipt carries the guard of the chunk the
-	 * refused request named.  Chunk 2 has never been written, and a
-	 * zeroed guard would say it was written at generation zero by
-	 * writer zero -- a different answer, and a durable one.
+	 * Section 5: the receipt carries the current CAS guard of the
+	 * chunk the owner is *bound* to, not of the one the refused
+	 * request named.  Chunk 0 is at generation one and chunk 2 has
+	 * never been written, so the two answers are plainly different
+	 * and only one of them tells the caller anything.
 	 */
-	check(res.entries[0].guard.never_written,
-	      "and the receipt says that chunk was never written");
+	check(!res.entries[0].guard.never_written &&
+		      res.entries[0].guard.generation == 1 &&
+		      res.entries[0].guard.writer == 11,
+	      "and the receipt carries the bound chunk's live guard");
 
-	/* C2: the same, against a chunk that has been written. */
-	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	/* The exact retry answers from the record, guard and all. */
+	check(d1_store_apply(s, &env, &again) == D1_OK &&
+		      again.entries[0].status == D1_OWNER_CONFLICT &&
+		      !again.entries[0].guard.never_written &&
+		      again.entries[0].guard.generation == 1 &&
+		      again.entries[0].guard.writer == 11,
+	      "and its exact retry answers the same from the receipt");
+
+	/* C2: the same owner under another object of the same export. */
+	fill_uuid(&other_key.object_uuid, 0x5e);
+	other_key.export_uuid = object.export_uuid;
+	other = d1_fixture_admit(s, &other_key, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	env_init(&env, s, other, D1_OP_WRITE_BATCH);
+	env.object = other_key;
 	env.body.write.count = 1;
 	env.body.write.stability = D1_FILE_SYNC;
 	write_entry(&env.body.write.entries[0], 0, 11, 1, payload_b,
@@ -382,11 +418,13 @@ static void test_owner_collision(void)
 		    &(struct d1_guard){ .never_written = true });
 	d1_store_apply(s, &env, &res);
 	check(res.entries[0].status == D1_OWNER_CONFLICT,
-	      "an owner reused for a written chunk conflicts too");
+	      "an owner reused under another object conflicts too");
 	check(!res.entries[0].guard.never_written &&
-		      res.entries[0].guard.generation == 0 &&
+		      res.entries[0].guard.generation == 1 &&
 		      res.entries[0].guard.writer == 11,
-	      "and the receipt carries that chunk's live guard");
+	      "and the guard is still the bound object's, not the named one");
+	check(!d1_store_visible(s, &other_key, 0, &visible),
+	      "and nothing is written under the named object");
 
 	d1_store_free(s);
 }
@@ -3607,8 +3645,15 @@ static void test_a_requests_shape_does_not_depend_on_room(void)
 		      res.entries[0].status == D1_OWNER_CONFLICT &&
 		      res.entries[0].disposition == D1_COMPLETED,
 	      "an owner bound elsewhere conflicts, table or not");
-	check(res.entries[0].guard.never_written,
-	      "and still carries the guard it was refused against");
+	/*
+	 * The guard is the bound chunk's -- keys[0] chunk 0, written in
+	 * the loop above -- and not the never-written chunk this request
+	 * named, which is past the chunk table anyway.
+	 */
+	check(!res.entries[0].guard.never_written &&
+		      res.entries[0].guard.generation == 0 &&
+		      res.entries[0].guard.writer == 11,
+	      "and still carries the bound chunk's guard, table or not");
 	check(d1_store_apply(s, &env, &again) == D1_OK &&
 		      again.entries[0].status == D1_OWNER_CONFLICT &&
 		      again.entries[0].disposition == D1_COMPLETED,
