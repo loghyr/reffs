@@ -2651,11 +2651,15 @@ static void *take_snapshots(void *arg)
 			sn->refused++;
 		}
 		free(buf);
-		if (pthread_mutex_lock(&sn->m) != 0)
+		if (pthread_mutex_lock(&sn->m) != 0) {
+			sn->err = 1;
 			break;
+		}
 		stop = sn->stop;
-		if (pthread_mutex_unlock(&sn->m) != 0)
+		if (pthread_mutex_unlock(&sn->m) != 0) {
+			sn->err = 2;
 			break;
+		}
 		if (stop)
 			break;
 	}
@@ -2690,7 +2694,8 @@ static void test_snapshots_run_beside_appends_and_a_close(void)
 	}
 	if (pthread_create(&reader, NULL, take_snapshots, &sn) != 0) {
 		check(false, "the snapshot reader starts");
-		(void)pthread_mutex_destroy(&sn.m);
+		check(pthread_mutex_destroy(&sn.m) == 0,
+		      "and its mutex is released again");
 		d1_store_free(s);
 		return;
 	}
@@ -2712,6 +2717,7 @@ static void test_snapshots_run_beside_appends_and_a_close(void)
 	check(pthread_join(reader, NULL) == 0, "and joined");
 
 	check(sn.taken + sn.refused > 0, "the reader took snapshots");
+	check(sn.err == 0, "with every primitive inside it succeeding");
 	check(sn.torn == 0, "and not one of them was a torn journal");
 	check(d1_store_destroy(s) == D1_OK, "then the store is destroyed");
 	check(pthread_mutex_destroy(&sn.m) == 0, "and the reader's mutex");
