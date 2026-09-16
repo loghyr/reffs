@@ -2818,10 +2818,27 @@ uint32_t d1_view_read(struct d1_view *v, uint64_t offset, uint8_t *buf,
 	return D1_OK;
 }
 
-void d1_view_close(struct d1_store *s, struct d1_view *v)
+/*
+ * Release a view, through the store it was opened on.
+ *
+ * This used to take the store as well, with nothing saying the two had
+ * to match and nothing checking that they did.  A caller could close a
+ * view of A while naming B: the call locked B, walked B's versions
+ * while clearing A's view fields, and marked the view unused -- after
+ * which A saw no live view, let a close and a destroy through, and the
+ * caller was left holding a view into freed storage.  That is an
+ * ownership precondition the design never had, invented by the extra
+ * argument, and the way to retire it is to stop asking for it: a view
+ * records the store it came from, and that is the only store that can
+ * release it.
+ */
+void d1_view_close(struct d1_view *v)
 {
-	if (!v)
+	struct d1_store *s;
+
+	if (!v || !v->store)
 		return;
+	s = v->store;
 	pthread_mutex_lock(&s->lock);
 	d1_view_unpin(s, v);
 	v->used = false;

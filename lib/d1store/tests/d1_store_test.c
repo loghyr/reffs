@@ -1233,7 +1233,7 @@ static void test_view_is_stable(void)
 	/* A normal close refuses while the view is outstanding. */
 	check(d1_store_close(s) == D1_BUSY,
 	      "a normal close refuses while a view is open");
-	d1_view_close(s, view);
+	d1_view_close(view);
 
 	ordinary_sel(&sel);
 	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
@@ -1241,7 +1241,7 @@ static void test_view_is_stable(void)
 	      "a later view opens");
 	check(d1_view_version(after, 0, &seen) && seen == v2,
 	      "and names the newer version");
-	d1_view_close(s, after);
+	d1_view_close(after);
 	check(d1_store_close(s) == D1_OK,
 	      "and the close succeeds once nothing is outstanding");
 	check(d1_store_destroy(s) == D1_OK, "and then it is destroyed");
@@ -1294,7 +1294,7 @@ static void test_close_refuses_an_active_call(void)
 			   &view) == D1_OK,
 	      "a view opens while the call is in flight");
 	check(d1_store_close(s) == D1_BUSY, "and the close is still refused");
-	d1_view_close(s, view);
+	d1_view_close(view);
 	check(d1_store_close(s) == D1_BUSY,
 	      "closing the view is not enough while the call is in flight");
 
@@ -1482,6 +1482,100 @@ static void test_close_does_not_destroy_under_an_arriving_call(void)
 	      "and destruction follows the join, not the close");
 	check(pthread_cond_destroy(&p.cv) == 0, "the condition is destroyed");
 	check(pthread_mutex_destroy(&p.m) == 0, "and the mutex with it");
+}
+
+/*
+ * A view is released through the store it was opened on.
+ *
+ * The release used to take the store as well, with nothing saying the
+ * two had to match and nothing checking that they did.  Naming the
+ * wrong store unpinned in one store while clearing a view out of
+ * another, and the store that really held the view then saw none: it
+ * closed, it destroyed, and the caller was left holding a view into
+ * freed memory.  There is no store argument now, so there is no
+ * mismatch to make.
+ *
+ * The property this keeps is the one the close fence is for: while a
+ * view is live its store refuses to close, and only releasing that view
+ * lets it.
+ */
+static void test_a_view_is_released_through_its_own_store(void)
+{
+	struct d1_uuid uuid_a, uuid_b;
+	struct d1_store *a, *b;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL, *other = NULL, *again = NULL;
+	static uint8_t data_a[16];
+	static uint8_t data_b[16];
+	static uint8_t got[32];
+	uint32_t got_len = 0;
+	d1_id_t admit_a, admit_b, seen;
+
+	memset(data_a, 0x2a, sizeof(data_a));
+	memset(data_b, 0x2b, sizeof(data_b));
+	fill_uuid(&uuid_a, 0x2a);
+	fill_uuid(&uuid_b, 0x2b);
+	a = d1_store_open(&uuid_a, CHUNK_BYTES, MAX_FILE_BYTES);
+	b = d1_store_open(&uuid_b, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!a || !b) {
+		d1_store_free(a);
+		d1_store_free(b);
+		return;
+	}
+	admit_a = d1_fixture_admit(a, &object, 11,
+				   D1_RIGHT_READ | D1_RIGHT_WRITE |
+					   D1_RIGHT_SINGLE_WRITER);
+	admit_b = d1_fixture_admit(b, &object, 11,
+				   D1_RIGHT_READ | D1_RIGHT_WRITE |
+					   D1_RIGHT_SINGLE_WRITER);
+	check(commit_chunk(a, admit_a, 0, 1, data_a, sizeof(data_a),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "A has something to pin");
+	check(commit_chunk(b, admit_b, 0, 1, data_b, sizeof(data_b),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "and so has B");
+
+	/* A pinned view of A, and a view of B to watch for damage. */
+	ordinary_sel(&sel);
+	check(d1_view_open(a, &object, admit_a, &sel, 0, CHUNK_BYTES, &view) ==
+		      D1_OK,
+	      "a view of A opens and pins");
+	check(d1_view_open(b, &object, admit_b, &sel, 0, CHUNK_BYTES, &other) ==
+		      D1_OK,
+	      "and one of B beside it");
+	check(d1_store_close(a) == D1_BUSY,
+	      "A refuses to close while its view is live");
+
+	/* Releasing it needs no store, so it cannot name the wrong one. */
+	d1_view_close(view);
+	check(d1_store_close(a) == D1_OK, "and closes once the view is gone");
+	check(d1_store_destroy(a) == D1_OK, "and destroys");
+
+	/* B is exactly as it was: its view still reads, and still pins. */
+	check(d1_view_version(other, 0, &seen),
+	      "B's view still names its version");
+	check(d1_view_eof(other) == sizeof(data_b), "and its EOF is B's");
+	check(d1_view_read(other, 0, got, sizeof(got), &got_len) == D1_OK &&
+		      got_len == sizeof(data_b) &&
+		      memcmp(got, data_b, sizeof(data_b)) == 0,
+	      "and it reads B's bytes, not A's");
+	check(d1_store_close(b) == D1_BUSY, "and B is still held open by it");
+	d1_view_close(other);
+
+	/* And B has lost no capacity: it opens another view, and writes. */
+	check(d1_view_open(b, &object, admit_b, &sel, 0, CHUNK_BYTES, &again) ==
+		      D1_OK,
+	      "B opens another view");
+	check(d1_view_eof(again) == sizeof(data_b), "with the same EOF");
+	d1_view_close(again);
+	check(commit_chunk(b, admit_b, 1, 2, data_b, sizeof(data_b),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "and still takes a write");
+	check(d1_store_close(b) == D1_OK && d1_store_destroy(b) == D1_OK,
+	      "then B closes and destroys of its own accord");
 }
 
 /* A door hook that only counts, for the arms that must not be run. */
@@ -2023,9 +2117,9 @@ static void test_release_order_does_not_matter(void)
 
 		if (release_first[pass]) {
 			released[pass] = d1_fixture_release_predecessor(s, v1);
-			d1_view_close(s, view);
+			d1_view_close(view);
 		} else {
-			d1_view_close(s, view);
+			d1_view_close(view);
 			released[pass] = d1_fixture_release_predecessor(s, v1);
 		}
 
@@ -2127,8 +2221,8 @@ static void test_view_owner_selection(void)
 			   &denied) == D1_OWNER_CONFLICT,
 	      "a wrong owner triple fails the view");
 
-	d1_view_close(s, own);
-	d1_view_close(s, ordinary);
+	d1_view_close(own);
+	d1_view_close(ordinary);
 	d1_store_free(s);
 }
 
@@ -2169,7 +2263,7 @@ static void test_owner_view_shrinkage(void)
 	      "and its EOF shrinks with what it selected");
 	check(d1_store_eof(s, &object) == sizeof(big),
 	      "while the ordinary EOF stays where it was");
-	d1_view_close(s, own);
+	d1_view_close(own);
 	d1_store_free(s);
 }
 
@@ -2243,10 +2337,10 @@ static void test_view_range_holes_and_admission(void)
 				      D1_OK &&
 			      got_len == 8,
 		      "and a read inside it works");
-		d1_view_close(s, narrow);
+		d1_view_close(narrow);
 	}
 
-	d1_view_close(s, view);
+	d1_view_close(view);
 
 	{
 		struct d1_view *denied = NULL;
@@ -2814,7 +2908,7 @@ static void test_the_chunk_table_is_capacity(void)
 				   got, sizeof(got), &got_len) == D1_OK &&
 			      got_len == 0,
 		      "and past the table it reads no bytes, as past EOF");
-		d1_view_close(s, view);
+		d1_view_close(view);
 	}
 
 	/* What was written still rebuilds, and the refusal left no trace. */
@@ -2884,7 +2978,7 @@ static void test_the_empty_object_can_be_read(void)
 				      D1_OK &&
 			      got_len == 0,
 		      "and reads no bytes, as a read at EOF does");
-		d1_view_close(s, view);
+		d1_view_close(view);
 		view = NULL;
 	}
 
@@ -2907,7 +3001,7 @@ static void test_the_empty_object_can_be_read(void)
 		if (d1_view_open(s, &keys[i], admissions[i], &sel, 0,
 				 CHUNK_BYTES, &view) != D1_OK)
 			continue;
-		d1_view_close(s, view);
+		d1_view_close(view);
 		view = NULL;
 	}
 	for (i = 0; i < D1_MAX_OBJECTS; i++) {
@@ -3628,7 +3722,7 @@ static void test_index_fault_serves_the_overlay(void)
 	check(d1_view_read(view, 0, got, sizeof(got), &got_len) == D1_OK &&
 		      memcmp(got, second, sizeof(second)) == 0,
 	      "and reads its bytes");
-	d1_view_close(s, view);
+	d1_view_close(view);
 
 	/* A rebuild from the log produces the same state, without the fault. */
 	{
@@ -4061,7 +4155,7 @@ static void test_reopen_fences_owner_reads(void)
 	check(d1_view_open(live, &object, admission, &sel, 0, CHUNK_BYTES,
 			   &view) == D1_OK,
 	      "its owner selects it while the incarnation is current");
-	d1_view_close(live, view);
+	d1_view_close(view);
 	view = NULL;
 
 	log = journal_of(live, &len);
@@ -4086,7 +4180,7 @@ static void test_reopen_fences_owner_reads(void)
 			   &view) == D1_OK,
 	      "an ordinary view by the same handle is not fenced here");
 	if (view)
-		d1_view_close(reopened, view);
+		d1_view_close(view);
 	view = NULL;
 
 	/* Recovery under current authority is what opens it again. */
@@ -4115,7 +4209,7 @@ static void test_reopen_fences_owner_reads(void)
 		      got_len == sizeof(data) &&
 		      memcmp(got, data, sizeof(data)) == 0,
 	      "and reads its bytes");
-	d1_view_close(reopened, view);
+	d1_view_close(view);
 
 	d1_store_free(reopened);
 	d1_store_free(live);
@@ -4249,7 +4343,7 @@ static void test_view_eof_is_object_wide(void)
 	check(i == sizeof(got), "and reads as zeros");
 
 	/* A window that is nothing but hole. */
-	d1_view_close(s, view);
+	d1_view_close(view);
 	view = NULL;
 	check(d1_view_open(s, &object, admission, &sel, CHUNK_BYTES,
 			   2u * CHUNK_BYTES, &view) == D1_OK,
@@ -4264,7 +4358,7 @@ static void test_view_eof_is_object_wide(void)
 		if (got[i] != 0)
 			break;
 	check(i == sizeof(got), "which are zeros");
-	d1_view_close(s, view);
+	d1_view_close(view);
 
 	d1_store_free(s);
 }
@@ -4319,7 +4413,7 @@ static void test_owner_shrink_below_higher_chunk(void)
 		      memcmp(got, small, sizeof(small)) == 0 &&
 		      got[sizeof(small)] == 0,
 	      "the shortened image reads, and its tail is a hole");
-	d1_view_close(s, own);
+	d1_view_close(own);
 
 	d1_store_free(s);
 }
@@ -4399,7 +4493,7 @@ static void test_refusal_consumes_no_capacity(void)
 			check(d1_view_eof(view) == 0 &&
 				      !d1_view_version(view, 0, &seen),
 			      "with no EOF and no version in it");
-			d1_view_close(s, view);
+			d1_view_close(view);
 			view = NULL;
 		}
 
@@ -5138,7 +5232,7 @@ static void test_owner_vector_is_validated_whole(void)
 		check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
 				   &view) == D1_OK,
 		      "while the admissible vector opens");
-		d1_view_close(s, view);
+		d1_view_close(view);
 		view = NULL;
 
 		/*
@@ -5156,7 +5250,7 @@ static void test_owner_vector_is_validated_whole(void)
 				break;
 		check(n == D1_MAX_VIEWS, "every view slot is still free");
 		while (n--)
-			d1_view_close(s, held[n]);
+			d1_view_close(held[n]);
 	}
 
 	d1_store_free(s);
@@ -7791,6 +7885,7 @@ int main(void)
 	test_close_refuses_an_active_call();
 	test_close_does_not_destroy_under_an_arriving_call();
 	test_a_closed_store_answers_nothing();
+	test_a_view_is_released_through_its_own_store();
 	test_the_door_arm_belongs_to_its_store();
 	test_an_owner_names_a_cohort();
 	test_the_chunk_table_is_capacity();

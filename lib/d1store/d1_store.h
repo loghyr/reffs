@@ -343,8 +343,18 @@ bool d1_view_version(const struct d1_view *v, uint64_t index, d1_id_t *ver);
 /* The EOF the view saw when it opened. */
 uint64_t d1_view_eof(const struct d1_view *v);
 
-/* Drop the view's pins.  The view is gone once this returns. */
-void d1_view_close(struct d1_store *s, struct d1_view *v);
+/*
+ * Drop the view's pins.  The view is gone once this returns, and a null
+ * view is nothing to release.
+ *
+ * It releases through the store it was opened on, which the view
+ * already knows: naming a store here as well would be an ownership
+ * precondition the caller could get wrong, and getting it wrong would
+ * clear a view out of one store while unpinning in another -- which is
+ * how a store comes to see no live view and let a close through under
+ * one.
+ */
+void d1_view_close(struct d1_view *v);
 
 /*
  * Start journalling.  Writes the START record that opens this
