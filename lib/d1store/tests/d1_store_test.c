@@ -1254,8 +1254,9 @@ static void test_view_is_stable(void)
  * A batch releases the lock between members so the next one is
  * revalidated against what the last one left.  A close that ran in that
  * gap saw no views, freed the store, and left the caller to lock a
- * destroyed mutex.  The model is single threaded, so the fixture pair
- * holds exactly what a paused call holds.
+ * destroyed mutex.  The fixture pair holds exactly what a paused call
+ * holds, without a thread; the real caller is parked in the test after
+ * this one.
  */
 static void test_close_refuses_an_active_call(void)
 {
@@ -1325,18 +1326,31 @@ struct parked_call {
 	pthread_cond_t cv;
 	bool parked;
 	bool resume;
+	/*
+	 * Which primitive failed, if one did.  The parked thread cannot
+	 * call check() -- the counter it keeps is not shared state -- so
+	 * it records the step here and the main thread reports it after
+	 * the join.
+	 */
+	unsigned int err;
 };
 
 static void park_at_the_door(void *arg)
 {
 	struct parked_call *p = arg;
 
-	pthread_mutex_lock(&p->m);
+	if (pthread_mutex_lock(&p->m) != 0) {
+		p->err = 1;
+		return;
+	}
 	p->parked = true;
-	pthread_cond_signal(&p->cv);
-	while (!p->resume)
-		pthread_cond_wait(&p->cv, &p->m);
-	pthread_mutex_unlock(&p->m);
+	if (pthread_cond_signal(&p->cv) != 0)
+		p->err = 2;
+	while (!p->resume && !p->err)
+		if (pthread_cond_wait(&p->cv, &p->m) != 0)
+			p->err = 3;
+	if (pthread_mutex_unlock(&p->m) != 0)
+		p->err = 4;
 }
 
 static void *run_parked_call(void *arg)
@@ -1379,21 +1393,37 @@ static bool park_a_caller(struct parked_call *p, struct d1_store *s,
 	if (parked_step_fails(1) || pthread_mutex_init(&p->m, NULL) != 0)
 		return false;
 	if (parked_step_fails(2) || pthread_cond_init(&p->cv, NULL) != 0) {
-		pthread_mutex_destroy(&p->m);
+		if (pthread_mutex_destroy(&p->m) != 0)
+			p->err = 5;
 		return false;
 	}
-	d1_fixture_before_admission(s, park_at_the_door, p);
+	if (d1_fixture_before_admission(s, park_at_the_door, p) != D1_OK) {
+		p->err = 6;
+		if (pthread_cond_destroy(&p->cv) != 0)
+			p->err = 7;
+		if (pthread_mutex_destroy(&p->m) != 0)
+			p->err = 8;
+		return false;
+	}
 	if (parked_step_fails(3) ||
 	    pthread_create(caller, NULL, run_parked_call, p) != 0) {
-		d1_fixture_before_admission(s, NULL, NULL);
-		pthread_cond_destroy(&p->cv);
-		pthread_mutex_destroy(&p->m);
+		if (d1_fixture_before_admission(s, NULL, NULL) != D1_OK)
+			p->err = 9;
+		if (pthread_cond_destroy(&p->cv) != 0)
+			p->err = 10;
+		if (pthread_mutex_destroy(&p->m) != 0)
+			p->err = 11;
 		return false;
 	}
-	pthread_mutex_lock(&p->m);
-	while (!p->parked)
-		pthread_cond_wait(&p->cv, &p->m);
-	pthread_mutex_unlock(&p->m);
+	if (pthread_mutex_lock(&p->m) != 0) {
+		p->err = 12;
+		return true;
+	}
+	while (!p->parked && !p->err)
+		if (pthread_cond_wait(&p->cv, &p->m) != 0)
+			p->err = 13;
+	if (pthread_mutex_unlock(&p->m) != 0)
+		p->err = 14;
 	return true;
 }
 
@@ -1435,11 +1465,12 @@ static void test_close_does_not_destroy_under_an_arriving_call(void)
 	      "a close wins against a call that is not admitted yet");
 
 	/* It resumes, and it must land on a store that is still there. */
-	pthread_mutex_lock(&p.m);
+	check(pthread_mutex_lock(&p.m) == 0, "the resume takes the lock");
 	p.resume = true;
-	pthread_cond_signal(&p.cv);
-	pthread_mutex_unlock(&p.m);
+	check(pthread_cond_signal(&p.cv) == 0, "and signals the caller");
+	check(pthread_mutex_unlock(&p.m) == 0, "and lets the lock go");
 	check(pthread_join(caller, NULL) == 0, "and the caller is joined");
+	check(p.err == 0, "with every primitive inside it succeeding");
 	check(p.status == D1_INVALID,
 	      "the arriving call is refused rather than admitted");
 	check(p.out.count == 0, "and it recorded nothing");
@@ -1449,8 +1480,8 @@ static void test_close_does_not_destroy_under_an_arriving_call(void)
 	/* Only now, with the caller joined, does the memory go. */
 	check(d1_store_destroy(s) == D1_OK,
 	      "and destruction follows the join, not the close");
-	pthread_cond_destroy(&p.cv);
-	pthread_mutex_destroy(&p.m);
+	check(pthread_cond_destroy(&p.cv) == 0, "the condition is destroyed");
+	check(pthread_mutex_destroy(&p.m) == 0, "and the mutex with it");
 }
 
 /* A door hook that only counts, for the arms that must not be run. */
@@ -6963,6 +6994,115 @@ static void test_replay_refuses_a_record_that_found_no_room(void)
 	d1_store_free(live);
 }
 
+/*
+ * The other half of the control record's emission proof.
+ *
+ * A control answers once, so its receipt is member zero and the
+ * question asked before the reducer refuses a duplicate.  That is not
+ * the whole proof, and the matrix used to say it was.  A control the
+ * live store answered UNRECORDED -- a handle not bound to the object,
+ * say -- has no receipt before and none after, and appends nothing; a
+ * record of it passes the before question untouched and is refused only
+ * by the one asked after.  Both halves are live, and each refuses a
+ * class the other does not.
+ */
+static void test_a_control_record_that_recorded_nothing(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *target;
+	struct d1_objkey elsewhere;
+	struct d1_envelope env, crafted;
+	struct d1_complete_result made;
+	struct d1_result res;
+	static uint8_t copy[65536];
+	static uint8_t scratch[65536];
+	static uint8_t body[8192];
+	static uint8_t bytes[4096];
+	static uint8_t result[512];
+	static uint8_t data[16];
+	uint8_t digest[D1_DIGEST_BYTES];
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	const uint8_t *log;
+	size_t len, before = 0, at[16], used, env_len, res_len;
+	unsigned int records;
+	uint32_t blen;
+	d1_id_t admission, stranger, txn;
+
+	memset(data, 0x27, sizeof(data));
+	fill_uuid(&store_uuid, 0x27);
+	elsewhere.export_uuid = object.export_uuid;
+	fill_uuid(&elsewhere.object_uuid, 0x28);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	d1_store_verifier(live, verifier);
+	admission = d1_fixture_admit(live, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	/* A control handle for a different object: admitted, not bound. */
+	stranger = d1_fixture_admit(live, &elsewhere, 11, D1_RIGHT_CONTROL);
+
+	env_init(&env, live, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a history with work in it");
+	txn = res.entries[0].txn;
+
+	/* The live control the writer appends nothing for. */
+	(void)journal_of(live, &before);
+	env_init(&crafted, live, stranger, D1_OP_LEASE_REAP);
+	crafted.object = object;
+	crafted.body.control.count = 1;
+	crafted.body.control.txns[0] = txn;
+	crafted.body.control.old_admission = admission;
+	check(d1_store_apply(live, &crafted, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "a control whose handle is bound elsewhere records nothing");
+	log = journal_of(live, &len);
+	check(len == before, "and the writer appended nothing for it");
+
+	/* A record of it, carrying the result the reducer computes. */
+	crafted_result(&made, &crafted.key, D1_STALE_AUTH, D1_UNRECORDED,
+		       verifier);
+	env_len = d1_envelope_encode(&crafted, bytes, sizeof(bytes));
+	res_len = d1_complete_result_encode(&made, result, sizeof(result));
+	check(env_len && res_len &&
+		      d1_envelope_digest(&crafted, scratch, sizeof(scratch),
+					 digest),
+	      "the record it did not write encodes");
+	records = index_log(log, len, at, 16);
+	check(len + 4096u <= sizeof(copy), "and the log fits a copy");
+	if (!env_len || !res_len || len + 4096u > sizeof(copy)) {
+		d1_store_free(live);
+		return;
+	}
+	blen = control_body(body, D1_CTL_ENVELOPE, bytes, (uint32_t)env_len,
+			    result, (uint32_t)res_len);
+	memcpy(copy, log, len);
+	used = len + frame_record(copy + len, D1_REC_CONTROL, &store_uuid,
+				  (uint64_t)records + 1u, 1, body, blen);
+
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, copy, used) == D1_INVALID,
+		      "a control record that recorded nothing is refused");
+		d1_store_free(target);
+	}
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, log, len) == D1_OK,
+		      "while the log as written still rebuilds");
+		check(states_agree(live, target), "into the same store");
+		d1_store_free(target);
+	}
+	d1_store_free(live);
+}
+
 /* An admission that arrives in the gap between two members. */
 struct late_admit {
 	struct d1_store *s;
@@ -7406,9 +7546,10 @@ static void test_fixture_records_carry_an_outcome_that_was_logged(void)
  * malformed request reach the reducer and be answered with a recorded
  * semantic refusal.
  *
- * The record leg is coverage rather than an oracle: the decoder refuses
- * the bytes, so putting the check back is what the four direct legs
- * above it detect.
+ * The record leg is an oracle in its own right.  It carries the raw
+ * digest of the bytes actually in it and the result the reducer really
+ * computes for the body they decode to, so putting the check back
+ * fails it as well as the four direct legs above it.
  */
 static void test_lifecycle_options_are_canonical(void)
 {
@@ -7696,6 +7837,7 @@ int main(void)
 	test_records_must_name_what_they_carry();
 	test_replay_requires_the_record_to_have_happened();
 	test_replay_refuses_a_record_that_found_no_room();
+	test_a_control_record_that_recorded_nothing();
 	test_a_batch_stops_at_its_first_unrecorded_member();
 	test_fixture_control_records_are_canonical();
 	test_fixture_records_carry_an_outcome_that_was_logged();

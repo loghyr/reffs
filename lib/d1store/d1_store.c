@@ -606,10 +606,12 @@ uint32_t d1_store_destroy(struct d1_store *s)
 /*
  * Fixture controls that hold what a paused call holds.
  *
- * This model is single threaded, so a test cannot stop a real call part
- * way through.  These stand in for one: between them the store is in
- * exactly the state it is in between two members of an ordinary batch,
- * which is the window a close must not slip through.
+ * Between them the store is in exactly the state it is in between two
+ * members of an ordinary batch, which is the window a close must not
+ * slip through -- and they hold it without a thread.  A test that needs
+ * a real caller stopped at a real point uses d1_fixture_before_admission
+ * or d1_fixture_before_member instead; the store serialises on one
+ * mutex and does not require its caller to be single threaded.
  */
 void d1_fixture_call_enter(struct d1_store *s)
 {
