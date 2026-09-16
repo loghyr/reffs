@@ -1495,6 +1495,19 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 	 * semantic refusal, and with the table full the identical request
 	 * became NOSPC and retryable.  From here on the answers do depend
 	 * on the store, so from here on the store is asked.
+	 *
+	 * The order above is the answer for a request that is wrong in
+	 * more than one way, and it is frozen: a receipt keeps the answer
+	 * the request got, and replay compares it, so reordering these is
+	 * a format change and not a tidy-up.  A request that reuses an
+	 * owner and carries a bad checksum is answered CHECKSUM, because
+	 * the bytes it brought are wrong before the binding it asks for
+	 * is; a multi-writer request that asks to activate against a stale
+	 * guard is answered INVALID, because a request its grant may not
+	 * make is not a request whose expectations are worth comparing.
+	 * Earlier revisions of this model answered both the other way
+	 * round.  Nothing is deployed and no log outlives a revision, so
+	 * this is a decision and not a compatibility claim.
 	 */
 	o = d1_object_find(s, &env->object);
 	if (!o) {

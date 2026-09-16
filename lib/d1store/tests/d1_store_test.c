@@ -2697,11 +2697,10 @@ static void test_view_range_holes_and_admission(void)
 /*
  * Do two stores hold the same state for one object?
  *
- * Handles are compared by value rather than as handles.  Two stores
- * that ran the same history hold the same version numbers, and a
- * handle's provenance is which store issued it -- which is exactly the
- * thing these two differ in, and never the thing this question asks
- * about.
+ * Handles are compared by value rather than as handles, and must be:
+ * two live stores are two stores whatever they are called, so their
+ * handles are never equal, and the value is the only thing a log
+ * carries and the only thing two histories can agree about.
  */
 static bool object_states_agree(struct d1_store *a, struct d1_store *b,
 				const struct d1_objkey *key)
@@ -4491,6 +4490,83 @@ static void test_an_exhausted_epoch_refuses(void)
 	d1_fixture_set_index_epoch(s, 3);
 	check(commit_txn(s, admission, 1, 11, 2, t2) == D1_OK,
 	      "and a commit goes through once there is room");
+
+	d1_store_free(s);
+}
+
+/*
+ * A request that is wrong in more than one way gets one answer, and it
+ * is always the same one.
+ *
+ * A receipt keeps the answer a request got and replay compares it, so
+ * which of two refusals wins is part of the format and not a detail.
+ * Moving the request-only questions in front of the tables moved two of
+ * these, and this is the record of where they landed.
+ */
+static void test_the_order_of_two_refusals_is_fixed(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t data[16];
+	d1_admission_id single, multi;
+
+	memset(data, 0x41, sizeof(data));
+	fill_uuid(&store_uuid, 0x41);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	single = d1_fixture_admit(s, &object, 11,
+				  D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	multi = d1_fixture_admit(s, &object, 12, D1_RIGHT_WRITE);
+
+	/* An owner is bound, so reusing it is a conflict on its own. */
+	env_init(&env, s, single, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a write binds an owner");
+
+	env_init(&env, s, single, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 2, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OWNER_CONFLICT,
+	      "and reusing it conflicts");
+
+	/* The same request with a bad checksum is answered on the bytes. */
+	env.key.sequence = next_sequence++;
+	env.body.write.entries[0].checksum.digest[0] ^= 0xffu;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_CHECKSUM,
+	      "a bad checksum outranks a reused owner");
+
+	/* A stale guard on its own is GUARDED. */
+	env_init(&env, s, single, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .generation = 9, .writer = 11 });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_GUARDED,
+	      "a stale guard is guarded");
+
+	/* The same stale guard, asked for by a grant that may not: INVALID. */
+	env_init(&env, s, multi, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 0, 12, 3, data, sizeof(data),
+		    true, &(struct d1_guard){ .generation = 9, .writer = 12 });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_INVALID,
+	      "a request its grant may not make outranks a stale guard");
 
 	d1_store_free(s);
 }
@@ -9811,6 +9887,7 @@ int main(void)
 	test_one_number_is_one_member();
 	test_an_exhausted_counter_refuses();
 	test_an_exhausted_epoch_refuses();
+	test_the_order_of_two_refusals_is_fixed();
 	test_a_handle_names_its_own_kind();
 	test_replay_rebuilds_the_same_handles();
 	test_geometry_is_asked_before_the_object_table();
