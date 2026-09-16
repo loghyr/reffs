@@ -148,7 +148,7 @@ void d1_enc_guard(struct d1_cursor *c, const struct d1_guard *g)
 
 void d1_enc_owner(struct d1_cursor *c, const struct d1_owner *o)
 {
-	d1_enc_u64(c, o->cohort);
+	d1_enc_u64(c, o->cohort.raw);
 	d1_enc_u32(c, o->writer);
 	d1_enc_u32(c, o->co_id);
 }
@@ -303,7 +303,7 @@ bool d1_dec_guard(struct d1_cursor *c, struct d1_guard *g)
 
 bool d1_dec_owner(struct d1_cursor *c, struct d1_owner *o)
 {
-	return d1_dec_u64(c, &o->cohort) && d1_dec_u32(c, &o->writer) &&
+	return d1_dec_u64(c, &o->cohort.raw) && d1_dec_u32(c, &o->writer) &&
 	       d1_dec_u32(c, &o->co_id);
 }
 

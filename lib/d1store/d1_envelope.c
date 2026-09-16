@@ -119,8 +119,8 @@ static void d1_enc_lifecycle(struct d1_cursor *c,
 
 		d1_enc_u64(c, e->index);
 		d1_enc_owner(c, &e->owner);
-		d1_enc_u64(c, e->txn);
-		d1_enc_opt_u64(c, e->predecessor_present, e->predecessor);
+		d1_enc_u64(c, e->txn.raw);
+		d1_enc_opt_u64(c, e->predecessor_present, e->predecessor.raw);
 	}
 	d1_enc_raw(c, l->prior_verifier, sizeof(l->prior_verifier));
 }
@@ -141,9 +141,9 @@ static bool d1_dec_lifecycle(struct d1_cursor *c, struct d1_lifecycle_batch *l)
 		struct d1_lifecycle_entry *e = &l->entries[i];
 
 		if (!d1_dec_u64(c, &e->index) || !d1_dec_owner(c, &e->owner) ||
-		    !d1_dec_u64(c, &e->txn) ||
+		    !d1_dec_u64(c, &e->txn.raw) ||
 		    !d1_dec_opt_u64(c, &e->predecessor_present,
-				    &e->predecessor))
+				    &e->predecessor.raw))
 			return false;
 	}
 	return d1_dec_raw(c, l->prior_verifier, sizeof(l->prior_verifier));
@@ -162,10 +162,10 @@ static void d1_enc_rollback(struct d1_cursor *c,
 
 		d1_enc_u64(c, e->index);
 		d1_enc_owner(c, &e->owner);
-		d1_enc_u64(c, e->txn);
-		d1_enc_opt_u64(c, e->visible_present, e->visible);
-		d1_enc_opt_u64(c, e->predecessor_present, e->predecessor);
-		d1_enc_opt_u64(c, e->custody_present, e->custody);
+		d1_enc_u64(c, e->txn.raw);
+		d1_enc_opt_u64(c, e->visible_present, e->visible.raw);
+		d1_enc_opt_u64(c, e->predecessor_present, e->predecessor.raw);
+		d1_enc_opt_u64(c, e->custody_present, e->custody.raw);
 	}
 }
 
@@ -185,11 +185,11 @@ static bool d1_dec_rollback(struct d1_cursor *c, struct d1_rollback_batch *r)
 		struct d1_rollback_entry *e = &r->entries[i];
 
 		if (!d1_dec_u64(c, &e->index) || !d1_dec_owner(c, &e->owner) ||
-		    !d1_dec_u64(c, &e->txn) ||
-		    !d1_dec_opt_u64(c, &e->visible_present, &e->visible) ||
+		    !d1_dec_u64(c, &e->txn.raw) ||
+		    !d1_dec_opt_u64(c, &e->visible_present, &e->visible.raw) ||
 		    !d1_dec_opt_u64(c, &e->predecessor_present,
-				    &e->predecessor) ||
-		    !d1_dec_opt_u64(c, &e->custody_present, &e->custody))
+				    &e->predecessor.raw) ||
+		    !d1_dec_opt_u64(c, &e->custody_present, &e->custody.raw))
 			return false;
 	}
 	return true;
@@ -202,9 +202,9 @@ static void d1_enc_control(struct d1_cursor *c,
 
 	d1_enc_u32(c, k->count);
 	for (i = 0; i < k->count; i++)
-		d1_enc_u64(c, k->txns[i]);
-	d1_enc_u64(c, k->old_admission);
-	d1_enc_opt_u64(c, k->new_admission_present, k->new_admission);
+		d1_enc_u64(c, k->txns[i].raw);
+	d1_enc_u64(c, k->old_admission.raw);
+	d1_enc_opt_u64(c, k->new_admission_present, k->new_admission.raw);
 	d1_enc_opt_u64(c, k->read_epoch_present, k->read_epoch);
 }
 
@@ -220,11 +220,11 @@ static bool d1_dec_control(struct d1_cursor *c, struct d1_control_batch *k)
 		return false;
 	}
 	for (i = 0; i < k->count; i++)
-		if (!d1_dec_u64(c, &k->txns[i]))
+		if (!d1_dec_u64(c, &k->txns[i].raw))
 			return false;
-	return d1_dec_u64(c, &k->old_admission) &&
+	return d1_dec_u64(c, &k->old_admission.raw) &&
 	       d1_dec_opt_u64(c, &k->new_admission_present,
-			      &k->new_admission) &&
+			      &k->new_admission.raw) &&
 	       d1_dec_opt_u64(c, &k->read_epoch_present, &k->read_epoch);
 }
 
@@ -269,7 +269,7 @@ static bool d1_writer_ok(uint32_t writer)
  */
 static bool d1_owner_ok(const struct d1_owner *o)
 {
-	return o->cohort != 0 && d1_writer_ok(o->writer);
+	return d1_cohort_live(o->cohort) && d1_writer_ok(o->writer);
 }
 
 static bool d1_validate_write(const struct d1_write_batch *w)
@@ -311,7 +311,7 @@ static bool d1_validate_lifecycle(const struct d1_lifecycle_batch *l)
 
 		if (e->index < l->range_begin || e->index >= l->range_end)
 			return false;
-		if (e->txn == 0)
+		if (!d1_txn_live(e->txn))
 			return false;
 		if (!d1_owner_ok(&e->owner))
 			return false;
@@ -323,11 +323,11 @@ static bool d1_validate_lifecycle(const struct d1_lifecycle_batch *l)
 		 * "no predecessor" would be two requests that mean one
 		 * thing, and one of them would reach the reducer.
 		 */
-		if (e->predecessor_present && e->predecessor == 0)
+		if (e->predecessor_present && !d1_version_live(e->predecessor))
 			return false;
 		for (j = 0; j < i; j++)
 			if (l->entries[j].index == e->index ||
-			    l->entries[j].txn == e->txn)
+			    d1_txn_eq(l->entries[j].txn, e->txn))
 				return false;
 	}
 	return true;
@@ -344,19 +344,19 @@ static bool d1_validate_rollback(const struct d1_rollback_batch *r)
 
 		if (e->index < r->range_begin || e->index >= r->range_end)
 			return false;
-		if (e->txn == 0)
+		if (!d1_txn_live(e->txn))
 			return false;
 		if (!d1_owner_ok(&e->owner))
 			return false;
-		if (e->visible_present && e->visible == 0)
+		if (e->visible_present && !d1_version_live(e->visible))
 			return false;
-		if (e->predecessor_present && e->predecessor == 0)
+		if (e->predecessor_present && !d1_version_live(e->predecessor))
 			return false;
-		if (e->custody_present && e->custody == 0)
+		if (e->custody_present && !d1_custody_live(e->custody))
 			return false;
 		for (j = 0; j < i; j++)
 			if (r->entries[j].index == e->index ||
-			    r->entries[j].txn == e->txn)
+			    d1_txn_eq(r->entries[j].txn, e->txn))
 				return false;
 	}
 	return true;
@@ -372,19 +372,20 @@ static bool d1_validate_control(uint32_t op, const struct d1_control_batch *k)
 {
 	uint32_t i, j;
 
-	if (!d1_count_ok(k->count) || k->old_admission == 0)
+	if (!d1_count_ok(k->count) || !d1_admission_live(k->old_admission))
 		return false;
 	for (i = 0; i < k->count; i++) {
-		if (k->txns[i] == 0)
+		if (!d1_txn_live(k->txns[i]))
 			return false;
 		for (j = 0; j < i; j++)
-			if (k->txns[j] == k->txns[i])
+			if (d1_txn_eq(k->txns[j], k->txns[i]))
 				return false;
 	}
 	if (op == D1_OP_RECOVERY_ADMIT) {
-		if (!k->new_admission_present || k->new_admission == 0)
+		if (!k->new_admission_present ||
+		    !d1_admission_live(k->new_admission))
 			return false;
-		if (k->new_admission == k->old_admission)
+		if (d1_admission_eq(k->new_admission, k->old_admission))
 			return false;
 		if (!k->read_epoch_present)
 			return false;
@@ -458,7 +459,7 @@ size_t d1_envelope_encode(const struct d1_envelope *env, void *buf, size_t cap)
 		return 0;
 	d1_enc_init(&c, buf, cap);
 	d1_enc_objkey(&c, &env->object);
-	d1_enc_u64(&c, env->admission);
+	d1_enc_u64(&c, env->admission.raw);
 	d1_enc_u64(&c, env->incarnation);
 	d1_enc_opkey(&c, &env->key);
 	d1_enc_u32(&c, env->op);
@@ -490,7 +491,7 @@ bool d1_envelope_decode(const void *buf, size_t len, struct d1_envelope *env)
 	memset(env, 0, sizeof(*env));
 	d1_dec_init(&c, buf, len);
 	if (!d1_dec_objkey(&c, &env->object) ||
-	    !d1_dec_u64(&c, &env->admission) ||
+	    !d1_dec_u64(&c, &env->admission.raw) ||
 	    !d1_dec_u64(&c, &env->incarnation) ||
 	    !d1_dec_opkey(&c, &env->key) || !d1_dec_u32(&c, &env->op))
 		return false;

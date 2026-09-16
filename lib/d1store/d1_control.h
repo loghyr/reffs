@@ -45,9 +45,9 @@ struct d1_control_request {
 	/* D1_CTL_ADMIT */
 	struct d1_fixture_authority auth;
 	/* D1_CTL_REVOKE, D1_CTL_EXPIRE */
-	d1_id_t admission;
+	d1_admission_id admission;
 	/* D1_CTL_CUSTODY, D1_CTL_RELEASE */
-	d1_id_t version;
+	d1_version_id version;
 };
 
 /*
@@ -57,7 +57,13 @@ struct d1_control_request {
  */
 struct d1_control_result {
 	uint32_t status;
-	d1_id_t id;
+	/*
+	 * The raw form of whichever handle this kind issues or names --
+	 * an admission for ADMIT, a custody for CUSTODY, a version for
+	 * RELEASE.  It is a logged value that replay compares, not a
+	 * handle anything resolves, so it carries no type and no issuer.
+	 */
+	uint64_t id;
 };
 
 size_t d1_control_request_encode(const struct d1_control_request *r, void *buf,

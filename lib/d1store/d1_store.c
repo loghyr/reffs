@@ -32,7 +32,7 @@
 
 struct d1_version {
 	bool used;
-	d1_id_t id;
+	uint64_t id;
 	uint32_t object;
 	uint64_t index;
 	uint8_t bytes[D1_CHUNK_BYTES_MAX];
@@ -41,7 +41,7 @@ struct d1_version {
 	struct d1_owner owner;
 	/* The predecessor this version displaced, if it is still retained. */
 	bool predecessor_present;
-	d1_id_t predecessor;
+	uint64_t predecessor;
 	/*
 	 * Whether this version is still retained as somebody's predecessor.
 	 * Releasing it removes that root; the bytes are a separate question
@@ -57,12 +57,12 @@ struct d1_version {
 
 struct d1_txn {
 	bool used;
-	d1_id_t id;
+	uint64_t id;
 	uint32_t object;
 	uint64_t index;
 	struct d1_owner owner;
-	d1_id_t admission;
-	d1_id_t version;
+	uint64_t admission;
+	uint64_t version;
 	uint32_t phase;
 	uint32_t mode;
 	uint32_t stability;
@@ -72,7 +72,7 @@ struct d1_txn {
 	 */
 	uint64_t read_epoch;
 	bool predecessor_present;
-	d1_id_t predecessor;
+	uint64_t predecessor;
 	/* The guard this transaction installed when it was admitted. */
 	struct d1_guard guard;
 };
@@ -80,10 +80,10 @@ struct d1_txn {
 struct d1_chunk {
 	struct d1_guard guard;
 	bool pending_present;
-	d1_id_t pending;
+	uint64_t pending;
 	/* The reducer's state: what the durable events say is visible. */
 	bool visible_present;
-	d1_id_t visible;
+	uint64_t visible;
 	/*
 	 * The materialized index.  Reads in this model never consult it at
 	 * all: they use the reducer's visible pointer, which is the
@@ -93,7 +93,7 @@ struct d1_chunk {
 	 * real index paths, and this model does not claim otherwise.
 	 */
 	bool materialized_present;
-	d1_id_t materialized;
+	uint64_t materialized;
 	bool index_stale;
 };
 
@@ -111,7 +111,7 @@ struct d1_object {
  */
 struct d1_admission {
 	bool used;
-	d1_id_t id;
+	uint64_t id;
 	struct d1_uuid issuer;
 	struct d1_objkey object;
 	struct d1_uuid principal;
@@ -134,7 +134,7 @@ struct d1_owner_assoc {
 	struct d1_owner owner;
 	uint32_t object;
 	uint64_t index;
-	d1_id_t version;
+	uint64_t version;
 };
 
 /*
@@ -160,14 +160,14 @@ struct d1_view {
 	uint32_t extent_len[D1_MAX_CHUNKS];
 	/* The versions this view pinned: the ones its window can read. */
 	bool present[D1_MAX_CHUNKS];
-	d1_id_t version[D1_MAX_CHUNKS];
+	uint64_t version[D1_MAX_CHUNKS];
 };
 
 /* Repair custody over one exact version. */
 struct d1_custody {
 	bool used;
-	d1_id_t id;
-	d1_id_t version;
+	uint64_t id;
+	uint64_t version;
 };
 
 struct d1_receipt {
@@ -200,9 +200,9 @@ struct d1_store {
 	uint64_t index_epoch;
 
 	/* Monotonic per-type counters; none is ever reused. */
-	d1_id_t next_txn;
-	d1_id_t next_version;
-	d1_id_t next_admission;
+	uint64_t next_txn;
+	uint64_t next_version;
+	uint64_t next_admission;
 
 	struct d1_object objects[D1_MAX_OBJECTS];
 	struct d1_txn txns[D1_MAX_TXNS];
@@ -212,7 +212,7 @@ struct d1_store {
 	struct d1_receipt receipts[D1_MAX_RECEIPTS];
 	struct d1_custody custody[D1_MAX_CUSTODY];
 	struct d1_view views[D1_MAX_VIEWS];
-	d1_id_t next_custody;
+	uint64_t next_custody;
 
 	/*
 	 * Encoding scratch owned by this store and used only under its own
@@ -853,50 +853,117 @@ static uint32_t d1_object_slot(const struct d1_store *s,
 	return (uint32_t)(o - s->objects);
 }
 
-static struct d1_admission *d1_admission_find(struct d1_store *s, d1_id_t id)
+/*
+ * Turn one of this store's counter values into a handle of this store.
+ *
+ * These four are the only places a raw number becomes a bound handle,
+ * and they are static to this file: a caller outside has no way to make
+ * one, so every handle a caller holds came from the store that issued
+ * it.  Replay uses the same constructors to adopt a decoded log's
+ * values for the store it is rebuilding, which is what makes a
+ * reconstructed handle the rebuilding store's own.
+ */
+static d1_admission_id d1_admission_of(const struct d1_store *s, uint64_t raw)
+{
+	d1_admission_id id = d1_admission_none();
+
+	if (raw) {
+		id.raw = raw;
+		id.store = s->uuid;
+	}
+	return id;
+}
+
+static d1_txn_id d1_txn_of(const struct d1_store *s, uint64_t raw)
+{
+	d1_txn_id id = d1_txn_none();
+
+	if (raw) {
+		id.raw = raw;
+		id.store = s->uuid;
+	}
+	return id;
+}
+
+static d1_version_id d1_version_of(const struct d1_store *s, uint64_t raw)
+{
+	d1_version_id id = d1_version_none();
+
+	if (raw) {
+		id.raw = raw;
+		id.store = s->uuid;
+	}
+	return id;
+}
+
+static d1_custody_id d1_custody_of(const struct d1_store *s, uint64_t raw)
+{
+	d1_custody_id id = d1_custody_none();
+
+	if (raw) {
+		id.raw = raw;
+		id.store = s->uuid;
+	}
+	return id;
+}
+
+/*
+ * A handle names a row here only if this store issued it.
+ *
+ * The type settles which table is asked, and the issuer settles whose
+ * table it is: a handle another store issued names nothing here, even
+ * when both stores have counted to the same number, and a value nothing
+ * issued names nothing either.
+ */
+static struct d1_admission *d1_admission_find(struct d1_store *s,
+					      d1_admission_id id)
 {
 	uint32_t i;
 
-	if (!id)
+	if (!d1_admission_live(id) ||
+	    memcmp(id.store.bytes, s->uuid.bytes, D1_UUID_BYTES) != 0)
 		return NULL;
 	for (i = 0; i < D1_MAX_ADMISSIONS; i++)
-		if (s->admissions[i].used && s->admissions[i].id == id)
+		if (s->admissions[i].used && s->admissions[i].id == id.raw)
 			return &s->admissions[i];
 	return NULL;
 }
 
-static struct d1_custody *d1_custody_find(struct d1_store *s, d1_id_t id)
+static struct d1_custody *d1_custody_find(struct d1_store *s, d1_custody_id id)
 {
 	uint32_t i;
 
-	if (!id)
+	if (!d1_custody_live(id) ||
+	    memcmp(id.store.bytes, s->uuid.bytes, D1_UUID_BYTES) != 0)
 		return NULL;
 	for (i = 0; i < D1_MAX_CUSTODY; i++)
-		if (s->custody[i].used && s->custody[i].id == id)
+		if (s->custody[i].used && s->custody[i].id == id.raw)
 			return &s->custody[i];
 	return NULL;
 }
 
-static struct d1_txn *d1_txn_find(struct d1_store *s, d1_id_t id)
+static struct d1_txn *d1_txn_find(struct d1_store *s, d1_txn_id id)
 {
 	uint32_t i;
 
-	if (!id)
+	if (!d1_txn_live(id) ||
+	    memcmp(id.store.bytes, s->uuid.bytes, D1_UUID_BYTES) != 0)
 		return NULL;
 	for (i = 0; i < D1_MAX_TXNS; i++)
-		if (s->txns[i].used && s->txns[i].id == id)
+		if (s->txns[i].used && s->txns[i].id == id.raw)
 			return &s->txns[i];
 	return NULL;
 }
 
-static struct d1_version *d1_version_find(struct d1_store *s, d1_id_t id)
+static struct d1_version *d1_version_find(struct d1_store *s, d1_version_id id)
 {
 	uint32_t i;
 
-	if (!id)
+	if (!d1_version_live(id) ||
+	    memcmp(id.store.bytes, s->uuid.bytes, D1_UUID_BYTES) != 0)
 		return NULL;
 	for (i = 0; i < D1_MAX_VERSIONS; i++)
-		if (s->versions[i].used && s->versions[i].id == id)
+		if (s->versions[i].used && s->versions[i].id == id.raw)
 			return &s->versions[i];
 	return NULL;
 }
@@ -915,7 +982,7 @@ static struct d1_owner_assoc *d1_owner_find(struct d1_store *s,
 		if (memcmp(&a->export_uuid, export_uuid,
 			   sizeof(*export_uuid)) != 0)
 			continue;
-		if (a->owner.cohort == owner->cohort &&
+		if (a->owner.cohort.raw == owner->cohort.raw &&
 		    a->owner.writer == owner->writer &&
 		    a->owner.co_id == owner->co_id)
 			return a;
@@ -954,7 +1021,7 @@ static struct d1_owner_assoc *d1_owner_add(struct d1_store *s,
  * fault exists so a test can demonstrate that rather than assume it.
  */
 static void d1_publish_visible(struct d1_store *s, struct d1_chunk *c,
-			       d1_id_t version)
+			       uint64_t version)
 {
 	c->visible_present = true;
 	c->visible = version;
@@ -969,23 +1036,24 @@ static void d1_publish_visible(struct d1_store *s, struct d1_chunk *c,
 }
 
 /* What a read sees: the reducer's state, which is the authority. */
-static bool d1_chunk_visible(const struct d1_chunk *c, d1_id_t *version)
+static bool d1_chunk_visible(const struct d1_store *s, const struct d1_chunk *c,
+			     d1_version_id *version)
 {
 	if (!c->visible_present)
 		return false;
-	*version = c->visible;
+	*version = d1_version_of(s, c->visible);
 	return true;
 }
 
 static bool d1_visible_locked(struct d1_store *s,
 			      const struct d1_objkey *object, uint64_t index,
-			      d1_id_t *version)
+			      d1_version_id *version)
 {
 	const struct d1_object *o = d1_object_find(s, object);
 
 	if (!o || index >= D1_MAX_CHUNKS)
 		return false;
-	return d1_chunk_visible(&o->chunks[index], version);
+	return d1_chunk_visible(s, &o->chunks[index], version);
 }
 
 static bool d1_guard_locked(struct d1_store *s, const struct d1_objkey *object,
@@ -1020,7 +1088,7 @@ static uint64_t d1_eof_locked(struct d1_store *s,
 
 		if (!o->chunks[i].visible_present)
 			continue;
-		v = d1_version_find(s, o->chunks[i].visible);
+		v = d1_version_find(s, d1_version_of(s, o->chunks[i].visible));
 		if (!v)
 			continue;
 		if (!d1_mul_u64(i, s->chunk_bytes, &start))
@@ -1096,7 +1164,7 @@ static uint32_t d1_holes_locked(struct d1_store *s,
 
 		if (!o->chunks[i].visible_present)
 			continue;
-		v = d1_version_find(s, o->chunks[i].visible);
+		v = d1_version_find(s, d1_version_of(s, o->chunks[i].visible));
 		if (!v)
 			continue;
 		if (!d1_mul_u64(i, s->chunk_bytes, &start) ||
@@ -1181,14 +1249,14 @@ struct d1_undo {
 	struct d1_chunk chunk_before;
 	struct d1_txn *txn;
 	uint32_t txn_phase_before;
-	d1_id_t txn_admission_before;
+	uint64_t txn_admission_before;
 	struct d1_object *fresh_object;
 	struct d1_txn *fresh_txn;
 	struct d1_version *fresh_version;
 	struct d1_owner_assoc *fresh_assoc;
 	uint64_t epoch_before;
-	d1_id_t next_txn_before;
-	d1_id_t next_version_before;
+	uint64_t next_txn_before;
+	uint64_t next_version_before;
 	/*
 	 * The injected index fault is consumed, and the overlay flag set,
 	 * at publication.  They are unjournalled harness state, so they
@@ -1437,9 +1505,9 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 	}
 
 	res->version_present = true;
-	res->version = ver->id;
+	res->version = d1_version_of(s, ver->id);
 	res->txn_present = true;
-	res->txn = txn->id;
+	res->txn = d1_txn_of(s, txn->id);
 	res->guard = chunk->guard;
 	res->owner = e->owner;
 	res->activated = activate;
@@ -1483,7 +1551,7 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 		return D1_INVALID;
 	if (txn->index != e->index || txn->object != d1_object_slot(s, o))
 		return D1_INVALID;
-	if (txn->owner.cohort != e->owner.cohort ||
+	if (txn->owner.cohort.raw != e->owner.cohort.raw ||
 	    txn->owner.writer != e->owner.writer ||
 	    txn->owner.co_id != e->owner.co_id)
 		return D1_OWNER_CONFLICT;
@@ -1495,12 +1563,12 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 
 	res->owner = txn->owner;
 	res->txn_present = true;
-	res->txn = txn->id;
+	res->txn = d1_txn_of(s, txn->id);
 	res->version_present = true;
-	res->version = txn->version;
+	res->version = d1_version_of(s, txn->version);
 
 	if (txn->predecessor_present != e->predecessor_present ||
-	    (e->predecessor_present && txn->predecessor != e->predecessor))
+	    (e->predecessor_present && txn->predecessor != e->predecessor.raw))
 		return D1_NO_PREDECESSOR;
 
 	if (!commit) {
@@ -1514,7 +1582,7 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 
 	if (txn->phase != D1_PHASE_FINALIZED)
 		return D1_BAD_PHASE;
-	ver = d1_version_find(s, txn->version);
+	ver = d1_version_find(s, d1_version_of(s, txn->version));
 	if (!ver)
 		return D1_INVALID;
 	/* Payload and extent metadata are replaced together. */
@@ -1575,7 +1643,7 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 	if (!txn || txn->index != e->index ||
 	    txn->object != d1_object_slot(s, o))
 		return D1_INVALID;
-	if (txn->owner.cohort != e->owner.cohort ||
+	if (txn->owner.cohort.raw != e->owner.cohort.raw ||
 	    txn->owner.writer != e->owner.writer ||
 	    txn->owner.co_id != e->owner.co_id)
 		return D1_OWNER_CONFLICT;
@@ -1584,7 +1652,7 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 
 	res->owner = txn->owner;
 	res->txn_present = true;
-	res->txn = txn->id;
+	res->txn = d1_txn_of(s, txn->id);
 
 	if (txn->phase == D1_PHASE_PREPARED ||
 	    txn->phase == D1_PHASE_FINALIZED) {
@@ -1601,11 +1669,11 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 		 * nothing there.
 		 */
 		if (e->visible_present != chunk->visible_present ||
-		    (e->visible_present && e->visible != chunk->visible))
+		    (e->visible_present && e->visible.raw != chunk->visible))
 			return D1_OWNER_CONFLICT;
 		if (txn->predecessor_present != e->predecessor_present ||
 		    (e->predecessor_present &&
-		     txn->predecessor != e->predecessor))
+		     txn->predecessor != e->predecessor.raw))
 			return D1_NO_PREDECESSOR;
 		d1_undo_chunk(u, chunk);
 		d1_undo_txn(u, txn);
@@ -1631,7 +1699,7 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 	if ((a->rights & D1_RIGHT_REPAIR) != D1_RIGHT_REPAIR)
 		return D1_STALE_AUTH;
 	if (e->visible_present != chunk->visible_present ||
-	    (e->visible_present && e->visible != chunk->visible))
+	    (e->visible_present && e->visible.raw != chunk->visible))
 		return D1_OWNER_CONFLICT;
 	/*
 	 * Custody is looked up on replay too.  It is journalled, so the
@@ -1652,18 +1720,19 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 	if (chunk->pending_present)
 		return D1_GUARDED;
 
-	ver = d1_version_find(s, txn->version);
+	ver = d1_version_find(s, d1_version_of(s, txn->version));
 	if (!ver)
 		return D1_INVALID;
 	res->version_present = true;
-	res->version = ver->id;
+	res->version = d1_version_of(s, ver->id);
 
 	/* The expected predecessor is compared for presence and value. */
 	if (ver->predecessor_present != e->predecessor_present ||
-	    (e->predecessor_present && ver->predecessor != e->predecessor))
+	    (e->predecessor_present && ver->predecessor != e->predecessor.raw))
 		return D1_NO_PREDECESSOR;
-	pred = ver->predecessor_present ? d1_version_find(s, ver->predecessor) :
-					  NULL;
+	pred = ver->predecessor_present ?
+		       d1_version_find(s, d1_version_of(s, ver->predecessor)) :
+		       NULL;
 	if (!pred || pred->released) {
 		/*
 		 * Nothing to put back.  The current data stays, no episode
@@ -1679,7 +1748,7 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 	d1_publish_visible(s, chunk, pred->id);
 	txn->phase = D1_PHASE_ROLLED_BACK;
 	s->index_epoch++;
-	res->version = pred->id;
+	res->version = d1_version_of(s, pred->id);
 	res->phase = txn->phase;
 	return D1_OK;
 }
@@ -1717,7 +1786,7 @@ struct d1_control_undo {
 	uint32_t count;
 	struct d1_txn *txn[D1_BATCH_ENTRIES_MAX];
 	uint32_t phase[D1_BATCH_ENTRIES_MAX];
-	d1_id_t admission[D1_BATCH_ENTRIES_MAX];
+	uint64_t admission[D1_BATCH_ENTRIES_MAX];
 	uint64_t read_epoch[D1_BATCH_ENTRIES_MAX];
 	struct d1_chunk *chunk[D1_BATCH_ENTRIES_MAX];
 	struct d1_chunk chunk_before[D1_BATCH_ENTRIES_MAX];
@@ -2496,7 +2565,7 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
  * admission table as writes; a revoked or expired admission cannot open
  * a view, and one issued for a different object cannot either.
  */
-static uint32_t d1_read_admission(struct d1_store *s, d1_id_t admission,
+static uint32_t d1_read_admission(struct d1_store *s, d1_admission_id admission,
 				  const struct d1_objkey *object, bool private,
 				  struct d1_admission **out)
 {
@@ -2546,7 +2615,7 @@ static uint32_t d1_read_admission(struct d1_store *s, d1_id_t admission,
 static uint32_t d1_owner_resolve(struct d1_store *s,
 				 const struct d1_selection_spec *sel,
 				 const struct d1_admission *a, uint32_t object,
-				 bool *present, d1_id_t *chosen)
+				 bool *present, uint64_t *chosen)
 {
 	uint32_t i, j;
 
@@ -2556,11 +2625,11 @@ static uint32_t d1_owner_resolve(struct d1_store *s,
 
 		/* One vector never names one transaction twice. */
 		for (j = 0; j < i; j++)
-			if (sel->txns[j] == sel->txns[i])
+			if (d1_txn_eq(sel->txns[j], sel->txns[i]))
 				return D1_INVALID;
 		if (!t || t->object != object || t->index >= D1_MAX_CHUNKS)
 			return D1_INVALID;
-		if (t->owner.cohort != sel->owners[i].cohort ||
+		if (t->owner.cohort.raw != sel->owners[i].cohort.raw ||
 		    t->owner.writer != sel->owners[i].writer ||
 		    t->owner.co_id != sel->owners[i].co_id)
 			return D1_OWNER_CONFLICT;
@@ -2573,7 +2642,7 @@ static uint32_t d1_owner_resolve(struct d1_store *s,
 		/* Two members resolving to one chunk is not a selection. */
 		if (present[t->index])
 			return D1_INVALID;
-		v = d1_version_find(s, t->version);
+		v = d1_version_find(s, d1_version_of(s, t->version));
 		if (!v)
 			return D1_INVALID;
 		present[t->index] = true;
@@ -2591,7 +2660,7 @@ static void d1_view_unpin(struct d1_store *s, struct d1_view *v)
 
 		if (!v->present[i])
 			continue;
-		ver = d1_version_find(s, v->version[i]);
+		ver = d1_version_find(s, d1_version_of(s, v->version[i]));
 		if (ver && ver->pins)
 			ver->pins--;
 		v->present[i] = false;
@@ -2599,9 +2668,9 @@ static void d1_view_unpin(struct d1_store *s, struct d1_view *v)
 }
 
 uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
-		      d1_id_t admission, const struct d1_selection_spec *sel,
-		      uint64_t byte_begin, uint64_t byte_end,
-		      struct d1_view **out)
+		      d1_admission_id admission,
+		      const struct d1_selection_spec *sel, uint64_t byte_begin,
+		      uint64_t byte_end, struct d1_view **out)
 {
 	struct d1_admission *a = NULL;
 	struct d1_object *o;
@@ -2609,7 +2678,7 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 	/* The version each chunk resolves to, settled before anything is
 	 * pinned. */
 	bool chosen_present[D1_MAX_CHUNKS] = { false };
-	d1_id_t chosen[D1_MAX_CHUNKS] = { 0 };
+	uint64_t chosen[D1_MAX_CHUNKS] = { 0 };
 	uint64_t first, last;
 	uint32_t status, i;
 
@@ -2704,9 +2773,9 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 		uint64_t start, end;
 
 		if (chosen_present[i])
-			ver = d1_version_find(s, chosen[i]);
+			ver = d1_version_find(s, d1_version_of(s, chosen[i]));
 		if (!ver && c->visible_present)
-			ver = d1_version_find(s, c->visible);
+			ver = d1_version_find(s, d1_version_of(s, c->visible));
 		if (!ver)
 			continue;
 		v->extent_present[i] = true;
@@ -2741,11 +2810,12 @@ out:
 	return status;
 }
 
-bool d1_view_version(const struct d1_view *v, uint64_t index, d1_id_t *ver)
+bool d1_view_version(const struct d1_view *v, uint64_t index,
+		     d1_version_id *ver)
 {
-	if (index >= D1_MAX_CHUNKS || !v->present[index])
+	if (!v || index >= D1_MAX_CHUNKS || !v->present[index])
 		return false;
-	*ver = v->version[index];
+	*ver = d1_version_of(v->store, v->version[index]);
 	return true;
 }
 
@@ -2791,7 +2861,8 @@ uint32_t d1_view_read(struct d1_view *v, uint64_t offset, uint8_t *buf,
 		if (span > len - done)
 			span = len - done;
 		if (index < D1_MAX_CHUNKS && v->present[index])
-			ver = d1_version_find(s, v->version[index]);
+			ver = d1_version_find(
+				s, d1_version_of(s, v->version[index]));
 		/*
 		 * A chunk inside the window is either pinned or a hole; one
 		 * outside it never reaches here, because the read is clipped
@@ -2854,16 +2925,19 @@ void d1_view_close(struct d1_view *v)
  * inventing it.  Each has a locked core the rebuild calls directly and
  * a public form that takes the lock and writes the event.
  */
-static d1_id_t d1_admit_locked(struct d1_store *s,
-			       const struct d1_objkey *object,
-			       const struct d1_fixture_authority *auth)
+static d1_admission_id d1_admit_locked(struct d1_store *s,
+				       const struct d1_objkey *object,
+				       const struct d1_fixture_authority *auth)
 {
 	uint32_t i;
 
 	/* Reserved writer IDs are never issued. */
 	if (auth->writer == D1_WRITER_RESERVED_LOW ||
 	    auth->writer == D1_WRITER_RESERVED_HIGH)
-		return 0;
+		return d1_admission_of(s, 0);
+	/* And a counter that has run out issues nothing rather than wrap. */
+	if (s->next_admission == UINT64_MAX)
+		return d1_admission_of(s, 0);
 	for (i = 0; i < D1_MAX_ADMISSIONS; i++) {
 		struct d1_admission *a = &s->admissions[i];
 
@@ -2883,12 +2957,12 @@ static d1_id_t d1_admit_locked(struct d1_store *s,
 		a->fence_sequence = auth->fence_sequence;
 		a->rights = auth->rights;
 		a->incarnation = s->incarnation;
-		return a->id;
+		return d1_admission_of(s, a->id);
 	}
-	return 0;
+	return d1_admission_of(s, 0);
 }
 
-static bool d1_revoke_locked(struct d1_store *s, d1_id_t admission)
+static bool d1_revoke_locked(struct d1_store *s, d1_admission_id admission)
 {
 	struct d1_admission *a = d1_admission_find(s, admission);
 
@@ -2898,7 +2972,7 @@ static bool d1_revoke_locked(struct d1_store *s, d1_id_t admission)
 	return true;
 }
 
-static bool d1_expire_locked(struct d1_store *s, d1_id_t admission)
+static bool d1_expire_locked(struct d1_store *s, d1_admission_id admission)
 {
 	struct d1_admission *a = d1_admission_find(s, admission);
 
@@ -2916,12 +2990,15 @@ static bool d1_expire_locked(struct d1_store *s, d1_id_t admission)
  * allocated: such a handle would silently become valid later, when the
  * counter reached it.  Custody names a version that is there now.
  */
-static d1_id_t d1_custody_locked(struct d1_store *s, d1_id_t version)
+static d1_custody_id d1_custody_locked(struct d1_store *s,
+				       d1_version_id version)
 {
 	uint32_t i;
 
 	if (!d1_version_find(s, version))
-		return 0;
+		return d1_custody_of(s, 0);
+	if (s->next_custody == UINT64_MAX)
+		return d1_custody_of(s, 0);
 	for (i = 0; i < D1_MAX_CUSTODY; i++) {
 		struct d1_custody *c = &s->custody[i];
 
@@ -2929,10 +3006,10 @@ static d1_id_t d1_custody_locked(struct d1_store *s, d1_id_t version)
 			continue;
 		c->used = true;
 		c->id = s->next_custody++;
-		c->version = version;
-		return c->id;
+		c->version = version.raw;
+		return d1_custody_of(s, c->id);
 	}
-	return 0;
+	return d1_custody_of(s, 0);
 }
 
 /*
@@ -2952,7 +3029,7 @@ static d1_id_t d1_custody_locked(struct d1_store *s, d1_id_t version)
  * limitation of the model's capacity, not a licence to answer the
  * logical question differently.
  */
-static bool d1_release_locked(struct d1_store *s, d1_id_t version)
+static bool d1_release_locked(struct d1_store *s, d1_version_id version)
 {
 	struct d1_version *v = d1_version_find(s, version);
 	uint32_t i, c;
@@ -2964,7 +3041,7 @@ static bool d1_release_locked(struct d1_store *s, d1_id_t version)
 			continue;
 		for (c = 0; c < D1_MAX_CHUNKS; c++)
 			if (s->objects[i].chunks[c].visible_present &&
-			    s->objects[i].chunks[c].visible == version)
+			    s->objects[i].chunks[c].visible == version.raw)
 				return false;
 	}
 	for (i = 0; i < D1_MAX_TXNS; i++) {
@@ -2980,9 +3057,9 @@ static bool d1_release_locked(struct d1_store *s, d1_id_t version)
 		 * on cancellation still depends on it, which is a different
 		 * question from whether the version is itself private.
 		 */
-		if (t->version == version)
+		if (t->version == version.raw)
 			return false;
-		if (t->predecessor_present && t->predecessor == version)
+		if (t->predecessor_present && t->predecessor == version.raw)
 			return false;
 	}
 	v->released = true;
@@ -3033,7 +3110,7 @@ bool d1_store_overlay_active(struct d1_store *s)
  * read did not consult it.  There is no production use for this.
  */
 bool d1_store_materialized(struct d1_store *s, const struct d1_objkey *object,
-			   uint64_t index, d1_id_t *version)
+			   uint64_t index, d1_version_id *version)
 {
 	struct d1_object *o;
 	bool found = false;
@@ -3042,7 +3119,7 @@ bool d1_store_materialized(struct d1_store *s, const struct d1_objkey *object,
 	o = d1_store_serving(s) ? d1_object_find(s, object) : NULL;
 	if (o && index < D1_MAX_CHUNKS &&
 	    o->chunks[index].materialized_present) {
-		*version = o->chunks[index].materialized;
+		*version = d1_version_of(s, o->chunks[index].materialized);
 		found = true;
 	}
 	pthread_mutex_unlock(&s->lock);
@@ -3070,14 +3147,34 @@ static bool d1_journal_fixture(struct d1_store *s,
 					request_len, result_bytes, result_len);
 }
 
-d1_id_t d1_fixture_admit_full(struct d1_store *s,
-			      const struct d1_objkey *object,
-			      const struct d1_fixture_authority *auth)
+d1_admission_id d1_fixture_admission_handle(struct d1_store *s, uint64_t raw)
+{
+	return d1_admission_of(s, raw);
+}
+
+d1_txn_id d1_fixture_txn_handle(struct d1_store *s, uint64_t raw)
+{
+	return d1_txn_of(s, raw);
+}
+
+d1_version_id d1_fixture_version_handle(struct d1_store *s, uint64_t raw)
+{
+	return d1_version_of(s, raw);
+}
+
+d1_custody_id d1_fixture_custody_handle(struct d1_store *s, uint64_t raw)
+{
+	return d1_custody_of(s, raw);
+}
+
+d1_admission_id d1_fixture_admit_full(struct d1_store *s,
+				      const struct d1_objkey *object,
+				      const struct d1_fixture_authority *auth)
 {
 	struct d1_control_request request;
 	struct d1_control_result result;
 	struct d1_admission *a;
-	d1_id_t id;
+	d1_admission_id id;
 
 	memset(&request, 0, sizeof(request));
 	request.kind = D1_CTL_ADMIT;
@@ -3087,19 +3184,20 @@ d1_id_t d1_fixture_admit_full(struct d1_store *s,
 	pthread_mutex_lock(&s->lock);
 	if (!d1_store_serving(s)) {
 		pthread_mutex_unlock(&s->lock);
-		return 0;
+		return d1_admission_of(s, 0);
 	}
 	id = d1_admit_locked(s, object, auth);
 	memset(&result, 0, sizeof(result));
-	result.id = id;
-	result.status = id ? D1_OK : D1_NOSPC;
-	if (id && !d1_journal_fixture(s, &request, &result)) {
+	result.id = id.raw;
+	result.status = d1_admission_live(id) ? D1_OK : D1_NOSPC;
+	if (d1_admission_live(id) &&
+	    !d1_journal_fixture(s, &request, &result)) {
 		/* An event that is not durable did not happen. */
 		a = d1_admission_find(s, id);
 		if (a)
 			a->used = false;
 		s->next_admission--;
-		id = 0;
+		id = d1_admission_of(s, 0);
 	}
 	pthread_mutex_unlock(&s->lock);
 	return id;
@@ -3110,8 +3208,9 @@ d1_id_t d1_fixture_admit_full(struct d1_store *s,
  * so two handles for one writer share a principal and two for different
  * writers do not.  Tests that need a specific binding use the full form.
  */
-d1_id_t d1_fixture_admit(struct d1_store *s, const struct d1_objkey *object,
-			 uint32_t writer, uint32_t rights)
+d1_admission_id d1_fixture_admit(struct d1_store *s,
+				 const struct d1_objkey *object,
+				 uint32_t writer, uint32_t rights)
 {
 	struct d1_fixture_authority auth;
 	unsigned int i;
@@ -3126,7 +3225,7 @@ d1_id_t d1_fixture_admit(struct d1_store *s, const struct d1_objkey *object,
 	return d1_fixture_admit_full(s, object, &auth);
 }
 
-void d1_fixture_revoke(struct d1_store *s, d1_id_t admission)
+void d1_fixture_revoke(struct d1_store *s, d1_admission_id admission)
 {
 	struct d1_control_request request;
 	struct d1_control_result result;
@@ -3146,7 +3245,7 @@ void d1_fixture_revoke(struct d1_store *s, d1_id_t admission)
 	before = a ? a->revoked : false;
 	memset(&result, 0, sizeof(result));
 	result.status = d1_revoke_locked(s, admission) ? D1_OK : D1_STALE_AUTH;
-	result.id = admission;
+	result.id = admission.raw;
 	if (a)
 		request.object = a->object;
 	if (!d1_journal_fixture(s, &request, &result) && a)
@@ -3154,7 +3253,7 @@ void d1_fixture_revoke(struct d1_store *s, d1_id_t admission)
 	pthread_mutex_unlock(&s->lock);
 }
 
-void d1_fixture_expire(struct d1_store *s, d1_id_t admission)
+void d1_fixture_expire(struct d1_store *s, d1_admission_id admission)
 {
 	struct d1_control_request request;
 	struct d1_control_result result;
@@ -3174,7 +3273,7 @@ void d1_fixture_expire(struct d1_store *s, d1_id_t admission)
 	before = a ? a->expired : false;
 	memset(&result, 0, sizeof(result));
 	result.status = d1_expire_locked(s, admission) ? D1_OK : D1_STALE_AUTH;
-	result.id = admission;
+	result.id = admission.raw;
 	if (a)
 		request.object = a->object;
 	if (!d1_journal_fixture(s, &request, &result) && a)
@@ -3182,12 +3281,12 @@ void d1_fixture_expire(struct d1_store *s, d1_id_t admission)
 	pthread_mutex_unlock(&s->lock);
 }
 
-d1_id_t d1_fixture_custody(struct d1_store *s, d1_id_t version)
+d1_custody_id d1_fixture_custody(struct d1_store *s, d1_version_id version)
 {
 	struct d1_control_request request;
 	struct d1_control_result result;
 	struct d1_custody *c;
-	d1_id_t id;
+	d1_custody_id id;
 	uint32_t i;
 
 	memset(&request, 0, sizeof(request));
@@ -3197,26 +3296,26 @@ d1_id_t d1_fixture_custody(struct d1_store *s, d1_id_t version)
 	pthread_mutex_lock(&s->lock);
 	if (!d1_store_serving(s)) {
 		pthread_mutex_unlock(&s->lock);
-		return 0;
+		return d1_custody_of(s, 0);
 	}
 	id = d1_custody_locked(s, version);
 	memset(&result, 0, sizeof(result));
-	result.id = id;
-	result.status = id ? D1_OK : D1_NOSPC;
-	if (id && !d1_journal_fixture(s, &request, &result)) {
+	result.id = id.raw;
+	result.status = d1_custody_live(id) ? D1_OK : D1_NOSPC;
+	if (d1_custody_live(id) && !d1_journal_fixture(s, &request, &result)) {
 		for (i = 0; i < D1_MAX_CUSTODY; i++) {
 			c = &s->custody[i];
-			if (c->used && c->id == id)
+			if (c->used && c->id == id.raw)
 				c->used = false;
 		}
 		s->next_custody--;
-		id = 0;
+		id = d1_custody_of(s, 0);
 	}
 	pthread_mutex_unlock(&s->lock);
 	return id;
 }
 
-bool d1_fixture_release_predecessor(struct d1_store *s, d1_id_t version)
+bool d1_fixture_release_predecessor(struct d1_store *s, d1_version_id version)
 {
 	struct d1_control_request request;
 	struct d1_control_result result;
@@ -3234,7 +3333,7 @@ bool d1_fixture_release_predecessor(struct d1_store *s, d1_id_t version)
 	}
 	ok = d1_release_locked(s, version);
 	memset(&result, 0, sizeof(result));
-	result.id = version;
+	result.id = version.raw;
 	result.status = ok ? D1_OK : D1_INVALID;
 	if (!d1_journal_fixture(s, &request, &result) && ok) {
 		v = d1_version_find(s, version);
@@ -3375,6 +3474,67 @@ static uint32_t d1_replay_start(struct d1_store *s, const uint8_t *payload,
 }
 
 /*
+ * Bind a decoded record's handles to the store replaying it.
+ *
+ * A log carries values, not provenance: nothing that comes off the wire
+ * names a store, and a lookup refuses a handle no store issued.
+ * Recovery is deterministic re-execution by this store, so the handles
+ * a record names are this store's, and these two functions are the only
+ * place that says so.  They are not a general cast: every handle they
+ * make is bound to the target and to nothing else, they are static to
+ * this file, and no public entry point reaches them.
+ */
+static void d1_envelope_adopt(const struct d1_store *s, struct d1_envelope *env)
+{
+	uint32_t i;
+
+	env->admission = d1_admission_of(s, env->admission.raw);
+	switch (env->op) {
+	case D1_OP_FINALIZE_BATCH:
+	case D1_OP_COMMIT_BATCH:
+		for (i = 0; i < env->body.lifecycle.count; i++) {
+			struct d1_lifecycle_entry *e =
+				&env->body.lifecycle.entries[i];
+
+			e->txn = d1_txn_of(s, e->txn.raw);
+			e->predecessor = d1_version_of(s, e->predecessor.raw);
+		}
+		break;
+	case D1_OP_ROLLBACK_BATCH:
+		for (i = 0; i < env->body.rollback.count; i++) {
+			struct d1_rollback_entry *e =
+				&env->body.rollback.entries[i];
+
+			e->txn = d1_txn_of(s, e->txn.raw);
+			e->visible = d1_version_of(s, e->visible.raw);
+			e->predecessor = d1_version_of(s, e->predecessor.raw);
+			e->custody = d1_custody_of(s, e->custody.raw);
+		}
+		break;
+	case D1_OP_RECOVERY_ADMIT:
+	case D1_OP_LEASE_REAP:
+		for (i = 0; i < env->body.control.count; i++)
+			env->body.control.txns[i] =
+				d1_txn_of(s, env->body.control.txns[i].raw);
+		env->body.control.old_admission =
+			d1_admission_of(s, env->body.control.old_admission.raw);
+		env->body.control.new_admission =
+			d1_admission_of(s, env->body.control.new_admission.raw);
+		break;
+	default:
+		/* A write batch carries an owner, which no store issues. */
+		break;
+	}
+}
+
+static void d1_control_adopt(const struct d1_store *s,
+			     struct d1_control_request *r)
+{
+	r->admission = d1_admission_of(s, r->admission.raw);
+	r->version = d1_version_of(s, r->version.raw);
+}
+
+/*
  * Whether the receipt this record claims is there.
  *
  * Replay asks it twice, once on each side of the reducer: a receipt
@@ -3410,6 +3570,7 @@ static uint32_t d1_replay_entry(struct d1_store *s, const uint8_t *body,
 		return D1_INVALID;
 	if (!d1_envelope_decode(env_bytes, env_len, &env))
 		return D1_INVALID;
+	d1_envelope_adopt(s, &env);
 	if (!d1_complete_result_decode(result_bytes, result_len, &logged))
 		return D1_INVALID;
 	/*
@@ -3544,6 +3705,7 @@ static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 	if (kind == D1_CTL_ENVELOPE) {
 		if (!d1_envelope_decode(request_bytes, request_len, &env))
 			return D1_INVALID;
+		d1_envelope_adopt(s, &env);
 		/* A CONTROL record carries a control operation. */
 		if (d1_op_rights(env.op) != D1_RIGHT_CONTROL)
 			return D1_INVALID;
@@ -3572,6 +3734,7 @@ static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 
 	if (!d1_control_request_decode(request_bytes, request_len, &request))
 		return D1_INVALID;
+	d1_control_adopt(s, &request);
 	/* And the outer tag agrees with the schema it actually carries. */
 	if (request.kind != kind)
 		return D1_INVALID;
@@ -3602,27 +3765,27 @@ static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 	switch (request.kind) {
 	case D1_CTL_ADMIT:
 		computed_ctl.id =
-			d1_admit_locked(s, &request.object, &request.auth);
+			d1_admit_locked(s, &request.object, &request.auth).raw;
 		computed_ctl.status = computed_ctl.id ? D1_OK : D1_NOSPC;
 		break;
 	case D1_CTL_REVOKE:
-		computed_ctl.id = request.admission;
+		computed_ctl.id = request.admission.raw;
 		computed_ctl.status = d1_revoke_locked(s, request.admission) ?
 					      D1_OK :
 					      D1_STALE_AUTH;
 		break;
 	case D1_CTL_EXPIRE:
-		computed_ctl.id = request.admission;
+		computed_ctl.id = request.admission.raw;
 		computed_ctl.status = d1_expire_locked(s, request.admission) ?
 					      D1_OK :
 					      D1_STALE_AUTH;
 		break;
 	case D1_CTL_CUSTODY:
-		computed_ctl.id = d1_custody_locked(s, request.version);
+		computed_ctl.id = d1_custody_locked(s, request.version).raw;
 		computed_ctl.status = computed_ctl.id ? D1_OK : D1_NOSPC;
 		break;
 	default:
-		computed_ctl.id = request.version;
+		computed_ctl.id = request.version.raw;
 		computed_ctl.status = d1_release_locked(s, request.version) ?
 					      D1_OK :
 					      D1_INVALID;
@@ -3812,7 +3975,7 @@ uint32_t d1_store_reopen(struct d1_store *s, const uint8_t *log, size_t durable)
  * above, because it already holds the lock.
  */
 bool d1_store_visible(struct d1_store *s, const struct d1_objkey *object,
-		      uint64_t index, d1_id_t *version)
+		      uint64_t index, d1_version_id *version)
 {
 	bool found;
 

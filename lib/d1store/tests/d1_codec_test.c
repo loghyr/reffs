@@ -266,7 +266,7 @@ static void test_golden_structs(void)
 	};
 	struct d1_objkey obj;
 	struct d1_opkey key;
-	struct d1_owner owner = { .cohort = 42, .writer = 11, .co_id = 12 };
+	struct d1_owner owner = { .cohort = { 42 }, .writer = 11, .co_id = 12 };
 	struct d1_guard guard = { .generation = 5,
 				  .writer = 11,
 				  .never_written = false };
@@ -300,7 +300,7 @@ static void test_round_trip(void)
 {
 	struct d1_objkey obj, obj2;
 	struct d1_opkey key, key2;
-	struct d1_owner owner = { .cohort = UINT64_MAX,
+	struct d1_owner owner = { .cohort = { UINT64_MAX },
 				  .writer = 1,
 				  .co_id = 2 },
 			owner2;
@@ -356,7 +356,8 @@ static void test_round_trip(void)
 		      key.sequence == key2.sequence &&
 		      key.ordinal == key2.ordinal,
 	      "opkey survives");
-	check(owner.cohort == owner2.cohort && owner.writer == owner2.writer &&
+	check(owner.cohort.raw == owner2.cohort.raw &&
+		      owner.writer == owner2.writer &&
 		      owner.co_id == owner2.co_id,
 	      "owner survives");
 	check(guard2.never_written && guard2.generation == 0,

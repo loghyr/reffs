@@ -39,10 +39,10 @@ size_t d1_control_request_encode(const struct d1_control_request *r, void *buf,
 		break;
 	case D1_CTL_REVOKE:
 	case D1_CTL_EXPIRE:
-		d1_enc_u64(&c, r->admission);
+		d1_enc_u64(&c, r->admission.raw);
 		break;
 	default:
-		d1_enc_u64(&c, r->version);
+		d1_enc_u64(&c, r->version.raw);
 		break;
 	}
 	if (!d1_cursor_ok(&c))
@@ -77,11 +77,11 @@ bool d1_control_request_decode(const void *buf, size_t len,
 		break;
 	case D1_CTL_REVOKE:
 	case D1_CTL_EXPIRE:
-		if (!d1_dec_u64(&c, &r->admission))
+		if (!d1_dec_u64(&c, &r->admission.raw))
 			return false;
 		break;
 	default:
-		if (!d1_dec_u64(&c, &r->version))
+		if (!d1_dec_u64(&c, &r->version.raw))
 			return false;
 		break;
 	}
@@ -124,8 +124,8 @@ size_t d1_complete_result_encode(const struct d1_complete_result *r, void *buf,
 	d1_enc_u64(&c, r->eof);
 	d1_enc_u32(&c, r->disposition);
 	d1_enc_u32(&c, e->status);
-	d1_enc_opt_u64(&c, e->version_present, e->version);
-	d1_enc_opt_u64(&c, e->txn_present, e->txn);
+	d1_enc_opt_u64(&c, e->version_present, e->version.raw);
+	d1_enc_opt_u64(&c, e->txn_present, e->txn.raw);
 	d1_enc_guard(&c, &e->guard);
 	d1_enc_owner(&c, &e->owner);
 	d1_enc_u32(&c, e->stability);
@@ -148,8 +148,8 @@ bool d1_complete_result_decode(const void *buf, size_t len,
 	if (!d1_dec_opkey(&c, &r->key) || !d1_dec_u64(&c, &r->index_epoch) ||
 	    !d1_dec_u64(&c, &r->eof) || !d1_dec_u32(&c, &r->disposition) ||
 	    !d1_dec_u32(&c, &e->status) ||
-	    !d1_dec_opt_u64(&c, &e->version_present, &e->version) ||
-	    !d1_dec_opt_u64(&c, &e->txn_present, &e->txn) ||
+	    !d1_dec_opt_u64(&c, &e->version_present, &e->version.raw) ||
+	    !d1_dec_opt_u64(&c, &e->txn_present, &e->txn.raw) ||
 	    !d1_dec_guard(&c, &e->guard) || !d1_dec_owner(&c, &e->owner) ||
 	    !d1_dec_u32(&c, &e->stability) || !d1_dec_bool(&c, &e->activated) ||
 	    !d1_dec_u32(&c, &e->phase) ||
@@ -178,17 +178,24 @@ bool d1_complete_result_equal(const struct d1_complete_result *a,
 		return false;
 	if (a->entry.status != b->entry.status)
 		return false;
+	/*
+	 * Handles are compared by the value the log carries.  Provenance
+	 * is runtime state and is never encoded, so a decoded result has
+	 * none and there is nothing there to compare: what the log records
+	 * is which handle the reducer named, and that is the raw value.
+	 */
 	if (a->entry.version_present != b->entry.version_present ||
-	    (a->entry.version_present && a->entry.version != b->entry.version))
+	    (a->entry.version_present &&
+	     a->entry.version.raw != b->entry.version.raw))
 		return false;
 	if (a->entry.txn_present != b->entry.txn_present ||
-	    (a->entry.txn_present && a->entry.txn != b->entry.txn))
+	    (a->entry.txn_present && a->entry.txn.raw != b->entry.txn.raw))
 		return false;
 	if (a->entry.guard.generation != b->entry.guard.generation ||
 	    a->entry.guard.writer != b->entry.guard.writer ||
 	    a->entry.guard.never_written != b->entry.guard.never_written)
 		return false;
-	if (a->entry.owner.cohort != b->entry.owner.cohort ||
+	if (a->entry.owner.cohort.raw != b->entry.owner.cohort.raw ||
 	    a->entry.owner.writer != b->entry.owner.writer ||
 	    a->entry.owner.co_id != b->entry.owner.co_id)
 		return false;

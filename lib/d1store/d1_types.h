@@ -21,6 +21,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 /* Uninterpreted 16-byte identity, never parsed by the model. */
 #define D1_UUID_BYTES 16
@@ -168,10 +169,152 @@ struct d1_uuid {
 };
 
 /*
- * A typed identifier.  Zero means absent everywhere, which is why
- * presence is carried by an option tag rather than by testing for zero.
+ * A typed identifier, and the store that issued it.
+ *
+ * Section 3 makes version, transaction, cohort, custody, episode, pin
+ * and admission handles disjoint typed IDs, and one u64 is what the
+ * canonical form carries for each of them.  One u64 was also all the C
+ * model carried, and that was two holes rather than one.  Every store
+ * starts each of its counters at one, so a handle from one store
+ * resolved against another store's table of the same kind and
+ * authorized work there; and a lookup chose its table from the
+ * parameter the number arrived in, so an admission passed where a
+ * version belongs was resolved as a version.
+ *
+ * So the canonical value keeps its u64 and gains two things that never
+ * reach the encoding.  The type is the C type: these are different
+ * structs, and neither the compiler nor a lookup will take one for
+ * another.  The provenance is the issuing store's UUID, which is this
+ * model's own name for a store -- the same name a journal carries and a
+ * rebuild checks, so a handle survives a reopen of the store that
+ * issued it and is refused by any other.  It is an exact identity, not
+ * a hash or a partition of the value: nothing is derived, nothing can
+ * collide that the model does not already treat as one store, and
+ * there is no counter to wrap or restart.
+ *
+ * Zero is absent, as it always was, and an absent handle has no issuer.
  */
-typedef uint64_t d1_id_t;
+typedef struct d1_admission_id {
+	uint64_t raw;
+	/* The issuing store's UUID; zero when the handle is absent. */
+	struct d1_uuid store;
+} d1_admission_id;
+
+typedef struct d1_txn_id {
+	uint64_t raw;
+	/* The issuing store's UUID; zero when the handle is absent. */
+	struct d1_uuid store;
+} d1_txn_id;
+
+typedef struct d1_version_id {
+	uint64_t raw;
+	/* The issuing store's UUID; zero when the handle is absent. */
+	struct d1_uuid store;
+} d1_version_id;
+
+typedef struct d1_custody_id {
+	uint64_t raw;
+	/* The issuing store's UUID; zero when the handle is absent. */
+	struct d1_uuid store;
+} d1_custody_id;
+
+/*
+ * The cohort is a typed handle too, and the one the store never issues:
+ * it names the caller's own cohort, so it has no issuer and only its
+ * type keeps it apart from the others.
+ */
+typedef struct d1_cohort_id {
+	uint64_t raw;
+} d1_cohort_id;
+
+/*
+ * The absent handle of each kind.  Zero names nothing and is issued by
+ * nobody, so this is the one raw value a caller may make a handle out
+ * of: it can be compared and it can be passed, and it resolves to no
+ * row in any store.
+ */
+static inline d1_admission_id d1_admission_none(void)
+{
+	d1_admission_id id = { 0, { { 0 } } };
+
+	return id;
+}
+
+static inline d1_txn_id d1_txn_none(void)
+{
+	d1_txn_id id = { 0, { { 0 } } };
+
+	return id;
+}
+
+static inline d1_version_id d1_version_none(void)
+{
+	d1_version_id id = { 0, { { 0 } } };
+
+	return id;
+}
+
+static inline d1_custody_id d1_custody_none(void)
+{
+	d1_custody_id id = { 0, { { 0 } } };
+
+	return id;
+}
+
+/* Whether a handle names anything: zero is absent, everywhere. */
+static inline bool d1_admission_live(d1_admission_id id)
+{
+	return id.raw != 0;
+}
+
+static inline bool d1_txn_live(d1_txn_id id)
+{
+	return id.raw != 0;
+}
+
+static inline bool d1_version_live(d1_version_id id)
+{
+	return id.raw != 0;
+}
+
+static inline bool d1_custody_live(d1_custody_id id)
+{
+	return id.raw != 0;
+}
+
+static inline bool d1_cohort_live(d1_cohort_id id)
+{
+	return id.raw != 0;
+}
+
+/*
+ * Whether two handles are the same handle: the same value, issued by
+ * the same store.  Two stores' first admissions are both one and are
+ * not the same admission.
+ */
+static inline bool d1_admission_eq(d1_admission_id a, d1_admission_id b)
+{
+	return a.raw == b.raw &&
+	       memcmp(a.store.bytes, b.store.bytes, D1_UUID_BYTES) == 0;
+}
+
+static inline bool d1_txn_eq(d1_txn_id a, d1_txn_id b)
+{
+	return a.raw == b.raw &&
+	       memcmp(a.store.bytes, b.store.bytes, D1_UUID_BYTES) == 0;
+}
+
+static inline bool d1_version_eq(d1_version_id a, d1_version_id b)
+{
+	return a.raw == b.raw &&
+	       memcmp(a.store.bytes, b.store.bytes, D1_UUID_BYTES) == 0;
+}
+
+static inline bool d1_custody_eq(d1_custody_id a, d1_custody_id b)
+{
+	return a.raw == b.raw &&
+	       memcmp(a.store.bytes, b.store.bytes, D1_UUID_BYTES) == 0;
+}
 
 /* The CAS guard of one chunk: (generation, writer), plus never-written. */
 struct d1_guard {
@@ -187,7 +330,7 @@ struct d1_guard {
 
 /* The client-supplied owner triple of one chunk write. */
 struct d1_owner {
-	uint64_t cohort;
+	d1_cohort_id cohort;
 	uint32_t writer;
 	uint32_t co_id;
 };

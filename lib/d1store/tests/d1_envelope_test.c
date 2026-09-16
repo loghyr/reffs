@@ -54,7 +54,7 @@ static void make_write(struct d1_envelope *env)
 	fill_uuid(&env->object.export_uuid, 0x00);
 	fill_uuid(&env->object.object_uuid, 0x10);
 	fill_uuid(&env->key.origin, 0x20);
-	env->admission = 7;
+	env->admission.raw = 7;
 	env->incarnation = 1;
 	env->key.sequence = 5;
 	env->key.ordinal = 0;
@@ -65,7 +65,7 @@ static void make_write(struct d1_envelope *env)
 
 	e = &env->body.write.entries[0];
 	e->index = 0;
-	e->owner.cohort = 42;
+	e->owner.cohort.raw = 42;
 	e->owner.writer = 11;
 	e->owner.co_id = 1;
 	e->guard_check = true;
@@ -273,7 +273,7 @@ static void test_round_trip(void)
 	len = d1_envelope_encode(&env, buf, sizeof(buf));
 	check(len != 0, "write envelope encodes");
 	check(d1_envelope_decode(buf, len, &back), "write envelope decodes");
-	check(back.op == D1_OP_WRITE_BATCH && back.admission == 7 &&
+	check(back.op == D1_OP_WRITE_BATCH && back.admission.raw == 7 &&
 		      back.incarnation == 1 && back.key.sequence == 5,
 	      "envelope header survives");
 	check(back.body.write.count == 1 &&
@@ -310,7 +310,7 @@ static void test_digest_binds_every_field(void)
 		make_write(&v);
 		switch (i) {
 		case 0:
-			v.admission++;
+			v.admission.raw++;
 			what = "admission";
 			break;
 		case 1:
@@ -449,7 +449,7 @@ static void test_lifecycle_and_control(void)
 	fill_uuid(&env.object.export_uuid, 0x40);
 	fill_uuid(&env.object.object_uuid, 0x50);
 	fill_uuid(&env.key.origin, 0x60);
-	env.admission = 3;
+	env.admission.raw = 3;
 	env.incarnation = 2;
 	env.key.sequence = 9;
 	env.op = D1_OP_COMMIT_BATCH;
@@ -457,17 +457,17 @@ static void test_lifecycle_and_control(void)
 	env.body.lifecycle.range_end = 2;
 	env.body.lifecycle.count = 2;
 	env.body.lifecycle.entries[0].index = 0;
-	env.body.lifecycle.entries[0].owner.cohort = 5;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 5;
 	env.body.lifecycle.entries[0].owner.writer = 11;
 	env.body.lifecycle.entries[0].owner.co_id = 1;
-	env.body.lifecycle.entries[0].txn = 11;
+	env.body.lifecycle.entries[0].txn.raw = 11;
 	env.body.lifecycle.entries[1].index = 1;
-	env.body.lifecycle.entries[1].owner.cohort = 5;
+	env.body.lifecycle.entries[1].owner.cohort.raw = 5;
 	env.body.lifecycle.entries[1].owner.writer = 11;
 	env.body.lifecycle.entries[1].owner.co_id = 2;
-	env.body.lifecycle.entries[1].txn = 12;
+	env.body.lifecycle.entries[1].txn.raw = 12;
 	env.body.lifecycle.entries[1].predecessor_present = true;
-	env.body.lifecycle.entries[1].predecessor = 4;
+	env.body.lifecycle.entries[1].predecessor.raw = 4;
 	memcpy(env.body.lifecycle.prior_verifier, "\0\0\0\0\0\0\0\2", 8);
 
 	len = d1_envelope_encode(&env, buf, sizeof(buf));
@@ -476,7 +476,7 @@ static void test_lifecycle_and_control(void)
 	check(back.body.lifecycle.count == 2 &&
 		      back.body.lifecycle.range_end == 2 &&
 		      back.body.lifecycle.entries[1].predecessor_present &&
-		      back.body.lifecycle.entries[1].predecessor == 4,
+		      back.body.lifecycle.entries[1].predecessor.raw == 4,
 	      "commit body survives");
 	check(memcmp(back.body.lifecycle.prior_verifier,
 		     env.body.lifecycle.prior_verifier, 8) == 0,
@@ -485,17 +485,17 @@ static void test_lifecycle_and_control(void)
 	memset(&env, 0, sizeof(env));
 	env.op = D1_OP_RECOVERY_ADMIT;
 	env.body.control.count = 1;
-	env.body.control.txns[0] = 77;
-	env.body.control.old_admission = 5;
+	env.body.control.txns[0].raw = 77;
+	env.body.control.old_admission.raw = 5;
 	env.body.control.new_admission_present = true;
-	env.body.control.new_admission = 6;
+	env.body.control.new_admission.raw = 6;
 	env.body.control.read_epoch_present = true;
 	env.body.control.read_epoch = 8;
 	len = d1_envelope_encode(&env, buf, sizeof(buf));
 	check(len != 0 && d1_envelope_decode(buf, len, &back),
 	      "recovery_admit envelope round trips");
-	check(back.body.control.txns[0] == 77 &&
-		      back.body.control.new_admission == 6 &&
+	check(back.body.control.txns[0].raw == 77 &&
+		      back.body.control.new_admission.raw == 6 &&
 		      back.body.control.read_epoch == 8,
 	      "control body survives");
 }

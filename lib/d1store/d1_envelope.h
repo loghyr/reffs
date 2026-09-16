@@ -47,9 +47,9 @@ struct d1_write_batch {
 struct d1_lifecycle_entry {
 	uint64_t index;
 	struct d1_owner owner;
-	d1_id_t txn;
+	d1_txn_id txn;
 	bool predecessor_present;
-	d1_id_t predecessor;
+	d1_version_id predecessor;
 };
 
 struct d1_lifecycle_batch {
@@ -65,18 +65,18 @@ struct d1_lifecycle_batch {
 struct d1_rollback_entry {
 	uint64_t index;
 	struct d1_owner owner;
-	d1_id_t txn;
+	d1_txn_id txn;
 	bool visible_present;
-	d1_id_t visible;
+	d1_version_id visible;
 	bool predecessor_present;
-	d1_id_t predecessor;
+	d1_version_id predecessor;
 	/*
 	 * Repair custody, for rolling back committed data.  It is what
 	 * authorises that; ordinary owner custody cannot roll back a
 	 * committed version, including a replacement.
 	 */
 	bool custody_present;
-	d1_id_t custody;
+	d1_custody_id custody;
 };
 
 struct d1_rollback_batch {
@@ -89,18 +89,18 @@ struct d1_rollback_batch {
 /* A control operation naming transactions of one admission. */
 struct d1_control_batch {
 	uint32_t count;
-	d1_id_t txns[D1_BATCH_ENTRIES_MAX];
-	d1_id_t old_admission;
+	d1_txn_id txns[D1_BATCH_ENTRIES_MAX];
+	d1_admission_id old_admission;
 	/* recovery_admit only; absent for lease_reap. */
 	bool new_admission_present;
-	d1_id_t new_admission;
+	d1_admission_id new_admission;
 	bool read_epoch_present;
 	uint64_t read_epoch;
 };
 
 struct d1_envelope {
 	struct d1_objkey object;
-	d1_id_t admission;
+	d1_admission_id admission;
 	uint64_t incarnation;
 	struct d1_opkey key;
 	/* One of enum d1_op. */

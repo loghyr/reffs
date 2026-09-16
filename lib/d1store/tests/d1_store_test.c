@@ -97,7 +97,7 @@ static void fill_uuid(struct d1_uuid *u, uint8_t base)
 }
 
 static void env_init(struct d1_envelope *env, struct d1_store *s,
-		     d1_id_t admission, uint32_t op)
+		     d1_admission_id admission, uint32_t op)
 {
 	memset(env, 0, sizeof(*env));
 	env->object = object;
@@ -115,7 +115,7 @@ static void write_entry(struct d1_write_entry *e, uint64_t index,
 {
 	memset(e, 0, sizeof(*e));
 	e->index = index;
-	e->owner.cohort = 1;
+	e->owner.cohort.raw = 1;
 	e->owner.writer = writer;
 	e->owner.co_id = co_id;
 	e->guard_check = guard_check;
@@ -139,8 +139,10 @@ static void test_ordinary_lifecycle(void)
 	struct d1_envelope env;
 	struct d1_result res;
 	struct d1_guard guard;
-	d1_id_t admission, txn, version;
-	d1_id_t visible;
+	d1_admission_id admission;
+	d1_txn_id txn;
+	d1_version_id version;
+	d1_version_id visible;
 	uint8_t verifier[D1_VERIFIER_BYTES];
 
 	fill_uuid(&store_uuid, 0x90);
@@ -151,7 +153,7 @@ static void test_ordinary_lifecycle(void)
 	admission = d1_fixture_admit(s, &object, 11,
 				     D1_RIGHT_READ | D1_RIGHT_WRITE |
 					     D1_RIGHT_SINGLE_WRITER);
-	check(admission != 0, "fixture issues an admission");
+	check(d1_admission_live(admission), "fixture issues an admission");
 	d1_store_verifier(s, verifier);
 
 	/* A1: a stable write is PREPARED, and nothing is visible. */
@@ -182,7 +184,7 @@ static void test_ordinary_lifecycle(void)
 	env.body.lifecycle.range_end = 1;
 	env.body.lifecycle.count = 1;
 	env.body.lifecycle.entries[0].index = 0;
-	env.body.lifecycle.entries[0].owner.cohort = 1;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
 	env.body.lifecycle.entries[0].owner.writer = 11;
 	env.body.lifecycle.entries[0].owner.co_id = 1;
 	env.body.lifecycle.entries[0].txn = txn;
@@ -200,7 +202,7 @@ static void test_ordinary_lifecycle(void)
 	env.body.lifecycle.range_end = 1;
 	env.body.lifecycle.count = 1;
 	env.body.lifecycle.entries[0].index = 0;
-	env.body.lifecycle.entries[0].owner.cohort = 1;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
 	env.body.lifecycle.entries[0].owner.writer = 11;
 	env.body.lifecycle.entries[0].owner.co_id = 1;
 	env.body.lifecycle.entries[0].txn = txn;
@@ -209,7 +211,8 @@ static void test_ordinary_lifecycle(void)
 	check(res.entries[0].status == D1_OK &&
 		      res.entries[0].phase == D1_PHASE_COMMITTED,
 	      "commit reaches COMMITTED");
-	check(d1_store_visible(s, &object, 0, &visible) && visible == version,
+	check(d1_store_visible(s, &object, 0, &visible) &&
+		      d1_version_eq(visible, version),
 	      "commit publishes the version the write made");
 	check(d1_store_eof(s, &object) == sizeof(payload_a),
 	      "EOF follows the committed extent");
@@ -231,7 +234,7 @@ static void test_ordinary_lifecycle(void)
 		check(after.entries[0].status == D1_REPLAY_CONFLICT,
 		      "a changed body under a used key conflicts");
 		check(d1_store_visible(s, &object, 0, &visible) &&
-			      visible == version,
+			      d1_version_eq(visible, version),
 		      "and changes nothing");
 	}
 
@@ -246,7 +249,9 @@ static void test_activation(void)
 	struct d1_envelope env;
 	struct d1_result res;
 	struct d1_guard guard, before;
-	d1_id_t single, multi, visible;
+	d1_admission_id single;
+	d1_admission_id multi;
+	d1_version_id visible;
 
 	fill_uuid(&store_uuid, 0xa0);
 	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -328,7 +333,8 @@ static void test_owner_collision(void)
 	struct d1_store *s;
 	struct d1_envelope env;
 	struct d1_result res;
-	d1_id_t admission, visible;
+	d1_admission_id admission;
+	d1_version_id visible;
 
 	fill_uuid(&store_uuid, 0xb0);
 	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -370,7 +376,8 @@ static void test_write_refusals(void)
 	struct d1_envelope env;
 	struct d1_result res;
 	struct d1_guard guard;
-	d1_id_t admission, other;
+	d1_admission_id admission;
+	d1_admission_id other;
 
 	fill_uuid(&store_uuid, 0xc0);
 	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -465,7 +472,9 @@ static void test_phase_order(void)
 	struct d1_envelope env;
 	struct d1_result res;
 	uint8_t verifier[D1_VERIFIER_BYTES];
-	d1_id_t admission, txn, visible;
+	d1_admission_id admission;
+	d1_txn_id txn;
+	d1_version_id visible;
 
 	fill_uuid(&store_uuid, 0xd0);
 	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -489,7 +498,7 @@ static void test_phase_order(void)
 	env.body.lifecycle.range_end = 1;
 	env.body.lifecycle.count = 1;
 	env.body.lifecycle.entries[0].index = 0;
-	env.body.lifecycle.entries[0].owner.cohort = 1;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
 	env.body.lifecycle.entries[0].owner.writer = 11;
 	env.body.lifecycle.entries[0].owner.co_id = 1;
 	env.body.lifecycle.entries[0].txn = txn;
@@ -511,7 +520,7 @@ static void test_phase_order(void)
 	env.body.lifecycle.range_end = 3;
 	env.body.lifecycle.count = 1;
 	env.body.lifecycle.entries[0].index = 0;
-	env.body.lifecycle.entries[0].owner.cohort = 1;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
 	env.body.lifecycle.entries[0].owner.writer = 11;
 	env.body.lifecycle.entries[0].owner.co_id = 1;
 	env.body.lifecycle.entries[0].txn = txn;
@@ -537,7 +546,8 @@ static void test_unsupported(void)
 	struct d1_envelope env;
 	struct d1_result res;
 	struct d1_guard guard;
-	d1_id_t admission, visible;
+	d1_admission_id admission;
+	d1_version_id visible;
 
 	fill_uuid(&store_uuid, 0xe0);
 	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -575,15 +585,17 @@ static void test_unsupported(void)
 }
 
 /* Write, finalize and commit one chunk, and answer its version. */
-static d1_id_t commit_chunk(struct d1_store *s, d1_id_t admission,
-			    uint64_t index, uint32_t co_id, const uint8_t *data,
-			    uint32_t len, const struct d1_guard *expected,
-			    d1_id_t predecessor, d1_id_t *txn_out)
+static d1_version_id commit_chunk(struct d1_store *s, d1_admission_id admission,
+				  uint64_t index, uint32_t co_id,
+				  const uint8_t *data, uint32_t len,
+				  const struct d1_guard *expected,
+				  d1_version_id predecessor, d1_txn_id *txn_out)
 {
 	struct d1_envelope env;
 	struct d1_result res;
 	uint8_t verifier[D1_VERIFIER_BYTES];
-	d1_id_t txn, version;
+	d1_txn_id txn;
+	d1_version_id version;
 	unsigned int pass;
 
 	d1_store_verifier(s, verifier);
@@ -594,7 +606,7 @@ static d1_id_t commit_chunk(struct d1_store *s, d1_id_t admission,
 		    true, expected);
 	if (d1_store_apply(s, &env, &res) != D1_OK ||
 	    res.entries[0].status != D1_OK)
-		return 0;
+		return d1_version_none();
 	txn = res.entries[0].txn;
 	version = res.entries[0].version;
 
@@ -605,7 +617,7 @@ static d1_id_t commit_chunk(struct d1_store *s, d1_id_t admission,
 		env.body.lifecycle.range_end = index + 1;
 		env.body.lifecycle.count = 1;
 		env.body.lifecycle.entries[0].index = index;
-		env.body.lifecycle.entries[0].owner.cohort = 1;
+		env.body.lifecycle.entries[0].owner.cohort.raw = 1;
 		env.body.lifecycle.entries[0].owner.writer = 11;
 		env.body.lifecycle.entries[0].owner.co_id = co_id;
 		env.body.lifecycle.entries[0].txn = txn;
@@ -615,13 +627,13 @@ static d1_id_t commit_chunk(struct d1_store *s, d1_id_t admission,
 		 * caller that wrote it.
 		 */
 		env.body.lifecycle.entries[0].predecessor_present =
-			predecessor != 0;
+			d1_version_live(predecessor);
 		env.body.lifecycle.entries[0].predecessor = predecessor;
 		memcpy(env.body.lifecycle.prior_verifier, verifier,
 		       sizeof(verifier));
 		if (d1_store_apply(s, &env, &res) != D1_OK ||
 		    res.entries[0].status != D1_OK)
-			return 0;
+			return d1_version_none();
 	}
 	if (txn_out)
 		*txn_out = txn;
@@ -635,15 +647,15 @@ static d1_id_t commit_chunk(struct d1_store *s, d1_id_t admission,
  */
 struct rollback_expect {
 	bool custody_present;
-	d1_id_t custody;
+	d1_custody_id custody;
 	bool visible_present;
-	d1_id_t visible;
+	d1_version_id visible;
 	bool predecessor_present;
-	d1_id_t predecessor;
+	d1_version_id predecessor;
 };
 
-static uint32_t rollback_one(struct d1_store *s, d1_id_t admission,
-			     uint64_t index, uint32_t co_id, d1_id_t txn,
+static uint32_t rollback_one(struct d1_store *s, d1_admission_id admission,
+			     uint64_t index, uint32_t co_id, d1_txn_id txn,
 			     const struct rollback_expect *x,
 			     struct d1_entry_result *out)
 {
@@ -655,7 +667,7 @@ static uint32_t rollback_one(struct d1_store *s, d1_id_t admission,
 	env.body.rollback.range_end = index + 1;
 	env.body.rollback.count = 1;
 	env.body.rollback.entries[0].index = index;
-	env.body.rollback.entries[0].owner.cohort = 1;
+	env.body.rollback.entries[0].owner.cohort.raw = 1;
 	env.body.rollback.entries[0].owner.writer = 11;
 	env.body.rollback.entries[0].owner.co_id = co_id;
 	env.body.rollback.entries[0].txn = txn;
@@ -681,7 +693,9 @@ static void test_private_rollback(void)
 	struct d1_envelope env;
 	struct d1_result res;
 	struct d1_guard before, after;
-	d1_id_t admission, txn, visible;
+	d1_admission_id admission;
+	d1_txn_id txn;
+	d1_version_id visible;
 
 	fill_uuid(&store_uuid, 0xf0);
 	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -731,8 +745,8 @@ static void test_private_rollback(void)
 
 	/* Committed data is not the owner's to roll back. */
 	{
-		d1_id_t ctxn = 0;
-		d1_id_t committed_version = 0;
+		d1_txn_id ctxn = { 0 };
+		d1_version_id committed_version = { 0 };
 		struct d1_entry_result entry;
 
 		check(rollback_one(s, admission, 0, 2, res.entries[0].txn,
@@ -741,8 +755,10 @@ static void test_private_rollback(void)
 		      "the second write is cancelled too");
 		committed_version = commit_chunk(
 			s, admission, 1, 3, payload_a, sizeof(payload_a),
-			&(struct d1_guard){ .never_written = true }, 0, &ctxn);
-		check(committed_version != 0, "a chunk is committed");
+			&(struct d1_guard){ .never_written = true },
+			d1_version_none(), &ctxn);
+		check(d1_version_live(committed_version),
+		      "a chunk is committed");
 		check(rollback_one(s, admission, 1, 3, ctxn,
 				   &(struct rollback_expect){
 					   .visible_present = true,
@@ -769,7 +785,14 @@ static void test_rollback_predicates(void)
 	struct d1_entry_result entry;
 	struct d1_guard guard;
 	static uint8_t data[16];
-	d1_id_t writer_adm, repair_adm, v1, v2, txn1, txn2, custody, visible;
+	d1_admission_id writer_adm;
+	d1_admission_id repair_adm;
+	d1_version_id v1;
+	d1_version_id v2;
+	d1_txn_id txn1;
+	d1_txn_id txn2;
+	d1_custody_id custody;
+	d1_version_id visible;
 
 	memset(data, 0x91, sizeof(data));
 	fill_uuid(&store_uuid, 0x13);
@@ -782,11 +805,13 @@ static void test_rollback_predicates(void)
 	repair_adm = d1_fixture_admit(s, &object, 11, D1_RIGHT_REPAIR);
 
 	v1 = commit_chunk(s, writer_adm, 0, 1, data, sizeof(data),
-			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), NULL);
 	d1_store_guard(s, &object, 0, &guard);
 	v2 = commit_chunk(s, writer_adm, 0, 2, data, sizeof(data), &guard, v1,
 			  &txn2);
-	check(v1 != 0 && v2 != 0, "a version is replaced");
+	check(d1_version_live(v1) && d1_version_live(v2),
+	      "a version is replaced");
 
 	/*
 	 * A wrong expected predecessor, reached with valid custody.  With
@@ -796,16 +821,18 @@ static void test_rollback_predicates(void)
 	 */
 	custody = d1_fixture_custody(s, v2);
 	check(rollback_one(s, repair_adm, 0, 2, txn2,
-			   &(struct rollback_expect){ .custody_present = true,
-						      .custody = custody,
-						      .visible_present = true,
-						      .visible = v2,
-						      .predecessor_present =
-							      true,
-						      .predecessor = 999999 },
+			   &(struct rollback_expect){
+				   .custody_present = true,
+				   .custody = custody,
+				   .visible_present = true,
+				   .visible = v2,
+				   .predecessor_present = true,
+				   .predecessor = d1_fixture_version_handle(
+					   s, 999999) },
 			   &entry) == D1_NO_PREDECESSOR,
 	      "a wrong expected predecessor answers NO_PREDECESSOR");
-	check(d1_store_visible(s, &object, 0, &visible) && visible == v2,
+	check(d1_store_visible(s, &object, 0, &visible) &&
+		      d1_version_eq(visible, v2),
 	      "and changes nothing");
 
 	/* An absent expected predecessor, where one was recorded. */
@@ -816,7 +843,8 @@ static void test_rollback_predicates(void)
 						      .visible = v2 },
 			   &entry) == D1_NO_PREDECESSOR,
 	      "an absent expected predecessor is a mismatch too");
-	check(d1_store_visible(s, &object, 0, &visible) && visible == v2,
+	check(d1_store_visible(s, &object, 0, &visible) &&
+		      d1_version_eq(visible, v2),
 	      "and changes nothing");
 
 	/* An absent expected-visible option asserts nothing is there. */
@@ -830,7 +858,8 @@ static void test_rollback_predicates(void)
 	      "an absent expected-visible option is a mismatch, not a skip");
 	check(entry.guard.generation == guard.generation + 1u,
 	      "and the conflict carries the current guard");
-	check(d1_store_visible(s, &object, 0, &visible) && visible == v2,
+	check(d1_store_visible(s, &object, 0, &visible) &&
+		      d1_version_eq(visible, v2),
 	      "and changes nothing");
 
 	/*
@@ -847,7 +876,8 @@ static void test_rollback_predicates(void)
 						      .predecessor = v1 },
 			   &entry) == D1_OK,
 	      "REPAIR plus exact custody rolls committed data back");
-	check(d1_store_visible(s, &object, 0, &visible) && visible == v1,
+	check(d1_store_visible(s, &object, 0, &visible) &&
+		      d1_version_eq(visible, v1),
 	      "and the predecessor is visible again");
 
 	/* A private cancellation needs WRITE, and a REPAIR handle lacks it. */
@@ -859,15 +889,16 @@ static void test_rollback_predicates(void)
 		    true, &guard);
 	d1_store_apply(s, &env, &res);
 	txn1 = res.entries[0].txn;
-	check(txn1 != 0, "a new private transaction is prepared");
+	check(d1_txn_live(txn1), "a new private transaction is prepared");
 
 	/* The private path compares its expectations too. */
 	check(rollback_one(s, writer_adm, 0, 3, txn1,
-			   &(struct rollback_expect){ .visible_present = true,
-						      .visible = v1,
-						      .predecessor_present =
-							      true,
-						      .predecessor = 999999 },
+			   &(struct rollback_expect){
+				   .visible_present = true,
+				   .visible = v1,
+				   .predecessor_present = true,
+				   .predecessor = d1_fixture_version_handle(
+					   s, 999999) },
 			   &entry) == D1_NO_PREDECESSOR,
 	      "a private rollback with a wrong predecessor is refused");
 	check(rollback_one(s, writer_adm, 0, 3, txn1,
@@ -912,7 +943,13 @@ static void test_sparse_and_rollback_extents(void)
 	static uint8_t big[4096];
 	static uint8_t small[100];
 	static uint8_t tiny[50];
-	d1_id_t admission, v3, v4, v5, txn4, custody, visible;
+	d1_admission_id admission;
+	d1_version_id v3;
+	d1_version_id v4;
+	d1_version_id v5;
+	d1_txn_id txn4;
+	d1_custody_id custody;
+	d1_version_id visible;
 	uint32_t n;
 
 	memset(big, 0x11, sizeof(big));
@@ -929,8 +966,9 @@ static void test_sparse_and_rollback_extents(void)
 
 	/* D1: a sparse commit at chunk 3 of 100 bytes. */
 	v3 = commit_chunk(s, admission, 3, 1, small, sizeof(small),
-			  &(struct d1_guard){ .never_written = true }, 0, NULL);
-	check(v3 != 0, "the sparse chunk commits");
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), NULL);
+	check(d1_version_live(v3), "the sparse chunk commits");
 	check(d1_store_eof(s, &object) == 3 * CHUNK_BYTES + sizeof(small),
 	      "EOF is the end of the only interval");
 	n = d1_store_holes(s, &object, holes, D1_MAX_INTERVALS);
@@ -939,8 +977,9 @@ static void test_sparse_and_rollback_extents(void)
 
 	/* D2: a later chunk 5 of 50 bytes. */
 	v5 = commit_chunk(s, admission, 5, 2, tiny, sizeof(tiny),
-			  &(struct d1_guard){ .never_written = true }, 0, NULL);
-	check(v5 != 0, "the later chunk commits");
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), NULL);
+	check(d1_version_live(v5), "the later chunk commits");
 	check(d1_store_eof(s, &object) == 5 * CHUNK_BYTES + sizeof(tiny),
 	      "EOF follows the highest interval");
 	n = d1_store_holes(s, &object, holes, D1_MAX_INTERVALS);
@@ -952,12 +991,13 @@ static void test_sparse_and_rollback_extents(void)
 	d1_store_guard(s, &object, 3, &guard);
 	v4 = commit_chunk(s, admission, 3, 3, big, sizeof(big), &guard, v3,
 			  &txn4);
-	check(v4 != 0 && v4 != v3, "the replacement commits");
+	check(d1_version_live(v4) && !d1_version_eq(v4, v3),
+	      "the replacement commits");
 	check(d1_store_eof(s, &object) == 5 * CHUNK_BYTES + sizeof(tiny),
 	      "the higher chunk still sets EOF");
 
 	custody = d1_fixture_custody(s, v4);
-	check(custody != 0, "the fixture issues custody over it");
+	check(d1_custody_live(custody), "the fixture issues custody over it");
 	check(rollback_one(s, admission, 3, 3, txn4,
 			   &(struct rollback_expect){ .custody_present = true,
 						      .custody = custody,
@@ -968,7 +1008,8 @@ static void test_sparse_and_rollback_extents(void)
 						      .predecessor = v3 },
 			   NULL) == D1_OK,
 	      "custody rolls the replacement back");
-	check(d1_store_visible(s, &object, 3, &visible) && visible == v3,
+	check(d1_store_visible(s, &object, 3, &visible) &&
+		      d1_version_eq(visible, v3),
 	      "and the predecessor is visible again");
 	check(d1_store_eof(s, &object) == 5 * CHUNK_BYTES + sizeof(tiny),
 	      "EOF stays high because chunk 5 still holds it");
@@ -987,7 +1028,12 @@ static void test_rollback_shrinks_eof(void)
 	struct d1_guard guard;
 	static uint8_t big[4096];
 	static uint8_t small[100];
-	d1_id_t admission, v3, v4, txn4, custody, visible;
+	d1_admission_id admission;
+	d1_version_id v3;
+	d1_version_id v4;
+	d1_txn_id txn4;
+	d1_custody_id custody;
+	d1_version_id visible;
 
 	memset(big, 0x44, sizeof(big));
 	memset(small, 0x55, sizeof(small));
@@ -1001,13 +1047,14 @@ static void test_rollback_shrinks_eof(void)
 					     D1_RIGHT_SINGLE_WRITER);
 
 	v3 = commit_chunk(s, admission, 3, 1, small, sizeof(small),
-			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), NULL);
 	check(d1_store_eof(s, &object) == 3 * CHUNK_BYTES + sizeof(small),
 	      "the short image sets EOF");
 	d1_store_guard(s, &object, 3, &guard);
 	v4 = commit_chunk(s, admission, 3, 2, big, sizeof(big), &guard, v3,
 			  &txn4);
-	check(v4 != 0, "the full image commits");
+	check(d1_version_live(v4), "the full image commits");
 	check(d1_store_eof(s, &object) == 4 * CHUNK_BYTES,
 	      "and EOF grows with it");
 
@@ -1022,7 +1069,8 @@ static void test_rollback_shrinks_eof(void)
 						      .predecessor = v3 },
 			   NULL) == D1_OK,
 	      "the replacement rolls back");
-	check(d1_store_visible(s, &object, 3, &visible) && visible == v3,
+	check(d1_store_visible(s, &object, 3, &visible) &&
+		      d1_version_eq(visible, v3),
 	      "the predecessor is visible");
 	check(d1_store_eof(s, &object) == 3 * CHUNK_BYTES + sizeof(small),
 	      "and EOF shrinks with the payload it came from");
@@ -1038,7 +1086,12 @@ static void test_released_predecessor(void)
 	struct d1_guard guard;
 	struct d1_entry_result entry;
 	static uint8_t data[64];
-	d1_id_t admission, v1, v2, txn2, custody, visible;
+	d1_admission_id admission;
+	d1_version_id v1;
+	d1_version_id v2;
+	d1_txn_id txn2;
+	d1_custody_id custody;
+	d1_version_id visible;
 
 	memset(data, 0x66, sizeof(data));
 	fill_uuid(&store_uuid, 0x33);
@@ -1050,11 +1103,13 @@ static void test_released_predecessor(void)
 					     D1_RIGHT_SINGLE_WRITER);
 
 	v1 = commit_chunk(s, admission, 0, 1, data, sizeof(data),
-			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), NULL);
 	d1_store_guard(s, &object, 0, &guard);
 	v2 = commit_chunk(s, admission, 0, 2, data, sizeof(data), &guard, v1,
 			  &txn2);
-	check(v1 != 0 && v2 != 0, "two versions commit in turn");
+	check(d1_version_live(v1) && d1_version_live(v2),
+	      "two versions commit in turn");
 
 	check(d1_fixture_release_predecessor(s, v1),
 	      "the displaced predecessor may be released");
@@ -1072,23 +1127,25 @@ static void test_released_predecessor(void)
 						      .predecessor = v1 },
 			   &entry) == D1_NO_PREDECESSOR,
 	      "a released predecessor is no longer eligible");
-	check(d1_store_visible(s, &object, 0, &visible) && visible == v2,
+	check(d1_store_visible(s, &object, 0, &visible) &&
+		      d1_version_eq(visible, v2),
 	      "and the current data stays exactly where it is");
 
 	d1_store_free(s);
 }
 
 /* Write and finalize one chunk, stopping short of commit. */
-static d1_id_t finalize_chunk(struct d1_store *s, d1_id_t admission,
-			      uint64_t index, uint32_t co_id,
-			      const uint8_t *data, uint32_t len,
-			      const struct d1_guard *expected,
-			      d1_id_t predecessor, d1_id_t *txn_out)
+static d1_version_id
+finalize_chunk(struct d1_store *s, d1_admission_id admission, uint64_t index,
+	       uint32_t co_id, const uint8_t *data, uint32_t len,
+	       const struct d1_guard *expected, d1_version_id predecessor,
+	       d1_txn_id *txn_out)
 {
 	struct d1_envelope env;
 	struct d1_result res;
 	uint8_t verifier[D1_VERIFIER_BYTES];
-	d1_id_t txn, version;
+	d1_txn_id txn;
+	d1_version_id version;
 
 	d1_store_verifier(s, verifier);
 	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
@@ -1098,7 +1155,7 @@ static d1_id_t finalize_chunk(struct d1_store *s, d1_id_t admission,
 		    true, expected);
 	if (d1_store_apply(s, &env, &res) != D1_OK ||
 	    res.entries[0].status != D1_OK)
-		return 0;
+		return d1_version_none();
 	txn = res.entries[0].txn;
 	version = res.entries[0].version;
 
@@ -1107,25 +1164,26 @@ static d1_id_t finalize_chunk(struct d1_store *s, d1_id_t admission,
 	env.body.lifecycle.range_end = index + 1;
 	env.body.lifecycle.count = 1;
 	env.body.lifecycle.entries[0].index = index;
-	env.body.lifecycle.entries[0].owner.cohort = 1;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
 	env.body.lifecycle.entries[0].owner.writer = 11;
 	env.body.lifecycle.entries[0].owner.co_id = co_id;
 	env.body.lifecycle.entries[0].txn = txn;
-	env.body.lifecycle.entries[0].predecessor_present = predecessor != 0;
+	env.body.lifecycle.entries[0].predecessor_present =
+		d1_version_live(predecessor);
 	env.body.lifecycle.entries[0].predecessor = predecessor;
 	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
 	if (d1_store_apply(s, &env, &res) != D1_OK ||
 	    res.entries[0].status != D1_OK)
-		return 0;
+		return d1_version_none();
 	if (txn_out)
 		*txn_out = txn;
 	return version;
 }
 
 /* Finalize a transaction that already exists, and report how it went. */
-static uint32_t finalize_txn(struct d1_store *s, d1_id_t admission,
+static uint32_t finalize_txn(struct d1_store *s, d1_admission_id admission,
 			     uint64_t index, uint32_t writer, uint32_t co_id,
-			     d1_id_t txn)
+			     d1_txn_id txn)
 {
 	struct d1_envelope env;
 	struct d1_result res;
@@ -1138,7 +1196,7 @@ static uint32_t finalize_txn(struct d1_store *s, d1_id_t admission,
 	env.body.lifecycle.range_end = index + 1;
 	env.body.lifecycle.count = 1;
 	env.body.lifecycle.entries[0].index = index;
-	env.body.lifecycle.entries[0].owner.cohort = 1;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
 	env.body.lifecycle.entries[0].owner.writer = writer;
 	env.body.lifecycle.entries[0].owner.co_id = co_id;
 	env.body.lifecycle.entries[0].txn = txn;
@@ -1157,14 +1215,14 @@ static void ordinary_sel(struct d1_selection_spec *sel)
 }
 
 /* An owner selection naming one transaction it claims. */
-static void owner_sel(struct d1_selection_spec *sel, d1_id_t txn,
+static void owner_sel(struct d1_selection_spec *sel, d1_txn_id txn,
 		      uint32_t writer, uint32_t co_id, uint64_t read_epoch)
 {
 	memset(sel, 0, sizeof(*sel));
 	sel->selection = D1_SELECT_OWNER;
 	sel->count = 1;
 	sel->txns[0] = txn;
-	sel->owners[0].cohort = 1;
+	sel->owners[0].cohort.raw = 1;
 	sel->owners[0].writer = writer;
 	sel->owners[0].co_id = co_id;
 	sel->read_epoch = read_epoch;
@@ -1182,7 +1240,10 @@ static void test_view_is_stable(void)
 	static uint8_t second[64];
 	uint8_t got[64];
 	uint32_t got_len;
-	d1_id_t admission, v1, v2, seen;
+	d1_admission_id admission;
+	d1_version_id v1;
+	d1_version_id v2;
+	d1_version_id seen;
 
 	memset(first, 0xa1, sizeof(first));
 	memset(second, 0xb2, sizeof(second));
@@ -1195,8 +1256,9 @@ static void test_view_is_stable(void)
 					     D1_RIGHT_SINGLE_WRITER);
 
 	v1 = commit_chunk(s, admission, 0, 1, first, sizeof(first),
-			  &(struct d1_guard){ .never_written = true }, 0, NULL);
-	check(v1 != 0, "the first version commits");
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), NULL);
+	check(d1_version_live(v1), "the first version commits");
 
 	ordinary_sel(&sel);
 	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
@@ -1211,8 +1273,9 @@ static void test_view_is_stable(void)
 	d1_store_guard(s, &object, 0, &guard);
 	v2 = commit_chunk(s, admission, 0, 2, second, sizeof(second), &guard,
 			  v1, NULL);
-	check(v2 != 0 && v2 != v1, "a second version commits over it");
-	check(d1_view_version(view, 0, &seen) && seen == v1,
+	check(d1_version_live(v2) && !d1_version_eq(v2, v1),
+	      "a second version commits over it");
+	check(d1_view_version(view, 0, &seen) && d1_version_eq(seen, v1),
 	      "the open view still names the version it chose");
 	check(d1_view_read(view, 0, got, sizeof(got), &got_len) == D1_OK &&
 		      memcmp(got, first, sizeof(first)) == 0,
@@ -1239,7 +1302,7 @@ static void test_view_is_stable(void)
 	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
 			   &after) == D1_OK,
 	      "a later view opens");
-	check(d1_view_version(after, 0, &seen) && seen == v2,
+	check(d1_view_version(after, 0, &seen) && d1_version_eq(seen, v2),
 	      "and names the newer version");
 	d1_view_close(after);
 	check(d1_store_close(s) == D1_OK,
@@ -1326,7 +1389,8 @@ static void test_close_refuses_an_active_call(void)
 	struct parked_member p;
 	pthread_t worker;
 	static uint8_t data[16];
-	d1_id_t admission, seen;
+	d1_admission_id admission;
+	d1_version_id seen;
 
 	memset(data, 0x5a, sizeof(data));
 	fill_uuid(&store_uuid, 0x41);
@@ -1336,9 +1400,10 @@ static void test_close_refuses_an_active_call(void)
 	admission = d1_fixture_admit(s, &object, 11,
 				     D1_RIGHT_READ | D1_RIGHT_WRITE |
 					     D1_RIGHT_SINGLE_WRITER);
-	check(commit_chunk(s, admission, 0, 1, data, sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(s, admission, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "there is something to read");
 
 	check(d1_store_destroy(s) == D1_BUSY,
@@ -1522,7 +1587,7 @@ static bool parked_step_fails(unsigned int step)
 }
 
 static bool park_a_caller(struct parked_call *p, struct d1_store *s,
-			  d1_id_t admission, pthread_t *caller)
+			  d1_admission_id admission, pthread_t *caller)
 {
 	memset(p, 0, sizeof(*p));
 	p->s = s;
@@ -1582,7 +1647,8 @@ static void test_close_does_not_destroy_under_an_arriving_call(void)
 	struct parked_call p;
 	pthread_t caller;
 	unsigned int fault;
-	d1_id_t admission, seen;
+	d1_admission_id admission;
+	d1_version_id seen;
 
 	fill_uuid(&store_uuid, 0x4e);
 	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -1652,7 +1718,9 @@ static void test_a_view_is_released_through_its_own_store(void)
 	static uint8_t data_b[16];
 	static uint8_t got[32];
 	uint32_t got_len = 0;
-	d1_id_t admit_a, admit_b, seen;
+	d1_admission_id admit_a;
+	d1_admission_id admit_b;
+	d1_version_id seen;
 
 	memset(data_a, 0x2a, sizeof(data_a));
 	memset(data_b, 0x2b, sizeof(data_b));
@@ -1671,13 +1739,15 @@ static void test_a_view_is_released_through_its_own_store(void)
 	admit_b = d1_fixture_admit(b, &object, 11,
 				   D1_RIGHT_READ | D1_RIGHT_WRITE |
 					   D1_RIGHT_SINGLE_WRITER);
-	check(commit_chunk(a, admit_a, 0, 1, data_a, sizeof(data_a),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(a, admit_a, 0, 1, data_a, sizeof(data_a),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "A has something to pin");
-	check(commit_chunk(b, admit_b, 0, 1, data_b, sizeof(data_b),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(b, admit_b, 0, 1, data_b, sizeof(data_b),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "and so has B");
 
 	/* A pinned view of A, and a view of B to watch for damage. */
@@ -1713,9 +1783,10 @@ static void test_a_view_is_released_through_its_own_store(void)
 	      "B opens another view");
 	check(d1_view_eof(again) == sizeof(data_b), "with the same EOF");
 	d1_view_close(again);
-	check(commit_chunk(b, admit_b, 1, 2, data_b, sizeof(data_b),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(b, admit_b, 1, 2, data_b, sizeof(data_b),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "and still takes a write");
 	check(d1_store_close(b) == D1_OK && d1_store_destroy(b) == D1_OK,
 	      "then B closes and destroys of its own accord");
@@ -1753,7 +1824,8 @@ static void test_the_door_arm_belongs_to_its_store(void)
 	static uint8_t data[16];
 	const uint8_t *log;
 	size_t len;
-	d1_id_t admit_a, admit_b;
+	d1_admission_id admit_a;
+	d1_admission_id admit_b;
 
 	memset(data, 0x3c, sizeof(data));
 	fill_uuid(&uuid_a, 0x3c);
@@ -1883,9 +1955,10 @@ static void test_the_door_arm_belongs_to_its_store(void)
 	d1_store_journal_enable(a);
 	admit_a = d1_fixture_admit(a, &object, 11,
 				   D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
-	check(commit_chunk(a, admit_a, 0, 1, data, sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(a, admit_a, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "a history to rebuild");
 	log = journal_of(a, &len);
 
@@ -1896,16 +1969,17 @@ static void test_the_door_arm_belongs_to_its_store(void)
 		check(d1_store_replay(target, log, len) == D1_OK &&
 			      seen.fired == 0,
 		      "the rebuild itself does not run it");
-		check(commit_chunk(target, admit_a, 2, 9, data, sizeof(data),
-				   &(struct d1_guard){ .never_written = true },
-				   0, NULL) != 0 &&
+		check(d1_version_live(commit_chunk(
+			      target, admit_a, 2, 9, data, sizeof(data),
+			      &(struct d1_guard){ .never_written = true },
+			      d1_version_none(), NULL)) &&
 			      seen.fired == 0,
 		      "and the first call after the rebuild does not either");
 		d1_store_free(target);
 	}
 	target = d1_store_open(&uuid_a, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (target) {
-		d1_id_t fresh;
+		d1_admission_id fresh;
 
 		memset(&seen, 0, sizeof(seen));
 		d1_fixture_before_admission(target, count_the_door, &seen);
@@ -1915,9 +1989,10 @@ static void test_the_door_arm_belongs_to_its_store(void)
 		fresh = d1_fixture_admit(target, &object, 11,
 					 D1_RIGHT_WRITE |
 						 D1_RIGHT_SINGLE_WRITER);
-		check(commit_chunk(target, fresh, 3, 9, data, sizeof(data),
-				   &(struct d1_guard){ .never_written = true },
-				   0, NULL) != 0 &&
+		check(d1_version_live(commit_chunk(
+			      target, fresh, 3, 9, data, sizeof(data),
+			      &(struct d1_guard){ .never_written = true },
+			      d1_version_none(), NULL)) &&
 			      seen.fired == 0,
 		      "nor the first call after it");
 		d1_store_free(target);
@@ -1984,7 +2059,8 @@ static void test_failed_replay_poisons_the_handle(void)
 	size_t len, badlen;
 	uint8_t *writable;
 	static uint8_t data[16];
-	d1_id_t admission, seen;
+	d1_admission_id admission;
+	d1_version_id seen;
 	unsigned int i;
 	bool zero = true;
 
@@ -1997,22 +2073,25 @@ static void test_failed_replay_poisons_the_handle(void)
 	admission = d1_fixture_admit(live, &object, 11,
 				     D1_RIGHT_READ | D1_RIGHT_WRITE |
 					     D1_RIGHT_SINGLE_WRITER);
-	check(commit_chunk(live, admission, 0, 1, data, sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(live, admission, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "there is a history to rebuild");
-	check(commit_chunk(live, admission, 2, 2, data, sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(live, admission, 2, 2, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "with more than one record in it");
 	/*
 	 * Two committed chunks with a gap between them, so the prefix the
 	 * rebuild does reduce has a visible version, an EOF, a guard and
 	 * an extent list to be wrongly served from.
 	 */
-	check(commit_chunk(live, admission, 4, 3, data, sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(live, admission, 4, 3, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "and a third, past a hole");
 
 	log = journal_of(live, &len);
@@ -2105,7 +2184,8 @@ static void test_a_closed_store_answers_nothing(void)
 	size_t len, after = 1;
 	unsigned int i;
 	bool zero = true;
-	d1_id_t admission, seen;
+	d1_admission_id admission;
+	d1_version_id seen;
 
 	memset(data, 0x2e, sizeof(data));
 	fill_uuid(&store_uuid, 0x2e);
@@ -2116,15 +2196,17 @@ static void test_a_closed_store_answers_nothing(void)
 	admission = d1_fixture_admit(s, &object, 11,
 				     D1_RIGHT_READ | D1_RIGHT_WRITE |
 					     D1_RIGHT_SINGLE_WRITER);
-	check(commit_chunk(s, admission, 0, 1, data, sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(s, admission, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "a store with something to answer about");
 	/* An index fault leaves an overlay, so those two have answers too. */
 	d1_fixture_fail_next_index(s);
-	check(commit_chunk(s, admission, 1, 2, data, sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(s, admission, 1, 2, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "and a materialized pointer left behind by a fault");
 	check(d1_store_visible(s, &object, 0, &seen) &&
 		      d1_store_guard(s, &object, 0, &guard) &&
@@ -2168,7 +2250,8 @@ static void test_a_closed_store_answers_nothing(void)
 			   &view) == D1_INVALID,
 	      "it opens no view");
 	check(d1_store_journal_enable(s) == D1_INVALID, "it starts no journal");
-	check(d1_fixture_admit(s, &object, 12, D1_RIGHT_WRITE) == 0,
+	check(!d1_admission_live(
+		      d1_fixture_admit(s, &object, 12, D1_RIGHT_WRITE)),
 	      "and the fixture installs no authority in it");
 
 	check(d1_store_close(s) == D1_OK, "closing it again is not an error");
@@ -2192,7 +2275,8 @@ static void test_custody_needs_a_real_version(void)
 	struct d1_uuid store_uuid;
 	struct d1_store *s;
 	static uint8_t data[16];
-	d1_id_t admission, v1;
+	d1_admission_id admission;
+	d1_version_id v1;
 
 	memset(data, 0x78, sizeof(data));
 	fill_uuid(&store_uuid, 0x43);
@@ -2202,13 +2286,17 @@ static void test_custody_needs_a_real_version(void)
 	admission = d1_fixture_admit(s, &object, 11,
 				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
 
-	check(d1_fixture_custody(s, 1) == 0,
+	check(!d1_custody_live(
+		      d1_fixture_custody(s, d1_fixture_version_handle(s, 1))),
 	      "custody over a version that does not exist yet is refused");
 	v1 = commit_chunk(s, admission, 0, 1, data, sizeof(data),
-			  &(struct d1_guard){ .never_written = true }, 0, NULL);
-	check(v1 != 0, "a version is committed");
-	check(d1_fixture_custody(s, v1) != 0, "and custody over it is issued");
-	check(d1_fixture_custody(s, v1 + 1000u) == 0,
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), NULL);
+	check(d1_version_live(v1), "a version is committed");
+	check(d1_custody_live(d1_fixture_custody(s, v1)),
+	      "and custody over it is issued");
+	check(!d1_custody_live(d1_fixture_custody(
+		      s, d1_fixture_version_handle(s, v1.raw + 1000u))),
 	      "but not over one that has never been allocated");
 
 	d1_store_free(s);
@@ -2234,7 +2322,11 @@ static void test_release_order_does_not_matter(void)
 		struct d1_view *view = NULL;
 		struct d1_guard guard;
 		static uint8_t data[32];
-		d1_id_t admission, v1, v2, txn2, custody;
+		d1_admission_id admission;
+		d1_version_id v1;
+		d1_version_id v2;
+		d1_txn_id txn2;
+		d1_custody_id custody;
 
 		memset(data, 0xc3, sizeof(data));
 		fill_uuid(&store_uuid, (uint8_t)(0x55 + pass));
@@ -2248,7 +2340,7 @@ static void test_release_order_does_not_matter(void)
 
 		v1 = commit_chunk(s, admission, 0, 1, data, sizeof(data),
 				  &(struct d1_guard){ .never_written = true },
-				  0, NULL);
+				  d1_version_none(), NULL);
 		ordinary_sel(&sel);
 		check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
 				   &view) == D1_OK,
@@ -2256,7 +2348,8 @@ static void test_release_order_does_not_matter(void)
 		d1_store_guard(s, &object, 0, &guard);
 		v2 = commit_chunk(s, admission, 0, 2, data, sizeof(data),
 				  &guard, v1, &txn2);
-		check(v1 != 0 && v2 != 0, "a new version displaces it");
+		check(d1_version_live(v1) && d1_version_live(v2),
+		      "a new version displaces it");
 
 		if (release_first[pass]) {
 			released[pass] = d1_fixture_release_predecessor(s, v1);
@@ -2302,7 +2395,12 @@ static void test_view_owner_selection(void)
 	static uint8_t pending[64];
 	uint8_t got[64];
 	uint32_t got_len;
-	d1_id_t admission, stranger, v1, v2, txn, seen;
+	d1_admission_id admission;
+	d1_admission_id stranger;
+	d1_version_id v1;
+	d1_version_id v2;
+	d1_txn_id txn;
+	d1_version_id seen;
 
 	memset(committed, 0xd4, sizeof(committed));
 	memset(pending, 0xe5, sizeof(pending));
@@ -2316,17 +2414,20 @@ static void test_view_owner_selection(void)
 	stranger = d1_fixture_admit(s, &object, 22, D1_RIGHT_READ);
 
 	v1 = commit_chunk(s, admission, 0, 1, committed, sizeof(committed),
-			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), NULL);
 	d1_store_guard(s, &object, 0, &guard);
 	v2 = finalize_chunk(s, admission, 0, 2, pending, sizeof(pending),
 			    &guard, v1, &txn);
-	check(v1 != 0 && v2 != 0, "one version commits and one finalizes");
+	check(d1_version_live(v1) && d1_version_live(v2),
+	      "one version commits and one finalizes");
 
 	owner_sel(&sel, txn, 11, 2, 0);
 	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES, &own) ==
 		      D1_OK,
 	      "an owner view opens on its own transaction");
-	check(d1_view_version(own, 0, &seen) && seen == v2, "and selects it");
+	check(d1_view_version(own, 0, &seen) && d1_version_eq(seen, v2),
+	      "and selects it");
 	check(d1_view_read(own, 0, got, sizeof(got), &got_len) == D1_OK &&
 		      got_len == sizeof(pending) &&
 		      memcmp(got, pending, sizeof(pending)) == 0,
@@ -2341,7 +2442,7 @@ static void test_view_owner_selection(void)
 	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
 			   &ordinary) == D1_OK,
 	      "an ordinary view opens alongside it");
-	check(d1_view_version(ordinary, 0, &seen) && seen == v1,
+	check(d1_view_version(ordinary, 0, &seen) && d1_version_eq(seen, v1),
 	      "and still sees only what is committed");
 
 	/* Another reader naming the same transaction gets nothing. */
@@ -2379,7 +2480,10 @@ static void test_owner_view_shrinkage(void)
 	struct d1_guard guard;
 	static uint8_t big[200];
 	static uint8_t small[20];
-	d1_id_t admission, v1, v2, txn;
+	d1_admission_id admission;
+	d1_version_id v1;
+	d1_version_id v2;
+	d1_txn_id txn;
 
 	memset(big, 0x11, sizeof(big));
 	memset(small, 0x22, sizeof(small));
@@ -2392,11 +2496,13 @@ static void test_owner_view_shrinkage(void)
 					     D1_RIGHT_SINGLE_WRITER);
 
 	v1 = commit_chunk(s, admission, 0, 1, big, sizeof(big),
-			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), NULL);
 	d1_store_guard(s, &object, 0, &guard);
 	v2 = finalize_chunk(s, admission, 0, 2, small, sizeof(small), &guard,
 			    v1, &txn);
-	check(v1 != 0 && v2 != 0, "a shorter private replacement finalizes");
+	check(d1_version_live(v1) && d1_version_live(v2),
+	      "a shorter private replacement finalizes");
 
 	owner_sel(&sel, txn, 11, 2, 0);
 	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES, &own) ==
@@ -2420,7 +2526,8 @@ static void test_view_range_holes_and_admission(void)
 	static uint8_t data[100];
 	uint8_t got[256];
 	uint32_t got_len, i;
-	d1_id_t admission, writeonly;
+	d1_admission_id admission;
+	d1_admission_id writeonly;
 
 	memset(data, 0xf6, sizeof(data));
 	fill_uuid(&store_uuid, 0x77);
@@ -2433,9 +2540,10 @@ static void test_view_range_holes_and_admission(void)
 	writeonly = d1_fixture_admit(s, &object, 12, D1_RIGHT_WRITE);
 
 	/* Only chunk 1 is written, so chunk 0 is a hole below EOF. */
-	check(commit_chunk(s, admission, 1, 1, data, sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(s, admission, 1, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "the sparse chunk commits");
 
 	ordinary_sel(&sel);
@@ -2499,31 +2607,41 @@ static void test_view_range_holes_and_admission(void)
 }
 
 /* Do the model's state agree, as far as anything can observe it? */
-static bool states_agree(struct d1_store *a, struct d1_store *b)
+/*
+ * Do two stores hold the same state for one object?
+ *
+ * Handles are compared by value rather than as handles.  Two stores
+ * that ran the same history hold the same version numbers, and a
+ * handle's provenance is which store issued it -- which is exactly the
+ * thing these two differ in, and never the thing this question asks
+ * about.
+ */
+static bool object_states_agree(struct d1_store *a, struct d1_store *b,
+				const struct d1_objkey *key)
 {
 	struct d1_interval ha[D1_MAX_INTERVALS], hb[D1_MAX_INTERVALS];
 	uint32_t na, nb, i;
 
-	if (d1_store_eof(a, &object) != d1_store_eof(b, &object))
+	if (d1_store_eof(a, key) != d1_store_eof(b, key))
 		return false;
-	na = d1_store_holes(a, &object, ha, D1_MAX_INTERVALS);
-	nb = d1_store_holes(b, &object, hb, D1_MAX_INTERVALS);
+	na = d1_store_holes(a, key, ha, D1_MAX_INTERVALS);
+	nb = d1_store_holes(b, key, hb, D1_MAX_INTERVALS);
 	if (na != nb)
 		return false;
 	for (i = 0; i < na; i++)
 		if (ha[i].start != hb[i].start || ha[i].end != hb[i].end)
 			return false;
 	for (i = 0; i < D1_MAX_CHUNKS; i++) {
-		d1_id_t va = 0, vb = 0;
+		d1_version_id va = { 0 }, vb = { 0 };
 		bool pa, pb, qa, qb;
 		struct d1_guard ga, gb;
 
-		pa = d1_store_visible(a, &object, i, &va);
-		pb = d1_store_visible(b, &object, i, &vb);
-		if (pa != pb || (pa && va != vb))
+		pa = d1_store_visible(a, key, i, &va);
+		pb = d1_store_visible(b, key, i, &vb);
+		if (pa != pb || (pa && va.raw != vb.raw))
 			return false;
-		qa = d1_store_guard(a, &object, i, &ga);
-		qb = d1_store_guard(b, &object, i, &gb);
+		qa = d1_store_guard(a, key, i, &ga);
+		qb = d1_store_guard(b, key, i, &gb);
 		if (qa != qb)
 			return false;
 		/*
@@ -2542,33 +2660,45 @@ static bool states_agree(struct d1_store *a, struct d1_store *b)
 	return true;
 }
 
+/* The file-scope object, which is the one most tests write. */
+static bool states_agree(struct d1_store *a, struct d1_store *b)
+{
+	return object_states_agree(a, b, &object);
+}
+
 /* A short history, written the same way twice. */
-static d1_id_t drive_history(struct d1_store *s, d1_id_t admission)
+static d1_version_id drive_history(struct d1_store *s,
+				   d1_admission_id admission)
 {
 	static uint8_t small[100];
 	static uint8_t tiny[50];
 	static uint8_t big[512];
 	struct d1_guard guard;
-	d1_id_t v3, txn4, custody;
+	d1_version_id v3;
+	d1_txn_id txn4;
+	d1_custody_id custody;
 
 	memset(small, 0x21, sizeof(small));
 	memset(tiny, 0x22, sizeof(tiny));
 	memset(big, 0x23, sizeof(big));
 
 	v3 = commit_chunk(s, admission, 3, 1, small, sizeof(small),
-			  &(struct d1_guard){ .never_written = true }, 0, NULL);
-	if (!v3)
-		return 0;
-	if (!commit_chunk(s, admission, 5, 2, tiny, sizeof(tiny),
-			  &(struct d1_guard){ .never_written = true }, 0, NULL))
-		return 0;
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), NULL);
+	if (!d1_version_live(v3))
+		return d1_version_none();
+	if (!d1_version_live(
+		    commit_chunk(s, admission, 5, 2, tiny, sizeof(tiny),
+				 &(struct d1_guard){ .never_written = true },
+				 d1_version_none(), NULL)))
+		return d1_version_none();
 	d1_store_guard(s, &object, 3, &guard);
-	if (!commit_chunk(s, admission, 3, 3, big, sizeof(big), &guard, v3,
-			  &txn4))
-		return 0;
+	if (!d1_version_live(commit_chunk(s, admission, 3, 3, big, sizeof(big),
+					  &guard, v3, &txn4)))
+		return d1_version_none();
 	/* Custody is issued over whatever is visible on chunk 3 now. */
 	{
-		d1_id_t visible = 0;
+		d1_version_id visible = { 0 };
 
 		d1_store_visible(s, &object, 3, &visible);
 		custody = d1_fixture_custody(s, visible);
@@ -2581,7 +2711,7 @@ static d1_id_t drive_history(struct d1_store *s, d1_id_t admission)
 					 .predecessor_present = true,
 					 .predecessor = v3 },
 				 NULL) != D1_OK)
-			return 0;
+			return d1_version_none();
 	}
 	return v3;
 }
@@ -2604,7 +2734,7 @@ static void test_a_journal_snapshot_is_a_value(void)
 	uint8_t *snap = NULL, *again = NULL;
 	size_t len = 0, grown = 0, after = 1;
 	unsigned int i;
-	d1_id_t admission;
+	d1_admission_id admission;
 
 	memset(data, 0x21, sizeof(data));
 	fill_uuid(&store_uuid, 0x21);
@@ -2621,9 +2751,10 @@ static void test_a_journal_snapshot_is_a_value(void)
 	d1_store_journal_enable(s);
 	admission = d1_fixture_admit(s, &object, 11,
 				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
-	check(commit_chunk(s, admission, 0, 1, data, sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(s, admission, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "a history to snapshot");
 
 	check(d1_store_journal_snapshot(s, &snap, &len) == D1_OK && snap &&
@@ -2643,7 +2774,7 @@ static void test_a_journal_snapshot_is_a_value(void)
 	for (i = 1; i < 20u; i++)
 		(void)commit_chunk(s, admission, i, i + 1u, data, sizeof(data),
 				   &(struct d1_guard){ .never_written = true },
-				   0, NULL);
+				   d1_version_none(), NULL);
 	check(d1_store_journal_snapshot(s, &again, &grown) == D1_OK &&
 		      grown > len,
 	      "the store's own journal grows past it");
@@ -2665,7 +2796,7 @@ static void test_a_journal_snapshot_is_a_value(void)
 	/* And it is still a log: it rebuilds a store of its own. */
 	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (target) {
-		d1_id_t seen;
+		d1_version_id seen;
 
 		check(d1_store_replay(target, snap, len) == D1_OK,
 		      "the snapshot replays after its store is gone");
@@ -2684,7 +2815,7 @@ static void test_a_journal_snapshot_can_find_no_memory(void)
 	static uint8_t data[16];
 	uint8_t *snap = NULL;
 	size_t len = 1, again = 0;
-	d1_id_t admission;
+	d1_admission_id admission;
 
 	memset(data, 0x22, sizeof(data));
 	fill_uuid(&store_uuid, 0x22);
@@ -2694,9 +2825,10 @@ static void test_a_journal_snapshot_can_find_no_memory(void)
 	d1_store_journal_enable(s);
 	admission = d1_fixture_admit(s, &object, 11,
 				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
-	check(commit_chunk(s, admission, 0, 1, data, sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(s, admission, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "a history to fail to snapshot");
 
 	d1_fixture_fail_next_snapshot(s);
@@ -2817,7 +2949,7 @@ static void test_snapshots_run_beside_appends_and_a_close(void)
 	pthread_t reader;
 	static uint8_t data[64];
 	unsigned int i;
-	d1_id_t admission;
+	d1_admission_id admission;
 
 	memset(data, 0x23, sizeof(data));
 	fill_uuid(&store_uuid, 0x23);
@@ -2851,7 +2983,7 @@ static void test_snapshots_run_beside_appends_and_a_close(void)
 					   &(struct d1_guard){ .never_written =
 								       true } :
 					   NULL,
-				   0, NULL);
+				   d1_version_none(), NULL);
 	check(d1_store_close(s) == D1_OK, "the store closes under the reader");
 
 	check(pthread_mutex_lock(&sn.m) == 0, "the reader is told to stop");
@@ -2893,7 +3025,9 @@ static void test_an_owner_names_a_cohort(void)
 	static uint8_t other[4096];
 	size_t before = 0, after = 1, env_len, other_len, i;
 	size_t first = 0, last = 0;
-	d1_id_t admission, txn, seen;
+	d1_admission_id admission;
+	d1_txn_id txn;
+	d1_version_id seen;
 
 	memset(data, 0x24, sizeof(data));
 	fill_uuid(&store_uuid, 0x24);
@@ -2912,7 +3046,7 @@ static void test_an_owner_names_a_cohort(void)
 	write_entry(&env.body.write.entries[0], 0, 11, 2, data, sizeof(data),
 		    true, &(struct d1_guard){ .never_written = true });
 	check(d1_envelope_validate(&env), "the request is otherwise canonical");
-	env.body.write.entries[0].owner.cohort = 0;
+	env.body.write.entries[0].owner.cohort.raw = 0;
 	check(!d1_envelope_validate(&env),
 	      "a write owner with no cohort is not a canonical request");
 	check(d1_store_apply(s, &env, &res) == D1_INVALID,
@@ -2927,9 +3061,9 @@ static void test_an_owner_names_a_cohort(void)
 	check(after == before, "and nothing reached the log");
 
 	/* The decoder refuses the bytes too, not only the encoder. */
-	env.body.write.entries[0].owner.cohort = 0x5a5au;
+	env.body.write.entries[0].owner.cohort.raw = 0x5a5au;
 	env_len = d1_envelope_encode(&env, bytes, sizeof(bytes));
-	env.body.write.entries[0].owner.cohort = 0xa5a5u;
+	env.body.write.entries[0].owner.cohort.raw = 0xa5a5u;
 	other_len = d1_envelope_encode(&env, other, sizeof(other));
 	check(env_len != 0 && env_len == other_len,
 	      "two canonical forms of it encode to one length");
@@ -2954,7 +3088,7 @@ static void test_an_owner_names_a_cohort(void)
 	      "and the same bytes with the cohort zeroed do not");
 
 	/* The same question of the other two shapes that carry an owner. */
-	env.body.write.entries[0].owner.cohort = 1;
+	env.body.write.entries[0].owner.cohort.raw = 1;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "the write with a cohort succeeds");
@@ -2965,7 +3099,7 @@ static void test_an_owner_names_a_cohort(void)
 	env.body.lifecycle.range_end = 1;
 	env.body.lifecycle.count = 1;
 	env.body.lifecycle.entries[0].index = 0;
-	env.body.lifecycle.entries[0].owner.cohort = 0;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 0;
 	env.body.lifecycle.entries[0].owner.writer = 11;
 	env.body.lifecycle.entries[0].owner.co_id = 2;
 	env.body.lifecycle.entries[0].txn = txn;
@@ -2980,7 +3114,7 @@ static void test_an_owner_names_a_cohort(void)
 	env.body.rollback.range_end = 1;
 	env.body.rollback.count = 1;
 	env.body.rollback.entries[0].index = 0;
-	env.body.rollback.entries[0].owner.cohort = 0;
+	env.body.rollback.entries[0].owner.cohort.raw = 0;
 	env.body.rollback.entries[0].owner.writer = 11;
 	env.body.rollback.entries[0].owner.co_id = 2;
 	env.body.rollback.entries[0].txn = txn;
@@ -3021,7 +3155,8 @@ static void test_the_chunk_table_is_capacity(void)
 	const uint8_t *log;
 	size_t before = 0, after = 1, len;
 	uint32_t got_len = 1;
-	d1_id_t admission, seen;
+	d1_admission_id admission;
+	d1_version_id seen;
 
 	memset(data, 0x25, sizeof(data));
 	fill_uuid(&store_uuid, 0x25);
@@ -3034,10 +3169,10 @@ static void test_the_chunk_table_is_capacity(void)
 					     D1_RIGHT_SINGLE_WRITER);
 
 	/* The last index the table holds is an ordinary write. */
-	check(commit_chunk(s, admission, D1_MAX_CHUNKS - 1u, 1, data,
-			   sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(commit_chunk(
+		      s, admission, D1_MAX_CHUNKS - 1u, 1, data, sizeof(data),
+		      &(struct d1_guard){ .never_written = true },
+		      d1_version_none(), NULL)),
 	      "the last chunk the table holds is written and committed");
 	check(d1_store_visible(s, &object, D1_MAX_CHUNKS - 1u, &seen),
 	      "and is visible");
@@ -3059,7 +3194,8 @@ static void test_the_chunk_table_is_capacity(void)
 	      "and answers out of room, not malformed");
 	check(res.entries[0].disposition == D1_UNRECORDED,
 	      "with nothing recorded for it");
-	check(res.entries[0].txn == 0 && res.entries[0].version == 0,
+	check(!d1_txn_live(res.entries[0].txn) &&
+		      !d1_version_live(res.entries[0].version),
 	      "and no durable ID spent");
 	(void)journal_of(s, &after);
 	check(after == before, "and nothing in the log");
@@ -3154,8 +3290,9 @@ static void test_geometry_is_asked_before_the_object_table(void)
 	const uint8_t *log;
 	size_t len, before = 0, after = 1;
 	unsigned int i;
-	d1_id_t admissions[D1_MAX_OBJECTS + 1u];
-	d1_id_t txn, version;
+	d1_admission_id admissions[D1_MAX_OBJECTS + 1u];
+	d1_txn_id txn;
+	d1_version_id version;
 
 	memset(data, 0x2e, sizeof(data));
 	fill_uuid(&store_uuid, 0x2f);
@@ -3209,7 +3346,7 @@ static void test_geometry_is_asked_before_the_object_table(void)
 	      "and spends no ID");
 	txn = res.entries[0].txn;
 	version = res.entries[0].version;
-	check(txn == 0 && version == 0, "nor names one");
+	check(!d1_txn_live(txn) && !d1_version_live(version), "nor names one");
 
 	/* Being recorded, the exact retry answers from the receipt. */
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
@@ -3276,8 +3413,8 @@ static void test_the_empty_object_can_be_read(void)
 	static uint8_t got[32];
 	unsigned int i;
 	uint32_t got_len = 1;
-	d1_id_t admissions[D1_MAX_OBJECTS + 2u];
-	d1_id_t seen;
+	d1_admission_id admissions[D1_MAX_OBJECTS + 2u];
+	d1_version_id seen;
 
 	memset(data, 0x26, sizeof(data));
 	fill_uuid(&store_uuid, 0x26);
@@ -3314,7 +3451,7 @@ static void test_the_empty_object_can_be_read(void)
 	memset(&sel, 0, sizeof(sel));
 	sel.selection = D1_SELECT_OWNER;
 	sel.count = 1;
-	sel.txns[0] = 1;
+	sel.txns[0] = d1_txn_none();
 	check(d1_view_open(s, &keys[0], admissions[0], &sel, 0, CHUNK_BYTES,
 			   &view) == D1_INVALID,
 	      "an owner view over transactions that do not exist does not");
@@ -3361,6 +3498,249 @@ static void test_the_empty_object_can_be_read(void)
 	d1_store_free(s);
 }
 
+/*
+ * A handle names one kind of thing, in one store.
+ *
+ * Every store starts each of its counters at one, so two stores' first
+ * admissions were both the number one -- and one number is all a handle
+ * used to be.  An envelope carrying A's admission applied to B, and B
+ * resolved the number against its own unrelated authority row and did
+ * the work; an admission passed where a version belongs was resolved as
+ * a version, and issued custody over it.  Neither is reachable now: the
+ * type settles which table is asked, the issuing store settles whose
+ * table it is, and a handle carries both.
+ *
+ * What a caller can still do is name any number for the store it is
+ * talking to, because that is all the wire carries.  A number the store
+ * never issued names no row, which is the answer it always was.
+ */
+static void test_a_handle_names_its_own_store(void)
+{
+	struct d1_uuid uuid_a, uuid_b;
+	struct d1_store *a, *b;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
+	static uint8_t data[16];
+	d1_admission_id admit_a, admit_b;
+	d1_version_id v_a, seen;
+	d1_txn_id txn_a;
+	d1_custody_id cust;
+
+	memset(data, 0x30, sizeof(data));
+	fill_uuid(&uuid_a, 0x30);
+	fill_uuid(&uuid_b, 0x31);
+	a = d1_store_open(&uuid_a, CHUNK_BYTES, MAX_FILE_BYTES);
+	b = d1_store_open(&uuid_b, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!a || !b) {
+		d1_store_free(a);
+		d1_store_free(b);
+		return;
+	}
+	admit_a = d1_fixture_admit(a, &object, 11,
+				   D1_RIGHT_READ | D1_RIGHT_WRITE |
+					   D1_RIGHT_SINGLE_WRITER);
+	admit_b = d1_fixture_admit(b, &object, 11,
+				   D1_RIGHT_READ | D1_RIGHT_WRITE |
+					   D1_RIGHT_SINGLE_WRITER);
+	check(d1_admission_live(admit_a) && d1_admission_live(admit_b),
+	      "both stores admit a handle");
+	check(admit_a.raw == admit_b.raw,
+	      "and both counted to the same number");
+	check(!d1_admission_eq(admit_a, admit_b),
+	      "which is not the same handle");
+
+	/* The positive control: A's handle works in A. */
+	env_init(&env, a, admit_a, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(a, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a store's own handle authorizes work in it");
+	v_a = res.entries[0].version;
+	txn_a = res.entries[0].txn;
+
+	/* The same envelope, the same number, the other store. */
+	env.object = object;
+	env.incarnation = d1_store_incarnation(b);
+	env.key.sequence = next_sequence++;
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "and authorizes nothing in another store");
+	check(res.entries[0].disposition == D1_UNRECORDED,
+	      "recording nothing there");
+	check(!d1_store_visible(b, &object, 0, &seen),
+	      "and publishing nothing there");
+
+	/* A read is the same question. */
+	ordinary_sel(&sel);
+	check(d1_view_open(b, &object, admit_a, &sel, 0, CHUNK_BYTES, &view) ==
+		      D1_STALE_AUTH,
+	      "nor does it open a view there");
+
+	/* A transaction and a version are no more portable. */
+	owner_sel(&sel, txn_a, 11, 1, 0);
+	check(d1_view_open(b, &object, admit_b, &sel, 0, CHUNK_BYTES, &view) ==
+		      D1_INVALID,
+	      "another store's transaction selects nothing here");
+	check(!d1_custody_live(d1_fixture_custody(b, v_a)),
+	      "and another store's version takes no custody here");
+	check(d1_custody_live(d1_fixture_custody(a, v_a)),
+	      "while its own store issues custody over it");
+	check(!d1_fixture_release_predecessor(b, v_a),
+	      "and another store's version is released by nobody else");
+
+	/*
+	 * A number the store never issued is refused by the store that
+	 * would have issued it, which is the answer that was always
+	 * right: it names no row.
+	 */
+	cust = d1_fixture_custody(a, d1_fixture_version_handle(a, 999999u));
+	check(!d1_custody_live(cust),
+	      "a version number this store never issued names nothing");
+
+	d1_store_free(a);
+	d1_store_free(b);
+}
+
+/*
+ * A handle of the wrong kind is not a handle.
+ *
+ * The cross-type half of the same defect: an admission and a version
+ * were both a u64, so an admission with the value one could be handed
+ * to custody, where version one existed, and custody was issued over a
+ * version the caller never named.  There is no conversion between the
+ * two now -- the compiler refuses it, which is why this test proves the
+ * property with the values instead.
+ */
+static void test_a_handle_names_its_own_kind(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t data[16];
+	d1_admission_id admission;
+	d1_version_id version;
+	d1_txn_id txn;
+
+	memset(data, 0x32, sizeof(data));
+	fill_uuid(&store_uuid, 0x32);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a write issues a transaction and a version");
+	version = res.entries[0].version;
+	txn = res.entries[0].txn;
+
+	/*
+	 * The collision the blind probe used: the first admission, the
+	 * first transaction and the first version are all the number one.
+	 */
+	check(admission.raw == 1 && txn.raw == 1 && version.raw == 1,
+	      "and all three are the number one");
+
+	/*
+	 * d1_fixture_custody(s, admission) does not compile: its parameter
+	 * is a version handle and an admission is a different type.  What
+	 * a caller can still do is name the admission's number as a
+	 * version -- and that is a version handle, which resolves as one.
+	 */
+	check(d1_custody_live(d1_fixture_custody(
+		      s, d1_fixture_version_handle(s, admission.raw))),
+	      "naming the number as a version reaches the version");
+	check(d1_custody_live(d1_fixture_custody(s, version)),
+	      "which is the same thing as naming the version");
+
+	/* And a transaction's number is not an admission's authority. */
+	env_init(&env, s, d1_fixture_admission_handle(s, txn.raw),
+		 D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the number one is also this store's admission, and works");
+
+	d1_store_free(s);
+}
+
+/*
+ * Replay reconstructs the handles the log names, for the store doing
+ * the rebuilding.
+ *
+ * A journal carries values and no provenance at all, so a decoded
+ * record names nothing until the store rebuilding it adopts the values
+ * as its own.  A store reopened from its own log is the same store --
+ * the same UUID, which is this model's name for one -- so the handles
+ * it issued before the reopen still name its rows afterwards.
+ */
+static void test_replay_rebuilds_the_same_handles(void)
+{
+	struct d1_uuid store_uuid, other_uuid;
+	struct d1_store *live, *rebuilt, *foreign;
+	static uint8_t data[16];
+	const uint8_t *log;
+	size_t len;
+	d1_admission_id admission;
+	d1_version_id v1, seen;
+
+	memset(data, 0x33, sizeof(data));
+	fill_uuid(&store_uuid, 0x33);
+	fill_uuid(&other_uuid, 0x34);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	admission = d1_fixture_admit(live, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+	v1 = commit_chunk(live, admission, 0, 1, data, sizeof(data),
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), NULL);
+	check(d1_version_live(v1), "a history to rebuild");
+	log = journal_of(live, &len);
+
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt && log) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "the log rebuilds a store of the same name");
+		check(d1_store_visible(rebuilt, &object, 0, &seen),
+		      "which has the version the log recorded");
+		check(d1_version_eq(seen, v1),
+		      "and it is the same handle, not merely the same number");
+		check(d1_custody_live(d1_fixture_custody(rebuilt, v1)),
+		      "so a handle issued before the rebuild still names it");
+		d1_store_free(rebuilt);
+	}
+
+	/* And a store of another name is another store, log or no log. */
+	foreign = d1_store_open(&other_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (foreign) {
+		check(d1_store_replay(foreign, log, len) == D1_IO,
+		      "a store of another name refuses the log");
+		check(!d1_custody_live(d1_fixture_custody(foreign, v1)),
+		      "and does not know its handles either");
+		d1_store_free(foreign);
+	}
+	d1_store_free(live);
+}
+
 /* H: the log rebuilds the store that wrote it. */
 static void test_replay_reproduces_the_store(void)
 {
@@ -3368,7 +3748,7 @@ static void test_replay_reproduces_the_store(void)
 	struct d1_store *a, *b;
 	const uint8_t *log;
 	size_t len;
-	d1_id_t admission;
+	d1_admission_id admission;
 
 	fill_uuid(&store_uuid, 0x88);
 	a = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -3379,7 +3759,8 @@ static void test_replay_reproduces_the_store(void)
 				     D1_RIGHT_READ | D1_RIGHT_WRITE |
 					     D1_RIGHT_REPAIR |
 					     D1_RIGHT_SINGLE_WRITER);
-	check(drive_history(a, admission) != 0, "the history is written");
+	check(d1_version_live(drive_history(a, admission)),
+	      "the history is written");
 
 	log = journal_of(a, &len);
 	check(len > 0, "the log has bytes");
@@ -3412,7 +3793,8 @@ static void test_crash_loses_only_the_torn_record(void)
 	struct d1_store *a, *before, *after;
 	const uint8_t *log;
 	size_t len, prefix;
-	d1_id_t admission, admission_b;
+	d1_admission_id admission;
+	d1_admission_id admission_b;
 	static uint8_t data[64];
 
 	memset(data, 0x31, sizeof(data));
@@ -3424,15 +3806,17 @@ static void test_crash_loses_only_the_torn_record(void)
 	admission = d1_fixture_admit(a, &object, 11,
 				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
 
-	check(commit_chunk(a, admission, 0, 1, data, sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(a, admission, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "the first chunk commits");
 	(void)journal_of(a, &prefix);
 
-	check(commit_chunk(a, admission, 2, 2, data, sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(a, admission, 2, 2, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "the second chunk commits");
 	log = journal_of(a, &len);
 	check(len > prefix, "and the log grew");
@@ -3450,7 +3834,8 @@ static void test_crash_loses_only_the_torn_record(void)
 	admission_b = d1_fixture_admit(before, &object, 11,
 				       D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
 	commit_chunk(before, admission_b, 0, 1, data, sizeof(data),
-		     &(struct d1_guard){ .never_written = true }, 0, NULL);
+		     &(struct d1_guard){ .never_written = true },
+		     d1_version_none(), NULL);
 
 	after = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (!after) {
@@ -3535,7 +3920,9 @@ static void test_append_fault_is_unrecorded(void)
 	struct d1_guard guard;
 	static uint8_t data[32];
 	size_t before, after;
-	d1_id_t admission, seen, first_txn;
+	d1_admission_id admission;
+	d1_version_id seen;
+	d1_txn_id first_txn;
 
 	memset(data, 0x41, sizeof(data));
 	fill_uuid(&store_uuid, 0xaa);
@@ -3574,7 +3961,7 @@ static void test_append_fault_is_unrecorded(void)
 		      res.entries[0].status == D1_OK,
 	      "the exact retry executes");
 	first_txn = res.entries[0].txn;
-	check(first_txn == 1,
+	check(first_txn.raw == 1,
 	      "and consumes the first transaction ID, not the second");
 	(void)journal_of(s, &after);
 	check(after > before, "and the log grew this time");
@@ -3622,7 +4009,9 @@ static void test_interrupted_batch_stops_and_resumes(void)
 	struct d1_envelope env, plain;
 	struct d1_result first, retry, ref;
 	static uint8_t data[16];
-	d1_id_t admission, clean_admission, visible;
+	d1_admission_id admission;
+	d1_admission_id clean_admission;
+	d1_version_id visible;
 	unsigned int i;
 
 	memset(data, 0xa7, sizeof(data));
@@ -3665,8 +4054,9 @@ static void test_interrupted_batch_stops_and_resumes(void)
 	/* The exact retry resumes the interrupted members, in input order. */
 	check(d1_store_apply(s, &env, &retry) == D1_OK, "the exact retry runs");
 	check(retry.entries[0].status == D1_OK &&
-		      retry.entries[0].version == first.entries[0].version &&
-		      retry.entries[0].txn == first.entries[0].txn,
+		      d1_version_eq(retry.entries[0].version,
+				    first.entries[0].version) &&
+		      d1_txn_eq(retry.entries[0].txn, first.entries[0].txn),
 	      "the first member returns its recorded result");
 	check(retry.entries[1].status == D1_OK &&
 		      retry.entries[1].disposition == D1_COMPLETED,
@@ -3674,7 +4064,7 @@ static void test_interrupted_batch_stops_and_resumes(void)
 	check(retry.entries[2].status == D1_OK &&
 		      retry.entries[2].disposition == D1_COMPLETED,
 	      "and so does the third");
-	check(retry.entries[1].txn < retry.entries[2].txn,
+	check(retry.entries[1].txn.raw < retry.entries[2].txn.raw,
 	      "and they took their IDs in input order");
 	check(d1_store_visible(s, &object, 1, &visible) &&
 		      d1_store_visible(s, &object, 2, &visible),
@@ -3718,7 +4108,8 @@ static void test_semantic_refusal_does_not_interrupt(void)
 	struct d1_envelope env;
 	struct d1_result res;
 	static uint8_t data[16];
-	d1_id_t admission, visible;
+	d1_admission_id admission;
+	d1_version_id visible;
 	unsigned int i;
 
 	memset(data, 0xa8, sizeof(data));
@@ -3772,7 +4163,8 @@ static void test_receipt_exhaustion_changes_nothing(void)
 	struct d1_guard guard;
 	static uint8_t data[8];
 	unsigned int i;
-	d1_id_t admission, seen;
+	d1_admission_id admission;
+	d1_version_id seen;
 	bool filled = false;
 
 	memset(data, 0x42, sizeof(data));
@@ -3837,7 +4229,8 @@ static void test_exact_retry_survives_revocation(void)
 	struct d1_envelope env, extend;
 	struct d1_result first, again;
 	static uint8_t data[8];
-	d1_id_t admission, second;
+	d1_admission_id admission;
+	d1_admission_id second;
 
 	memset(data, 0x43, sizeof(data));
 	fill_uuid(&store_uuid, 0xac);
@@ -3878,8 +4271,9 @@ static void test_exact_retry_survives_revocation(void)
 	      "with the recorded success, not a stale-authority error");
 	check(again.entries[0].disposition == D1_COMPLETED,
 	      "recorded, not unrecorded");
-	check(again.entries[0].version == first.entries[0].version &&
-		      again.entries[0].txn == first.entries[0].txn,
+	check(d1_version_eq(again.entries[0].version,
+			    first.entries[0].version) &&
+		      d1_txn_eq(again.entries[0].txn, first.entries[0].txn),
 	      "naming the same version and transaction");
 	check(again.eof == first.eof && again.index_epoch == first.index_epoch,
 	      "and the EOF and epoch it saw, not today's");
@@ -3911,7 +4305,9 @@ static void test_reopen_fences_and_repeats(void)
 	const uint8_t *log;
 	size_t len;
 	static uint8_t data[8];
-	d1_id_t admission, again, txn;
+	d1_admission_id admission;
+	d1_admission_id again;
+	d1_txn_id txn;
 	uint8_t verifier_before[D1_VERIFIER_BYTES];
 	uint8_t verifier_after[D1_VERIFIER_BYTES];
 
@@ -3931,7 +4327,7 @@ static void test_reopen_fences_and_repeats(void)
 		    true, &(struct d1_guard){ .never_written = true });
 	d1_store_apply(a, &env, &res);
 	txn = res.entries[0].txn;
-	check(txn != 0, "there is pending work to recover");
+	check(d1_txn_live(txn), "there is pending work to recover");
 	d1_store_verifier(a, verifier_before);
 	log = journal_of(a, &len);
 
@@ -3961,7 +4357,7 @@ static void test_reopen_fences_and_repeats(void)
 	/* A fresh handle in the new incarnation can. */
 	again = d1_fixture_admit(b, &object, 11,
 				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
-	check(again != 0 && again != admission,
+	check(d1_admission_live(again) && !d1_admission_eq(again, admission),
 	      "a new admission gets a new ID, never a reused one");
 	env_init(&env, b, again, D1_OP_WRITE_BATCH);
 	env.body.write.count = 1;
@@ -4010,7 +4406,11 @@ static void test_index_fault_serves_the_overlay(void)
 	static uint8_t second[32];
 	uint8_t got[32];
 	uint32_t got_len;
-	d1_id_t admission, v1, v2, seen, stale;
+	d1_admission_id admission;
+	d1_version_id v1;
+	d1_version_id v2;
+	d1_version_id seen;
+	d1_version_id stale;
 
 	memset(first, 0x31, sizeof(first));
 	memset(second, 0x32, sizeof(second));
@@ -4024,8 +4424,9 @@ static void test_index_fault_serves_the_overlay(void)
 					     D1_RIGHT_SINGLE_WRITER);
 
 	v1 = commit_chunk(s, admission, 0, 1, first, sizeof(first),
-			  &(struct d1_guard){ .never_written = true }, 0, NULL);
-	check(v1 != 0, "the first version commits");
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), NULL);
+	check(d1_version_live(v1), "the first version commits");
 	check(!d1_store_overlay_active(s),
 	      "and the store is not on the overlay");
 
@@ -4033,23 +4434,24 @@ static void test_index_fault_serves_the_overlay(void)
 	d1_fixture_fail_next_index(s);
 	v2 = commit_chunk(s, admission, 0, 2, second, sizeof(second), &guard,
 			  v1, NULL);
-	check(v2 != 0 && v2 != v1,
+	check(d1_version_live(v2) && !d1_version_eq(v2, v1),
 	      "the replacement commits despite the index fault");
 	check(d1_store_overlay_active(s),
 	      "and the store records that the two have diverged");
 
 	/* The materialized pointer was left behind, on purpose. */
-	check(d1_store_materialized(s, &object, 0, &stale) && stale == v1,
+	check(d1_store_materialized(s, &object, 0, &stale) &&
+		      d1_version_eq(stale, v1),
 	      "the materialized index still names the predecessor");
 
 	/* No read may serve it. */
-	check(d1_store_visible(s, &object, 0, &seen) && seen == v2,
+	check(d1_store_visible(s, &object, 0, &seen) && d1_version_eq(seen, v2),
 	      "but what is visible is the committed version");
 	ordinary_sel(&sel);
 	check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
 			   &view) == D1_OK,
 	      "a view opens after the fault");
-	check(d1_view_version(view, 0, &seen) && seen == v2,
+	check(d1_view_version(view, 0, &seen) && d1_version_eq(seen, v2),
 	      "and selects the committed version, not the predecessor");
 	check(d1_view_read(view, 0, got, sizeof(got), &got_len) == D1_OK &&
 		      memcmp(got, second, sizeof(second)) == 0,
@@ -4072,12 +4474,12 @@ static void test_index_fault_serves_the_overlay(void)
 			      "and the fault did not replay with it");
 			/* Unjournalled harness state, so it cannot. */
 			check(d1_store_visible(rebuilt, &object, 0, &seen) &&
-				      seen == v2,
+				      d1_version_eq(seen, v2),
 			      "and the rebuilt store sees the committed "
 			      "version");
 			check(d1_store_materialized(rebuilt, &object, 0,
 						    &stale) &&
-				      stale == v2,
+				      d1_version_eq(stale, v2),
 			      "with its materialized index in agreement");
 			d1_store_free(rebuilt);
 		}
@@ -4110,7 +4512,10 @@ static void test_undone_event_never_becomes_durable(void)
 		const uint8_t *log;
 		size_t len, before;
 		static uint8_t data[16];
-		d1_id_t admission, control, extra, seen;
+		d1_admission_id admission;
+		d1_admission_id control;
+		d1_admission_id extra;
+		d1_version_id seen;
 		uint32_t status;
 
 		memset(data, 0xb5, sizeof(data));
@@ -4155,7 +4560,9 @@ static void test_undone_event_never_becomes_durable(void)
 			 * before it ever reached the journal, and so would
 			 * prove nothing about the undo.
 			 */
-			d1_id_t old, fresh, txn;
+			d1_admission_id old;
+			d1_admission_id fresh;
+			d1_txn_id txn;
 
 			old = d1_fixture_admit(live, &object, 11,
 					       D1_RIGHT_WRITE |
@@ -4218,7 +4625,7 @@ static void test_undone_event_never_becomes_durable(void)
 			d1_fixture_fail_next_flush(live);
 			control = d1_fixture_admit(live, &object, 12,
 						   D1_RIGHT_READ);
-			check(control == 0,
+			check(!d1_admission_live(control),
 			      "the fixture control event is refused");
 			(void)journal_of(live, &len);
 			check(len == before, "and claims no durable bytes");
@@ -4228,7 +4635,8 @@ static void test_undone_event_never_becomes_durable(void)
 		/* Something unrelated now succeeds and flushes. */
 		(void)journal_of(live, &before);
 		extra = d1_fixture_admit(live, &object, 13, D1_RIGHT_READ);
-		check(extra != 0, "an unrelated control event succeeds");
+		check(d1_admission_live(extra),
+		      "an unrelated control event succeeds");
 		log = journal_of(live, &len);
 		check(len > before, "and does claim bytes");
 
@@ -4264,7 +4672,9 @@ static void test_retry_after_flush_fault_agrees_with_replay(void)
 	const uint8_t *log;
 	size_t len;
 	static uint8_t data[16];
-	d1_id_t admission, seen_live, seen_rebuilt;
+	d1_admission_id admission;
+	d1_version_id seen_live;
+	d1_version_id seen_rebuilt;
 
 	memset(data, 0xb6, sizeof(data));
 	fill_uuid(&store_uuid, 0x24);
@@ -4311,7 +4721,7 @@ static void test_retry_after_flush_fault_agrees_with_replay(void)
 	check(d1_store_replay(rebuilt, log, len) == D1_OK, "the log rebuilds");
 	check(d1_store_visible(live, &object, 0, &seen_live) &&
 		      d1_store_visible(rebuilt, &object, 0, &seen_rebuilt) &&
-		      seen_live == seen_rebuilt,
+		      d1_version_eq(seen_live, seen_rebuilt),
 	      "and agrees on the retried version");
 	check(states_agree(live, rebuilt), "and on everything else");
 
@@ -4347,7 +4757,13 @@ static void test_repair_only_rollback_replays(void)
 	const uint8_t *log;
 	size_t len;
 	static uint8_t data[16];
-	d1_id_t writer_adm, repair_adm, v1, v2, txn2, custody, seen;
+	d1_admission_id writer_adm;
+	d1_admission_id repair_adm;
+	d1_version_id v1;
+	d1_version_id v2;
+	d1_txn_id txn2;
+	d1_custody_id custody;
+	d1_version_id seen;
 
 	memset(data, 0xb7, sizeof(data));
 	fill_uuid(&store_uuid, 0x25);
@@ -4361,12 +4777,15 @@ static void test_repair_only_rollback_replays(void)
 	repair_adm = d1_fixture_admit(live, &object, 11, D1_RIGHT_REPAIR);
 
 	v1 = commit_chunk(live, writer_adm, 0, 1, data, sizeof(data),
-			  &(struct d1_guard){ .never_written = true }, 0, NULL);
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), NULL);
 	d1_store_guard(live, &object, 0, &guard);
 	v2 = commit_chunk(live, writer_adm, 0, 2, data, sizeof(data), &guard,
 			  v1, &txn2);
 	custody = d1_fixture_custody(live, v2);
-	check(v1 && v2 && custody, "a replacement is committed under custody");
+	check(d1_version_live(v1) && d1_version_live(v2) &&
+		      d1_custody_live(custody),
+	      "a replacement is committed under custody");
 
 	check(rollback_one(live, repair_adm, 0, 2, txn2,
 			   &(struct rollback_expect){ .custody_present = true,
@@ -4378,7 +4797,8 @@ static void test_repair_only_rollback_replays(void)
 						      .predecessor = v1 },
 			   NULL) == D1_OK,
 	      "a REPAIR-only handle rolls it back");
-	check(d1_store_visible(live, &object, 0, &seen) && seen == v1,
+	check(d1_store_visible(live, &object, 0, &seen) &&
+		      d1_version_eq(seen, v1),
 	      "and the predecessor is visible");
 
 	log = journal_of(live, &len);
@@ -4396,7 +4816,12 @@ static void test_repair_only_rollback_replays(void)
 	{
 		struct d1_store *second, *second_rebuilt;
 		struct d1_uuid other_uuid;
-		d1_id_t other_writer, other_repair, w1, w2, t2, bad;
+		d1_admission_id other_writer;
+		d1_admission_id other_repair;
+		d1_version_id w1;
+		d1_version_id w2;
+		d1_txn_id t2;
+		d1_custody_id bad;
 
 		fill_uuid(&other_uuid, 0x26);
 		second =
@@ -4410,13 +4835,14 @@ static void test_repair_only_rollback_replays(void)
 							D1_RIGHT_REPAIR);
 			w1 = commit_chunk(
 				second, other_writer, 0, 1, data, sizeof(data),
-				&(struct d1_guard){ .never_written = true }, 0,
-				NULL);
+				&(struct d1_guard){ .never_written = true },
+				d1_version_none(), NULL);
 			d1_store_guard(second, &object, 0, &guard);
 			w2 = commit_chunk(second, other_writer, 0, 2, data,
 					  sizeof(data), &guard, w1, &t2);
 			bad = d1_fixture_custody(second, w1);
-			check(w2 != 0 && bad != 0, "a stale custody is issued");
+			check(d1_version_live(w2) && d1_custody_live(bad),
+			      "a stale custody is issued");
 			check(rollback_one(second, other_repair, 0, 2, t2,
 					   &(struct rollback_expect){
 						   .custody_present = true,
@@ -4466,7 +4892,11 @@ static void test_reopen_fences_owner_reads(void)
 	static uint8_t data[24];
 	uint8_t got[24];
 	uint32_t got_len;
-	d1_id_t admission, control, fresh, txn, seen;
+	d1_admission_id admission;
+	d1_admission_id control;
+	d1_admission_id fresh;
+	d1_txn_id txn;
+	d1_version_id seen;
 
 	memset(data, 0xd1, sizeof(data));
 	fill_uuid(&store_uuid, 0x31);
@@ -4477,9 +4907,10 @@ static void test_reopen_fences_owner_reads(void)
 	admission = d1_fixture_admit(live, &object, 11,
 				     D1_RIGHT_READ | D1_RIGHT_WRITE |
 					     D1_RIGHT_SINGLE_WRITER);
-	check(finalize_chunk(live, admission, 0, 1, data, sizeof(data),
-			     &(struct d1_guard){ .never_written = true }, 0,
-			     &txn) != 0,
+	check(d1_version_live(finalize_chunk(
+		      live, admission, 0, 1, data, sizeof(data),
+		      &(struct d1_guard){ .never_written = true },
+		      d1_version_none(), &txn)),
 	      "a private version is finalized");
 
 	/* Before the reopen, its owner can select it. */
@@ -4557,7 +4988,10 @@ static void test_recovery_target_must_be_current(void)
 	const uint8_t *log;
 	size_t len;
 	static uint8_t data[16];
-	d1_id_t old_a, old_b, control, txn;
+	d1_admission_id old_a;
+	d1_admission_id old_b;
+	d1_admission_id control;
+	d1_txn_id txn;
 
 	memset(data, 0xd2, sizeof(data));
 	fill_uuid(&store_uuid, 0x32);
@@ -4577,7 +5011,8 @@ static void test_recovery_target_must_be_current(void)
 		    true, &(struct d1_guard){ .never_written = true });
 	d1_store_apply(live, &env, &res);
 	txn = res.entries[0].txn;
-	check(txn != 0 && old_b != 0, "there is work and a second old handle");
+	check(d1_txn_live(txn) && d1_admission_live(old_b),
+	      "there is work and a second old handle");
 
 	log = journal_of(live, &len);
 	reopened = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -4634,7 +5069,7 @@ static void test_view_eof_is_object_wide(void)
 	static uint8_t data[100];
 	uint8_t got[64];
 	uint32_t got_len, i;
-	d1_id_t admission;
+	d1_admission_id admission;
 
 	memset(data, 0xe1, sizeof(data));
 	fill_uuid(&store_uuid, 0x33);
@@ -4645,13 +5080,15 @@ static void test_view_eof_is_object_wide(void)
 				     D1_RIGHT_READ | D1_RIGHT_WRITE |
 					     D1_RIGHT_SINGLE_WRITER);
 
-	check(commit_chunk(s, admission, 0, 1, data, sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(s, admission, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "chunk 0 commits a partial image");
-	check(commit_chunk(s, admission, 3, 2, data, sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(s, admission, 3, 2, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "and chunk 3 commits far above it");
 	check(d1_store_eof(s, &object) == 3u * CHUNK_BYTES + sizeof(data),
 	      "the object's EOF is set by the higher chunk");
@@ -4707,7 +5144,9 @@ static void test_owner_shrink_below_higher_chunk(void)
 	static uint8_t small[20];
 	uint8_t got[64];
 	uint32_t got_len;
-	d1_id_t admission, v1, txn;
+	d1_admission_id admission;
+	d1_version_id v1;
+	d1_txn_id txn;
 
 	memset(big, 0xe2, sizeof(big));
 	memset(small, 0xe3, sizeof(small));
@@ -4720,14 +5159,16 @@ static void test_owner_shrink_below_higher_chunk(void)
 					     D1_RIGHT_SINGLE_WRITER);
 
 	v1 = commit_chunk(s, admission, 0, 1, big, sizeof(big),
-			  &(struct d1_guard){ .never_written = true }, 0, NULL);
-	check(commit_chunk(s, admission, 2, 2, big, sizeof(big),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), NULL);
+	check(d1_version_live(
+		      commit_chunk(s, admission, 2, 2, big, sizeof(big),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "a higher chunk is committed");
 	d1_store_guard(s, &object, 0, &guard);
-	check(finalize_chunk(s, admission, 0, 3, small, sizeof(small), &guard,
-			     v1, &txn) != 0,
+	check(d1_version_live(finalize_chunk(s, admission, 0, 3, small,
+					     sizeof(small), &guard, v1, &txn)),
 	      "a shorter private replacement finalizes below it");
 
 	owner_sel(&sel, txn, 11, 3, 0);
@@ -4770,8 +5211,8 @@ static void test_refusal_consumes_no_capacity(void)
 	struct d1_guard guard;
 	static uint8_t data[16];
 	unsigned int i;
-	d1_id_t admissions[D1_MAX_OBJECTS + 1u];
-	d1_id_t seen;
+	d1_admission_id admissions[D1_MAX_OBJECTS + 1u];
+	d1_version_id seen;
 
 	memset(data, 0xf1, sizeof(data));
 	fill_uuid(&store_uuid, 0x35);
@@ -4858,7 +5299,7 @@ static void test_refusal_consumes_no_capacity(void)
 	 * And it is the first transaction and version the store ever
 	 * issued: the refusals took no IDs either.
 	 */
-	check(res.entries[0].txn == 1 && res.entries[0].version == 1,
+	check(res.entries[0].txn.raw == 1 && res.entries[0].version.raw == 1,
 	      "taking the first IDs, so the refusals consumed none");
 
 	/*
@@ -4903,7 +5344,8 @@ static void test_bound_authority_refusal_is_recorded(void)
 	const uint8_t *log;
 	size_t len;
 	static uint8_t data[16];
-	d1_id_t readonly, writer;
+	d1_admission_id readonly;
+	d1_admission_id writer;
 
 	memset(data, 0xf2, sizeof(data));
 	fill_uuid(&store_uuid, 0x36);
@@ -4980,7 +5422,12 @@ static void test_control_envelopes_replay(void)
 	const uint8_t *log;
 	size_t len;
 	static uint8_t data[16];
-	d1_id_t control, old, fresh, reaped, txn_recovered, txn_reaped;
+	d1_admission_id control;
+	d1_admission_id old;
+	d1_admission_id fresh;
+	d1_admission_id reaped;
+	d1_txn_id txn_recovered;
+	d1_txn_id txn_reaped;
 
 	memset(data, 0x64, sizeof(data));
 	fill_uuid(&store_uuid, 0x37);
@@ -5012,7 +5459,7 @@ static void test_control_envelopes_replay(void)
 		    true, &(struct d1_guard){ .never_written = true });
 	d1_store_apply(live, &env, &res);
 	txn_reaped = res.entries[0].txn;
-	check(txn_recovered != 0 && txn_reaped != 0,
+	check(d1_txn_live(txn_recovered) && d1_txn_live(txn_reaped),
 	      "two admissions leave work behind");
 
 	/* A recovery_admit, journalled. */
@@ -5071,7 +5518,7 @@ static void test_control_envelopes_replay(void)
 		env.body.lifecycle.range_end = 1;
 		env.body.lifecycle.count = 1;
 		env.body.lifecycle.entries[0].index = 0;
-		env.body.lifecycle.entries[0].owner.cohort = 1;
+		env.body.lifecycle.entries[0].owner.cohort.raw = 1;
 		env.body.lifecycle.entries[0].owner.writer = 11;
 		env.body.lifecycle.entries[0].owner.co_id = 1;
 		env.body.lifecycle.entries[0].txn = txn_recovered;
@@ -5106,7 +5553,12 @@ static void test_control_members_are_all_or_nothing(void)
 	const uint8_t *log;
 	size_t len;
 	static uint8_t data[16];
-	d1_id_t control, old, fresh, other, first, second;
+	d1_admission_id control;
+	d1_admission_id old;
+	d1_admission_id fresh;
+	d1_admission_id other;
+	d1_txn_id first;
+	d1_txn_id second;
 
 	memset(data, 0x41, sizeof(data));
 	fill_uuid(&store_uuid, 0x5d);
@@ -5214,7 +5666,9 @@ static void test_replay_requires_a_pristine_target(void)
 	const uint8_t *full;
 	size_t start_len, full_len;
 	static uint8_t data[8];
-	d1_id_t admission, seen_before, seen_after;
+	d1_admission_id admission;
+	d1_version_id seen_before;
+	d1_version_id seen_after;
 
 	memset(data, 0x2a, sizeof(data));
 	fill_uuid(&store_uuid, 0x51);
@@ -5234,9 +5688,10 @@ static void test_replay_requires_a_pristine_target(void)
 		admission = d1_fixture_admit(source, &object, 11,
 					     D1_RIGHT_WRITE |
 						     D1_RIGHT_SINGLE_WRITER);
-		check(commit_chunk(source, admission, 0, 1, data, sizeof(data),
-				   &(struct d1_guard){ .never_written = true },
-				   0, NULL) != 0,
+		check(d1_version_live(commit_chunk(
+			      source, admission, 0, 1, data, sizeof(data),
+			      &(struct d1_guard){ .never_written = true },
+			      d1_version_none(), NULL)),
 		      "and the source goes on to commit");
 		full = journal_of(source, &full_len);
 
@@ -5250,10 +5705,10 @@ static void test_replay_requires_a_pristine_target(void)
 		admission = d1_fixture_admit(populated, &object, 11,
 					     D1_RIGHT_WRITE |
 						     D1_RIGHT_SINGLE_WRITER);
-		check(commit_chunk(populated, admission, 0, 1, data,
-				   sizeof(data),
-				   &(struct d1_guard){ .never_written = true },
-				   0, NULL) != 0,
+		check(d1_version_live(commit_chunk(
+			      populated, admission, 0, 1, data, sizeof(data),
+			      &(struct d1_guard){ .never_written = true },
+			      d1_version_none(), NULL)),
 		      "the target has data of its own");
 		check(d1_store_visible(populated, &object, 0, &seen_before),
 		      "which is visible");
@@ -5264,13 +5719,13 @@ static void test_replay_requires_a_pristine_target(void)
 		check(d1_store_replay(populated, full, full_len) == D1_INVALID,
 		      "and so is a longer one");
 		check(d1_store_visible(populated, &object, 0, &seen_after) &&
-			      seen_after == seen_before,
+			      d1_version_eq(seen_after, seen_before),
 		      "and the target still holds exactly what it had");
 		/* Refused, not poisoned: it still works. */
 		check(d1_store_eof(populated, &object) == sizeof(data),
 		      "and still answers");
-		check(d1_fixture_admit(populated, &object, 12, D1_RIGHT_READ) !=
-			      0,
+		check(d1_admission_live(d1_fixture_admit(populated, &object, 12,
+							 D1_RIGHT_READ)),
 		      "and still admits");
 		d1_store_free(populated);
 
@@ -5301,7 +5756,7 @@ static void test_journal_enable_requires_a_pristine_store(void)
 	struct d1_uuid store_uuid;
 	struct d1_store *s, *poisoned;
 	static uint8_t data[8];
-	d1_id_t admission;
+	d1_admission_id admission;
 
 	memset(data, 0x2b, sizeof(data));
 	fill_uuid(&store_uuid, 0x52);
@@ -5310,7 +5765,8 @@ static void test_journal_enable_requires_a_pristine_store(void)
 		return;
 	admission = d1_fixture_admit(s, &object, 11,
 				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
-	check(admission != 0, "an admission is issued without a journal");
+	check(d1_admission_live(admission),
+	      "an admission is issued without a journal");
 	check(d1_store_journal_enable(s) == D1_INVALID,
 	      "journalling cannot start once authority exists unlogged");
 	d1_store_free(s);
@@ -5331,8 +5787,8 @@ static void test_journal_enable_requires_a_pristine_store(void)
 					     D1_RIGHT_WRITE |
 						     D1_RIGHT_SINGLE_WRITER);
 		commit_chunk(live, admission, 0, 1, data, sizeof(data),
-			     &(struct d1_guard){ .never_written = true }, 0,
-			     NULL);
+			     &(struct d1_guard){ .never_written = true },
+			     d1_version_none(), NULL);
 		log = journal_of(live, &len);
 
 		poisoned =
@@ -5345,10 +5801,12 @@ static void test_journal_enable_requires_a_pristine_store(void)
 			writable[len - 1] ^= 0xffu;
 			check(d1_store_journal_enable(poisoned) == D1_INVALID,
 			      "and a poisoned handle cannot start a journal");
-			check(d1_fixture_admit(poisoned, &object, 11,
-					       D1_RIGHT_READ) == 0,
+			check(!d1_admission_live(d1_fixture_admit(
+				      poisoned, &object, 11, D1_RIGHT_READ)),
 			      "nor accept fixture authority");
-			check(d1_fixture_custody(poisoned, 1) == 0,
+			check(!d1_custody_live(d1_fixture_custody(
+				      poisoned,
+				      d1_fixture_version_handle(poisoned, 1))),
 			      "nor issue custody");
 			d1_store_free(poisoned);
 		}
@@ -5370,7 +5828,8 @@ static void test_initial_guard_is_zero_zero(void)
 	struct d1_guard guard;
 	static uint8_t data[8];
 	unsigned int pass;
-	d1_id_t admission, seen;
+	d1_admission_id admission;
+	d1_version_id seen;
 
 	memset(data, 0x2c, sizeof(data));
 	fill_uuid(&store_uuid, 0x54);
@@ -5442,7 +5901,8 @@ static void test_writer_must_be_the_granted_one(void)
 	struct d1_result res;
 	struct d1_guard guard;
 	static uint8_t data[8];
-	d1_id_t admission, seen;
+	d1_admission_id admission;
+	d1_version_id seen;
 
 	memset(data, 0x2d, sizeof(data));
 	fill_uuid(&store_uuid, 0x55);
@@ -5487,7 +5947,10 @@ static void test_owner_vector_is_validated_whole(void)
 	struct d1_guard guard;
 	static uint8_t data[32];
 	struct d1_view *held[D1_MAX_VIEWS];
-	d1_id_t admission, v1, t1, t2;
+	d1_admission_id admission;
+	d1_version_id v1;
+	d1_txn_id t1;
+	d1_txn_id t2;
 	unsigned int pass, n;
 
 	memset(data, 0x3a, sizeof(data));
@@ -5501,10 +5964,11 @@ static void test_owner_vector_is_validated_whole(void)
 					     D1_RIGHT_SINGLE_WRITER);
 
 	v1 = commit_chunk(s, admission, 0, 1, data, sizeof(data),
-			  &(struct d1_guard){ .never_written = true }, 0, &t1);
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), &t1);
 	d1_store_guard(s, &object, 0, &guard);
-	check(finalize_chunk(s, admission, 0, 2, data, sizeof(data), &guard, v1,
-			     &t2) != 0,
+	check(d1_version_live(finalize_chunk(s, admission, 0, 2, data,
+					     sizeof(data), &guard, v1, &t2)),
 	      "a committed and a finalized transaction share a chunk");
 
 	/* Both orders of the same vector answer the same way. */
@@ -5514,10 +5978,10 @@ static void test_owner_vector_is_validated_whole(void)
 		sel.count = 2;
 		sel.txns[0] = pass ? t1 : t2;
 		sel.txns[1] = pass ? t2 : t1;
-		sel.owners[0].cohort = 1;
+		sel.owners[0].cohort.raw = 1;
 		sel.owners[0].writer = 11;
 		sel.owners[0].co_id = pass ? 1 : 2;
-		sel.owners[1].cohort = 1;
+		sel.owners[1].cohort.raw = 1;
 		sel.owners[1].writer = 11;
 		sel.owners[1].co_id = pass ? 2 : 1;
 		check(d1_view_open(s, &object, admission, &sel, 0, CHUNK_BYTES,
@@ -5528,7 +5992,7 @@ static void test_owner_vector_is_validated_whole(void)
 
 	/* Two members resolving to one chunk is not a selection. */
 	{
-		d1_id_t t3;
+		d1_txn_id t3;
 		struct d1_guard g2;
 
 		/* Cancel the finalized one so the chunk is free again. */
@@ -5541,8 +6005,9 @@ static void test_owner_vector_is_validated_whole(void)
 				   NULL) == D1_OK,
 		      "the finalized transaction is cancelled");
 		d1_store_guard(s, &object, 0, &g2);
-		check(finalize_chunk(s, admission, 0, 3, data, sizeof(data),
-				     &g2, v1, &t3) != 0,
+		check(d1_version_live(finalize_chunk(s, admission, 0, 3, data,
+						     sizeof(data), &g2, v1,
+						     &t3)),
 		      "and a new one finalizes on the same chunk");
 
 		memset(&sel, 0, sizeof(sel));
@@ -5550,7 +6015,7 @@ static void test_owner_vector_is_validated_whole(void)
 		sel.count = 2;
 		sel.txns[0] = t3;
 		sel.txns[1] = t3;
-		sel.owners[0].cohort = 1;
+		sel.owners[0].cohort.raw = 1;
 		sel.owners[0].writer = 11;
 		sel.owners[0].co_id = 3;
 		sel.owners[1] = sel.owners[0];
@@ -5604,7 +6069,7 @@ static void test_record_tags_are_validated(void)
 	const uint8_t *log;
 	size_t len, at;
 	static uint8_t data[8];
-	d1_id_t admission;
+	d1_admission_id admission;
 	uint32_t total, crc;
 	unsigned int pass;
 
@@ -5616,9 +6081,10 @@ static void test_record_tags_are_validated(void)
 	d1_store_journal_enable(live);
 	admission = d1_fixture_admit(live, &object, 11,
 				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
-	check(commit_chunk(live, admission, 0, 1, data, sizeof(data),
-			   &(struct d1_guard){ .never_written = true }, 0,
-			   NULL) != 0,
+	check(d1_version_live(
+		      commit_chunk(live, admission, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
 	      "a history with a CONTROL and several ENTRYs");
 	log = journal_of(live, &len);
 	check(len <= sizeof(copy), "the log fits the fixture buffer");
@@ -5707,7 +6173,9 @@ static void test_operation_key_binds_the_whole_envelope(void)
 		size_t len;
 		static uint8_t data[16];
 		static uint8_t other[16];
-		d1_id_t admission, spare, visible;
+		d1_admission_id admission;
+		d1_admission_id spare;
+		d1_version_id visible;
 		unsigned int i;
 
 		memset(data, 0x3c, sizeof(data));
@@ -5801,7 +6269,8 @@ static void test_unused_key_is_not_bound(void)
 	struct d1_result res;
 	static uint8_t data[16];
 	static uint8_t other[16];
-	d1_id_t admission, visible;
+	d1_admission_id admission;
+	d1_version_id visible;
 
 	memset(data, 0x3e, sizeof(data));
 	memset(other, 0x3f, sizeof(other));
@@ -5859,7 +6328,9 @@ static void test_recovery_clears_fault_arms(void)
 		uint8_t *snap = NULL;
 		size_t snap_len = 0;
 		bool hook_fired = false;
-		d1_id_t admission, fresh, seen;
+		d1_admission_id admission;
+		d1_admission_id fresh;
+		d1_version_id seen;
 
 		memset(data, 0x40, sizeof(data));
 		fill_uuid(&store_uuid, (uint8_t)(0x5b + pass));
@@ -5870,9 +6341,10 @@ static void test_recovery_clears_fault_arms(void)
 		admission = d1_fixture_admit(live, &object, 11,
 					     D1_RIGHT_WRITE |
 						     D1_RIGHT_SINGLE_WRITER);
-		check(commit_chunk(live, admission, 0, 1, data, sizeof(data),
-				   &(struct d1_guard){ .never_written = true },
-				   0, NULL) != 0,
+		check(d1_version_live(commit_chunk(
+			      live, admission, 0, 1, data, sizeof(data),
+			      &(struct d1_guard){ .never_written = true },
+			      d1_version_none(), NULL)),
 		      "a history to rebuild");
 		log = journal_of(live, &len);
 
@@ -5921,13 +6393,14 @@ static void test_recovery_clears_fault_arms(void)
 			fresh = d1_fixture_admit(
 				target, &object, 11,
 				D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
-			check(fresh != 0, "a fresh handle is admitted");
+			check(d1_admission_live(fresh),
+			      "a fresh handle is admitted");
 			(void)journal_of(target, &before);
-			check(commit_chunk(target, fresh, 2, 9, data,
-					   sizeof(data),
-					   &(struct d1_guard){ .never_written =
-								       true },
-					   0, NULL) != 0,
+			check(d1_version_live(commit_chunk(
+				      target, fresh, 2, 9, data, sizeof(data),
+				      &(struct d1_guard){ .never_written =
+								  true },
+				      d1_version_none(), NULL)),
 			      "and its first commit succeeds");
 			(void)journal_of(target, &after);
 			check(after > before,
@@ -5946,11 +6419,12 @@ static void test_recovery_clears_fault_arms(void)
 			 */
 			check(!d1_store_overlay_active(target),
 			      "and the arm did not survive the rebuild");
-			check(commit_chunk(target, admission, 2, 9, data,
-					   sizeof(data),
-					   &(struct d1_guard){ .never_written =
-								       true },
-					   0, NULL) != 0,
+			check(d1_version_live(commit_chunk(
+				      target, admission, 2, 9, data,
+				      sizeof(data),
+				      &(struct d1_guard){ .never_written =
+								  true },
+				      d1_version_none(), NULL)),
 			      "the first commit after it succeeds");
 			check(!d1_store_overlay_active(target),
 			      "with no index fault firing");
@@ -5988,8 +6462,13 @@ static void test_custody_and_release_replay(void)
 		const uint8_t *log;
 		size_t len;
 		static uint8_t data[32];
-		d1_id_t admission, v1, v2, txn2, custody, live_visible;
-		d1_id_t rebuilt_visible;
+		d1_admission_id admission;
+		d1_version_id v1;
+		d1_version_id v2;
+		d1_txn_id txn2;
+		d1_custody_id custody;
+		d1_version_id live_visible;
+		d1_version_id rebuilt_visible;
 		uint32_t status;
 
 		memset(data, 0x51, sizeof(data));
@@ -6006,11 +6485,12 @@ static void test_custody_and_release_replay(void)
 
 		v1 = commit_chunk(live, admission, 0, 1, data, sizeof(data),
 				  &(struct d1_guard){ .never_written = true },
-				  0, NULL);
+				  d1_version_none(), NULL);
 		d1_store_guard(live, &object, 0, &guard);
 		v2 = commit_chunk(live, admission, 0, 2, data, sizeof(data),
 				  &guard, v1, &txn2);
-		check(v1 != 0 && v2 != 0, "two versions commit in turn");
+		check(d1_version_live(v1) && d1_version_live(v2),
+		      "two versions commit in turn");
 
 		if (release_case[pass]) {
 			/* The predecessor is released, so it is not eligible. */
@@ -6034,7 +6514,7 @@ static void test_custody_and_release_replay(void)
 						      D1_OWNER_CONFLICT),
 		      "the rollback answers from the fixture state");
 		check(d1_store_visible(live, &object, 0, &live_visible) &&
-			      live_visible == v2,
+			      d1_version_eq(live_visible, v2),
 		      "and the current data stays where it is");
 
 		log = journal_of(live, &len);
@@ -6047,7 +6527,7 @@ static void test_custody_and_release_replay(void)
 		check(d1_store_replay(rebuilt, log, len) == D1_OK,
 		      "the log replays without diverging");
 		check(d1_store_visible(rebuilt, &object, 0, &rebuilt_visible) &&
-			      rebuilt_visible == live_visible,
+			      d1_version_eq(rebuilt_visible, live_visible),
 		      "and the rebuilt store sees the same version");
 		check(states_agree(live, rebuilt),
 		      "and agrees with the store that wrote it");
@@ -6064,7 +6544,7 @@ static void test_replay_refuses_a_foreign_log(void)
 	struct d1_store *a, *b;
 	const uint8_t *log;
 	size_t len;
-	d1_id_t admission;
+	d1_admission_id admission;
 	static uint8_t data[16];
 
 	memset(data, 0x51, sizeof(data));
@@ -6077,7 +6557,8 @@ static void test_replay_refuses_a_foreign_log(void)
 	admission = d1_fixture_admit(a, &object, 11,
 				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
 	commit_chunk(a, admission, 0, 1, data, sizeof(data),
-		     &(struct d1_guard){ .never_written = true }, 0, NULL);
+		     &(struct d1_guard){ .never_written = true },
+		     d1_version_none(), NULL);
 	log = journal_of(a, &len);
 
 	b = d1_store_open(&theirs, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -6117,7 +6598,10 @@ static void test_recovery_admit(void)
 	struct d1_result res;
 	uint8_t verifier[D1_VERIFIER_BYTES];
 	static uint8_t data[16];
-	d1_id_t control, old, fresh, txn;
+	d1_admission_id control;
+	d1_admission_id old;
+	d1_admission_id fresh;
+	d1_txn_id txn;
 
 	memset(data, 0x61, sizeof(data));
 	fill_uuid(&store_uuid, 0xdd);
@@ -6163,7 +6647,7 @@ static void test_recovery_admit(void)
 	env.body.lifecycle.range_end = 1;
 	env.body.lifecycle.count = 1;
 	env.body.lifecycle.entries[0].index = 0;
-	env.body.lifecycle.entries[0].owner.cohort = 1;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
 	env.body.lifecycle.entries[0].owner.writer = 11;
 	env.body.lifecycle.entries[0].owner.co_id = 1;
 	env.body.lifecycle.entries[0].txn = txn;
@@ -6201,7 +6685,12 @@ static void test_recovery_admit_is_atomic(void)
 	struct d1_envelope env;
 	struct d1_result res;
 	static uint8_t data[16];
-	d1_id_t control, old, fresh, stranger, txn, other_txn;
+	d1_admission_id control;
+	d1_admission_id old;
+	d1_admission_id fresh;
+	d1_admission_id stranger;
+	d1_txn_id txn;
+	d1_txn_id other_txn;
 
 	memset(data, 0x62, sizeof(data));
 	fill_uuid(&store_uuid, 0xdf);
@@ -6230,7 +6719,8 @@ static void test_recovery_admit_is_atomic(void)
 		    true, &(struct d1_guard){ .never_written = true });
 	d1_store_apply(s, &env, &res);
 	other_txn = res.entries[0].txn;
-	check(txn != 0 && other_txn != 0, "two admissions prepare work");
+	check(d1_txn_live(txn) && d1_txn_live(other_txn),
+	      "two admissions prepare work");
 
 	/* A read epoch the store has never reached. */
 	env_init(&env, s, control, D1_OP_RECOVERY_ADMIT);
@@ -6275,7 +6765,7 @@ static void test_recovery_admit_is_atomic(void)
 	env_init(&env, s, control, D1_OP_RECOVERY_ADMIT);
 	env.body.control.count = 1;
 	env.body.control.txns[0] = txn;
-	env.body.control.old_admission = 9999;
+	env.body.control.old_admission = d1_fixture_admission_handle(s, 9999);
 	env.body.control.new_admission_present = true;
 	env.body.control.new_admission = fresh;
 	env.body.control.read_epoch_present = true;
@@ -6296,7 +6786,12 @@ static void test_lease_reap(void)
 	struct d1_result res;
 	struct d1_guard before, after;
 	static uint8_t data[24];
-	d1_id_t control, writer, other, txn_a, txn_b, visible;
+	d1_admission_id control;
+	d1_admission_id writer;
+	d1_admission_id other;
+	d1_txn_id txn_a;
+	d1_txn_id txn_b;
+	d1_version_id visible;
 
 	memset(data, 0x71, sizeof(data));
 	fill_uuid(&store_uuid, 0xee);
@@ -6322,7 +6817,8 @@ static void test_lease_reap(void)
 		    true, &(struct d1_guard){ .never_written = true });
 	d1_store_apply(s, &env, &res);
 	txn_b = res.entries[0].txn;
-	check(txn_a != 0 && txn_b != 0, "two transactions are prepared");
+	check(d1_txn_live(txn_a) && d1_txn_live(txn_b),
+	      "two transactions are prepared");
 	d1_store_guard(s, &object, 0, &before);
 
 	/* A live lease keeps its own work. */
@@ -6353,7 +6849,7 @@ static void test_lease_reap(void)
 	env.body.control.old_admission = writer;
 	env.body.control.count = 2;
 	env.body.control.txns[0] = txn_a;
-	env.body.control.txns[1] = 999999;
+	env.body.control.txns[1] = d1_fixture_txn_handle(s, 999999);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_INVALID,
 	      "a member that is not a transaction refuses the whole reap");
@@ -6412,7 +6908,8 @@ static void test_malformed_requests_are_refused(void)
 	struct d1_envelope env;
 	struct d1_result res;
 	static uint8_t data[16];
-	d1_id_t admission, visible;
+	d1_admission_id admission;
+	d1_version_id visible;
 
 	memset(data, 0x81, sizeof(data));
 	fill_uuid(&store_uuid, 0x12);
@@ -6498,20 +6995,20 @@ static void test_malformed_requests_are_refused(void)
 	/* A control request carrying a field its operation has no use for. */
 	env_init(&env, s, admission, D1_OP_LEASE_REAP);
 	env.body.control.count = 1;
-	env.body.control.txns[0] = 1;
+	env.body.control.txns[0] = d1_fixture_txn_handle(s, 1);
 	env.body.control.old_admission = admission;
 	env.body.control.new_admission_present = true;
-	env.body.control.new_admission = 2;
+	env.body.control.new_admission = d1_fixture_admission_handle(s, 2);
 	check(d1_store_apply(s, &env, &res) == D1_INVALID,
 	      "a reap naming a new admission is a different request");
 
 	/* A recovery request missing the epoch it exists to grant. */
 	env_init(&env, s, admission, D1_OP_RECOVERY_ADMIT);
 	env.body.control.count = 1;
-	env.body.control.txns[0] = 1;
+	env.body.control.txns[0] = d1_fixture_txn_handle(s, 1);
 	env.body.control.old_admission = admission;
 	env.body.control.new_admission_present = true;
-	env.body.control.new_admission = 2;
+	env.body.control.new_admission = d1_fixture_admission_handle(s, 2);
 	check(d1_store_apply(s, &env, &res) == D1_INVALID,
 	      "a recovery granting no read epoch is refused");
 
@@ -6560,7 +7057,8 @@ static void test_concurrent_callers_cannot_splice_a_key(void)
 	size_t len;
 	static uint8_t mine[16];
 	static uint8_t theirs[16];
-	d1_id_t admission, seen;
+	d1_admission_id admission;
+	d1_version_id seen;
 	unsigned int i;
 
 	memset(mine, 0x61, sizeof(mine));
@@ -6614,7 +7112,8 @@ static void test_concurrent_callers_cannot_splice_a_key(void)
 	for (i = 0; i < 2; i++) {
 		check(retry.entries[i].status == D1_OK,
 		      "from its own receipts, member by member");
-		check(retry.entries[i].version == first.res.entries[i].version,
+		check(d1_version_eq(retry.entries[i].version,
+				    first.res.entries[i].version),
 		      "with the versions it was given the first time");
 	}
 	check(!d1_store_visible(s, &object, 1, &seen),
@@ -6705,7 +7204,8 @@ static void test_replay_refuses_a_spliced_key(void)
 		size_t len, len_b = 0, at[16], at_b[16], used = 0;
 		unsigned int records, records_b = 0, i;
 		const uint32_t rights = D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER;
-		d1_id_t admission, second;
+		d1_admission_id admission;
+		d1_admission_id second;
 
 		memset(mine, 0x64, sizeof(mine));
 		memset(theirs, 0x65, sizeof(theirs));
@@ -6755,7 +7255,7 @@ static void test_replay_refuses_a_spliced_key(void)
 			}
 			d1_store_journal_enable(other);
 			second = d1_fixture_admit(other, &object, 11, rights);
-			check(second == admission,
+			check(d1_admission_eq(second, admission),
 			      "the second store admits the same handle");
 			changed = env;
 			write_entry(&changed.body.write.entries[1], 1, 11, 2,
@@ -6835,7 +7335,9 @@ static void test_caller_binding_is_settled_first(void)
 	struct d1_envelope env, stranger;
 	struct d1_result res;
 	static uint8_t data[16];
-	d1_id_t mine, theirs, seen;
+	d1_admission_id mine;
+	d1_admission_id theirs;
+	d1_version_id seen;
 
 	memset(data, 0x71, sizeof(data));
 	fill_uuid(&store_uuid, 0x72);
@@ -6849,7 +7351,8 @@ static void test_caller_binding_is_settled_first(void)
 				D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
 	theirs = d1_fixture_admit(s, &elsewhere, 12,
 				  D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
-	check(mine != 0 && theirs != 0, "two handles, on two objects");
+	check(d1_admission_live(mine) && d1_admission_live(theirs),
+	      "two handles, on two objects");
 
 	env_init(&env, s, mine, D1_OP_WRITE_BATCH);
 	env.body.write.count = 1;
@@ -7032,7 +7535,7 @@ static void test_records_must_name_what_they_carry(void)
 		size_t len, at[8], used, env_len, res_len;
 		unsigned int records;
 		uint32_t blen;
-		d1_id_t admission;
+		d1_admission_id admission;
 
 		memset(data, 0x6a, sizeof(data));
 		fill_uuid(&store_uuid, (uint8_t)(0x6b + pass));
@@ -7206,7 +7709,9 @@ static void test_replay_requires_the_record_to_have_happened(void)
 		unsigned int records;
 		uint32_t blen = 0, type = D1_REC_ENTRY, ordinal = 0;
 		uint64_t lsn;
-		d1_id_t admission, control, txn;
+		d1_admission_id admission;
+		d1_admission_id control;
+		d1_txn_id txn;
 
 		memset(data, 0x71, sizeof(data));
 		fill_uuid(&store_uuid, (uint8_t)(0x71 + pass));
@@ -7267,7 +7772,9 @@ static void test_replay_requires_the_record_to_have_happened(void)
 		} else {
 			if (pass == 1) {
 				/* A handle the store never issued. */
-				env_init(&crafted, live, admission + 7u,
+				env_init(&crafted, live,
+					 d1_fixture_admission_handle(
+						 live, admission.raw + 7u),
 					 D1_OP_WRITE_BATCH);
 				crafted.body.write.count = 1;
 				crafted.body.write.stability = D1_FILE_SYNC;
@@ -7365,7 +7872,7 @@ static void test_replay_refuses_a_record_that_found_no_room(void)
 	uint32_t blen;
 	uint64_t lsn;
 	bool filled = false;
-	d1_id_t admission;
+	d1_admission_id admission;
 
 	memset(data, 0x74, sizeof(data));
 	fill_uuid(&store_uuid, 0x74);
@@ -7472,7 +7979,9 @@ static void test_a_control_record_that_recorded_nothing(void)
 	size_t len, before = 0, at[16], used, env_len, res_len;
 	unsigned int records;
 	uint32_t blen;
-	d1_id_t admission, stranger, txn;
+	d1_admission_id admission;
+	d1_admission_id stranger;
+	d1_txn_id txn;
 
 	memset(data, 0x27, sizeof(data));
 	fill_uuid(&store_uuid, 0x27);
@@ -7588,7 +8097,7 @@ static void test_a_batch_stops_at_its_first_unrecorded_member(void)
 	const uint8_t *log;
 	size_t len, at[8];
 	unsigned int records;
-	d1_id_t admission;
+	d1_admission_id admission;
 
 	memset(data, 0x75, sizeof(data));
 	fill_uuid(&store_uuid, 0x75);
@@ -7604,7 +8113,8 @@ static void test_a_batch_stops_at_its_first_unrecorded_member(void)
 	 */
 	memset(&late, 0, sizeof(late));
 	late.s = live;
-	env_init(&env, live, 1, D1_OP_WRITE_BATCH);
+	env_init(&env, live, d1_fixture_admission_handle(live, 1),
+		 D1_OP_WRITE_BATCH);
 	env.body.write.count = 2;
 	env.body.write.stability = D1_FILE_SYNC;
 	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
@@ -7636,7 +8146,8 @@ static void test_a_batch_stops_at_its_first_unrecorded_member(void)
 	d1_fixture_before_member(live, 1, NULL, NULL);
 	admission = d1_fixture_admit(live, &object, 11,
 				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
-	check(admission == 1, "the handle the request named is the one issued");
+	check(admission.raw == 1,
+	      "the handle the request named is the one issued");
 	check(d1_store_apply(live, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK &&
 		      res.entries[1].status == D1_OK,
@@ -7749,7 +8260,8 @@ static void test_fixture_control_records_are_canonical(void)
 		unsigned int records;
 		uint32_t blen;
 		int which;
-		d1_id_t admission, version;
+		d1_admission_id admission;
+		d1_version_id version;
 
 		memset(data, 0x78, sizeof(data));
 		fill_uuid(&store_uuid, (uint8_t)(0x78 + pass));
@@ -7776,9 +8288,12 @@ static void test_fixture_control_records_are_canonical(void)
 			 * logged too, with the zero object the writer had
 			 * nothing to fill it from.
 			 */
-			d1_fixture_revoke(live, admission + 50u);
+			d1_fixture_revoke(live,
+					  d1_fixture_admission_handle(
+						  live, admission.raw + 50u));
 		} else {
-			check(d1_fixture_custody(live, version) != 0,
+			check(d1_custody_live(
+				      d1_fixture_custody(live, version)),
 			      "custody is issued and logged");
 			d1_fixture_revoke(live, admission);
 		}
@@ -7882,7 +8397,7 @@ static void test_fixture_records_carry_an_outcome_that_was_logged(void)
 		unsigned int i, records;
 		uint32_t blen;
 		size_t after = 0;
-		d1_id_t admission;
+		d1_admission_id admission;
 
 		memset(data, 0x7f, sizeof(data));
 		fill_uuid(&store_uuid, (uint8_t)(0x7f + pass));
@@ -7916,13 +8431,15 @@ static void test_fixture_records_carry_an_outcome_that_was_logged(void)
 			}
 			request.auth.writer = D1_WRITER_RESERVED_LOW;
 			request.auth.rights = D1_RIGHT_WRITE;
-			check(d1_fixture_admit_full(live, &object,
-						    &request.auth) == 0,
+			check(!d1_admission_live(d1_fixture_admit_full(
+				      live, &object, &request.auth)),
 			      "a reserved writer is never admitted");
 		} else {
 			request.kind = D1_CTL_CUSTODY;
-			request.version = 999999u;
-			check(d1_fixture_custody(live, request.version) == 0,
+			request.version =
+				d1_fixture_version_handle(live, 999999u);
+			check(!d1_custody_live(d1_fixture_custody(
+				      live, request.version)),
 			      "custody over no version is never issued");
 		}
 		log = journal_of(live, &after);
@@ -8018,7 +8535,8 @@ static void test_lifecycle_options_are_canonical(void)
 	size_t first = 0, last = 0;
 	unsigned int records;
 	uint32_t blen;
-	d1_id_t admission, txn;
+	d1_admission_id admission;
+	d1_txn_id txn;
 
 	memset(data, 0x7c, sizeof(data));
 	fill_uuid(&store_uuid, 0x7c);
@@ -8044,12 +8562,12 @@ static void test_lifecycle_options_are_canonical(void)
 	env.body.lifecycle.range_end = 1;
 	env.body.lifecycle.count = 1;
 	env.body.lifecycle.entries[0].index = 0;
-	env.body.lifecycle.entries[0].owner.cohort = 1;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
 	env.body.lifecycle.entries[0].owner.writer = 11;
 	env.body.lifecycle.entries[0].owner.co_id = 1;
 	env.body.lifecycle.entries[0].txn = txn;
 	env.body.lifecycle.entries[0].predecessor_present = true;
-	env.body.lifecycle.entries[0].predecessor = 0;
+	env.body.lifecycle.entries[0].predecessor = d1_version_none();
 	/*
 	 * A prior verifier that does not match, so that if validation ever
 	 * stopped refusing this body the reducer would answer a recorded
@@ -8079,9 +8597,11 @@ static void test_lifecycle_options_are_canonical(void)
 	 * small, so zeroing the bytes that differ zeroes the whole ID and
 	 * leaves the present flag exactly where it was.
 	 */
-	env.body.lifecycle.entries[0].predecessor = 0x5a5au;
+	env.body.lifecycle.entries[0].predecessor =
+		d1_fixture_version_handle(live, 0x5a5au);
 	env_len = d1_envelope_encode(&env, bytes, sizeof(bytes));
-	env.body.lifecycle.entries[0].predecessor = 0xa5a5u;
+	env.body.lifecycle.entries[0].predecessor =
+		d1_fixture_version_handle(live, 0xa5a5u);
 	other_len = d1_envelope_encode(&env, other, sizeof(other));
 	check(env_len != 0 && env_len == other_len,
 	      "two canonical forms of it encode to one length");
@@ -8171,7 +8691,8 @@ static void test_start_can_fail_to_become_durable(void)
 		const uint8_t *log;
 		size_t len;
 		static uint8_t data[16];
-		d1_id_t admission, seen;
+		d1_admission_id admission;
+		d1_version_id seen;
 
 		memset(data, 0x6e, sizeof(data));
 		fill_uuid(&store_uuid, (uint8_t)(0x6f + pass));
@@ -8199,9 +8720,10 @@ static void test_start_can_fail_to_become_durable(void)
 		admission = d1_fixture_admit(s, &object, 11,
 					     D1_RIGHT_WRITE |
 						     D1_RIGHT_SINGLE_WRITER);
-		check(commit_chunk(s, admission, 0, 1, data, sizeof(data),
-				   &(struct d1_guard){ .never_written = true },
-				   0, NULL) != 0,
+		check(d1_version_live(commit_chunk(
+			      s, admission, 0, 1, data, sizeof(data),
+			      &(struct d1_guard){ .never_written = true },
+			      d1_version_none(), NULL)),
 		      "which then records ordinary work");
 		log = journal_of(s, &len);
 		rebuilt =
@@ -8241,6 +8763,9 @@ int main(void)
 	test_the_door_arm_belongs_to_its_store();
 	test_an_owner_names_a_cohort();
 	test_the_chunk_table_is_capacity();
+	test_a_handle_names_its_own_store();
+	test_a_handle_names_its_own_kind();
+	test_replay_rebuilds_the_same_handles();
 	test_geometry_is_asked_before_the_object_table();
 	test_the_empty_object_can_be_read();
 	test_a_journal_snapshot_is_a_value();

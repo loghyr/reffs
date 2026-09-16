@@ -51,9 +51,9 @@ struct d1_store;
 struct d1_entry_result {
 	uint32_t status;
 	bool version_present;
-	d1_id_t version;
+	d1_version_id version;
 	bool txn_present;
-	d1_id_t txn;
+	d1_txn_id txn;
 	/* The guard as it stands after the entry, or as it stood on refusal. */
 	struct d1_guard guard;
 	struct d1_owner owner;
@@ -123,6 +123,23 @@ uint32_t d1_store_destroy(struct d1_store *s);
 void d1_store_free(struct d1_store *s);
 
 /*
+ * Fixture control: a handle of @s with a chosen value.
+ *
+ * On the wire a handle is a bare u64, so a client can always name any
+ * number for the store it is talking to -- a number that store never
+ * issued, or one it issued for something else.  These model exactly
+ * that and nothing more: the handle they make belongs to @s, so they
+ * cannot hand one store another store's authority, and they cannot
+ * change which table a value is looked up in.  What a value names is
+ * still whatever row @s has under it, which for a number @s never
+ * issued is no row at all.
+ */
+d1_admission_id d1_fixture_admission_handle(struct d1_store *s, uint64_t raw);
+d1_txn_id d1_fixture_txn_handle(struct d1_store *s, uint64_t raw);
+d1_version_id d1_fixture_version_handle(struct d1_store *s, uint64_t raw);
+d1_custody_id d1_fixture_custody_handle(struct d1_store *s, uint64_t raw);
+
+/*
  * Fixture control: run @fn once, in the interval between a public
  * call's first instruction and its admission on @s -- the one interval
  * the store's own lock does not cover, and the one a close races.
@@ -169,20 +186,21 @@ struct d1_fixture_authority {
 	uint64_t fence_sequence;
 };
 
-d1_id_t d1_fixture_admit_full(struct d1_store *s,
-			      const struct d1_objkey *object,
-			      const struct d1_fixture_authority *auth);
+d1_admission_id d1_fixture_admit_full(struct d1_store *s,
+				      const struct d1_objkey *object,
+				      const struct d1_fixture_authority *auth);
 
 /*
  * The common case: one issuer, and a principal derived from the writer,
  * so two handles for one writer share a principal and two for different
  * writers do not.
  */
-d1_id_t d1_fixture_admit(struct d1_store *s, const struct d1_objkey *object,
-			 uint32_t writer, uint32_t rights);
-void d1_fixture_revoke(struct d1_store *s, d1_id_t admission);
+d1_admission_id d1_fixture_admit(struct d1_store *s,
+				 const struct d1_objkey *object,
+				 uint32_t writer, uint32_t rights);
+void d1_fixture_revoke(struct d1_store *s, d1_admission_id admission);
 /* Expire an admission's lease without revoking its identity. */
-void d1_fixture_expire(struct d1_store *s, d1_id_t admission);
+void d1_fixture_expire(struct d1_store *s, d1_admission_id admission);
 
 /*
  * Issue repair custody over one version.  Rolling back committed data
@@ -190,7 +208,7 @@ void d1_fixture_expire(struct d1_store *s, d1_id_t admission);
  * tied to the exact version it is issued for, so a stale pointer is a
  * conflict rather than a weaker check.
  */
-d1_id_t d1_fixture_custody(struct d1_store *s, d1_id_t version);
+d1_custody_id d1_fixture_custody(struct d1_store *s, d1_version_id version);
 
 /*
  * Release the retention of one predecessor version.  Allowed only for a
@@ -198,7 +216,7 @@ d1_id_t d1_fixture_custody(struct d1_store *s, d1_id_t version);
  * durable retention root and changes what a future rollback is eligible
  * for.  It says nothing about whether any bytes were freed.
  */
-bool d1_fixture_release_predecessor(struct d1_store *s, d1_id_t version);
+bool d1_fixture_release_predecessor(struct d1_store *s, d1_version_id version);
 
 /*
  * Apply one envelope.  The returned status is the operation's own; per
@@ -247,7 +265,7 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 
 /* What the model currently makes visible, for the oracles to ask. */
 bool d1_store_visible(struct d1_store *s, const struct d1_objkey *object,
-		      uint64_t index, d1_id_t *version);
+		      uint64_t index, d1_version_id *version);
 bool d1_store_guard(struct d1_store *s, const struct d1_objkey *object,
 		    uint64_t index, struct d1_guard *guard);
 uint64_t d1_store_eof(struct d1_store *s, const struct d1_objkey *object);
@@ -279,7 +297,7 @@ struct d1_view;
 struct d1_selection_spec {
 	uint32_t selection;
 	uint32_t count;
-	d1_id_t txns[D1_BATCH_ENTRIES_MAX];
+	d1_txn_id txns[D1_BATCH_ENTRIES_MAX];
 	struct d1_owner owners[D1_BATCH_ENTRIES_MAX];
 	uint64_t read_epoch;
 };
@@ -311,9 +329,9 @@ struct d1_selection_spec {
  * as usual.
  */
 uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
-		      d1_id_t admission, const struct d1_selection_spec *sel,
-		      uint64_t byte_begin, uint64_t byte_end,
-		      struct d1_view **out);
+		      d1_admission_id admission,
+		      const struct d1_selection_spec *sel, uint64_t byte_begin,
+		      uint64_t byte_end, struct d1_view **out);
 
 /*
  * Read from the view.  The offset must lie inside the range the view
@@ -326,7 +344,8 @@ uint32_t d1_view_read(struct d1_view *v, uint64_t offset, uint8_t *buf,
 		      uint32_t len, uint32_t *out_len);
 
 /* Which version the view selected for one chunk, if any. */
-bool d1_view_version(const struct d1_view *v, uint64_t index, d1_id_t *ver);
+bool d1_view_version(const struct d1_view *v, uint64_t index,
+		     d1_version_id *ver);
 
 /* The EOF the view saw when it opened. */
 uint64_t d1_view_eof(const struct d1_view *v);
@@ -508,6 +527,6 @@ void d1_fixture_before_member(struct d1_store *s, uint32_t ordinal,
  * did not consult it.  There is no production use for this.
  */
 bool d1_store_materialized(struct d1_store *s, const struct d1_objkey *object,
-			   uint64_t index, d1_id_t *version);
+			   uint64_t index, d1_version_id *version);
 
 #endif /* REFFS_D1_STORE_H */

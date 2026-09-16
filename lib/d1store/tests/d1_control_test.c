@@ -47,12 +47,12 @@ static void make_result(struct d1_complete_result *r)
 	r->disposition = D1_COMPLETED;
 	r->entry.status = D1_OK;
 	r->entry.version_present = true;
-	r->entry.version = 7;
+	r->entry.version.raw = 7;
 	r->entry.txn_present = true;
-	r->entry.txn = 9;
+	r->entry.txn.raw = 9;
 	r->entry.guard.generation = 2;
 	r->entry.guard.writer = 11;
-	r->entry.owner.cohort = 42;
+	r->entry.owner.cohort.raw = 42;
 	r->entry.owner.writer = 11;
 	r->entry.owner.co_id = 1;
 	r->entry.stability = D1_FILE_SYNC;
@@ -248,7 +248,7 @@ static void test_comparison_notices_every_field(void)
 			what = "status";
 			break;
 		case 6:
-			v.entry.version = 8;
+			v.entry.version.raw = 8;
 			what = "version";
 			break;
 		case 7:
@@ -323,10 +323,10 @@ static void test_control_round_trip(void)
 
 	memset(&r, 0, sizeof(r));
 	r.kind = D1_CTL_RELEASE;
-	r.version = 12;
+	r.version.raw = 12;
 	len = d1_control_request_encode(&r, buf, sizeof(buf));
 	check(len != 0 && d1_control_request_decode(buf, len, &back) &&
-		      back.kind == D1_CTL_RELEASE && back.version == 12,
+		      back.kind == D1_CTL_RELEASE && back.version.raw == 12,
 	      "a release request round trips");
 
 	memset(&res, 0, sizeof(res));
@@ -356,7 +356,7 @@ static void test_control_refusals(void)
 
 	memset(&r, 0, sizeof(r));
 	r.kind = D1_CTL_EXPIRE;
-	r.admission = 3;
+	r.admission.raw = 3;
 	len = d1_control_request_encode(&r, buf, sizeof(buf));
 	check(len != 0, "a request encodes");
 	check(!d1_control_request_decode(buf, len + 1u, &back),
