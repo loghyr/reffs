@@ -1393,6 +1393,26 @@ static void d1_undo_apply(struct d1_store *s, struct d1_undo *u)
 	s->overlay_active = u->overlay_before;
 }
 
+/*
+ * The guard a chunk carries now, without creating anything.
+ *
+ * A request refused before the object is looked up still has to be told
+ * what it was refused against, and a chunk of an object nothing has
+ * written yet carries the initial guard.
+ */
+static struct d1_guard d1_guard_at(struct d1_store *s,
+				   const struct d1_objkey *key, uint64_t index)
+{
+	const struct d1_object *o = d1_object_find(s, key);
+	struct d1_guard guard;
+
+	memset(&guard, 0, sizeof(guard));
+	guard.never_written = true;
+	if (o && index < D1_MAX_CHUNKS)
+		guard = o->chunks[index].guard;
+	return guard;
+}
+
 static uint32_t
 d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 		  const struct d1_write_entry *e, struct d1_admission *a,
@@ -1446,8 +1466,21 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 		return D1_CHECKSUM;
 	/* An owner names one version, and only an exact replay reuses it. */
 	assoc = d1_owner_find(s, &env->object.export_uuid, &e->owner);
-	if (assoc)
+	if (assoc) {
+		/*
+		 * Section 5: an OWNER_CONFLICT result carries the current
+		 * CAS guard.  The answer is still independent of how full
+		 * the object table is -- the chunk is read, never created,
+		 * and an object that does not exist yet has the guard a
+		 * never-written chunk has, which is what the caller would
+		 * have been refused against.  A zeroed guard decodes as
+		 * "written, generation 0, writer 0", which is a different
+		 * and wrong answer, and it is durable: the receipt is
+		 * replayed and compared on every rebuild.
+		 */
+		res->guard = d1_guard_at(s, &env->object, e->index);
 		return D1_OWNER_CONFLICT;
+	}
 
 	/*
 	 * Everything above depends on the request and the grant it came

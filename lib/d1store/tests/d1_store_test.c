@@ -364,6 +364,29 @@ static void test_owner_collision(void)
 	      "an owner reused for another chunk conflicts");
 	check(!d1_store_visible(s, &object, 2, &visible),
 	      "and writes nothing there");
+	/*
+	 * Section 5: the receipt carries the guard of the chunk the
+	 * refused request named.  Chunk 2 has never been written, and a
+	 * zeroed guard would say it was written at generation zero by
+	 * writer zero -- a different answer, and a durable one.
+	 */
+	check(res.entries[0].guard.never_written,
+	      "and the receipt says that chunk was never written");
+
+	/* C2: the same, against a chunk that has been written. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, payload_b,
+		    sizeof(payload_b), true,
+		    &(struct d1_guard){ .never_written = true });
+	d1_store_apply(s, &env, &res);
+	check(res.entries[0].status == D1_OWNER_CONFLICT,
+	      "an owner reused for a written chunk conflicts too");
+	check(!res.entries[0].guard.never_written &&
+		      res.entries[0].guard.generation == 0 &&
+		      res.entries[0].guard.writer == 11,
+	      "and the receipt carries that chunk's live guard");
 
 	d1_store_free(s);
 }
@@ -3545,6 +3568,41 @@ static void test_a_requests_shape_does_not_depend_on_room(void)
 		      res.entries[0].status == D1_CHECKSUM &&
 		      res.entries[0].disposition == D1_COMPLETED,
 	      "a checksum that does not verify is refused, table or not");
+
+	/* An owner already bound elsewhere, past the table. */
+	env_init(&env, s, admissions[D1_MAX_OBJECTS], D1_OP_WRITE_BATCH);
+	env.object = keys[D1_MAX_OBJECTS];
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], D1_MAX_CHUNKS, 11, 1, data,
+		    sizeof(data), true,
+		    &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OWNER_CONFLICT &&
+		      res.entries[0].disposition == D1_COMPLETED,
+	      "an owner bound elsewhere conflicts, table or not");
+	check(res.entries[0].guard.never_written,
+	      "and still carries the guard it was refused against");
+	check(d1_store_apply(s, &env, &again) == D1_OK &&
+		      again.entries[0].status == D1_OWNER_CONFLICT &&
+		      again.entries[0].disposition == D1_COMPLETED,
+	      "and answers its exact retry from the record");
+
+	/* An absent guard predicate under a multi-writer grant, past it. */
+	env_init(&env, s, multi, D1_OP_WRITE_BATCH);
+	env.object = keys[D1_MAX_OBJECTS];
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], D1_MAX_CHUNKS, 12, 45, data,
+		    sizeof(data), false, NULL);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_INVALID &&
+		      res.entries[0].disposition == D1_COMPLETED,
+	      "a multi-writer request may not omit the guard, table or not");
+	check(d1_store_apply(s, &env, &again) == D1_OK &&
+		      again.entries[0].status == D1_INVALID &&
+		      again.entries[0].disposition == D1_COMPLETED,
+	      "and it too answers from its record");
 
 	/* And a well-formed one past the table is still out of room. */
 	env_init(&env, s, admissions[D1_MAX_OBJECTS], D1_OP_WRITE_BATCH);
