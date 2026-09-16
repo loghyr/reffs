@@ -4620,22 +4620,73 @@ static void test_an_exhausted_epoch_refuses(void)
 	d1_store_free(s);
 }
 
+/* One row of the precedence matrix: a request wrong in two ways. */
+struct precedence_case {
+	const char *what;
+	/* Which faults to build into the entry. */
+	bool bad_geometry;
+	bool bad_writer;
+	bool omit_guard;
+	bool ask_activate;
+	bool bad_checksum;
+	bool reuse_owner;
+	/* Which admission to send it under. */
+	bool multi_writer;
+	uint32_t expect;
+};
+
 /*
  * A request that is wrong in more than one way gets one answer, and it
  * is always the same one.
  *
  * A receipt keeps the answer a request got and replay compares it, so
  * which of two refusals wins is part of the format and not a detail.
- * Moving the request-only questions in front of the tables moved two of
- * these, and this is the record of where they landed.
+ * The order is frozen in d1_do_write_entry; this is the record of it
+ * for every pair a client can actually construct.
+ *
+ * Each row builds one entry carrying two faults and asserts the answer.
+ * Five of these rows are the pairs that a reordering of the shipped
+ * code would change: checksum against writer, against activation, and
+ * against the absent guard; the absent guard against the writer; and
+ * geometry against the writer.
  */
 static void test_the_order_of_two_refusals_is_fixed(void)
 {
+	static const struct precedence_case cases[] = {
+		/* One fault at a time, so the matrix has its corners. */
+		{ "geometry alone", true, false, false, false, false, false,
+		  false, D1_INVALID },
+		{ "a writer that is not the granted one", false, true, false,
+		  false, false, false, false, D1_STALE_AUTH },
+		{ "an omitted guard under a multi-writer grant", false, false,
+		  true, false, false, false, true, D1_INVALID },
+		{ "a multi-writer grant asking to activate", false, false,
+		  false, true, false, false, true, D1_INVALID },
+		{ "a checksum that does not verify", false, false, false, false,
+		  true, false, false, D1_CHECKSUM },
+		{ "an owner bound elsewhere", false, false, false, false, false,
+		  true, false, D1_OWNER_CONFLICT },
+		/* The five pairs a reorder would change. */
+		{ "geometry outranks the writer", true, true, false, false,
+		  false, false, false, D1_INVALID },
+		{ "the writer outranks an omitted guard", false, true, true,
+		  false, false, false, true, D1_STALE_AUTH },
+		{ "an omitted guard outranks the checksum", false, false, true,
+		  false, true, false, true, D1_INVALID },
+		{ "asking to activate outranks the checksum", false, false,
+		  false, true, true, false, true, D1_INVALID },
+		{ "the writer outranks the checksum", false, true, false, false,
+		  true, false, false, D1_STALE_AUTH },
+		/* And the two the last cycle pinned, kept in the table. */
+		{ "the checksum outranks a reused owner", false, false, false,
+		  false, true, true, false, D1_CHECKSUM },
+	};
 	struct d1_uuid store_uuid;
 	struct d1_store *s;
 	struct d1_envelope env;
 	struct d1_result res;
 	static uint8_t data[16];
+	uint32_t i;
 	d1_admission_id single, multi;
 
 	memset(data, 0x41, sizeof(data));
@@ -4647,52 +4698,40 @@ static void test_the_order_of_two_refusals_is_fixed(void)
 				  D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
 	multi = d1_fixture_admit(s, &object, 12, D1_RIGHT_WRITE);
 
-	/* An owner is bound, so reusing it is a conflict on its own. */
+	/* An owner to collide with: bound to chunk 0, co_id 1, writer 11. */
 	env_init(&env, s, single, D1_OP_WRITE_BATCH);
 	env.body.write.count = 1;
 	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
 	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
 		    true, &(struct d1_guard){ .never_written = true });
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
-	      "a write binds an owner");
+	      "a write binds an owner to compare against");
 
-	env_init(&env, s, single, D1_OP_WRITE_BATCH);
-	env.body.write.count = 1;
-	env.body.write.stability = D1_FILE_SYNC;
-	write_entry(&env.body.write.entries[0], 2, 11, 1, data, sizeof(data),
-		    true, &(struct d1_guard){ .never_written = true });
-	check(d1_store_apply(s, &env, &res) == D1_OK &&
-		      res.entries[0].status == D1_OWNER_CONFLICT,
-	      "and reusing it conflicts");
+	for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		const struct precedence_case *c = &cases[i];
+		uint32_t writer = c->multi_writer ? 12 : 11;
+		uint64_t index = c->bad_geometry ? MAX_FILE_BYTES : 4;
+		uint32_t co_id = c->reuse_owner ? 1 : 20 + i;
 
-	/* The same request with a bad checksum is answered on the bytes. */
-	env.key.sequence = next_sequence++;
-	env.body.write.entries[0].checksum.digest[0] ^= 0xffu;
-	check(d1_store_apply(s, &env, &res) == D1_OK &&
-		      res.entries[0].status == D1_CHECKSUM,
-	      "a bad checksum outranks a reused owner");
-
-	/* A stale guard on its own is GUARDED. */
-	env_init(&env, s, single, D1_OP_WRITE_BATCH);
-	env.body.write.count = 1;
-	env.body.write.stability = D1_FILE_SYNC;
-	write_entry(&env.body.write.entries[0], 0, 11, 2, data, sizeof(data),
-		    true, &(struct d1_guard){ .generation = 9, .writer = 11 });
-	check(d1_store_apply(s, &env, &res) == D1_OK &&
-		      res.entries[0].status == D1_GUARDED,
-	      "a stale guard is guarded");
-
-	/* The same stale guard, asked for by a grant that may not: INVALID. */
-	env_init(&env, s, multi, D1_OP_WRITE_BATCH);
-	env.body.write.count = 1;
-	env.body.write.stability = D1_FILE_SYNC;
-	env.body.write.activate = true;
-	write_entry(&env.body.write.entries[0], 0, 12, 3, data, sizeof(data),
-		    true, &(struct d1_guard){ .generation = 9, .writer = 12 });
-	check(d1_store_apply(s, &env, &res) == D1_OK &&
-		      res.entries[0].status == D1_INVALID,
-	      "a request its grant may not make outranks a stale guard");
+		env_init(&env, s, c->multi_writer ? multi : single,
+			 D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		env.body.write.activate = c->ask_activate;
+		write_entry(&env.body.write.entries[0], index,
+			    c->bad_writer ? 99 : writer, co_id, data,
+			    sizeof(data), !c->omit_guard,
+			    &(struct d1_guard){ .never_written = true });
+		if (c->reuse_owner)
+			env.body.write.entries[0].owner.writer = 11;
+		if (c->bad_checksum)
+			env.body.write.entries[0].checksum.digest[0] ^= 0xffu;
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == c->expect,
+		      c->what);
+	}
 
 	d1_store_free(s);
 }
