@@ -248,6 +248,15 @@ struct d1_store {
 	/* One-shot: the next journal snapshot finds no memory. */
 	bool fail_next_snapshot;
 	/*
+	 * Standing arms: while set, the store answers as though it had no
+	 * ID or no epoch left to give.  They are consulted at the refusal
+	 * sites and nowhere else, so all they can produce is the refusal
+	 * that state produces, and nothing derived from them reaches a
+	 * counter, a result or the log.
+	 */
+	bool exhaust_ids;
+	bool exhaust_epoch;
+	/*
 	 * The fixture's window on a gap a batch leaves between two of its
 	 * members -- and, at ordinal zero, on the gap between deciding
 	 * that its operation key is free and running the first member.
@@ -1589,7 +1598,8 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 	 * refused before a row is taken, a counter moves, a guard advances
 	 * or anything is published.
 	 */
-	if (s->next_txn == UINT64_MAX || s->next_version == UINT64_MAX)
+	if (s->exhaust_ids || s->next_txn == UINT64_MAX ||
+	    s->next_version == UINT64_MAX)
 		return D1_NOSPC;
 	/*
 	 * The epoch a publication would advance is the same kind of
@@ -1598,7 +1608,7 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 	 * A wrap would make an old epoch indistinguishable from a new one
 	 * and a recorded high read epoch look like the future.
 	 */
-	if (activate && s->index_epoch == UINT64_MAX)
+	if (activate && (s->exhaust_epoch || s->index_epoch == UINT64_MAX))
 		return D1_NOSPC;
 
 	for (i = 0; i < D1_MAX_TXNS && !txn; i++)
@@ -1755,7 +1765,7 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 	if (!ver)
 		return D1_INVALID;
 	/* The epoch this publication advances; see d1_do_write_entry. */
-	if (s->index_epoch == UINT64_MAX)
+	if (s->exhaust_epoch || s->index_epoch == UINT64_MAX)
 		return D1_NOSPC;
 	/* Payload and extent metadata are replaced together. */
 	d1_undo_txn(u, txn);
@@ -1915,7 +1925,7 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 		return D1_NO_PREDECESSOR;
 	}
 	/* The epoch this publication advances; see d1_do_write_entry. */
-	if (s->index_epoch == UINT64_MAX)
+	if (s->exhaust_epoch || s->index_epoch == UINT64_MAX)
 		return D1_NOSPC;
 	/* Payload and extent are restored in the one transition. */
 	d1_undo_chunk(u, chunk);
@@ -3422,6 +3432,48 @@ void d1_fixture_fail_next_snapshot(struct d1_store *s)
 	pthread_mutex_unlock(&s->lock);
 }
 
+/*
+ * Fixture arms: answer as though the ID counters, or the index epoch,
+ * had nothing left to give.
+ *
+ * These exist because the exhausted states are real states of the
+ * contract that no history reaches: the tables are fixed size, rows are
+ * never freed, and nothing allocates two to the sixty-fourth of
+ * anything.  They are arms and not settings.  An arm can only ever
+ * produce the NOSPC refusal the exhausted state produces, so it has no
+ * reducer-visible durable effect: no counter moves, no epoch moves, no
+ * result carries a value it chose, and the log gains nothing.  Turning
+ * one off does not restore a number -- there is no number to restore --
+ * it resumes from whatever the history has derived.
+ *
+ * Setting a value directly, which is what these replaced, did have such
+ * an effect: it placed a number later results were derived from, wrote
+ * no event to say so, and left a log that could not rebuild its store.
+ */
+void d1_fixture_exhaust_ids(struct d1_store *s, bool on)
+{
+	pthread_mutex_lock(&s->lock);
+	if (!d1_store_serving(s)) {
+		pthread_mutex_unlock(&s->lock);
+		return;
+	}
+	if (!s->replaying)
+		s->exhaust_ids = on;
+	pthread_mutex_unlock(&s->lock);
+}
+
+void d1_fixture_exhaust_epoch(struct d1_store *s, bool on)
+{
+	pthread_mutex_lock(&s->lock);
+	if (!d1_store_serving(s)) {
+		pthread_mutex_unlock(&s->lock);
+		return;
+	}
+	if (!s->replaying)
+		s->exhaust_epoch = on;
+	pthread_mutex_unlock(&s->lock);
+}
+
 void d1_fixture_fail_next_index(struct d1_store *s)
 {
 	pthread_mutex_lock(&s->lock);
@@ -3484,22 +3536,6 @@ static bool d1_journal_fixture(struct d1_store *s,
 		return false;
 	return d1_journal_control_event(s, request->kind, request_bytes,
 					request_len, result_bytes, result_len);
-}
-
-void d1_fixture_set_next_ids(struct d1_store *s, uint64_t next_txn,
-			     uint64_t next_version)
-{
-	pthread_mutex_lock(&s->lock);
-	s->next_txn = next_txn;
-	s->next_version = next_version;
-	pthread_mutex_unlock(&s->lock);
-}
-
-void d1_fixture_set_index_epoch(struct d1_store *s, uint64_t epoch)
-{
-	pthread_mutex_lock(&s->lock);
-	s->index_epoch = epoch;
-	pthread_mutex_unlock(&s->lock);
 }
 
 d1_admission_id d1_fixture_admission_handle(struct d1_store *s, uint64_t raw)
@@ -4217,6 +4253,8 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
 	 */
 	s->fail_next_index = false;
 	s->fail_next_snapshot = false;
+	s->exhaust_ids = false;
+	s->exhaust_epoch = false;
 	s->overlay_active = false;
 	s->journal.fail_append_in = 0;
 	s->journal.fail_next_flush = false;

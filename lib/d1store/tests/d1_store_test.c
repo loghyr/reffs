@@ -4385,78 +4385,114 @@ static void test_one_number_is_one_member(void)
 }
 
 /*
- * A counter at its last value has no ID left to give.
+ * A store with no ID left to give refuses, and what it wrote still
+ * rebuilds it.
  *
  * Section 3: reject exhaustion, never reuse.  The admission and custody
  * counters did; the transaction and version counters issued their last
  * value, wrapped to zero -- which means absent -- and then reissued a
- * number a retained row still held.  Nothing on the wire moves a
- * counter and no history allocates two to the sixty-fourth of anything,
- * so the state is the fixture's to arrange and the contract's to keep.
+ * number a retained row still held.
  *
- * Each counter alone, and then both: the answer is that the store has
- * no room, nothing is recorded, nothing moves, and the same request
- * succeeds once the room is there.
+ * The exhausted state is a real state of the contract that no history
+ * reaches, so the fixture arms the answer rather than placing a number.
+ * An arm can only produce the refusal, which is why the store it leaves
+ * behind is still one its own log rebuilds: turning the arm off does
+ * not restore anything, it resumes from what the history derived.
  */
 static void test_an_exhausted_counter_refuses(void)
 {
 	struct d1_uuid store_uuid;
-	struct d1_store *s;
+	struct d1_store *s, *rebuilt;
 	struct d1_envelope env;
 	struct d1_result res;
 	static uint8_t data[16];
+	const uint8_t *log;
 	size_t before, after, len;
-	uint32_t pass;
 	d1_admission_id admission;
-	d1_version_id seen;
+	d1_version_id seen, v1, v2;
 
 	memset(data, 0x3c, sizeof(data));
-	for (pass = 0; pass < 3; pass++) {
-		fill_uuid(&store_uuid, (uint8_t)(0x3c + pass));
-		s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
-		if (!s)
-			return;
-		d1_store_journal_enable(s);
-		admission = d1_fixture_admit(s, &object, 11,
-					     D1_RIGHT_WRITE |
-						     D1_RIGHT_SINGLE_WRITER);
-		/* Transaction only, version only, then both. */
-		d1_fixture_set_next_ids(s, pass == 1 ? 7 : UINT64_MAX,
-					pass == 0 ? 7 : UINT64_MAX);
-		(void)journal_of(s, &before);
+	fill_uuid(&store_uuid, 0x3c);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
 
-		env_init(&env, s, admission, D1_OP_WRITE_BATCH);
-		env.body.write.count = 1;
-		env.body.write.stability = D1_FILE_SYNC;
-		env.body.write.activate = true;
-		write_entry(&env.body.write.entries[0], 0, 11, 1, data,
-			    sizeof(data), true,
-			    &(struct d1_guard){ .never_written = true });
-		check(d1_store_apply(s, &env, &res) == D1_OK &&
-			      res.entries[0].status == D1_NOSPC &&
-			      res.entries[0].disposition == D1_UNRECORDED,
-		      "an exhausted counter leaves no room for a write");
-		check(!res.entries[0].txn_present &&
-			      !res.entries[0].version_present,
-		      "and spends no ID");
-		check(!d1_store_visible(s, &object, 0, &seen),
-		      "and publishes nothing");
-		(void)journal_of(s, &after);
-		check(after == before, "and writes nothing to the log");
+	/* A history first, so there is something real to rebuild. */
+	v1 = commit_chunk(s, admission, 0, 1, data, sizeof(data),
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), NULL);
+	check(d1_version_live(v1), "a history to keep");
+	(void)journal_of(s, &before);
 
-		/* The same request, once there is room again. */
-		d1_fixture_set_next_ids(s, 7, 7);
-		check(d1_store_apply(s, &env, &res) == D1_OK &&
-			      res.entries[0].status == D1_OK,
-		      "and the same request succeeds when there is");
-		check(d1_version_raw(res.entries[0].version) == 7 &&
-			      d1_txn_raw(res.entries[0].txn) == 7,
-		      "taking the numbers the counters had left");
+	d1_fixture_exhaust_ids(s, true);
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 1, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_NOSPC &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "a store with no ID left has no room for a write");
+	check(!res.entries[0].txn_present && !res.entries[0].version_present,
+	      "and spends no ID");
+	check(!d1_store_visible(s, &object, 1, &seen), "and publishes nothing");
+	(void)journal_of(s, &after);
+	check(after == before, "and writes nothing to the log");
 
-		(void)journal_of(s, &len);
-		check(len > before, "which does reach the log");
-		d1_store_free(s);
+	/* Disarmed, the same request runs from where the history left off. */
+	d1_fixture_exhaust_ids(s, false);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the same request succeeds once it has one");
+	v2 = res.entries[0].version;
+	check(d1_version_raw(v2) == d1_version_raw(v1) + 1,
+	      "taking the next number, not one the fixture chose");
+
+	/* The whole log, arm cycle included, still rebuilds the store. */
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "and the log it leaves rebuilds the store");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		d1_store_free(rebuilt);
 	}
+
+	/*
+	 * An arm set on a pristine target does not survive a
+	 * reconstruction and does not reach the reducer during one: a
+	 * rebuild executes the history, not the harness.
+	 */
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		d1_fixture_exhaust_ids(rebuilt, true);
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "an armed target still replays the whole history");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		check(d1_version_live(commit_chunk(
+			      rebuilt,
+			      d1_fixture_admit(rebuilt, &object, 11,
+					       D1_RIGHT_WRITE |
+						       D1_RIGHT_SINGLE_WRITER),
+			      3, 9, data, sizeof(data),
+			      &(struct d1_guard){ .never_written = true },
+			      d1_version_none(), NULL)),
+		      "and the arm did not survive the rebuild");
+		d1_store_free(rebuilt);
+	}
+
+	/* The arm is an arm: refused when the store is not serving. */
+	check(d1_store_close(s) == D1_OK, "the store closes");
+	d1_fixture_exhaust_ids(s, true);
+	check(d1_store_destroy(s) == D1_OK,
+	      "and arming a closed store changed nothing about closing it");
 }
 
 /*
@@ -4470,7 +4506,7 @@ static void test_an_exhausted_counter_refuses(void)
  *
  * The store does its whole history first, so there is a real log to
  * keep.  Then each of the three transitions that advance the epoch is
- * offered it at its last value: each is refused, the log does not grow
+ * offered the exhausted answer: each is refused, the log does not grow
  * by a byte, and what the store did write still rebuilds it.
  */
 static void test_an_exhausted_epoch_refuses(void)
@@ -4498,8 +4534,7 @@ static void test_an_exhausted_epoch_refuses(void)
 				     D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
 					     D1_RIGHT_SINGLE_WRITER);
 
-	/* The history: a published chunk, a replacement over it, and a
-	 * second chunk written and finalized but not committed. */
+	/* A published chunk, a replacement over it, and a finalized one. */
 	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
 	env.body.write.count = 1;
 	env.body.write.stability = D1_FILE_SYNC;
@@ -4520,8 +4555,9 @@ static void test_an_exhausted_epoch_refuses(void)
 	      "a replacement is committed and a second chunk finalized");
 	(void)journal_of(s, &before);
 
-	/* An activated write, with the epoch at its last value. */
-	d1_fixture_set_index_epoch(s, UINT64_MAX);
+	d1_fixture_exhaust_epoch(s, true);
+
+	/* An activated write. */
 	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
 	env.body.write.count = 1;
 	env.body.write.stability = D1_FILE_SYNC;
@@ -4534,7 +4570,7 @@ static void test_an_exhausted_epoch_refuses(void)
 	      "an activated write will not advance a full epoch");
 	check(!d1_store_visible(s, &object, 2, &seen), "and publishes nothing");
 
-	/* A lifecycle commit, at the same value. */
+	/* A lifecycle commit. */
 	check(commit_txn(s, admission, 1, 11, 2, t2) == D1_NOSPC,
 	      "a commit will not advance a full epoch");
 	check(!d1_store_visible(s, &object, 1, &seen),
@@ -4566,22 +4602,21 @@ static void test_an_exhausted_epoch_refuses(void)
 	(void)journal_of(s, &after);
 	check(after == before, "and writes nothing");
 
-	/* What the store did write still rebuilds it. */
+	/* Disarmed, the transitions go through and the epoch just moves. */
+	d1_fixture_exhaust_epoch(s, false);
+	check(commit_txn(s, admission, 1, 11, 2, t2) == D1_OK,
+	      "and a commit goes through once the epoch can move");
+
+	/* The whole log, arm cycle included, rebuilds the store. */
 	log = journal_of(s, &len);
 	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (rebuilt) {
 		check(d1_store_replay(rebuilt, log, len) == D1_OK,
-		      "and the durable prefix replays");
+		      "and the log it leaves rebuilds the store");
 		check(object_states_agree(s, rebuilt, &object),
 		      "into the same store");
 		d1_store_free(rebuilt);
 	}
-
-	/* With room again, the transitions the store refused go through. */
-	d1_fixture_set_index_epoch(s, 3);
-	check(commit_txn(s, admission, 1, 11, 2, t2) == D1_OK,
-	      "and a commit goes through once there is room");
-
 	d1_store_free(s);
 }
 

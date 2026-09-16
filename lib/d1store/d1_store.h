@@ -140,20 +140,26 @@ d1_version_id d1_fixture_version_handle(struct d1_store *s, uint64_t raw);
 d1_custody_id d1_fixture_custody_handle(struct d1_store *s, uint64_t raw);
 
 /*
- * Fixture control: place the counters a write allocates from, and the
- * durable index epoch.
+ * Fixture arms: answer as though there were no ID, or no index epoch,
+ * left to give.
  *
  * Every counter in this model ascends and none is reused, so their
  * exhausted states are real states of the contract and unreachable
  * through the public API -- the tables are fixed size, rows are never
  * freed, and no history allocates two to the sixty-fourth of anything.
- * These put the store in one of those states so the refusal can be
- * tested, and put it back afterwards.  They are the fixture's, not a
- * client's: nothing on the wire moves a counter.
+ * These arm that answer so it can be tested.
+ *
+ * They are arms, not settings.  While one is on, the store gives the
+ * refusal an exhausted counter gives; nothing else changes, no counter
+ * or epoch moves, no result carries a value the fixture chose, and the
+ * log gains nothing.  Turning one off does not restore a number: it
+ * resumes from whatever the history has derived, which is what the next
+ * ordinary operation would have used anyway.  Like every other arm they
+ * are refused on a store that is not serving, ignored during replay,
+ * and cleared when a reconstruction begins.
  */
-void d1_fixture_set_next_ids(struct d1_store *s, uint64_t next_txn,
-			     uint64_t next_version);
-void d1_fixture_set_index_epoch(struct d1_store *s, uint64_t epoch);
+void d1_fixture_exhaust_ids(struct d1_store *s, bool on);
+void d1_fixture_exhaust_epoch(struct d1_store *s, bool on);
 
 /*
  * Fixture control: run @fn once, in the interval between a public
