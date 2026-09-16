@@ -143,6 +143,13 @@ bool d1_envelope_decode(const void *buf, size_t len, struct d1_envelope *env);
  * are all checked here, before anything reads a payload or writes a
  * byte.  The decoder applies the same test, so the two agree on exactly
  * which envelopes exist.
+ *
+ * "The same test" is why every question here is asked of the canonical
+ * value alone.  A handle also carries a runtime domain and issuer, and
+ * a decoder reading bytes has neither: two members naming one number
+ * are one member twice to the decoder, so they must be one member twice
+ * here as well, or an envelope would encode and then fail to decode.
+ * Whose handle a number is, is asked at the store's door and not here.
  */
 bool d1_envelope_validate(const struct d1_envelope *env);
 

@@ -2101,6 +2101,124 @@ static bool d1_binding_ok(struct d1_store *s, const struct d1_envelope *env)
 }
 
 /*
+ * Whether a handle is absent, or one this store issued of its domain.
+ *
+ * Absent is allowed here because absence is a shape question and the
+ * shape check has already been made: an option that says it is present
+ * and carries zero is not a canonical request, and one that says it is
+ * absent names nothing to check.
+ */
+static bool d1_owns_admission(const struct d1_store *s, d1_admission_id id)
+{
+	return !d1_admission_live(id) ||
+	       d1_handle_ours(s, id.raw, id._kind, id._instance,
+			      D1_HANDLE_ADMISSION);
+}
+
+static bool d1_owns_txn(const struct d1_store *s, d1_txn_id id)
+{
+	return !d1_txn_live(id) ||
+	       d1_handle_ours(s, id.raw, id._kind, id._instance, D1_HANDLE_TXN);
+}
+
+static bool d1_owns_version(const struct d1_store *s, d1_version_id id)
+{
+	return !d1_version_live(id) ||
+	       d1_handle_ours(s, id.raw, id._kind, id._instance,
+			      D1_HANDLE_VERSION);
+}
+
+static bool d1_owns_custody(const struct d1_store *s, d1_custody_id id)
+{
+	return !d1_custody_live(id) ||
+	       d1_handle_ours(s, id.raw, id._kind, id._instance,
+			      D1_HANDLE_CUSTODY);
+}
+
+/*
+ * Whether every handle this request names belongs to this store.
+ *
+ * Which store issued a handle is a fact about the C value and about
+ * nothing the canonical form carries: an ENTRY or CONTROL record holds
+ * the raw number and no issuer at all.  So a refusal decided on the
+ * issuer is an answer replay cannot reach, and recording one leaves a
+ * history the store cannot rebuild -- the log says the reducer was
+ * asked about a number, replay adopts that number for the target,
+ * finds the row and answers something else.
+ *
+ * The question is therefore asked once, here, before a key is looked
+ * up, a receipt is reserved, a table is read or a frame is appended.
+ * A request naming a handle of another store, or of another domain, is
+ * not this store's request: it is refused, nothing is recorded, and
+ * nothing in the log ever has to explain it.  After this, every handle
+ * the reducer sees is the store's own, so the reducer compares raw
+ * values -- which is what the log carries and all it carries.
+ *
+ * Replay reaches the reducer through the same door, having adopted
+ * every decoded value for the store it is rebuilding, so what it
+ * executes is a history that passed the door when it was live.
+ */
+static bool d1_envelope_owned(const struct d1_store *s,
+			      const struct d1_envelope *env)
+{
+	uint32_t i, n;
+
+	if (!d1_owns_admission(s, env->admission))
+		return false;
+	switch (env->op) {
+	case D1_OP_WRITE_BATCH:
+		/* A write names no handle this store ever issued. */
+		return true;
+	case D1_OP_FINALIZE_BATCH:
+	case D1_OP_COMMIT_BATCH:
+		n = env->body.lifecycle.count;
+		if (n > D1_BATCH_ENTRIES_MAX)
+			return false;
+		for (i = 0; i < n; i++) {
+			const struct d1_lifecycle_entry *e =
+				&env->body.lifecycle.entries[i];
+
+			if (!d1_owns_txn(s, e->txn) ||
+			    !d1_owns_version(s, e->predecessor))
+				return false;
+		}
+		return true;
+	case D1_OP_ROLLBACK_BATCH:
+		n = env->body.rollback.count;
+		if (n > D1_BATCH_ENTRIES_MAX)
+			return false;
+		for (i = 0; i < n; i++) {
+			const struct d1_rollback_entry *e =
+				&env->body.rollback.entries[i];
+
+			if (!d1_owns_txn(s, e->txn) ||
+			    !d1_owns_version(s, e->visible) ||
+			    !d1_owns_version(s, e->predecessor) ||
+			    !d1_owns_custody(s, e->custody))
+				return false;
+		}
+		return true;
+	case D1_OP_RECOVERY_ADMIT:
+	case D1_OP_LEASE_REAP:
+		n = env->body.control.count;
+		if (n > D1_BATCH_ENTRIES_MAX)
+			return false;
+		for (i = 0; i < n; i++)
+			if (!d1_owns_txn(s, env->body.control.txns[i]))
+				return false;
+		return d1_owns_admission(s, env->body.control.old_admission) &&
+		       d1_owns_admission(s, env->body.control.new_admission);
+	default:
+		/*
+		 * A body this slice cannot read is a body it cannot vouch
+		 * for.  The operation itself is refused elsewhere; this
+		 * says only that nothing here proved its handles.
+		 */
+		return false;
+	}
+}
+
+/*
  * Whether this operation key is already recorded under a different
  * request.
  *
@@ -2236,7 +2354,7 @@ static void d1_apply_one(struct d1_store *s, const struct d1_envelope *env,
 	 * whether the admission is still live.  Retrieving a result is not
 	 * a new mutation.
 	 */
-	if (!d1_binding_ok(s, env)) {
+	if (!d1_binding_ok(s, env) || !d1_envelope_owned(s, env)) {
 		res->status = D1_STALE_AUTH;
 		res->disposition = D1_UNRECORDED;
 		complete->disposition = D1_UNRECORDED;
@@ -2382,7 +2500,7 @@ static void d1_apply_control(struct d1_store *s, const struct d1_envelope *env,
 	res->disposition = D1_COMPLETED;
 	d1_verifier_of(s->incarnation, res->verifier);
 
-	if (!d1_binding_ok(s, env)) {
+	if (!d1_binding_ok(s, env) || !d1_envelope_owned(s, env)) {
 		res->status = D1_STALE_AUTH;
 		res->disposition = D1_UNRECORDED;
 		complete->disposition = D1_UNRECORDED;
@@ -2457,7 +2575,7 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	uint8_t digest[D1_DIGEST_BYTES];
 	struct d1_complete_result complete;
 	uint32_t need, count, i;
-	bool commit, conflict;
+	bool commit, conflict, owned;
 
 	memset(out, 0, sizeof(*out));
 	out->key = env->key;
@@ -2519,6 +2637,33 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		break;
 	}
 	out->count = count;
+
+	/*
+	 * Provenance, before anything is looked up, hashed or reserved.
+	 * A handle of another store or another domain is not this store's
+	 * to answer about, and an answer given on that ground is one the
+	 * log cannot carry -- see d1_envelope_owned.  The same question is
+	 * asked again inside each member's lock interval, because this one
+	 * was asked in a lock interval the call no longer holds and replay
+	 * never comes through here at all.
+	 */
+	pthread_mutex_lock(&s->lock);
+	owned = d1_envelope_owned(s, env);
+	pthread_mutex_unlock(&s->lock);
+	if (!owned) {
+		for (i = 0; i < count; i++) {
+			struct d1_entry_result *res = &out->entries[i];
+
+			memset(res, 0, sizeof(*res));
+			res->status = D1_STALE_AUTH;
+			res->stability = D1_FILE_SYNC;
+			res->disposition = D1_UNRECORDED;
+			d1_store_verifier(s, res->verifier);
+		}
+		out->disposition = D1_UNRECORDED;
+		d1_call_leave(s);
+		return D1_OK;
+	}
 
 	pthread_mutex_lock(&s->lock);
 	if (!d1_envelope_digest(env, s->scratch, s->scratch_cap, digest)) {
@@ -3322,6 +3467,16 @@ void d1_fixture_revoke(struct d1_store *s, d1_admission_id admission)
 		pthread_mutex_unlock(&s->lock);
 		return;
 	}
+	/*
+	 * A handle of another store is not this store's to refuse in
+	 * writing: the CONTROL record would carry the number and not the
+	 * issuer, and replay would adopt the number, find the row and
+	 * revoke it.  See d1_envelope_owned.
+	 */
+	if (!d1_owns_admission(s, admission)) {
+		pthread_mutex_unlock(&s->lock);
+		return;
+	}
 	a = d1_admission_find(s, admission);
 	before = a ? a->revoked : false;
 	memset(&result, 0, sizeof(result));
@@ -3347,6 +3502,11 @@ void d1_fixture_expire(struct d1_store *s, d1_admission_id admission)
 
 	pthread_mutex_lock(&s->lock);
 	if (!d1_store_serving(s)) {
+		pthread_mutex_unlock(&s->lock);
+		return;
+	}
+	/* The same, before anything is written; see d1_fixture_revoke. */
+	if (!d1_owns_admission(s, admission)) {
 		pthread_mutex_unlock(&s->lock);
 		return;
 	}
@@ -3409,6 +3569,11 @@ bool d1_fixture_release_predecessor(struct d1_store *s, d1_version_id version)
 
 	pthread_mutex_lock(&s->lock);
 	if (!d1_store_serving(s)) {
+		pthread_mutex_unlock(&s->lock);
+		return false;
+	}
+	/* The same, before anything is written; see d1_fixture_revoke. */
+	if (!d1_owns_version(s, version)) {
 		pthread_mutex_unlock(&s->lock);
 		return false;
 	}

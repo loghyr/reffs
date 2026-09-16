@@ -327,7 +327,7 @@ static bool d1_validate_lifecycle(const struct d1_lifecycle_batch *l)
 			return false;
 		for (j = 0; j < i; j++)
 			if (l->entries[j].index == e->index ||
-			    d1_txn_eq(l->entries[j].txn, e->txn))
+			    d1_txn_raw(l->entries[j].txn) == d1_txn_raw(e->txn))
 				return false;
 	}
 	return true;
@@ -356,7 +356,7 @@ static bool d1_validate_rollback(const struct d1_rollback_batch *r)
 			return false;
 		for (j = 0; j < i; j++)
 			if (r->entries[j].index == e->index ||
-			    d1_txn_eq(r->entries[j].txn, e->txn))
+			    d1_txn_raw(r->entries[j].txn) == d1_txn_raw(e->txn))
 				return false;
 	}
 	return true;
@@ -378,14 +378,15 @@ static bool d1_validate_control(uint32_t op, const struct d1_control_batch *k)
 		if (!d1_txn_live(k->txns[i]))
 			return false;
 		for (j = 0; j < i; j++)
-			if (d1_txn_eq(k->txns[j], k->txns[i]))
+			if (d1_txn_raw(k->txns[j]) == d1_txn_raw(k->txns[i]))
 				return false;
 	}
 	if (op == D1_OP_RECOVERY_ADMIT) {
 		if (!k->new_admission_present ||
 		    !d1_admission_live(k->new_admission))
 			return false;
-		if (d1_admission_eq(k->new_admission, k->old_admission))
+		if (d1_admission_raw(k->new_admission) ==
+		    d1_admission_raw(k->old_admission))
 			return false;
 		if (!k->read_epoch_present)
 			return false;

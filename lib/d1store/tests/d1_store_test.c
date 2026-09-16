@@ -3900,7 +3900,7 @@ static void test_a_decoded_handle_names_no_store(void)
 	struct d1_store *s, *zero;
 	struct d1_envelope env, decoded;
 	struct d1_result res;
-	uint8_t bytes[D1_ENVELOPE_MAX];
+	static uint8_t bytes[D1_ENVELOPE_MAX];
 	size_t len;
 	static uint8_t data[16];
 	d1_admission_id admission;
@@ -3954,6 +3954,259 @@ static void test_a_decoded_handle_names_no_store(void)
 
 	d1_store_free(s);
 	d1_store_free(zero);
+}
+
+/*
+ * A handle of another store leaves no history behind.
+ *
+ * Which store issued a handle is a fact about the C value; a record
+ * carries the number and no issuer at all.  So an answer decided on the
+ * issuer is one replay cannot reach: the log says the reducer was asked
+ * about a number, replay adopts that number for the store it is
+ * rebuilding, finds the row, and answers something else.  A store that
+ * had recorded such an answer could never be rebuilt from its own log.
+ *
+ * The question is asked at the door instead, before a key is looked up,
+ * a receipt is reserved or a frame is appended.  Each row here drives
+ * one foreign handle at B through a public entry point and requires
+ * three things: the call is refused, B's log did not grow by a byte,
+ * and B's log still rebuilds B.
+ *
+ * A and B are opened under one name and given the same history, so
+ * every counter collides and only the issuer separates the handles.
+ */
+static void test_a_foreign_handle_leaves_no_history(void)
+{
+	struct d1_uuid shared_uuid;
+	struct d1_store *a, *b, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct rollback_expect x;
+	static uint8_t data[16];
+	const uint8_t *log;
+	size_t before, after, len;
+	d1_admission_id adm_a, adm_b;
+	d1_version_id va, vb;
+	d1_txn_id ta, tb;
+	d1_custody_id ca;
+	struct d1_entry_result entry;
+
+	memset(data, 0x3a, sizeof(data));
+	fill_uuid(&shared_uuid, 0x3a);
+	a = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	b = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!a || !b) {
+		d1_store_free(a);
+		d1_store_free(b);
+		return;
+	}
+	d1_store_journal_enable(a);
+	d1_store_journal_enable(b);
+	adm_a = d1_fixture_admit(a, &object, 11,
+				 D1_RIGHT_READ | D1_RIGHT_WRITE |
+					 D1_RIGHT_REPAIR |
+					 D1_RIGHT_SINGLE_WRITER);
+	adm_b = d1_fixture_admit(b, &object, 11,
+				 D1_RIGHT_READ | D1_RIGHT_WRITE |
+					 D1_RIGHT_REPAIR |
+					 D1_RIGHT_SINGLE_WRITER);
+	va = commit_chunk(a, adm_a, 0, 1, data, sizeof(data),
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), &ta);
+	vb = commit_chunk(b, adm_b, 0, 1, data, sizeof(data),
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), &tb);
+	ca = d1_fixture_custody(a, va);
+	check(d1_version_live(va) && d1_version_live(vb),
+	      "two stores of one name, with one history each");
+	check(d1_admission_raw(adm_a) == d1_admission_raw(adm_b) &&
+		      d1_version_raw(va) == d1_version_raw(vb) &&
+		      d1_txn_raw(ta) == d1_txn_raw(tb),
+	      "so every counter collides");
+	check(!d1_admission_eq(adm_a, adm_b) && !d1_version_eq(va, vb) &&
+		      !d1_txn_eq(ta, tb),
+	      "and no handle is the same handle");
+
+	/* A's transaction, finalized at B. */
+	(void)journal_of(b, &before);
+	check(finalize_txn(b, adm_b, 0, 11, 1, ta) == D1_STALE_AUTH,
+	      "A's transaction finalizes nothing at B");
+	(void)journal_of(b, &after);
+	check(after == before, "and writes nothing to B's log");
+
+	/* A's custody, rolling back B's committed version. */
+	memset(&x, 0, sizeof(x));
+	x.custody_present = true;
+	x.custody = ca;
+	x.visible_present = true;
+	x.visible = vb;
+	check(rollback_one(b, adm_b, 0, 1, tb, &x, &entry) == D1_STALE_AUTH,
+	      "A's custody rolls nothing back at B");
+	(void)journal_of(b, &after);
+	check(after == before, "and writes nothing either");
+
+	/*
+	 * A's version where B's belongs.  This is the field that used to
+	 * skip the question entirely: the authority was B's, so a
+	 * committed rollback went through on A's handles.
+	 */
+	memset(&x, 0, sizeof(x));
+	x.custody_present = true;
+	x.custody = d1_fixture_custody(b, vb);
+	x.visible_present = true;
+	x.visible = va;
+	check(rollback_one(b, adm_b, 0, 1, tb, &x, &entry) == D1_STALE_AUTH,
+	      "A's visible version rolls nothing back at B");
+	(void)journal_of(b, &after);
+	check(d1_store_visible(b, &object, 0, &vb) && d1_version_raw(vb) != 0,
+	      "and B's chunk still has what B put there");
+
+	/* A's admission, revoked and expired at B. */
+	(void)journal_of(b, &before);
+	d1_fixture_revoke(b, adm_a);
+	d1_fixture_expire(b, adm_a);
+	(void)journal_of(b, &after);
+	check(after == before, "revoking A's handle at B writes nothing");
+	check(finalize_txn(b, adm_b, 0, 11, 1, tb) != D1_STALE_AUTH,
+	      "and B's own handle is untouched by it");
+
+	/* A's version, released at B. */
+	(void)journal_of(b, &before);
+	check(!d1_fixture_release_predecessor(b, va),
+	      "A's version releases nothing at B");
+	(void)journal_of(b, &after);
+	check(after == before, "and writes nothing");
+
+	/* A's handles inside a control envelope.  Admitting one logs. */
+	env_init(&env, b, d1_fixture_admit(b, &object, 11, D1_RIGHT_CONTROL),
+		 D1_OP_LEASE_REAP);
+	(void)journal_of(b, &before);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = tb;
+	env.body.control.old_admission = adm_a;
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "a control naming A's admission is refused unrecorded");
+	(void)journal_of(b, &after);
+	check(after == before, "and appends no control record");
+
+	env.key.sequence = next_sequence++;
+	env.body.control.txns[0] = ta;
+	env.body.control.old_admission = adm_b;
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "and so is one naming A's transaction");
+	(void)journal_of(b, &after);
+	check(after == before, "with nothing appended for that either");
+
+	/* Everything B did record still rebuilds B. */
+	log = journal_of(b, &len);
+	rebuilt = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "and B's log rebuilds B");
+		check(object_states_agree(b, rebuilt, &object),
+		      "into the same store");
+		d1_store_free(rebuilt);
+	}
+
+	d1_store_free(a);
+	d1_store_free(b);
+}
+
+/*
+ * Two members naming one number are one member twice.
+ *
+ * The validator decides which envelopes the canonical form can express,
+ * and the decoder applies the same test to the bytes so that the two
+ * agree.  A handle carries a runtime domain and issuer as well as its
+ * number, and a decoder reading bytes has neither -- so a duplicate
+ * test that looked at provenance saw two members where the decoder saw
+ * one, and an envelope could validate, encode, and then fail to decode.
+ * A store could execute such a request and never rebuild from its own
+ * log.
+ *
+ * The question is asked of the number, which is what the form carries.
+ * Whose handle that number is, is asked at the store's door instead.
+ */
+static void test_one_number_is_one_member(void)
+{
+	struct d1_uuid shared_uuid;
+	struct d1_store *a, *b;
+	struct d1_envelope env, decoded;
+	static uint8_t bytes[D1_ENVELOPE_MAX];
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	static uint8_t data[16];
+	size_t len;
+	d1_admission_id adm_a, adm_b;
+	d1_txn_id ta2, tb1, tb2;
+
+	memset(data, 0x3b, sizeof(data));
+	fill_uuid(&shared_uuid, 0x3b);
+	a = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	b = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!a || !b) {
+		d1_store_free(a);
+		d1_store_free(b);
+		return;
+	}
+	adm_a = d1_fixture_admit(a, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	adm_b = d1_fixture_admit(b, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	(void)commit_chunk(a, adm_a, 0, 1, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true },
+			   d1_version_none(), NULL);
+	(void)commit_chunk(a, adm_a, 1, 2, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true },
+			   d1_version_none(), &ta2);
+	(void)commit_chunk(b, adm_b, 0, 1, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true },
+			   d1_version_none(), &tb1);
+	(void)commit_chunk(b, adm_b, 1, 2, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true },
+			   d1_version_none(), &tb2);
+	check(d1_txn_raw(ta2) == d1_txn_raw(tb2) && !d1_txn_eq(ta2, tb2),
+	      "two stores of one name issue one number twice");
+
+	/* The same number in two members, through two different handles. */
+	d1_store_verifier(b, verifier);
+	env_init(&env, b, adm_b, D1_OP_FINALIZE_BATCH);
+	env.body.lifecycle.range_begin = 0;
+	env.body.lifecycle.range_end = 2;
+	env.body.lifecycle.count = 2;
+	env.body.lifecycle.entries[0].index = 0;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = 1;
+	env.body.lifecycle.entries[0].txn = tb2;
+	env.body.lifecycle.entries[1].index = 1;
+	env.body.lifecycle.entries[1].owner.cohort.raw = 1;
+	env.body.lifecycle.entries[1].owner.writer = 11;
+	env.body.lifecycle.entries[1].owner.co_id = 2;
+	env.body.lifecycle.entries[1].txn = ta2;
+	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+	check(!d1_envelope_validate(&env),
+	      "two members naming one number are not two members");
+	check(d1_envelope_encode(&env, bytes, sizeof(bytes)) == 0,
+	      "and the canonical form cannot express it");
+
+	/* Two numbers is two members, and the bytes say the same. */
+	env.body.lifecycle.entries[1].txn = tb1;
+	env.body.lifecycle.entries[1].index = 1;
+	env.body.lifecycle.entries[0].txn = tb2;
+	env.body.lifecycle.entries[0].index = 0;
+	check(d1_envelope_validate(&env), "two numbers is two members");
+	len = d1_envelope_encode(&env, bytes, sizeof(bytes));
+	check(len != 0, "which encodes");
+	memset(&decoded, 0, sizeof(decoded));
+	check(d1_envelope_decode(bytes, len, &decoded),
+	      "and decodes, so the two agree about it");
+
+	d1_store_free(a);
+	d1_store_free(b);
 }
 
 /*
@@ -9268,6 +9521,8 @@ int main(void)
 	test_a_handle_keeps_its_domain_through_a_copy();
 	test_two_live_stores_of_one_name_are_two_stores();
 	test_a_decoded_handle_names_no_store();
+	test_a_foreign_handle_leaves_no_history();
+	test_one_number_is_one_member();
 	test_a_handle_names_its_own_kind();
 	test_replay_rebuilds_the_same_handles();
 	test_geometry_is_asked_before_the_object_table();
