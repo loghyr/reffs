@@ -205,7 +205,12 @@ struct d1_store {
 	uint64_t incarnation;
 	uint64_t index_epoch;
 
-	/* Monotonic per-type counters; none is ever reused. */
+	/*
+	 * Monotonic per-type counters; none is ever reused, and each
+	 * refuses rather than wrap.  A store with one of them at its last
+	 * value has no ID left to give, which is a want of room and not a
+	 * malformed request.
+	 */
 	uint64_t next_txn;
 	uint64_t next_version;
 	uint64_t next_admission;
@@ -1546,6 +1551,28 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 					 env->body.write.stability,
 					 d1_chunk_empty(s, chunk));
 
+	/*
+	 * Section 3: reject exhaustion, never reuse.  A write needs a
+	 * transaction ID and a version ID, and a counter at its last value
+	 * has none left to give -- issuing it and then wrapping would make
+	 * the next write's ID zero, which means absent, and the one after
+	 * that a number a retained row already holds.  The store has no
+	 * room for this request, which is what NOSPC says, and it is
+	 * refused before a row is taken, a counter moves, a guard advances
+	 * or anything is published.
+	 */
+	if (s->next_txn == UINT64_MAX || s->next_version == UINT64_MAX)
+		return D1_NOSPC;
+	/*
+	 * The epoch a publication would advance is the same kind of
+	 * counter, and it is durable: a complete result carries it, a
+	 * snapshot carries it, and recovery reads it as an ordering bound.
+	 * A wrap would make an old epoch indistinguishable from a new one
+	 * and a recorded high read epoch look like the future.
+	 */
+	if (activate && s->index_epoch == UINT64_MAX)
+		return D1_NOSPC;
+
 	for (i = 0; i < D1_MAX_TXNS && !txn; i++)
 		if (!s->txns[i].used)
 			txn = &s->txns[i];
@@ -1699,6 +1726,9 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 	ver = d1_version_find(s, d1_version_of(s, txn->version));
 	if (!ver)
 		return D1_INVALID;
+	/* The epoch this publication advances; see d1_do_write_entry. */
+	if (s->index_epoch == UINT64_MAX)
+		return D1_NOSPC;
 	/* Payload and extent metadata are replaced together. */
 	d1_undo_txn(u, txn);
 	d1_undo_chunk(u, chunk);
@@ -1856,6 +1886,9 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 		res->phase = txn->phase;
 		return D1_NO_PREDECESSOR;
 	}
+	/* The epoch this publication advances; see d1_do_write_entry. */
+	if (s->index_epoch == UINT64_MAX)
+		return D1_NOSPC;
 	/* Payload and extent are restored in the one transition. */
 	d1_undo_chunk(u, chunk);
 	d1_undo_txn(u, txn);
@@ -3404,6 +3437,22 @@ static bool d1_journal_fixture(struct d1_store *s,
 		return false;
 	return d1_journal_control_event(s, request->kind, request_bytes,
 					request_len, result_bytes, result_len);
+}
+
+void d1_fixture_set_next_ids(struct d1_store *s, uint64_t next_txn,
+			     uint64_t next_version)
+{
+	pthread_mutex_lock(&s->lock);
+	s->next_txn = next_txn;
+	s->next_version = next_version;
+	pthread_mutex_unlock(&s->lock);
+}
+
+void d1_fixture_set_index_epoch(struct d1_store *s, uint64_t epoch)
+{
+	pthread_mutex_lock(&s->lock);
+	s->index_epoch = epoch;
+	pthread_mutex_unlock(&s->lock);
 }
 
 d1_admission_id d1_fixture_admission_handle(struct d1_store *s, uint64_t raw)

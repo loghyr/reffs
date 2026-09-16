@@ -140,6 +140,22 @@ d1_version_id d1_fixture_version_handle(struct d1_store *s, uint64_t raw);
 d1_custody_id d1_fixture_custody_handle(struct d1_store *s, uint64_t raw);
 
 /*
+ * Fixture control: place the counters a write allocates from, and the
+ * durable index epoch.
+ *
+ * Every counter in this model ascends and none is reused, so their
+ * exhausted states are real states of the contract and unreachable
+ * through the public API -- the tables are fixed size, rows are never
+ * freed, and no history allocates two to the sixty-fourth of anything.
+ * These put the store in one of those states so the refusal can be
+ * tested, and put it back afterwards.  They are the fixture's, not a
+ * client's: nothing on the wire moves a counter.
+ */
+void d1_fixture_set_next_ids(struct d1_store *s, uint64_t next_txn,
+			     uint64_t next_version);
+void d1_fixture_set_index_epoch(struct d1_store *s, uint64_t epoch);
+
+/*
  * Fixture control: run @fn once, in the interval between a public
  * call's first instruction and its admission on @s -- the one interval
  * the store's own lock does not cover, and the one a close races.

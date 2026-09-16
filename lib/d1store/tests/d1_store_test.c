@@ -1240,6 +1240,33 @@ finalize_chunk(struct d1_store *s, d1_admission_id admission, uint64_t index,
 }
 
 /* Finalize a transaction that already exists, and report how it went. */
+/* Commit one finalized transaction, and answer what the member said. */
+static uint32_t commit_txn(struct d1_store *s, d1_admission_id admission,
+			   uint64_t index, uint32_t writer, uint32_t co_id,
+			   d1_txn_id txn)
+{
+	struct d1_envelope env;
+	struct d1_result res;
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	uint32_t status;
+
+	d1_store_verifier(s, verifier);
+	env_init(&env, s, admission, D1_OP_COMMIT_BATCH);
+	env.body.lifecycle.range_begin = index;
+	env.body.lifecycle.range_end = index + 1;
+	env.body.lifecycle.count = 1;
+	env.body.lifecycle.entries[0].index = index;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+	env.body.lifecycle.entries[0].owner.writer = writer;
+	env.body.lifecycle.entries[0].owner.co_id = co_id;
+	env.body.lifecycle.entries[0].txn = txn;
+	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+	status = d1_store_apply(s, &env, &res);
+	if (status != D1_OK)
+		return status;
+	return res.entries[0].status;
+}
+
 static uint32_t finalize_txn(struct d1_store *s, d1_admission_id admission,
 			     uint64_t index, uint32_t writer, uint32_t co_id,
 			     d1_txn_id txn)
@@ -4265,6 +4292,207 @@ static void test_one_number_is_one_member(void)
 
 	d1_store_free(a);
 	d1_store_free(b);
+}
+
+/*
+ * A counter at its last value has no ID left to give.
+ *
+ * Section 3: reject exhaustion, never reuse.  The admission and custody
+ * counters did; the transaction and version counters issued their last
+ * value, wrapped to zero -- which means absent -- and then reissued a
+ * number a retained row still held.  Nothing on the wire moves a
+ * counter and no history allocates two to the sixty-fourth of anything,
+ * so the state is the fixture's to arrange and the contract's to keep.
+ *
+ * Each counter alone, and then both: the answer is that the store has
+ * no room, nothing is recorded, nothing moves, and the same request
+ * succeeds once the room is there.
+ */
+static void test_an_exhausted_counter_refuses(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t data[16];
+	size_t before, after, len;
+	uint32_t pass;
+	d1_admission_id admission;
+	d1_version_id seen;
+
+	memset(data, 0x3c, sizeof(data));
+	for (pass = 0; pass < 3; pass++) {
+		fill_uuid(&store_uuid, (uint8_t)(0x3c + pass));
+		s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!s)
+			return;
+		d1_store_journal_enable(s);
+		admission = d1_fixture_admit(s, &object, 11,
+					     D1_RIGHT_WRITE |
+						     D1_RIGHT_SINGLE_WRITER);
+		/* Transaction only, version only, then both. */
+		d1_fixture_set_next_ids(s, pass == 1 ? 7 : UINT64_MAX,
+					pass == 0 ? 7 : UINT64_MAX);
+		(void)journal_of(s, &before);
+
+		env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		env.body.write.activate = true;
+		write_entry(&env.body.write.entries[0], 0, 11, 1, data,
+			    sizeof(data), true,
+			    &(struct d1_guard){ .never_written = true });
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_NOSPC &&
+			      res.entries[0].disposition == D1_UNRECORDED,
+		      "an exhausted counter leaves no room for a write");
+		check(!res.entries[0].txn_present &&
+			      !res.entries[0].version_present,
+		      "and spends no ID");
+		check(!d1_store_visible(s, &object, 0, &seen),
+		      "and publishes nothing");
+		(void)journal_of(s, &after);
+		check(after == before, "and writes nothing to the log");
+
+		/* The same request, once there is room again. */
+		d1_fixture_set_next_ids(s, 7, 7);
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and the same request succeeds when there is");
+		check(d1_version_raw(res.entries[0].version) == 7 &&
+			      d1_txn_raw(res.entries[0].txn) == 7,
+		      "taking the numbers the counters had left");
+
+		(void)journal_of(s, &len);
+		check(len > before, "which does reach the log");
+		d1_store_free(s);
+	}
+}
+
+/*
+ * The durable index epoch does not wrap either.
+ *
+ * A complete result carries it, a snapshot carries it, and recovery
+ * reads it as an ordering bound.  Wrapping would make an old epoch
+ * indistinguishable from a new one and a recorded high read epoch look
+ * like the future -- and recording the wrapped value would make the
+ * wrong answer deterministic rather than correct.
+ *
+ * The store does its whole history first, so there is a real log to
+ * keep.  Then each of the three transitions that advance the epoch is
+ * offered it at its last value: each is refused, the log does not grow
+ * by a byte, and what the store did write still rebuilds it.
+ */
+static void test_an_exhausted_epoch_refuses(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct rollback_expect x;
+	static uint8_t data[16];
+	const uint8_t *log;
+	size_t before, after, len;
+	d1_admission_id admission;
+	d1_version_id v1, v2, v3, seen;
+	d1_txn_id t2, t3;
+	struct d1_entry_result entry;
+
+	memset(data, 0x3f, sizeof(data));
+	fill_uuid(&store_uuid, 0x3f);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+
+	/* The history: a published chunk, a replacement over it, and a
+	 * second chunk written and finalized but not committed. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "an activated write publishes");
+	v1 = res.entries[0].version;
+	v3 = commit_chunk(s, admission, 0, 3, data, sizeof(data),
+			  &(struct d1_guard){ .generation = 0, .writer = 11 },
+			  v1, &t3);
+	v2 = finalize_chunk(s, admission, 1, 2, data, sizeof(data),
+			    &(struct d1_guard){ .never_written = true },
+			    d1_version_none(), &t2);
+	check(d1_version_live(v3) && d1_version_live(v2),
+	      "a replacement is committed and a second chunk finalized");
+	(void)journal_of(s, &before);
+
+	/* An activated write, with the epoch at its last value. */
+	d1_fixture_set_index_epoch(s, UINT64_MAX);
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 2, 11, 4, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_NOSPC &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "an activated write will not advance a full epoch");
+	check(!d1_store_visible(s, &object, 2, &seen), "and publishes nothing");
+
+	/* A lifecycle commit, at the same value. */
+	check(commit_txn(s, admission, 1, 11, 2, t2) == D1_NOSPC,
+	      "a commit will not advance a full epoch");
+	check(!d1_store_visible(s, &object, 1, &seen),
+	      "and publishes nothing either");
+
+	/* And the rollback of a committed version. */
+	memset(&x, 0, sizeof(x));
+	x.custody_present = true;
+	x.custody = d1_fixture_custody(s, v3);
+	x.visible_present = true;
+	x.visible = v3;
+	x.predecessor_present = true;
+	x.predecessor = v1;
+	check(rollback_one(s, admission, 0, 3, t3, &x, &entry) == D1_NOSPC,
+	      "a committed rollback will not advance a full epoch");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_raw(seen) == d1_version_raw(v3),
+	      "and the chunk still has the replacement");
+
+	/*
+	 * Custody was issued above, which is a control event and does
+	 * reach the log; the three refusals did not.
+	 */
+	(void)journal_of(s, &after);
+	check(after > before, "custody was logged");
+	before = after;
+	check(rollback_one(s, admission, 0, 3, t3, &x, &entry) == D1_NOSPC,
+	      "the rollback is still refused");
+	(void)journal_of(s, &after);
+	check(after == before, "and writes nothing");
+
+	/* What the store did write still rebuilds it. */
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "and the durable prefix replays");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		d1_store_free(rebuilt);
+	}
+
+	/* With room again, the transitions the store refused go through. */
+	d1_fixture_set_index_epoch(s, 3);
+	check(commit_txn(s, admission, 1, 11, 2, t2) == D1_OK,
+	      "and a commit goes through once there is room");
+
+	d1_store_free(s);
 }
 
 /*
@@ -9581,6 +9809,8 @@ int main(void)
 	test_a_decoded_handle_names_no_store();
 	test_a_foreign_handle_leaves_no_history();
 	test_one_number_is_one_member();
+	test_an_exhausted_counter_refuses();
+	test_an_exhausted_epoch_refuses();
 	test_a_handle_names_its_own_kind();
 	test_replay_rebuilds_the_same_handles();
 	test_geometry_is_asked_before_the_object_table();
