@@ -2477,7 +2477,13 @@ static void d1_apply_one(struct d1_store *s, const struct d1_envelope *env,
 	 * whether the admission is still live.  Retrieving a result is not
 	 * a new mutation.
 	 */
-	if (!d1_binding_ok(s, env) || !d1_envelope_owned(s, env)) {
+	/*
+	 * Provenance first, so nothing is read on behalf of a request that
+	 * is not this store's to answer -- d1_binding_ok reads the
+	 * admission table, and asking it first would be one table read
+	 * before the door.
+	 */
+	if (!d1_envelope_owned(s, env) || !d1_binding_ok(s, env)) {
 		res->status = D1_STALE_AUTH;
 		res->disposition = D1_UNRECORDED;
 		complete->disposition = D1_UNRECORDED;
@@ -2623,7 +2629,8 @@ static void d1_apply_control(struct d1_store *s, const struct d1_envelope *env,
 	res->disposition = D1_COMPLETED;
 	d1_verifier_of(s->incarnation, res->verifier);
 
-	if (!d1_binding_ok(s, env) || !d1_envelope_owned(s, env)) {
+	/* Provenance first, for the reason in d1_apply_one. */
+	if (!d1_envelope_owned(s, env) || !d1_binding_ok(s, env)) {
 		res->status = D1_STALE_AUTH;
 		res->disposition = D1_UNRECORDED;
 		complete->disposition = D1_UNRECORDED;
@@ -2765,10 +2772,18 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	 * Provenance, before anything is looked up, hashed or reserved.
 	 * A handle of another store or another domain is not this store's
 	 * to answer about, and an answer given on that ground is one the
-	 * log cannot carry -- see d1_envelope_owned.  The same question is
-	 * asked again inside each member's lock interval, because this one
-	 * was asked in a lock interval the call no longer holds and replay
-	 * never comes through here at all.
+	 * log cannot carry -- see d1_envelope_owned.
+	 *
+	 * This one is an early-out and not the decision.  The door is
+	 * envelope-scoped, so the copy inside each member's lock interval
+	 * refuses the same requests with the same answers; removing this
+	 * one changes no result a caller can see.  What it does is save
+	 * the digest and the key lookup for a request that was never this
+	 * store's, and settle the question in the same lock interval that
+	 * decided the key was free.  The member copy is the one that has
+	 * to be there: this was asked in an interval the call no longer
+	 * holds, the request can change in the gap between two members,
+	 * and replay never comes through here at all.
 	 */
 	pthread_mutex_lock(&s->lock);
 	owned = d1_envelope_owned(s, env);
@@ -2905,6 +2920,13 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 			break;
 		}
 	}
+	/*
+	 * The operation's disposition, from the members: COMPLETED when
+	 * any of them recorded, UNRECORDED when none did.  A batch stops
+	 * at the first member it could not record, so the first member
+	 * settles it; see struct d1_result.
+	 */
+	out->disposition = out->entries[0].disposition;
 	d1_call_leave(s);
 	return D1_OK;
 }

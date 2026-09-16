@@ -4867,6 +4867,198 @@ static void test_an_absent_option_is_absent(void)
 	d1_store_free(b);
 }
 
+/* The arm for the member door: what it swaps, and into which envelope. */
+struct door_swap {
+	struct d1_envelope *env;
+	d1_txn_id foreign;
+	uint32_t fired;
+};
+
+static void swap_member_txn(void *arg)
+{
+	struct door_swap *d = arg;
+
+	d->fired++;
+	d->env->body.lifecycle.entries[1].txn = d->foreign;
+}
+
+/*
+ * The door inside a member, which is the only one a batch can reach.
+ *
+ * The preflight asks about every handle before the batch starts, in a
+ * lock interval the call does not hold afterwards.  Between two members
+ * the lock is released on purpose -- that is how the next member is
+ * revalidated against what the last one left -- and in that gap the
+ * request the store is working from can change under it.  Replay does
+ * not come through the preflight at all.
+ *
+ * So the same question is asked again in each member's lock interval,
+ * and this is the test that can tell: member 0 records, the gap swaps
+ * member 1's transaction for another store's, and member 1 must be
+ * refused with nothing written.  Remove the preflight and this still
+ * passes; remove the member check and member 1 records a refusal the
+ * log cannot explain, which is the eleventh cycle's defect back through
+ * the gap.
+ */
+static void test_the_door_inside_a_member(void)
+{
+	struct d1_uuid shared_uuid;
+	struct d1_store *a, *b, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct door_swap swap;
+	static uint8_t data[16];
+	const uint8_t *log;
+	size_t before, after, len;
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	d1_admission_id adm_a, adm_b;
+	d1_txn_id ta, tb0, tb1;
+	d1_version_id va;
+
+	memset(data, 0x46, sizeof(data));
+	fill_uuid(&shared_uuid, 0x46);
+	a = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	b = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!a || !b) {
+		d1_store_free(a);
+		d1_store_free(b);
+		return;
+	}
+	d1_store_journal_enable(b);
+	adm_a = d1_fixture_admit(a, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	adm_b = d1_fixture_admit(b, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	/* Two writes at A, so its second transaction is the number two. */
+	(void)commit_chunk(a, adm_a, 0, 1, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true },
+			   d1_version_none(), NULL);
+	va = commit_chunk(a, adm_a, 1, 2, data, sizeof(data),
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), &ta);
+	check(d1_version_live(va), "A has two transactions of its own");
+
+	/* B writes two chunks and finalizes neither. */
+	(void)finalize_chunk(b, adm_b, 0, 1, data, sizeof(data),
+			     &(struct d1_guard){ .never_written = true },
+			     d1_version_none(), &tb0);
+	(void)finalize_chunk(b, adm_b, 1, 2, data, sizeof(data),
+			     &(struct d1_guard){ .never_written = true },
+			     d1_version_none(), &tb1);
+	check(d1_txn_live(tb0) && d1_txn_live(tb1),
+	      "and B has two finalized transactions");
+	check(d1_txn_raw(ta) == d1_txn_raw(tb1) && !d1_txn_eq(ta, tb1),
+	      "A's transaction and B's second carry the same number");
+
+	/* A two-member commit at B, whose member 1 is swapped in the gap. */
+	d1_store_verifier(b, verifier);
+	env_init(&env, b, adm_b, D1_OP_COMMIT_BATCH);
+	env.body.lifecycle.range_begin = 0;
+	env.body.lifecycle.range_end = 2;
+	env.body.lifecycle.count = 2;
+	env.body.lifecycle.entries[0].index = 0;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = 1;
+	env.body.lifecycle.entries[0].txn = tb0;
+	env.body.lifecycle.entries[1].index = 1;
+	env.body.lifecycle.entries[1].owner.cohort.raw = 1;
+	env.body.lifecycle.entries[1].owner.writer = 11;
+	env.body.lifecycle.entries[1].owner.co_id = 2;
+	env.body.lifecycle.entries[1].txn = tb1;
+	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+
+	/*
+	 * First, the same batch with member 1 foreign from the outset.
+	 * The preflight sees the whole request before any of it runs, so
+	 * nothing runs: member 0 is refused along with member 1, and the
+	 * log does not move.  That is the difference between the two
+	 * doors -- the member check alone would let member 0 record.
+	 */
+	env.body.lifecycle.entries[1].txn = ta;
+	(void)journal_of(b, &before);
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH &&
+		      res.entries[0].disposition == D1_UNRECORDED &&
+		      res.entries[1].disposition == D1_UNRECORDED,
+	      "a batch naming a foreign handle runs no member at all");
+	check(res.disposition == D1_UNRECORDED,
+	      "and the operation recorded nothing");
+	(void)journal_of(b, &after);
+	check(after == before, "nor wrote anything");
+
+	/* Now the same batch, with the swap happening in the gap. */
+	env.body.lifecycle.entries[1].txn = tb1;
+	env.key.sequence = next_sequence++;
+	memset(&swap, 0, sizeof(swap));
+	swap.env = &env;
+	swap.foreign = ta;
+	(void)journal_of(b, &before);
+	d1_fixture_before_member(b, 1, swap_member_txn, &swap);
+	check(d1_store_apply(b, &env, &res) == D1_OK, "the batch applies");
+	check(swap.fired == 1, "and the gap before member 1 was occupied");
+	check(res.entries[0].status == D1_OK &&
+		      res.entries[0].disposition == D1_COMPLETED,
+	      "member 0 records");
+	check(res.entries[1].status == D1_STALE_AUTH &&
+		      res.entries[1].disposition == D1_UNRECORDED,
+	      "and member 1, swapped for another store's, records nothing");
+	/*
+	 * The operation recorded something, so it is COMPLETED as a whole
+	 * and there is a receipt to retry against; which members ran is
+	 * the per-entry question.  See struct d1_result.
+	 */
+	check(res.disposition == D1_COMPLETED,
+	      "the operation as a whole left a record");
+
+	/* Only member 0's event reached the log. */
+	(void)journal_of(b, &after);
+	check(after > before, "member 0 is in the log");
+	before = after;
+
+	/* The exact retry, unswapped, finishes the batch from the receipt. */
+	env.body.lifecycle.entries[1].txn = tb1;
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[1].status == D1_OK,
+	      "the exact retry completes the remainder");
+	(void)journal_of(b, &after);
+	check(after > before, "and member 1 reaches the log this time");
+
+	/*
+	 * And the preflight is not the member check moved earlier: it
+	 * decides before the key is looked up.  This key is bound to the
+	 * request just recorded, so a changed body under it conflicts --
+	 * but a changed body naming another store's handle is not this
+	 * store's request to have an opinion about, and the answer is
+	 * that, not the key.
+	 */
+	env.body.lifecycle.entries[1].txn = ta;
+	(void)journal_of(b, &before);
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "a foreign handle is answered before the key it names");
+	check(res.disposition == D1_UNRECORDED,
+	      "and the operation recorded nothing");
+	(void)journal_of(b, &after);
+	check(after == before, "nor wrote anything");
+
+	/* And what B recorded rebuilds B. */
+	log = journal_of(b, &len);
+	rebuilt = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "and B's log rebuilds B");
+		check(object_states_agree(b, rebuilt, &object),
+		      "into the same store");
+		d1_store_free(rebuilt);
+	}
+
+	d1_store_free(a);
+	d1_store_free(b);
+}
+
 /*
  * A handle names one kind of thing, in one store.
  *
@@ -10181,6 +10373,7 @@ int main(void)
 	test_a_decoded_handle_names_no_store();
 	test_a_foreign_handle_leaves_no_history();
 	test_an_absent_option_is_absent();
+	test_the_door_inside_a_member();
 	test_one_number_is_one_member();
 	test_an_exhausted_counter_refuses();
 	test_an_exhausted_epoch_refuses();

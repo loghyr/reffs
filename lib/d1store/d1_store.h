@@ -70,6 +70,20 @@ struct d1_result {
 	struct d1_opkey key;
 	uint64_t index_epoch;
 	uint64_t eof;
+	/*
+	 * The operation's disposition, which is a different question from
+	 * any member's.
+	 *
+	 * For a control operation there is one answer and this is it.  For
+	 * an ordinary batch it says whether the operation as a whole left
+	 * a record: COMPLETED when any member did, UNRECORDED when none
+	 * did.  A batch stops at the first member it could not record, so
+	 * "any" and "the first" are the same member, and a caller reading
+	 * only this field learns whether there is anything to retry
+	 * against -- not whether every member ran.  Which members ran is
+	 * what the per-entry dispositions are for, and they are the ones
+	 * to read.
+	 */
 	uint32_t disposition;
 	uint32_t count;
 	struct d1_entry_result entries[D1_BATCH_ENTRIES_MAX];
