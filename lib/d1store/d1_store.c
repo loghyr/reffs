@@ -1267,6 +1267,21 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 	bool activate, invalid;
 	uint32_t i;
 
+	/*
+	 * Shape before room, and the whole shape.  Bounds are the object's
+	 * maximum, not its current EOF, and they depend on nothing but the
+	 * store's geometry and this entry -- so they are asked before the
+	 * object is looked up or created.  Asking afterwards made the
+	 * answer to a malformed request depend on how full an internal
+	 * table happened to be: with a slot free it was INVALID and
+	 * recorded, and with every slot taken the identical request became
+	 * NOSPC and retryable.
+	 */
+	if (!d1_mul_u64(e->index, s->chunk_bytes, &start) ||
+	    !d1_add_u64(start, e->payload_len, &end) || end > s->max_file_bytes)
+		return D1_INVALID;
+	if (e->payload_len < 1 || e->payload_len > s->chunk_bytes)
+		return D1_INVALID;
 	if (!o) {
 		/* First touch of an object creates it, and a refusal
 		 * afterwards must leave it uncreated. */
@@ -1275,12 +1290,6 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 			return D1_NOSPC;
 		u->fresh_object = o;
 	}
-	/* Bounds are the object's maximum, not its current EOF. */
-	if (!d1_mul_u64(e->index, s->chunk_bytes, &start) ||
-	    !d1_add_u64(start, e->payload_len, &end) || end > s->max_file_bytes)
-		return D1_INVALID;
-	if (e->payload_len < 1 || e->payload_len > s->chunk_bytes)
-		return D1_INVALID;
 	/*
 	 * The chunk table is capacity, not geometry.  Section 3 bounds an
 	 * object by max_file_bytes, and this model keeps a fixed table

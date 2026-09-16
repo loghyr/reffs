@@ -3131,6 +3131,127 @@ static void test_the_chunk_table_is_capacity(void)
 }
 
 /*
+ * A malformed request is malformed whether or not there is room.
+ *
+ * The chunk bounds depend on nothing but the store's geometry and the
+ * entry, but they used to be asked after the object was looked up or
+ * created -- so with an object slot free an out-of-geometry index was
+ * INVALID and recorded, and with every slot taken the identical request
+ * became NOSPC and retryable.  The shape of a request cannot depend on
+ * how full an internal table happens to be.
+ *
+ * Both answers are checked here against a full table: out of geometry
+ * is still the recorded refusal, and in geometry is still the shortage.
+ */
+static void test_geometry_is_asked_before_the_object_table(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *target;
+	struct d1_objkey keys[D1_MAX_OBJECTS + 1u];
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t data[16];
+	const uint8_t *log;
+	size_t len, before = 0, after = 1;
+	unsigned int i;
+	d1_id_t admissions[D1_MAX_OBJECTS + 1u];
+	d1_id_t txn, version;
+
+	memset(data, 0x2e, sizeof(data));
+	fill_uuid(&store_uuid, 0x2f);
+	/* Geometry of exactly the table's worth of chunks. */
+	s = d1_store_open(&store_uuid, CHUNK_BYTES,
+			  (uint64_t)D1_MAX_CHUNKS * CHUNK_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	for (i = 0; i < D1_MAX_OBJECTS + 1u; i++) {
+		keys[i].export_uuid = object.export_uuid;
+		fill_uuid(&keys[i].object_uuid, (uint8_t)(0xe0 + i));
+		admissions[i] = d1_fixture_admit(
+			s, &keys[i], 11,
+			D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	}
+
+	/* Every object slot taken. */
+	for (i = 0; i < D1_MAX_OBJECTS; i++) {
+		env_init(&env, s, admissions[i], D1_OP_WRITE_BATCH);
+		env.object = keys[i];
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], 0, 11, i + 1u, data,
+			    sizeof(data), true,
+			    &(struct d1_guard){ .never_written = true });
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "every object slot is taken");
+	}
+	(void)journal_of(s, &before);
+
+	/*
+	 * The fifth object, at an index the declared geometry does not
+	 * reach.  There is no room for the object either, and the answer
+	 * must still be about the request.
+	 */
+	env_init(&env, s, admissions[D1_MAX_OBJECTS], D1_OP_WRITE_BATCH);
+	env.object = keys[D1_MAX_OBJECTS];
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], D1_MAX_CHUNKS, 11, 9, data,
+		    sizeof(data), true,
+		    &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK, "the write applies");
+	check(res.entries[0].status == D1_INVALID,
+	      "an out-of-geometry index is malformed with the table full");
+	check(res.entries[0].disposition == D1_COMPLETED,
+	      "and is a recorded refusal, as it is with the table free");
+	check(!res.entries[0].txn_present && !res.entries[0].version_present,
+	      "and spends no ID");
+	txn = res.entries[0].txn;
+	version = res.entries[0].version;
+	check(txn == 0 && version == 0, "nor names one");
+
+	/* Being recorded, the exact retry answers from the receipt. */
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_INVALID &&
+		      res.entries[0].disposition == D1_COMPLETED,
+	      "and the exact retry answers from the record it left");
+
+	/*
+	 * And the same fifth object in geometry is the other answer: the
+	 * request is well formed, and the model has no room for it.
+	 */
+	env_init(&env, s, admissions[D1_MAX_OBJECTS], D1_OP_WRITE_BATCH);
+	env.object = keys[D1_MAX_OBJECTS];
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 9, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_NOSPC &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "an in-geometry write with no object slot is a shortage");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_NOSPC &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "and its retry is a fresh question, not a record");
+
+	/* The log carries the refusal and not the shortage, and replays. */
+	log = journal_of(s, &after);
+	check(after > before, "the recorded refusal reached the log");
+	target = d1_store_open(&store_uuid, CHUNK_BYTES,
+			       (uint64_t)D1_MAX_CHUNKS * CHUNK_BYTES);
+	if (target && log) {
+		len = after;
+		check(d1_store_replay(target, log, len) == D1_OK,
+		      "and the log replays");
+		check(states_agree(s, target), "into the same store");
+		d1_store_free(target);
+	}
+	d1_store_free(s);
+}
+
+/*
  * An object nobody has written yet can still be read.
  *
  * Section 3 gives a new object initial EOF zero, and this API has no
@@ -8120,6 +8241,7 @@ int main(void)
 	test_the_door_arm_belongs_to_its_store();
 	test_an_owner_names_a_cohort();
 	test_the_chunk_table_is_capacity();
+	test_geometry_is_asked_before_the_object_table();
 	test_the_empty_object_can_be_read();
 	test_a_journal_snapshot_is_a_value();
 	test_a_journal_snapshot_can_find_no_memory();
