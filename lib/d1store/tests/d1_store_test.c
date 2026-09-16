@@ -4145,6 +4145,52 @@ static void test_a_foreign_handle_leaves_no_history(void)
 	check(d1_store_visible(b, &object, 0, &vb) && d1_version_raw(vb) != 0,
 	      "and B's chunk still has what B put there");
 
+	/* A's version as a lifecycle predecessor at B. */
+	{
+		struct d1_envelope life;
+		uint8_t verifier[D1_VERIFIER_BYTES];
+		d1_version_id vb2;
+		d1_txn_id tb2;
+
+		vb2 = finalize_chunk(b, adm_b, 1, 2, data, sizeof(data),
+				     &(struct d1_guard){ .never_written =
+								 true },
+				     d1_version_none(), &tb2);
+		check(d1_version_live(vb2), "B finalizes a second chunk");
+		(void)journal_of(b, &before);
+		d1_store_verifier(b, verifier);
+		env_init(&life, b, adm_b, D1_OP_COMMIT_BATCH);
+		life.body.lifecycle.range_begin = 1;
+		life.body.lifecycle.range_end = 2;
+		life.body.lifecycle.count = 1;
+		life.body.lifecycle.entries[0].index = 1;
+		life.body.lifecycle.entries[0].owner.cohort.raw = 1;
+		life.body.lifecycle.entries[0].owner.writer = 11;
+		life.body.lifecycle.entries[0].owner.co_id = 2;
+		life.body.lifecycle.entries[0].txn = tb2;
+		life.body.lifecycle.entries[0].predecessor_present = true;
+		life.body.lifecycle.entries[0].predecessor = va;
+		memcpy(life.body.lifecycle.prior_verifier, verifier,
+		       sizeof(verifier));
+		check(d1_store_apply(b, &life, &res) == D1_OK &&
+			      res.entries[0].status == D1_STALE_AUTH &&
+			      res.entries[0].disposition == D1_UNRECORDED,
+		      "A's version as a predecessor commits nothing at B");
+		(void)journal_of(b, &after);
+		check(after == before, "and writes nothing for it");
+	}
+
+	/* And as a rollback predecessor. */
+	memset(&x, 0, sizeof(x));
+	x.visible_present = true;
+	x.visible = vb;
+	x.predecessor_present = true;
+	x.predecessor = va;
+	check(rollback_one(b, adm_b, 0, 1, tb, &x, &entry) == D1_STALE_AUTH,
+	      "nor as a rollback predecessor");
+	(void)journal_of(b, &after);
+	check(after == before, "and writes nothing for that either");
+
 	/* A's admission, revoked and expired at B. */
 	(void)journal_of(b, &before);
 	d1_fixture_revoke(b, adm_a);
