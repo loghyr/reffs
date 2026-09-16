@@ -2950,6 +2950,35 @@ static void test_the_chunk_table_is_capacity(void)
 		d1_store_free(target);
 	}
 	d1_store_free(s);
+
+	/*
+	 * And the two bounds are asked in the right order.  On geometry of
+	 * exactly the table's worth of chunks, index 64 is not a request
+	 * the model has no room for -- it is outside the geometry the
+	 * store was opened with, which is a malformed request and a
+	 * recorded refusal.  Asking the table first would answer it out of
+	 * room, which would be the model's own limit standing in for the
+	 * caller's declared one.
+	 */
+	fill_uuid(&store_uuid, 0x2d);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES,
+			  (uint64_t)D1_MAX_CHUNKS * CHUNK_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], D1_MAX_CHUNKS, 11, 1, data,
+		    sizeof(data), true,
+		    &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK, "the write applies");
+	check(res.entries[0].status == D1_INVALID,
+	      "a write outside the declared geometry is malformed");
+	check(res.entries[0].disposition == D1_COMPLETED,
+	      "and is a recorded refusal, not a shortage");
+	d1_store_free(s);
 }
 
 /*
