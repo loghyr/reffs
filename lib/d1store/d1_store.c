@@ -2740,13 +2740,78 @@ static void d1_apply_control(struct d1_store *s, const struct d1_envelope *env,
 	slot->result = *complete;
 }
 
+/* Defined with the replay path, which adopts a decoded record the same way. */
+static void d1_envelope_adopt(const struct d1_store *s,
+			      struct d1_envelope *env);
+
+/*
+ * One request, owned by the call that executes it.
+ *
+ * A caller owns its envelope and its payload bytes, and the model has
+ * no claim on either after the call returns -- so it must have its own
+ * copy before it accepts anything.  It did not.  The digest was taken
+ * once, at entry, from the caller's memory, and then every member was
+ * executed from that same memory across lock intervals the call does
+ * not hold, with the fixture's between-members hook making the gap
+ * deterministic on purpose.  A caller that changed a local transaction,
+ * a payload byte, an index or an owner in that gap had the changed
+ * request executed and journalled under the digest of the request that
+ * was there before, so the ENTRY bytes did not hash to the digest
+ * stamped beside them and the store's own log stopped rebuilding it.
+ *
+ * So the call takes the request once, into storage it owns, and reads
+ * nothing else afterwards.  The canonical encoding is made first --
+ * which is the same encoding the digest binds and the journal records
+ * -- and the executed envelope is decoded back out of it, so the bytes
+ * that were hashed, the bytes that are recorded and the request that
+ * runs are one object by construction.  The decoded payloads point into
+ * that buffer, which lives until the call returns.
+ *
+ * Provenance is decided before any of this, on the caller's values,
+ * because adoption stamps this store on every handle and a handle of
+ * another store must be refused rather than naturalised.  After
+ * adoption the request is the store's own, which is exactly what replay
+ * arranges for a record it has decoded.
+ */
+struct d1_request {
+	uint8_t *bytes;
+	size_t len;
+	struct d1_envelope env;
+	uint8_t digest[D1_DIGEST_BYTES];
+};
+
+/*
+ * Take the request.  The caller's envelope is not read again.
+ *
+ * @scratch is the call's own buffer, allocated before the store lock
+ * was taken; the store's shared scratch is not used, because it is not
+ * this call's to hold across an unlocked interval.
+ */
+static bool d1_request_take(const struct d1_store *s,
+			    const struct d1_envelope *env, uint8_t *scratch,
+			    size_t cap, struct d1_request *r)
+{
+	r->bytes = scratch;
+	r->len = d1_envelope_encode(env, r->bytes, cap);
+	if (!r->len)
+		return false;
+	if (!d1_envelope_decode(r->bytes, r->len, &r->env))
+		return false;
+	/* The request becomes this store's, exactly as replay's does. */
+	d1_envelope_adopt(s, &r->env);
+	d1_request_digest(r->bytes, r->len, r->digest);
+	return true;
+}
+
 uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 			struct d1_result *out)
 {
 	uint8_t digest[D1_DIGEST_BYTES];
 	struct d1_complete_result complete;
+	struct d1_request req;
+	uint8_t *scratch;
 	uint32_t need, count, i;
-	bool commit, conflict, owned;
+	bool commit, conflict, owned, taken;
 
 	memset(out, 0, sizeof(*out));
 	out->key = env->key;
@@ -2810,31 +2875,18 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	out->count = count;
 
 	/*
-	 * Provenance, before anything is looked up, hashed or reserved.
-	 * A handle of another store or another domain is not this store's
-	 * to answer about, and an answer given on that ground is one the
-	 * log cannot carry -- see d1_envelope_owned.
-	 *
-	 * This one is an early-out and not the decision.  The door is
-	 * envelope-scoped, so the copy inside each member's lock interval
-	 * refuses the same requests with the same answers; removing this
-	 * one changes no result a caller can see.  What it does is save
-	 * the digest and the key lookup for a request that was never this
-	 * store's, and settle the question in the same lock interval that
-	 * decided the key was free.  The member copy is the one that has
-	 * to be there: this was asked in an interval the call no longer
-	 * holds, the request can change in the gap between two members,
-	 * and replay never comes through here at all.
+	 * The call's own buffer for the request it is about to take.  It
+	 * is allocated before the lock and freed on every exit; the
+	 * store's shared scratch is not used, because holding it across
+	 * the unlocked intervals between members is not this call's right.
 	 */
-	pthread_mutex_lock(&s->lock);
-	owned = d1_envelope_owned(s, env);
-	pthread_mutex_unlock(&s->lock);
-	if (!owned) {
+	scratch = malloc(D1_ENVELOPE_MAX);
+	if (!scratch) {
 		for (i = 0; i < count; i++) {
 			struct d1_entry_result *res = &out->entries[i];
 
 			memset(res, 0, sizeof(*res));
-			res->status = D1_STALE_AUTH;
+			res->status = D1_NOSPC;
 			res->stability = D1_FILE_SYNC;
 			res->disposition = D1_UNRECORDED;
 			d1_store_verifier(s, res->verifier);
@@ -2844,46 +2896,61 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		return D1_OK;
 	}
 
-	pthread_mutex_lock(&s->lock);
-	if (!d1_envelope_digest(env, s->scratch, s->scratch_cap, digest)) {
-		pthread_mutex_unlock(&s->lock);
-		d1_call_leave(s);
-		out->count = 0;
-		return D1_INVALID;
-	}
-	pthread_mutex_unlock(&s->lock);
-
 	/*
-	 * If this key is recorded under a different request, no member of
-	 * this one runs.  The recorded request keeps its receipts and can
-	 * still be finished by its own exact retry.  This is an early
-	 * answer, not the guarantee: the guarantee is the same question
-	 * asked inside each member's lock interval, in d1_apply_one.
+	 * One lock interval settles three things in the order section 8
+	 * gives them: whose request this is, whether the caller is bound
+	 * to the object it names, and only then whether the key is in use.
 	 *
-	 * Section 8 orders the two halves: validate the caller binding,
-	 * then look the key up.  A handle bound to another object learns
-	 * nothing about whose key is in use; it falls through to the
-	 * member path, which answers STALE_AUTH and reserves nothing.
+	 * Provenance and binding are asked of the caller's values, because
+	 * this is the last moment they exist as the caller's: taking the
+	 * request adopts every handle for this store, and a handle of
+	 * another store must be refused rather than naturalised.  A
+	 * request that is not this store's is told nothing about whose key
+	 * is in use -- it never reaches the lookup.
+	 *
+	 * Then the request is taken, and nothing the caller does to its
+	 * own memory afterwards can reach a member, a receipt or the log.
 	 */
 	pthread_mutex_lock(&s->lock);
-	conflict = d1_binding_ok(s, env) &&
-		   d1_key_conflicts(s, &env->object.export_uuid, &env->key,
-				    digest);
-	if (conflict) {
-		pthread_mutex_unlock(&s->lock);
+	owned = d1_envelope_owned(s, env) && d1_binding_ok(s, env);
+	taken = owned &&
+		d1_request_take(s, env, scratch, D1_ENVELOPE_MAX, &req);
+	conflict = taken && d1_key_conflicts(s, &env->object.export_uuid,
+					     &req.env.key, req.digest);
+	pthread_mutex_unlock(&s->lock);
+
+	if (owned && !taken) {
+		/*
+		 * The request does not fit the canonical form, or does not
+		 * survive its own encoding.  Nothing was looked up and
+		 * nothing reserved.
+		 */
+		free(scratch);
+		d1_call_leave(s);
+		out->count = 0;
+		out->disposition = D1_UNRECORDED;
+		return D1_INVALID;
+	}
+	if (!owned || conflict) {
 		for (i = 0; i < count; i++) {
 			struct d1_entry_result *res = &out->entries[i];
 
 			memset(res, 0, sizeof(*res));
-			res->status = D1_REPLAY_CONFLICT;
+			res->status = owned ? D1_REPLAY_CONFLICT :
+					      D1_STALE_AUTH;
 			res->stability = D1_FILE_SYNC;
-			res->disposition = D1_COMPLETED;
+			res->disposition = owned ? D1_COMPLETED : D1_UNRECORDED;
 			d1_store_verifier(s, res->verifier);
 		}
+		out->disposition = owned ? D1_COMPLETED : D1_UNRECORDED;
+		free(scratch);
 		d1_call_leave(s);
 		return D1_OK;
 	}
-	pthread_mutex_unlock(&s->lock);
+
+	/* From here the request is the store's own copy. */
+	env = &req.env;
+	memcpy(digest, req.digest, D1_DIGEST_BYTES);
 
 	if (need == D1_RIGHT_CONTROL) {
 		/*
@@ -2898,6 +2965,7 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		out->index_epoch = complete.index_epoch;
 		out->eof = complete.eof;
 		out->disposition = complete.disposition;
+		free(scratch);
 		d1_call_leave(s);
 		return D1_OK;
 	}
@@ -2968,6 +3036,7 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	 * settles it; see struct d1_result.
 	 */
 	out->disposition = out->entries[0].disposition;
+	free(scratch);
 	d1_call_leave(s);
 	return D1_OK;
 }

@@ -5024,11 +5024,10 @@ static void test_the_door_inside_a_member(void)
 	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
 
 	/*
-	 * First, the same batch with member 1 foreign from the outset.
-	 * The preflight sees the whole request before any of it runs, so
-	 * nothing runs: member 0 is refused along with member 1, and the
-	 * log does not move.  That is the difference between the two
-	 * doors -- the member check alone would let member 0 record.
+	 * The same batch with member 1 foreign from the outset.  The door
+	 * sees the whole request before any of it runs, so nothing runs:
+	 * member 0 is refused along with member 1, and the log does not
+	 * move.
 	 */
 	env.body.lifecycle.entries[1].txn = ta;
 	(void)journal_of(b, &before);
@@ -5042,7 +5041,14 @@ static void test_the_door_inside_a_member(void)
 	(void)journal_of(b, &after);
 	check(after == before, "nor wrote anything");
 
-	/* Now the same batch, with the swap happening in the gap. */
+	/*
+	 * And the same batch with the swap happening in the gap, which
+	 * changes nothing: the store took the request at entry, so what
+	 * runs in each member's interval is its own copy, and the caller
+	 * rewriting its own envelope afterwards reaches no member, no
+	 * receipt and no record.  This test used to assert the opposite,
+	 * which was the defect.
+	 */
 	env.body.lifecycle.entries[1].txn = tb1;
 	env.key.sequence = next_sequence++;
 	memset(&swap, 0, sizeof(swap));
@@ -5052,33 +5058,30 @@ static void test_the_door_inside_a_member(void)
 	d1_fixture_before_member(b, 1, swap_member_txn, &swap);
 	check(d1_store_apply(b, &env, &res) == D1_OK, "the batch applies");
 	check(swap.fired == 1, "and the gap before member 1 was occupied");
+	check(!d1_txn_eq(env.body.lifecycle.entries[1].txn, tb1),
+	      "and the caller's own envelope really was rewritten");
 	check(res.entries[0].status == D1_OK &&
 		      res.entries[0].disposition == D1_COMPLETED,
 	      "member 0 records");
-	check(res.entries[1].status == D1_STALE_AUTH &&
-		      res.entries[1].disposition == D1_UNRECORDED,
-	      "and member 1, swapped for another store's, records nothing");
-	/*
-	 * The operation recorded something, so it is COMPLETED as a whole
-	 * and there is a receipt to retry against; which members ran is
-	 * the per-entry question.  See struct d1_result.
-	 */
+	check(res.entries[1].status == D1_OK &&
+		      res.entries[1].disposition == D1_COMPLETED,
+	      "and so does member 1, from the request the store took");
 	check(res.disposition == D1_COMPLETED,
 	      "the operation as a whole left a record");
 
-	/* Only member 0's event reached the log. */
+	/* Both members reached the log, under the digest that was hashed. */
 	(void)journal_of(b, &after);
-	check(after > before, "member 0 is in the log");
+	check(after > before, "both members are in the log");
 	before = after;
 
-	/* The exact retry, unswapped, finishes the batch from the receipt. */
+	/* The exact retry of the original request answers from the record. */
 	env.body.lifecycle.entries[1].txn = tb1;
 	check(d1_store_apply(b, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK &&
 		      res.entries[1].status == D1_OK,
-	      "the exact retry completes the remainder");
+	      "the exact retry answers from the receipts");
 	(void)journal_of(b, &after);
-	check(after > before, "and member 1 reaches the log this time");
+	check(after == before, "and writes nothing further");
 
 	/*
 	 * And the preflight is not the member check moved earlier: it
@@ -5112,6 +5115,241 @@ static void test_the_door_inside_a_member(void)
 
 	d1_store_free(a);
 	d1_store_free(b);
+}
+
+/* The arm that rewrites the caller's envelope in the gap. */
+struct gap_rewrite {
+	struct d1_envelope *env;
+	/* Which field to rewrite, and to what. */
+	d1_txn_id txn;
+	bool rewrite_txn;
+	uint8_t *payload;
+	bool rewrite_payload;
+	bool rewrite_index;
+	bool rewrite_owner;
+	uint32_t fired;
+};
+
+static void rewrite_the_request(void *arg)
+{
+	struct gap_rewrite *g = arg;
+
+	g->fired++;
+	if (g->rewrite_txn)
+		g->env->body.lifecycle.entries[1].txn = g->txn;
+	if (g->rewrite_payload)
+		g->payload[0] ^= 0xffu;
+	if (g->rewrite_index)
+		g->env->body.write.entries[1].index = 9;
+	if (g->rewrite_owner)
+		g->env->body.write.entries[1].owner.co_id = 77;
+}
+
+/*
+ * Every ENTRY record's bytes hash to the digest beside it.
+ *
+ * The receipt digest binds the whole envelope and the ENTRY record
+ * carries both the bytes and the digest, so recovery can refuse a
+ * record whose bytes are not the ones that were hashed.  That check is
+ * only worth anything if the store never writes such a record, and it
+ * did: the digest was taken from the caller's envelope at entry and the
+ * bytes were encoded from it again at member time.
+ */
+static bool every_entry_digest_matches(const uint8_t *log, size_t len,
+				       const struct d1_uuid *store_uuid,
+				       uint32_t *records, uint32_t *bad)
+{
+	struct d1_journal_cursor c;
+	const uint8_t *body;
+	uint32_t type, blen;
+	uint64_t lsn, incarnation;
+
+	*records = 0;
+	*bad = 0;
+	d1_journal_cursor_init(&c, log, len, store_uuid);
+	while (d1_journal_next(&c, &type, &lsn, &incarnation, &body, &blen) ==
+	       D1_JOURNAL_RECORD) {
+		struct d1_cursor cur;
+		const uint8_t *env_bytes, *result_bytes;
+		uint8_t logged[D1_DIGEST_BYTES], want[D1_DIGEST_BYTES];
+		uint32_t env_len, result_len, ordinal;
+
+		if (type != D1_REC_ENTRY)
+			continue;
+		d1_dec_init(&cur, body, blen);
+		if (!d1_dec_bytes_ref(&cur, &env_bytes, &env_len,
+				      D1_ENVELOPE_MAX) ||
+		    !d1_dec_u32(&cur, &ordinal) ||
+		    !d1_dec_raw(&cur, logged, sizeof(logged)) ||
+		    !d1_dec_bytes_ref(&cur, &result_bytes, &result_len, 4096u))
+			return false;
+		(*records)++;
+		d1_request_digest(env_bytes, env_len, want);
+		if (memcmp(want, logged, D1_DIGEST_BYTES) != 0)
+			(*bad)++;
+	}
+	return *bad == 0;
+}
+
+/*
+ * The request the store executes is the request the store took.
+ *
+ * A caller owns its envelope and its payload bytes; the model has no
+ * claim on either.  So the store must copy what it accepts -- and it
+ * did not.  The digest was taken once at entry, from the caller's
+ * memory, and every member was then executed from that same memory
+ * across lock intervals the call does not hold, with the fixture's
+ * between-members hook making the gap deterministic on purpose.  A
+ * caller that changed a local transaction, a payload byte, an index or
+ * an owner in the gap had the changed request executed and journalled
+ * under the digest of the request that was there before: the ENTRY
+ * bytes did not hash to the digest stamped beside them, and the store's
+ * own log stopped rebuilding it.
+ *
+ * Each row rewrites the caller's envelope in the gap and requires four
+ * things: the answer is the one the original request deserves, the
+ * exact retry of the original answers from the receipt, every recorded
+ * ENTRY's bytes hash to its own digest, and the log replays.
+ */
+static void test_the_request_the_store_took(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct gap_rewrite g;
+	static uint8_t data[32];
+	static uint8_t payload_one[32], payload_two[32];
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	const uint8_t *log;
+	size_t len;
+	uint32_t records, bad;
+	d1_admission_id admission;
+	d1_version_id v0, v1, seen;
+	d1_txn_id t0, t1;
+
+	memset(data, 0x51, sizeof(data));
+	memset(payload_one, 0x52, sizeof(payload_one));
+	memset(payload_two, 0x53, sizeof(payload_two));
+	fill_uuid(&store_uuid, 0x51);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	/* Two chunks written and finalized, so there is work to commit. */
+	v0 = finalize_chunk(s, admission, 0, 1, data, sizeof(data),
+			    &(struct d1_guard){ .never_written = true },
+			    d1_version_none(), &t0);
+	v1 = finalize_chunk(s, admission, 1, 2, data, sizeof(data),
+			    &(struct d1_guard){ .never_written = true },
+			    d1_version_none(), &t1);
+	check(d1_version_live(v0) && d1_version_live(v1),
+	      "two chunks are written and finalized");
+
+	/* A: a local transaction swapped into member 1 in the gap. */
+	d1_store_verifier(s, verifier);
+	env_init(&env, s, admission, D1_OP_COMMIT_BATCH);
+	env.body.lifecycle.range_begin = 0;
+	env.body.lifecycle.range_end = 2;
+	env.body.lifecycle.count = 2;
+	env.body.lifecycle.entries[0].index = 0;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = 1;
+	env.body.lifecycle.entries[0].txn = t0;
+	env.body.lifecycle.entries[1].index = 1;
+	env.body.lifecycle.entries[1].owner.cohort.raw = 1;
+	env.body.lifecycle.entries[1].owner.writer = 11;
+	env.body.lifecycle.entries[1].owner.co_id = 2;
+	env.body.lifecycle.entries[1].txn = t1;
+	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+
+	memset(&g, 0, sizeof(g));
+	g.env = &env;
+	g.rewrite_txn = true;
+	g.txn = t0; /* This store's own, and the wrong one for member 1. */
+	d1_fixture_before_member(s, 1, rewrite_the_request, &g);
+	check(d1_store_apply(s, &env, &res) == D1_OK, "the commit applies");
+	check(g.fired == 1, "the gap before member 1 was occupied");
+	check(res.entries[0].status == D1_OK && res.entries[1].status == D1_OK,
+	      "and both members ran the request the store took");
+	check(d1_store_visible(s, &object, 1, &seen) &&
+		      d1_version_raw(seen) == d1_version_raw(v1),
+	      "so chunk 1 has the version its own transaction carried");
+
+	/* The exact retry of the original answers from the receipts. */
+	env.body.lifecycle.entries[1].txn = t1;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[1].status == D1_OK,
+	      "the exact retry of the original answers from the record");
+
+	/* B: a payload byte rewritten in the gap. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 2;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 2, 11, 3, payload_one,
+		    sizeof(payload_one), true,
+		    &(struct d1_guard){ .never_written = true });
+	write_entry(&env.body.write.entries[1], 3, 11, 4, payload_two,
+		    sizeof(payload_two), true,
+		    &(struct d1_guard){ .never_written = true });
+	memset(&g, 0, sizeof(g));
+	g.env = &env;
+	g.rewrite_payload = true;
+	g.payload = payload_two;
+	d1_fixture_before_member(s, 1, rewrite_the_request, &g);
+	check(d1_store_apply(s, &env, &res) == D1_OK, "the write applies");
+	check(g.fired == 1, "the gap before member 1 was occupied");
+	check(res.entries[0].status == D1_OK && res.entries[1].status == D1_OK,
+	      "and the member ran the bytes the store took, not the new ones");
+
+	/* C: an index and an owner rewritten in the gap. */
+	memset(payload_two, 0x53, sizeof(payload_two));
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 2;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 4, 11, 5, payload_one,
+		    sizeof(payload_one), true,
+		    &(struct d1_guard){ .never_written = true });
+	write_entry(&env.body.write.entries[1], 5, 11, 6, payload_two,
+		    sizeof(payload_two), true,
+		    &(struct d1_guard){ .never_written = true });
+	memset(&g, 0, sizeof(g));
+	g.env = &env;
+	g.rewrite_index = true;
+	g.rewrite_owner = true;
+	d1_fixture_before_member(s, 1, rewrite_the_request, &g);
+	check(d1_store_apply(s, &env, &res) == D1_OK,
+	      "the second write applies");
+	check(g.fired == 1, "the gap before member 1 was occupied");
+	check(res.entries[0].status == D1_OK && res.entries[1].status == D1_OK,
+	      "and the member ran the index and owner the store took");
+	check(d1_store_visible(s, &object, 5, &seen),
+	      "so chunk 5 was written, not the chunk the caller renamed");
+	check(!d1_store_visible(s, &object, 9, &seen), "and chunk 9 was not");
+
+	/* Every record the store wrote hashes to the digest beside it. */
+	log = journal_of(s, &len);
+	check(every_entry_digest_matches(log, len, &store_uuid, &records, &bad),
+	      "every ENTRY's bytes hash to its own digest");
+	check(records > 0 && bad == 0, "and there were records to check");
+
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "and the log rebuilds the store");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		d1_store_free(rebuilt);
+	}
+
+	d1_store_free(s);
 }
 
 /*
@@ -10429,6 +10667,7 @@ int main(void)
 	test_a_foreign_handle_leaves_no_history();
 	test_an_absent_option_is_absent();
 	test_the_door_inside_a_member();
+	test_the_request_the_store_took();
 	test_one_number_is_one_member();
 	test_an_exhausted_counter_refuses();
 	test_an_exhausted_epoch_refuses();
