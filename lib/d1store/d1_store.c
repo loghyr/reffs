@@ -1264,14 +1264,25 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 			return D1_NOSPC;
 		u->fresh_object = o;
 	}
-	if (e->index >= D1_MAX_CHUNKS)
-		return D1_INVALID;
 	/* Bounds are the object's maximum, not its current EOF. */
 	if (!d1_mul_u64(e->index, s->chunk_bytes, &start) ||
 	    !d1_add_u64(start, e->payload_len, &end) || end > s->max_file_bytes)
 		return D1_INVALID;
 	if (e->payload_len < 1 || e->payload_len > s->chunk_bytes)
 		return D1_INVALID;
+	/*
+	 * The chunk table is capacity, not geometry.  Section 3 bounds an
+	 * object by max_file_bytes, and this model keeps a fixed table
+	 * that may not reach that far; a write the declared geometry
+	 * allows is therefore a request the model has no room for, not a
+	 * malformed one.  Saying INVALID here recorded a receipt for a
+	 * request that was never wrong, and redefined the geometry the
+	 * store was opened with.  NOSPC is the answer, and the caller
+	 * above turns it into an UNRECORDED member: no receipt, no
+	 * durable ID, no owner association, and nothing in the log.
+	 */
+	if (e->index >= D1_MAX_CHUNKS)
+		return D1_NOSPC;
 	/*
 	 * Section 2 puts "writer-bearing input must match its granted
 	 * writer ID" with the export/object/principal bindings, so a
@@ -2611,13 +2622,15 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 		status = D1_INVALID;
 		goto out;
 	}
-	/* The byte range names the chunks it touches; it is not one. */
+	/*
+	 * The byte range names the chunks it touches; it is not one.  A
+	 * range that reaches past the table is not malformed for that
+	 * reason: nothing above the table can hold a version, so those
+	 * indices are simply above the captured EOF, which is an answer
+	 * and not an error.  The loop below never reaches them.
+	 */
 	first = byte_begin / s->chunk_bytes;
 	last = (byte_end - 1u) / s->chunk_bytes;
-	if (last >= D1_MAX_CHUNKS) {
-		status = D1_INVALID;
-		goto out;
-	}
 	/*
 	 * The whole selection is settled before a view slot is taken, so a
 	 * refused vector leaves no view and no pins to clean up.
@@ -2668,7 +2681,7 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 		    d1_add_u64(start, ver->len, &end) && end > v->eof)
 			v->eof = end;
 
-		if (i < (uint32_t)first || i > (uint32_t)last)
+		if (i < first || i > last)
 			continue;
 		/*
 		 * A view that would hand back bytes it cannot vouch for is

@@ -2634,6 +2634,115 @@ static void test_an_owner_names_a_cohort(void)
 	d1_store_free(s);
 }
 
+/*
+ * The chunk table is capacity, not geometry.
+ *
+ * A store opened for a million bytes of 4096-byte chunks has room in
+ * its declared geometry for chunk 64, and this model keeps a table of
+ * sixty-four.  It used to answer that write D1_INVALID with a recorded
+ * receipt, which says the request was malformed -- it was not, it was
+ * the geometry the store was opened with -- and quietly redefined the
+ * bound the caller gave.  Running out of table is running out of room,
+ * so it is NOSPC and UNRECORDED: nothing recorded, nothing logged,
+ * nothing spent, and the caller may come back when there is room.
+ *
+ * A read is a different question again.  A range that reaches past the
+ * table is not malformed for that reason; nothing above the table can
+ * hold a version, so those bytes are simply past EOF.
+ */
+static void test_the_chunk_table_is_capacity(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *target;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
+	static uint8_t data[16];
+	static uint8_t got[64];
+	const uint8_t *log;
+	size_t before = 0, after = 1, len;
+	uint32_t got_len = 1;
+	d1_id_t admission, seen;
+
+	memset(data, 0x25, sizeof(data));
+	fill_uuid(&store_uuid, 0x25);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+
+	/* The last index the table holds is an ordinary write. */
+	check(commit_chunk(s, admission, D1_MAX_CHUNKS - 1u, 1, data,
+			   sizeof(data),
+			   &(struct d1_guard){ .never_written = true }, 0,
+			   NULL) != 0,
+	      "the last chunk the table holds is written and committed");
+	check(d1_store_visible(s, &object, D1_MAX_CHUNKS - 1u, &seen),
+	      "and is visible");
+	(void)journal_of(s, &before);
+
+	/* The first index past it is within the declared geometry. */
+	check((uint64_t)D1_MAX_CHUNKS * CHUNK_BYTES + sizeof(data) <=
+		      MAX_FILE_BYTES,
+	      "the index past the table is inside the declared geometry");
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], D1_MAX_CHUNKS, 11, 9, data,
+		    sizeof(data), true,
+		    &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK,
+	      "the write past the table applies");
+	check(res.entries[0].status == D1_NOSPC,
+	      "and answers out of room, not malformed");
+	check(res.entries[0].disposition == D1_UNRECORDED,
+	      "with nothing recorded for it");
+	check(res.entries[0].txn == 0 && res.entries[0].version == 0,
+	      "and no durable ID spent");
+	(void)journal_of(s, &after);
+	check(after == before, "and nothing in the log");
+
+	/* An exact retry is a fresh question, because nothing was kept. */
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_NOSPC &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "the exact retry is answered afresh, not from a receipt");
+
+	/* A read window that crosses the boundary is an ordinary read. */
+	ordinary_sel(&sel);
+	check(d1_view_open(s, &object, admission, &sel,
+			   (uint64_t)(D1_MAX_CHUNKS - 1u) * CHUNK_BYTES,
+			   (uint64_t)(D1_MAX_CHUNKS + 1u) * CHUNK_BYTES,
+			   &view) == D1_OK,
+	      "a window crossing the end of the table opens");
+	if (view) {
+		check(d1_view_eof(view) ==
+			      (uint64_t)(D1_MAX_CHUNKS - 1u) * CHUNK_BYTES +
+				      sizeof(data),
+		      "with the EOF the table's last chunk gives it");
+		check(d1_view_read(view, (uint64_t)D1_MAX_CHUNKS * CHUNK_BYTES,
+				   got, sizeof(got), &got_len) == D1_OK &&
+			      got_len == 0,
+		      "and past the table it reads no bytes, as past EOF");
+		d1_view_close(s, view);
+	}
+
+	/* What was written still rebuilds, and the refusal left no trace. */
+	log = journal_of(s, &len);
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target && log) {
+		check(d1_store_replay(target, log, len) == D1_OK,
+		      "the log it did write replays");
+		check(states_agree(s, target), "into the same store");
+		d1_store_free(target);
+	}
+	d1_store_free(s);
+}
+
 /* H: the log rebuilds the store that wrote it. */
 static void test_replay_reproduces_the_store(void)
 {
@@ -7370,6 +7479,7 @@ int main(void)
 	test_a_closed_store_answers_nothing();
 	test_the_door_arm_belongs_to_its_store();
 	test_an_owner_names_a_cohort();
+	test_the_chunk_table_is_capacity();
 	test_a_journal_snapshot_is_a_value();
 	test_a_journal_snapshot_can_find_no_memory();
 	test_snapshots_run_beside_appends_and_a_close();
