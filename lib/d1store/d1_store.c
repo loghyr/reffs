@@ -196,7 +196,14 @@ struct d1_store {
 	/*
 	 * This live object's runtime token: what a handle it issued
 	 * carries, and what a resolver compares before it reads a table.
-	 * A reopen keeps it, because a reopen is the same object.
+	 *
+	 * A reopen does not change it, because a reopen is this object
+	 * being handed a log.  That says less than it sounds: a
+	 * reconstruction target must be pristine, so an object that can
+	 * be reopened has issued no handle for the token to matter to.
+	 * What the token separates is two objects, which is the case the
+	 * model actually creates -- a live store and a pristine target of
+	 * the same name, at the same time.
 	 */
 	uint64_t instance;
 	struct d1_uuid uuid;
@@ -1617,6 +1624,14 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 	for (i = 0; i < D1_MAX_VERSIONS && !ver; i++)
 		if (!s->versions[i].used)
 			ver = &s->versions[i];
+	/*
+	 * Defensive, and presently unreachable: every recorded member
+	 * takes one receipt and at most one row of each table, the tables
+	 * are the same size, and the receipt table is reserved first -- so
+	 * it refuses at the count these would.  Kept because "the table
+	 * is full" is a real answer of the model and the sizes are not a
+	 * contract.
+	 */
 	if (!txn || !ver)
 		return D1_NOSPC;
 
@@ -1648,6 +1663,7 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 	txn->predecessor = ver->predecessor;
 
 	assoc = d1_owner_add(s, &env->object.export_uuid, &e->owner);
+	/* Defensive and presently unreachable; see the row scan above. */
 	if (!assoc)
 		return D1_NOSPC;
 	u->fresh_assoc = assoc;

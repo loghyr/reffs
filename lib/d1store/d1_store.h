@@ -147,6 +147,17 @@ void d1_store_free(struct d1_store *s);
  * change which table a value is looked up in.  What a value names is
  * still whatever row @s has under it, which for a number @s never
  * issued is no row at all.
+ *
+ * Which is the whole of what the runtime kind and token are.  They are
+ * safety metadata that keeps a value in the domain and the store its
+ * request field names; they are not a capability and not a secret, and
+ * naming (target, domain, raw) here is the same thing as holding a
+ * handle with that value.  What they do refuse is the two mistakes a
+ * caller can make without meaning to: an admission copied unchanged
+ * into a version still says admission, and a handle one live store
+ * issued still names nothing in another.  Authority over an object is
+ * the admission's to grant, here as everywhere else, and that is the
+ * boundary this model enforces.
  */
 d1_admission_id d1_fixture_admission_handle(struct d1_store *s, uint64_t raw);
 d1_txn_id d1_fixture_txn_handle(struct d1_store *s, uint64_t raw);

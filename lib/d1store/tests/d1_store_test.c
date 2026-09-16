@@ -3889,7 +3889,7 @@ static void test_a_handle_keeps_its_domain_through_a_copy(void)
 	struct d1_store *s;
 	static uint8_t data[16];
 	d1_admission_id admission;
-	d1_version_id version, copied, literal;
+	d1_version_id version, copied, literal, named;
 
 	memset(data, 0x37, sizeof(data));
 	fill_uuid(&store_uuid, 0x37);
@@ -3928,6 +3928,22 @@ static void test_a_handle_keeps_its_domain_through_a_copy(void)
 	/* The store's own handle is unharmed by any of it. */
 	check(d1_custody_live(d1_fixture_custody(s, version)),
 	      "while the store's own handle still names its row");
+
+	/*
+	 * And the positive side of the same contract, said plainly: the
+	 * kind and the token are safety metadata, not a capability and
+	 * not a secret.  Naming this store, the version domain and a raw
+	 * value is the same thing as holding the handle with that value,
+	 * because that is exactly what a client does on the wire.  What
+	 * the metadata refuses is the mistake above -- an admission
+	 * copied unchanged into a version -- and a handle from another
+	 * live store.  Authority stays the admission's to grant.
+	 */
+	named = d1_fixture_version_handle(s, d1_version_raw(version));
+	check(d1_version_eq(named, version),
+	      "naming (this store, version, raw) is the handle with that raw");
+	check(d1_custody_live(d1_fixture_custody(s, named)),
+	      "and it names the same row");
 
 	d1_store_free(s);
 }
