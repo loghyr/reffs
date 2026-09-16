@@ -1415,6 +1415,31 @@ static void d1_undo_apply(struct d1_store *s, struct d1_undo *u)
 }
 
 /*
+ * The counters as the exhaustion checks see them.
+ *
+ * An arm makes the check see the exhausted value, and reaches nothing
+ * else: these three are read by the checks and by nothing that issues
+ * an ID or publishes an epoch.  So an armed store answers exactly as an
+ * exhausted one does, its counters are untouched, and the comparison
+ * the production path makes is the comparison the tests drive -- rather
+ * than a second condition beside it that the tests reach instead.
+ */
+static uint64_t d1_next_txn_seen(const struct d1_store *s)
+{
+	return s->exhaust_ids ? UINT64_MAX : s->next_txn;
+}
+
+static uint64_t d1_next_version_seen(const struct d1_store *s)
+{
+	return s->exhaust_ids ? UINT64_MAX : s->next_version;
+}
+
+static uint64_t d1_index_epoch_seen(const struct d1_store *s)
+{
+	return s->exhaust_epoch ? UINT64_MAX : s->index_epoch;
+}
+
+/*
  * The guard of the chunk an owner is already bound to.
  *
  * An owner conflict is not about the chunk the refused request named:
@@ -1605,8 +1630,8 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 	 * refused before a row is taken, a counter moves, a guard advances
 	 * or anything is published.
 	 */
-	if (s->exhaust_ids || s->next_txn == UINT64_MAX ||
-	    s->next_version == UINT64_MAX)
+	if (d1_next_txn_seen(s) == UINT64_MAX ||
+	    d1_next_version_seen(s) == UINT64_MAX)
 		return D1_NOSPC;
 	/*
 	 * The epoch a publication would advance is the same kind of
@@ -1615,7 +1640,7 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 	 * A wrap would make an old epoch indistinguishable from a new one
 	 * and a recorded high read epoch look like the future.
 	 */
-	if (activate && (s->exhaust_epoch || s->index_epoch == UINT64_MAX))
+	if (activate && d1_index_epoch_seen(s) == UINT64_MAX)
 		return D1_NOSPC;
 
 	for (i = 0; i < D1_MAX_TXNS && !txn; i++)
@@ -1781,7 +1806,7 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 	if (!ver)
 		return D1_INVALID;
 	/* The epoch this publication advances; see d1_do_write_entry. */
-	if (s->exhaust_epoch || s->index_epoch == UINT64_MAX)
+	if (d1_index_epoch_seen(s) == UINT64_MAX)
 		return D1_NOSPC;
 	/* Payload and extent metadata are replaced together. */
 	d1_undo_txn(u, txn);
@@ -1941,7 +1966,7 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 		return D1_NO_PREDECESSOR;
 	}
 	/* The epoch this publication advances; see d1_do_write_entry. */
-	if (s->exhaust_epoch || s->index_epoch == UINT64_MAX)
+	if (d1_index_epoch_seen(s) == UINT64_MAX)
 		return D1_NOSPC;
 	/* Payload and extent are restored in the one transition. */
 	d1_undo_chunk(u, chunk);
