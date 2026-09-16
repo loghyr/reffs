@@ -2939,7 +2939,7 @@ static void test_the_empty_object_can_be_read(void)
 {
 	struct d1_uuid store_uuid;
 	struct d1_store *s;
-	struct d1_objkey keys[D1_MAX_OBJECTS + 1u];
+	struct d1_objkey keys[D1_MAX_OBJECTS + 2u];
 	struct d1_selection_spec sel;
 	struct d1_view *view = NULL;
 	struct d1_envelope env;
@@ -2948,7 +2948,7 @@ static void test_the_empty_object_can_be_read(void)
 	static uint8_t got[32];
 	unsigned int i;
 	uint32_t got_len = 1;
-	d1_id_t admissions[D1_MAX_OBJECTS + 1u];
+	d1_id_t admissions[D1_MAX_OBJECTS + 2u];
 	d1_id_t seen;
 
 	memset(data, 0x26, sizeof(data));
@@ -2956,7 +2956,7 @@ static void test_the_empty_object_can_be_read(void)
 	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (!s)
 		return;
-	for (i = 0; i < D1_MAX_OBJECTS + 1u; i++) {
+	for (i = 0; i < D1_MAX_OBJECTS + 2u; i++) {
 		keys[i].export_uuid = object.export_uuid;
 		fill_uuid(&keys[i].object_uuid, (uint8_t)(0xc0 + i));
 		admissions[i] =
@@ -2992,15 +2992,19 @@ static void test_the_empty_object_can_be_read(void)
 	      "an owner view over transactions that do not exist does not");
 
 	/*
-	 * And every object slot is still free: the reads above created
-	 * nothing, so all D1_MAX_OBJECTS of them can still be taken by a
-	 * write, and only the one past them runs out.
+	 * And the read took no slot.  The key read here is never written,
+	 * and every one of the store's slots is then taken by a different
+	 * key, the last of them included: a read that had quietly created
+	 * an object would have spent the slot that write needs, and the
+	 * write would answer NOSPC.  Reading the same keys that are
+	 * written afterwards proves nothing -- the slots a slot-taking
+	 * read filled would be the very ones those writes go on to find.
 	 */
 	ordinary_sel(&sel);
-	for (i = 0; i < D1_MAX_OBJECTS + 1u; i++) {
-		if (d1_view_open(s, &keys[i], admissions[i], &sel, 0,
-				 CHUNK_BYTES, &view) != D1_OK)
-			continue;
+	check(d1_view_open(s, &keys[D1_MAX_OBJECTS], admissions[D1_MAX_OBJECTS],
+			   &sel, 0, CHUNK_BYTES, &view) == D1_OK,
+	      "a key that is never written is read once");
+	if (view) {
 		d1_view_close(view);
 		view = NULL;
 	}
@@ -3014,10 +3018,10 @@ static void test_the_empty_object_can_be_read(void)
 			    &(struct d1_guard){ .never_written = true });
 		check(d1_store_apply(s, &env, &res) == D1_OK &&
 			      res.entries[0].status == D1_OK,
-		      "every object slot is still free for a write");
+		      "and every slot is still free for a write of its own");
 	}
-	env_init(&env, s, admissions[D1_MAX_OBJECTS], D1_OP_WRITE_BATCH);
-	env.object = keys[D1_MAX_OBJECTS];
+	env_init(&env, s, admissions[D1_MAX_OBJECTS + 1u], D1_OP_WRITE_BATCH);
+	env.object = keys[D1_MAX_OBJECTS + 1u];
 	env.body.write.count = 1;
 	env.body.write.stability = D1_FILE_SYNC;
 	write_entry(&env.body.write.entries[0], 0, 11, 9, data, sizeof(data),
