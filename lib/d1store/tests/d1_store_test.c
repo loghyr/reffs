@@ -4663,6 +4663,176 @@ static void test_the_order_of_two_refusals_is_fixed(void)
 }
 
 /*
+ * An absent option is absent, whatever is lying in its slot.
+ *
+ * Presence is a tag, never a test of the value.  The encoder writes
+ * only the tag when an option is absent, the digest binds only what the
+ * encoder wrote, and the decoder leaves the slot zero -- so two
+ * requests whose absent slots differ are one canonical request, byte
+ * for byte and digest for digest.
+ *
+ * The door asked about those slots anyway, so the store answered one
+ * canonical request two ways depending on memory the request does not
+ * carry: a foreign handle left in an unused `predecessor` refused a
+ * commit that names only the store's own transaction.  No wire client
+ * can reach it -- a decoded envelope always has zero there -- and it
+ * failed closed, so nothing durable diverged.  It was still an answer
+ * decided on something unrecordable, which is the shape the door exists
+ * to remove.
+ *
+ * Each row here runs one operation three times under three different
+ * keys: the absent slot zeroed, holding one of this store's own
+ * handles, and holding another store's.  All three must encode to the
+ * same bytes, digest the same, and get the same answer.
+ */
+static void test_an_absent_option_is_absent(void)
+{
+	struct d1_uuid shared_uuid;
+	struct d1_store *a, *b, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct rollback_expect x;
+	static uint8_t data[16];
+	static uint8_t bytes_zero[D1_ENVELOPE_MAX];
+	static uint8_t bytes_foreign[D1_ENVELOPE_MAX];
+	uint8_t digest_zero[D1_DIGEST_BYTES], digest_foreign[D1_DIGEST_BYTES];
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	const uint8_t *log;
+	size_t len_zero, len_foreign, len;
+	d1_admission_id adm_a, adm_b, ctl_b;
+	d1_version_id va, vb1, vb2;
+	d1_txn_id ta, tb1, tb2;
+	struct d1_entry_result entry;
+	uint32_t foreign_answer, zero_answer;
+
+	memset(data, 0x44, sizeof(data));
+	fill_uuid(&shared_uuid, 0x44);
+	a = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	b = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!a || !b) {
+		d1_store_free(a);
+		d1_store_free(b);
+		return;
+	}
+	d1_store_journal_enable(b);
+	adm_a = d1_fixture_admit(a, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+					 D1_RIGHT_SINGLE_WRITER);
+	adm_b = d1_fixture_admit(b, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+					 D1_RIGHT_SINGLE_WRITER);
+	va = commit_chunk(a, adm_a, 0, 1, data, sizeof(data),
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), &ta);
+	vb1 = commit_chunk(b, adm_b, 0, 1, data, sizeof(data),
+			   &(struct d1_guard){ .never_written = true },
+			   d1_version_none(), &tb1);
+	vb2 = finalize_chunk(b, adm_b, 1, 2, data, sizeof(data),
+			     &(struct d1_guard){ .never_written = true },
+			     d1_version_none(), &tb2);
+	check(d1_version_live(va) && d1_version_live(vb1) &&
+		      d1_version_live(vb2),
+	      "two stores of one name, each with a history");
+
+	/*
+	 * A commit naming only B's own transaction, with no predecessor.
+	 * The slot holds A's version in one copy and zero in the other.
+	 */
+	d1_store_verifier(b, verifier);
+	env_init(&env, b, adm_b, D1_OP_COMMIT_BATCH);
+	env.body.lifecycle.range_begin = 1;
+	env.body.lifecycle.range_end = 2;
+	env.body.lifecycle.count = 1;
+	env.body.lifecycle.entries[0].index = 1;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = 2;
+	env.body.lifecycle.entries[0].txn = tb2;
+	env.body.lifecycle.entries[0].predecessor_present = false;
+	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+
+	len_zero = d1_envelope_encode(&env, bytes_zero, sizeof(bytes_zero));
+	check(d1_envelope_digest(&env, bytes_zero, sizeof(bytes_zero),
+				 digest_zero),
+	      "the request with a zeroed absent slot digests");
+	env.body.lifecycle.entries[0].predecessor = va;
+	len_foreign =
+		d1_envelope_encode(&env, bytes_foreign, sizeof(bytes_foreign));
+	check(d1_envelope_digest(&env, bytes_foreign, sizeof(bytes_foreign),
+				 digest_foreign),
+	      "and so does the one with a foreign handle in it");
+	check(len_zero != 0 && len_zero == len_foreign &&
+		      memcmp(bytes_zero, bytes_foreign, len_zero) == 0,
+	      "the two encode to the same bytes");
+	check(memcmp(digest_zero, digest_foreign, D1_DIGEST_BYTES) == 0,
+	      "and to the same digest");
+
+	/* The foreign value in the absent slot decides nothing. */
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].disposition == D1_COMPLETED,
+	      "so the commit succeeds with a foreign handle in the slot");
+	/* And the same request again, under its own key, with zero. */
+	env.body.lifecycle.entries[0].predecessor = d1_version_none();
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and answers its exact retry from the record");
+
+	/* A local handle in the slot is no different. */
+	env.key.sequence = next_sequence++;
+	env.body.lifecycle.entries[0].predecessor = vb1;
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_BAD_PHASE,
+	      "a second commit of the same member is a phase error");
+	env.body.lifecycle.entries[0].predecessor = d1_version_none();
+	env.key.sequence = next_sequence++;
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_BAD_PHASE,
+	      "and so is the same request with the slot zeroed");
+
+	/* Rollback: absent visible, predecessor and custody slots. */
+	memset(&x, 0, sizeof(x));
+	x.visible = va;
+	x.predecessor = va;
+	x.custody = d1_fixture_custody(a, va);
+	foreign_answer = rollback_one(b, adm_b, 0, 1, tb1, &x, &entry);
+	memset(&x, 0, sizeof(x));
+	zero_answer = rollback_one(b, adm_b, 0, 1, tb1, &x, &entry);
+	check(foreign_answer == D1_STALE_AUTH,
+	      "a rollback with three foreign handles in absent slots is "
+	      "answered on what it names");
+	check(zero_answer == foreign_answer,
+	      "exactly as the same request with the slots zeroed is");
+
+	/* Control: lease_reap has no new admission, absent by definition. */
+	ctl_b = d1_fixture_admit(b, &object, 11, D1_RIGHT_CONTROL);
+	env_init(&env, b, ctl_b, D1_OP_LEASE_REAP);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = tb1;
+	env.body.control.old_admission = adm_b;
+	env.body.control.new_admission_present = false;
+	env.body.control.new_admission = adm_a;
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].disposition == D1_COMPLETED,
+	      "a reap with a foreign admission in its absent slot is "
+	      "answered on what it names");
+
+	/* And what B recorded still rebuilds B. */
+	log = journal_of(b, &len);
+	rebuilt = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "and B's log rebuilds B");
+		check(object_states_agree(b, rebuilt, &object),
+		      "into the same store");
+		d1_store_free(rebuilt);
+	}
+
+	d1_store_free(a);
+	d1_store_free(b);
+}
+
+/*
  * A handle names one kind of thing, in one store.
  *
  * Every store starts each of its counters at one, so two stores' first
@@ -9975,6 +10145,7 @@ int main(void)
 	test_two_live_stores_of_one_name_are_two_stores();
 	test_a_decoded_handle_names_no_store();
 	test_a_foreign_handle_leaves_no_history();
+	test_an_absent_option_is_absent();
 	test_one_number_is_one_member();
 	test_an_exhausted_counter_refuses();
 	test_an_exhausted_epoch_refuses();

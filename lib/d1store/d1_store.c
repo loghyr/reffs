@@ -2251,6 +2251,15 @@ static bool d1_owns_custody(const struct d1_store *s, d1_custody_id id)
  * Replay reaches the reducer through the same door, having adopted
  * every decoded value for the store it is rebuilding, so what it
  * executes is a history that passed the door when it was live.
+ *
+ * An optional handle is asked about only when its presence tag says it
+ * is there.  Presence is the tag and never a test of the value, and an
+ * absent option's value is not part of the request: the encoder writes
+ * only the tag, the digest binds only what the encoder wrote, and the
+ * decoder leaves the slot zero.  Asking about it anyway made two
+ * requests with the same canonical bytes and the same digest get
+ * different answers, decided by memory the request does not carry --
+ * which is the same shape this door exists to remove, one field over.
  */
 static bool d1_envelope_owned(const struct d1_store *s,
 			      const struct d1_envelope *env)
@@ -2272,7 +2281,9 @@ static bool d1_envelope_owned(const struct d1_store *s,
 			const struct d1_lifecycle_entry *e =
 				&env->body.lifecycle.entries[i];
 
-			if (!d1_owns_txn(s, e->txn) ||
+			if (!d1_owns_txn(s, e->txn))
+				return false;
+			if (e->predecessor_present &&
 			    !d1_owns_version(s, e->predecessor))
 				return false;
 		}
@@ -2285,9 +2296,15 @@ static bool d1_envelope_owned(const struct d1_store *s,
 			const struct d1_rollback_entry *e =
 				&env->body.rollback.entries[i];
 
-			if (!d1_owns_txn(s, e->txn) ||
-			    !d1_owns_version(s, e->visible) ||
-			    !d1_owns_version(s, e->predecessor) ||
+			if (!d1_owns_txn(s, e->txn))
+				return false;
+			if (e->visible_present &&
+			    !d1_owns_version(s, e->visible))
+				return false;
+			if (e->predecessor_present &&
+			    !d1_owns_version(s, e->predecessor))
+				return false;
+			if (e->custody_present &&
 			    !d1_owns_custody(s, e->custody))
 				return false;
 		}
@@ -2300,7 +2317,9 @@ static bool d1_envelope_owned(const struct d1_store *s,
 		for (i = 0; i < n; i++)
 			if (!d1_owns_txn(s, env->body.control.txns[i]))
 				return false;
-		return d1_owns_admission(s, env->body.control.old_admission) &&
+		if (!d1_owns_admission(s, env->body.control.old_admission))
+			return false;
+		return !env->body.control.new_admission_present ||
 		       d1_owns_admission(s, env->body.control.new_admission);
 	default:
 		/*
