@@ -791,6 +791,7 @@ uint32_t d1_store_journal_snapshot(struct d1_store *s, uint8_t **out,
 				   size_t *len)
 {
 	uint8_t *copy = NULL;
+	bool starved;
 	size_t n;
 
 	*out = NULL;
@@ -800,13 +801,23 @@ uint32_t d1_store_journal_snapshot(struct d1_store *s, uint8_t **out,
 		pthread_mutex_unlock(&s->lock);
 		return D1_INVALID;
 	}
+	/*
+	 * The arm says the next snapshot, and means the next one: it is
+	 * taken and spent here, before the length is looked at, so an
+	 * empty journal consumes it exactly as a full one does.  Leaving
+	 * it pending across a zero-byte snapshot would have made the
+	 * header's "next" mean "next one that had something in it", which
+	 * is a different promise and not the one it makes.
+	 */
+	starved = s->fail_next_snapshot;
+	s->fail_next_snapshot = false;
+	if (starved) {
+		pthread_mutex_unlock(&s->lock);
+		return D1_NOSPC;
+	}
 	n = s->journal.durable;
 	if (n) {
-		bool starved = s->fail_next_snapshot;
-
-		s->fail_next_snapshot = false;
-		if (!starved)
-			copy = malloc(n);
+		copy = malloc(n);
 		if (!copy) {
 			/* Nothing of the store moved, so ask again. */
 			pthread_mutex_unlock(&s->lock);

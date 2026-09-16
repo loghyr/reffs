@@ -2564,6 +2564,28 @@ static void test_a_journal_snapshot_can_find_no_memory(void)
 		      again != 0,
 	      "and nothing of the store moved, so the next one is ordinary");
 	free(snap);
+	snap = NULL;
+	d1_store_free(s);
+
+	/*
+	 * The arm says the next snapshot, so an empty one spends it too.
+	 * A store that has logged nothing is where that is visible: the
+	 * armed call is refused, and the one after it answers empty.
+	 */
+	fill_uuid(&store_uuid, 0x2c);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_fixture_fail_next_snapshot(s);
+	len = 1;
+	check(d1_store_journal_snapshot(s, &snap, &len) == D1_NOSPC &&
+		      snap == NULL && len == 0,
+	      "an empty snapshot is refused by the arm as any other is");
+	len = 1;
+	check(d1_store_journal_snapshot(s, &snap, &len) == D1_OK &&
+		      snap == NULL && len == 0,
+	      "and the arm is spent, so the next one is the empty answer");
+	free(snap);
 	d1_store_free(s);
 }
 
@@ -2581,6 +2603,13 @@ struct snapper {
 	unsigned int taken;
 	unsigned int refused;
 	unsigned int torn;
+	/*
+	 * Which primitive failed, if one did.  The reader cannot call
+	 * check() from another thread, so it records the step and the main
+	 * thread reports it after the join -- and a failed lock ends the
+	 * loop with a reason rather than silently.
+	 */
+	unsigned int err;
 	bool stop;
 	pthread_mutex_t m;
 };
@@ -5528,6 +5557,8 @@ static void test_recovery_clears_fault_arms(void)
 		const uint8_t *log;
 		size_t len, before, after;
 		static uint8_t data[8];
+		uint8_t *snap = NULL;
+		size_t snap_len = 0;
 		bool hook_fired = false;
 		d1_id_t admission, fresh, seen;
 
@@ -5556,6 +5587,7 @@ static void test_recovery_clears_fault_arms(void)
 		d1_fixture_fail_next_index(target);
 		d1_fixture_fail_next_append(target);
 		d1_fixture_fail_next_flush(target);
+		d1_fixture_fail_next_snapshot(target);
 		d1_fixture_before_member(target, 0, note_hook_fired,
 					 &hook_fired);
 
@@ -5567,6 +5599,23 @@ static void test_recovery_clears_fault_arms(void)
 			      "the store rebuilds");
 		check(!d1_store_overlay_active(target),
 		      "and no fault fired during it");
+
+		/*
+		 * The snapshot arm did not survive either, and this is the
+		 * first snapshot after the rebuild -- any earlier one would
+		 * spend the arm before the question is asked.  A reopen
+		 * leaves a journal with a START in it; a read-only rebuild
+		 * leaves none, and an empty snapshot would answer the same
+		 * whether the arm were there or not.
+		 */
+		if (use_reopen[pass]) {
+			check(d1_store_journal_snapshot(target, &snap,
+							&snap_len) == D1_OK &&
+				      snap_len != 0,
+			      "and the first snapshot after it is ordinary");
+			free(snap);
+			snap = NULL;
+		}
 
 		/* The first operation afterwards is ordinary. */
 		if (use_reopen[pass]) {
