@@ -2523,6 +2523,13 @@ static void d1_apply_one(struct d1_store *s, const struct d1_envelope *env,
 	 * is not this store's to answer -- d1_binding_ok reads the
 	 * admission table, and asking it first would be one table read
 	 * before the door.
+	 *
+	 * On the public path this is a re-check of a decision already
+	 * made, because the request reaching here is the copy the call
+	 * took after the door passed.  It is kept as defence in depth and
+	 * because replay enters here directly, having adopted a decoded
+	 * record for this store: the same question, asked of a request
+	 * that arrived by another road.
 	 */
 	if (!d1_envelope_owned(s, env) || !d1_binding_ok(s, env)) {
 		res->status = D1_STALE_AUTH;

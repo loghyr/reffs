@@ -4940,20 +4940,18 @@ static void swap_member_txn(void *arg)
 /*
  * The door inside a member, which is the only one a batch can reach.
  *
- * The preflight asks about every handle before the batch starts, in a
- * lock interval the call does not hold afterwards.  Between two members
- * the lock is released on purpose -- that is how the next member is
- * revalidated against what the last one left -- and in that gap the
- * request the store is working from can change under it.  Replay does
- * not come through the preflight at all.
+ * The door is asked once, of the caller's values, in the lock interval
+ * that then takes the request and looks its key up.  After that the
+ * request is the store's own copy, so the copy of the door inside each
+ * member's interval is a re-check of a decision that can no longer
+ * differ -- kept as defence in depth, and because replay enters the
+ * member path directly by another road.
  *
- * So the same question is asked again in each member's lock interval,
- * and this is the test that can tell: member 0 records, the gap swaps
- * member 1's transaction for another store's, and member 1 must be
- * refused with nothing written.  Remove the preflight and this still
- * passes; remove the member check and member 1 records a refusal the
- * log cannot explain, which is the eleventh cycle's defect back through
- * the gap.
+ * What this test shows is that the gap is real and that nothing reaches
+ * through it: the hook rewrites the caller's envelope between two
+ * members, the rewrite is visible in the caller's own memory
+ * afterwards, and the store's answer, receipts and log are the ones the
+ * request it took deserves.
  */
 static void test_the_door_inside_a_member(void)
 {
@@ -5350,6 +5348,184 @@ static void test_the_request_the_store_took(void)
 	}
 
 	d1_store_free(s);
+}
+
+/* An ordinal-zero arm that replaces the envelope's admission locally. */
+struct zero_hook {
+	struct d1_envelope *env;
+	d1_admission_id local;
+	uint32_t fired;
+};
+
+static void replace_admission(void *arg)
+{
+	struct zero_hook *h = arg;
+
+	h->fired++;
+	h->env->admission = h->local;
+}
+
+/*
+ * A request that is not this store's is told nothing about its keys.
+ *
+ * Section 8 orders the two halves: validate the caller binding, then
+ * look the key up.  The header promises it -- "a handle that is not
+ * bound to the object it names is answered D1_STALE_AUTH and is told
+ * nothing about whether the key is in use" -- and provenance is the
+ * same kind of question asked of the same request.
+ *
+ * The door and the key lookup are one decision in one lock interval
+ * now.  When they were two, and only the admission gated the lookup, a
+ * foreign handle nested inside an otherwise well-formed request reached
+ * the key-conflict answer and was told REPLAY_CONFLICT instead: a
+ * different status, a different disposition, and exactly the thing the
+ * contract says such a request must not learn.  A previous cycle
+ * declared that gap unobservable on the strength of one leg whose
+ * digest happened to match; these are the legs that see it.
+ */
+static void test_a_foreign_request_learns_nothing_about_keys(void)
+{
+	struct d1_uuid shared_uuid;
+	struct d1_store *a, *b;
+	struct d1_envelope env, bound;
+	struct d1_result res;
+	struct zero_hook hook;
+	static uint8_t data[16];
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	size_t before, after;
+	d1_admission_id adm_a, adm_b, ctl_b;
+	d1_txn_id ta1, ta2, ta3, tb0, tb1;
+	d1_version_id seen;
+
+	memset(data, 0x57, sizeof(data));
+	fill_uuid(&shared_uuid, 0x57);
+	a = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	b = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!a || !b) {
+		d1_store_free(a);
+		d1_store_free(b);
+		return;
+	}
+	d1_store_journal_enable(b);
+	adm_a = d1_fixture_admit(a, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	adm_b = d1_fixture_admit(b, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	/* A holds three transactions; B holds two, finalized. */
+	(void)finalize_chunk(a, adm_a, 0, 1, data, sizeof(data),
+			     &(struct d1_guard){ .never_written = true },
+			     d1_version_none(), &ta1);
+	(void)finalize_chunk(a, adm_a, 1, 2, data, sizeof(data),
+			     &(struct d1_guard){ .never_written = true },
+			     d1_version_none(), &ta2);
+	(void)finalize_chunk(a, adm_a, 2, 3, data, sizeof(data),
+			     &(struct d1_guard){ .never_written = true },
+			     d1_version_none(), &ta3);
+	(void)finalize_chunk(b, adm_b, 0, 1, data, sizeof(data),
+			     &(struct d1_guard){ .never_written = true },
+			     d1_version_none(), &tb0);
+	(void)finalize_chunk(b, adm_b, 1, 2, data, sizeof(data),
+			     &(struct d1_guard){ .never_written = true },
+			     d1_version_none(), &tb1);
+	check(d1_txn_live(ta3) && d1_txn_live(tb1),
+	      "A has three transactions and B has two");
+
+	/* A two-member commit at B, fully recorded, binding a key. */
+	d1_store_verifier(b, verifier);
+	env_init(&bound, b, adm_b, D1_OP_COMMIT_BATCH);
+	bound.body.lifecycle.range_begin = 0;
+	bound.body.lifecycle.range_end = 2;
+	bound.body.lifecycle.count = 2;
+	bound.body.lifecycle.entries[0].index = 0;
+	bound.body.lifecycle.entries[0].owner.cohort.raw = 1;
+	bound.body.lifecycle.entries[0].owner.writer = 11;
+	bound.body.lifecycle.entries[0].owner.co_id = 1;
+	bound.body.lifecycle.entries[0].txn = tb0;
+	bound.body.lifecycle.entries[1].index = 1;
+	bound.body.lifecycle.entries[1].owner.cohort.raw = 1;
+	bound.body.lifecycle.entries[1].owner.writer = 11;
+	bound.body.lifecycle.entries[1].owner.co_id = 2;
+	bound.body.lifecycle.entries[1].txn = tb1;
+	memcpy(bound.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+	check(d1_store_apply(b, &bound, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[1].status == D1_OK,
+	      "a two-member commit is recorded under a key");
+
+	/*
+	 * The same key, a foreign member handle, and a body that hashes
+	 * differently -- so the key would conflict if the request ever
+	 * reached the lookup.  It must not: it is not this store's.
+	 */
+	env = bound;
+	env.body.lifecycle.entries[1].txn = ta3;
+	(void)journal_of(b, &before);
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "a foreign member handle under a bound key is refused, "
+	      "not told the key conflicts");
+	check(res.disposition == D1_UNRECORDED,
+	      "and the operation recorded nothing");
+	(void)journal_of(b, &after);
+	check(after == before, "nor wrote anything");
+
+	/* The same, for a control operation. */
+	ctl_b = d1_fixture_admit(b, &object, 11, D1_RIGHT_CONTROL);
+	env_init(&env, b, ctl_b, D1_OP_RECOVERY_ADMIT);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = tb0;
+	env.body.control.old_admission = adm_b;
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = adm_b;
+	env.body.control.read_epoch_present = true;
+	env.body.control.read_epoch = 0;
+	env.key = bound.key;
+	env.body.control.new_admission = d1_fixture_admit(
+		b, &object, 11, D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	(void)journal_of(b, &before);
+	env.body.control.txns[0] = ta1;
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "a control naming a foreign transaction under a bound key "
+	      "is refused the same way");
+	(void)journal_of(b, &after);
+	check(after == before, "and writes nothing either");
+
+	/*
+	 * And a foreign admission must not reach the gap before member
+	 * zero.  The hook would replace it with a local one and let the
+	 * request run; it is never called, because the request was
+	 * refused before the store opened that window.
+	 */
+	env_init(&env, b, adm_a, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 7, 11, 9, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	memset(&hook, 0, sizeof(hook));
+	hook.env = &env;
+	hook.local = adm_b;
+	(void)journal_of(b, &before);
+	d1_fixture_before_member(b, 0, replace_admission, &hook);
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "a foreign admission is refused before the batch starts");
+	check(hook.fired == 0,
+	      "and never reaches the gap where it could be replaced");
+	check(!d1_store_visible(b, &object, 7, &seen),
+	      "so nothing was written under it");
+	(void)journal_of(b, &after);
+	check(after == before, "and nothing was logged");
+
+	/* Disarm the hook the refusal never consumed. */
+	d1_fixture_before_member(b, 0, NULL, NULL);
+
+	d1_store_free(a);
+	d1_store_free(b);
 }
 
 /*
@@ -10668,6 +10844,7 @@ int main(void)
 	test_an_absent_option_is_absent();
 	test_the_door_inside_a_member();
 	test_the_request_the_store_took();
+	test_a_foreign_request_learns_nothing_about_keys();
 	test_one_number_is_one_member();
 	test_an_exhausted_counter_refuses();
 	test_an_exhausted_epoch_refuses();
