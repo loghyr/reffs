@@ -1479,7 +1479,7 @@ static void test_the_door_arm_belongs_to_its_store(void)
 {
 	struct d1_uuid uuid_a, uuid_b;
 	struct d1_store *a, *b, *target;
-	struct door_count seen;
+	struct door_count seen, other_seen;
 	struct d1_envelope env;
 	struct d1_result res;
 	static uint8_t data[16];
@@ -1523,6 +1523,44 @@ static void test_the_door_arm_belongs_to_its_store(void)
 	      "and the store it was aimed at still runs it, once");
 	check(d1_store_apply(a, &env, &res) == D1_OK && seen.fired == 1,
 	      "and only once");
+
+	/*
+	 * One slot for the process, and it says so.  A second store cannot
+	 * take it while the first holds it, and the refusal leaves the
+	 * first exactly as it was rather than quietly dropping it.
+	 */
+	memset(&seen, 0, sizeof(seen));
+	memset(&other_seen, 0, sizeof(other_seen));
+	check(d1_fixture_before_admission(a, count_the_door, &seen) == D1_OK,
+	      "A takes the slot");
+	check(d1_fixture_before_admission(b, count_the_door, &other_seen) ==
+		      D1_BUSY,
+	      "B is told the slot is taken");
+	check(d1_fixture_before_admission(a, count_the_door, &seen) == D1_OK,
+	      "while A may replace its own callback");
+
+	/* Disarming B's arm is not disarming A's. */
+	check(d1_fixture_before_admission(b, NULL, NULL) == D1_OK,
+	      "B disarms what it does not have");
+	check(d1_store_apply(a, &env, &res) == D1_OK && seen.fired == 1 &&
+		      other_seen.fired == 0,
+	      "and A's arm is still A's");
+
+	/* Nor is forgetting B's arm on the way out. */
+	memset(&seen, 0, sizeof(seen));
+	check(d1_fixture_before_admission(a, count_the_door, &seen) == D1_OK,
+	      "A takes the slot again");
+	check(d1_store_close(b) == D1_OK && d1_store_destroy(b) == D1_OK,
+	      "B closes and is destroyed");
+	check(d1_store_apply(a, &env, &res) == D1_OK && seen.fired == 1,
+	      "and A's arm survived B's teardown");
+	b = d1_store_open(&uuid_b, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!b) {
+		d1_store_free(a);
+		return;
+	}
+	admit_b = d1_fixture_admit(b, &object, 11,
+				   D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
 
 	/*
 	 * A close forgets it, and the proof needs no second store: the
@@ -1617,25 +1655,42 @@ static void test_the_door_arm_belongs_to_its_store(void)
 		d1_store_free(target);
 	}
 
-	/* Arming is refused where every other fixture arm is refused. */
+	/*
+	 * Arming is refused where every other fixture arm is refused, and
+	 * the proof has to call the store it was refused on: destroying it
+	 * forgets an arm the gate should never have taken, so a leg that
+	 * destroys first passes with the gate removed.  The door runs
+	 * before the closed fence is read, so a wrongly accepted arm fires
+	 * for a call the store is about to refuse.
+	 */
 	memset(&seen, 0, sizeof(seen));
 	check(d1_store_close(a) == D1_OK, "the armed store closes");
-	d1_fixture_before_admission(a, count_the_door, &seen);
-	check(d1_store_destroy(a) == D1_OK, "and destroys");
-	b = d1_store_open(&uuid_b, CHUNK_BYTES, MAX_FILE_BYTES);
-	if (b) {
-		admit_b = d1_fixture_admit(b, &object, 11,
-					   D1_RIGHT_WRITE |
-						   D1_RIGHT_SINGLE_WRITER);
-		env_init(&env, b, admit_b, D1_OP_WRITE_BATCH);
-		env.body.write.count = 1;
-		env.body.write.stability = D1_FILE_SYNC;
-		write_entry(&env.body.write.entries[0], 0, 11, 1, data,
-			    sizeof(data), true,
-			    &(struct d1_guard){ .never_written = true });
-		check(d1_store_apply(b, &env, &res) == D1_OK && seen.fired == 0,
-		      "an arm refused on a closed store is no arm at all");
-		d1_store_free(b);
+	check(d1_fixture_before_admission(a, count_the_door, &seen) ==
+		      D1_INVALID,
+	      "a closed store takes no arm");
+	check(d1_store_apply(a, &env, &res) == D1_INVALID && seen.fired == 0,
+	      "and the call it refuses runs nothing");
+	check(d1_store_destroy(a) == D1_OK, "and it destroys");
+
+	/* The same of a poisoned one, which a failed rebuild leaves. */
+	a = d1_store_open(&uuid_a, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (a && len > 8u) {
+		static uint8_t torn[1u << 16];
+
+		memcpy(torn, log, len);
+		torn[len - 1u] ^= 0xffu;
+		check(d1_store_replay(a, torn, len) == D1_IO,
+		      "a corrupt log poisons its target");
+		memset(&seen, 0, sizeof(seen));
+		check(d1_fixture_before_admission(a, count_the_door, &seen) ==
+			      D1_INVALID,
+		      "and a poisoned store takes no arm");
+		check(d1_store_apply(a, &env, &res) == D1_INVALID &&
+			      seen.fired == 0,
+		      "nor runs one for the call it refuses");
+		d1_store_free(a);
+	} else {
+		d1_store_free(a);
 	}
 }
 

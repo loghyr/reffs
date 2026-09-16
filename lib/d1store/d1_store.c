@@ -664,29 +664,47 @@ void d1_fixture_fail_append_in(struct d1_store *s, uint32_t n)
 }
 
 /*
- * Arm the door hook for this store.  A null @fn disarms it, and only
- * ever this store's: an arm aimed at another store is not this
- * caller's to drop.  The gates are the ones every other fixture arm
- * obeys -- not a closed or poisoned store, and not during recovery.
+ * Arm the door hook for this store.
+ *
+ * There is one slot for the process, because the interval it opens is
+ * the one the store's own lock cannot cover and the arm has to outlive
+ * the store; a registry of them would be a framework this model does
+ * not need.  One slot has to say so, though, rather than let the second
+ * caller quietly take the first caller's arm away: arming while another
+ * store holds the slot is D1_BUSY and leaves that store's arm exactly
+ * as it was.  A store may replace its own callback as often as it
+ * likes, and a null @fn disarms this store's arm and no other -- an arm
+ * aimed at another store is not this caller's to drop.
+ *
+ * The gates are the ones every other fixture arm obeys: not a closed or
+ * poisoned store, and not during recovery.
  */
-void d1_fixture_before_admission(struct d1_store *s, void (*fn)(void *),
-				 void *arg)
+uint32_t d1_fixture_before_admission(struct d1_store *s, void (*fn)(void *),
+				     void *arg)
 {
+	uint32_t status;
+
 	pthread_mutex_lock(&s->lock);
 	if (!d1_store_serving(s) || s->replaying) {
 		pthread_mutex_unlock(&s->lock);
-		return;
+		return D1_INVALID;
 	}
 	pthread_mutex_lock(&d1_admit_hook_lock);
-	if (fn) {
+	if (!fn) {
+		if (d1_admit_hook_target == s)
+			d1_admit_hook_drop();
+		status = D1_OK;
+	} else if (d1_admit_hook_target && d1_admit_hook_target != s) {
+		status = D1_BUSY;
+	} else {
 		d1_admit_hook_target = s;
 		d1_admit_hook = fn;
 		d1_admit_hook_arg = arg;
-	} else if (d1_admit_hook_target == s) {
-		d1_admit_hook_drop();
+		status = D1_OK;
 	}
 	pthread_mutex_unlock(&d1_admit_hook_lock);
 	pthread_mutex_unlock(&s->lock);
+	return status;
 }
 
 void d1_fixture_before_member(struct d1_store *s, uint32_t ordinal,

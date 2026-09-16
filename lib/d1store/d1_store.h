@@ -140,16 +140,21 @@ void d1_store_free(struct d1_store *s);
  * the store's own lock does not cover, and the one a close races.
  *
  * The arm's storage is outside the store, because the store is what may
- * be destroyed while a call is in it, but the arm names @s and only a
- * call entering @s takes it: a call on another store neither consumes
- * nor runs it.  @fn runs with no lock held, and a null @fn disarms this
- * store's arm and no other.  It is unjournalled, one-shot, refused on a
- * closed or poisoned store and during recovery, and forgotten when @s
- * is reconstructed, closed or destroyed -- so nothing it was aimed at
- * outlives the store or the run that armed it.
+ * be destroyed while a call is in it, and there is exactly one of it
+ * for the process.  The arm names @s: only a call entering @s takes it,
+ * a call on another store neither consumes nor runs it, and a null @fn
+ * disarms this store's arm and no other.  @fn runs with no lock held.
+ * It is unjournalled, one-shot, and forgotten when @s is reconstructed,
+ * closed or destroyed, so nothing it was aimed at outlives the store or
+ * the run that armed it.
+ *
+ * D1_OK armed it, replaced this store's own callback, or disarmed it.
+ * D1_BUSY is another live store holding the one slot; its arm is left
+ * exactly as it was and this store gets none.  D1_INVALID is a closed
+ * or poisoned store, or one in the middle of recovery.
  */
-void d1_fixture_before_admission(struct d1_store *s, void (*fn)(void *),
-				 void *arg);
+uint32_t d1_fixture_before_admission(struct d1_store *s, void (*fn)(void *),
+				     void *arg);
 
 /* The current verifier, as a START publishes it. */
 void d1_store_verifier(struct d1_store *s, uint8_t out[D1_VERIFIER_BYTES]);
