@@ -26,6 +26,8 @@ static unsigned int failures;
 
 /* The digest scratch is the caller's; the model keeps none. */
 static uint8_t *scratch;
+/* A second one, for the encoding of what the first one decoded. */
+static uint8_t *again;
 
 static void check(bool ok, const char *what)
 {
@@ -318,16 +320,29 @@ static bool header_same(const struct d1_envelope *a,
 	       a->key.ordinal == b->key.ordinal && a->op == b->op;
 }
 
+/*
+ * Encode, decode, and encode again -- and require the same bytes.
+ *
+ * Field equality is not the whole property the store rests on.  Replay
+ * decodes a record's Envelope bytes, encodes what it decoded, and
+ * digests that; the digest it compares against was taken by the writer
+ * over the record's own bytes.  So the two encodings must be the same
+ * bytes and not merely the same request, or a store would refuse the
+ * log it wrote itself.
+ */
 static bool round_trip(const struct d1_envelope *env, struct d1_envelope *back)
 {
-	size_t len;
+	size_t len, again_len;
 
-	if (!scratch)
+	if (!scratch || !again)
 		return false;
 	len = d1_envelope_encode(env, scratch, D1_ENVELOPE_MAX);
 	if (!len)
 		return false;
-	return d1_envelope_decode(scratch, len, back);
+	if (!d1_envelope_decode(scratch, len, back))
+		return false;
+	again_len = d1_envelope_encode(back, again, D1_ENVELOPE_MAX);
+	return again_len == len && memcmp(again, scratch, len) == 0;
 }
 
 static void test_the_round_trip_keeps_every_field(void)
@@ -728,7 +743,8 @@ static void test_lifecycle_and_control(void)
 int main(void)
 {
 	scratch = calloc(1, D1_ENVELOPE_MAX);
-	if (!scratch) {
+	again = calloc(1, D1_ENVELOPE_MAX);
+	if (!scratch || !again) {
 		fprintf(stderr, "FAIL: no scratch\n");
 		return 1;
 	}
@@ -744,6 +760,7 @@ int main(void)
 		return 1;
 	}
 	free(scratch);
+	free(again);
 	printf("d1_envelope_test: all checks passed\n");
 	return 0;
 }

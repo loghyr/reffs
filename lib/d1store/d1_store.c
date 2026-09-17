@@ -2187,25 +2187,28 @@ static bool d1_journal_event(struct d1_store *s, uint32_t type,
  * A whole-request intent could not support that comparison: it says
  * what was asked for, not what happened.
  *
+ * The Envelope bytes are handed in rather than encoded again here.
+ * They are the bytes the digest beside them was taken over, so the
+ * record carries one reading of the request and not two that happen to
+ * agree; and they are the call's own, so no two callers share a buffer
+ * to write them from.
  */
-static bool d1_journal_entry_event(struct d1_store *s,
-				   const struct d1_envelope *env,
-				   uint32_t ordinal,
+static bool d1_journal_entry_event(struct d1_store *s, const uint8_t *env_bytes,
+				   size_t env_len, uint32_t ordinal,
 				   const uint8_t digest[D1_DIGEST_BYTES],
 				   const struct d1_complete_result *complete)
 {
 	uint8_t result_bytes[256];
 	struct d1_cursor cur;
-	size_t env_len, res_len;
+	size_t res_len;
 
-	env_len = d1_envelope_encode(env, s->scratch, s->scratch_cap);
 	res_len = d1_complete_result_encode(complete, result_bytes,
 					    sizeof(result_bytes));
 	if (!env_len || !res_len)
 		return false;
 
 	d1_enc_init(&cur, s->record, s->record_cap);
-	d1_enc_bytes(&cur, s->scratch, env_len);
+	d1_enc_bytes(&cur, env_bytes, env_len);
 	d1_enc_u32(&cur, ordinal);
 	d1_enc_raw(&cur, digest, D1_DIGEST_BYTES);
 	d1_enc_bytes(&cur, result_bytes, res_len);
@@ -2495,7 +2498,7 @@ static uint32_t d1_op_rights(uint32_t op)
  * next one is revalidated against whatever this one left.
  */
 static void d1_apply_one(struct d1_store *s, const struct d1_envelope *env,
-			 uint32_t ordinal,
+			 const uint8_t *bytes, size_t len, uint32_t ordinal,
 			 const uint8_t digest[D1_DIGEST_BYTES], uint32_t need,
 			 bool commit, struct d1_complete_result *complete)
 {
@@ -2632,7 +2635,7 @@ record:
 	complete->eof = d1_eof_locked(s, &env->object);
 
 	if (s->journaling && !s->replaying &&
-	    !d1_journal_entry_event(s, env, ordinal, digest, complete)) {
+	    !d1_journal_entry_event(s, bytes, len, ordinal, digest, complete)) {
 		/*
 		 * The event did not become durable, so nothing happened:
 		 * the transition is put back, the reserved ID is given
@@ -2659,6 +2662,7 @@ record:
 
 /* The same, for a control operation, which is atomic as a whole. */
 static void d1_apply_control(struct d1_store *s, const struct d1_envelope *env,
+			     const uint8_t *bytes, size_t len,
 			     const uint8_t digest[D1_DIGEST_BYTES],
 			     struct d1_complete_result *complete)
 {
@@ -2667,7 +2671,7 @@ static void d1_apply_control(struct d1_store *s, const struct d1_envelope *env,
 	struct d1_admission *a = NULL;
 	struct d1_receipt *slot;
 	uint8_t result_bytes[256];
-	size_t env_len, res_len;
+	size_t res_len;
 	uint32_t status;
 
 	memset(&undo, 0, sizeof(undo));
@@ -2722,12 +2726,11 @@ static void d1_apply_control(struct d1_store *s, const struct d1_envelope *env,
 	complete->eof = d1_eof_locked(s, &env->object);
 
 	if (s->journaling && !s->replaying) {
-		env_len = d1_envelope_encode(env, s->scratch, s->scratch_cap);
 		res_len = d1_complete_result_encode(complete, result_bytes,
 						    sizeof(result_bytes));
-		if (!env_len || !res_len ||
-		    !d1_journal_control_event(s, D1_CTL_ENVELOPE, s->scratch,
-					      env_len, result_bytes, res_len)) {
+		if (!len || !res_len ||
+		    !d1_journal_control_event(s, D1_CTL_ENVELOPE, bytes, len,
+					      result_bytes, res_len)) {
 			d1_control_undo_apply(&undo);
 			slot->used = false;
 			memset(complete, 0, sizeof(*complete));
@@ -3050,7 +3053,7 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		 */
 		d1_run_member_hook(s, 0);
 		pthread_mutex_lock(&s->lock);
-		d1_apply_control(s, env, digest, &complete);
+		d1_apply_control(s, env, req.bytes, req.len, digest, &complete);
 		pthread_mutex_unlock(&s->lock);
 		out->entries[0] = complete.entry;
 		out->index_epoch = complete.index_epoch;
@@ -3078,7 +3081,8 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		 * left.
 		 */
 		pthread_mutex_lock(&s->lock);
-		d1_apply_one(s, env, i, digest, need, commit, &complete);
+		d1_apply_one(s, env, req.bytes, req.len, i, digest, need,
+			     commit, &complete);
 		pthread_mutex_unlock(&s->lock);
 		out->entries[i] = complete.entry;
 		out->index_epoch = complete.index_epoch;
@@ -4260,8 +4264,9 @@ static uint32_t d1_replay_entry(struct d1_store *s, const uint8_t *body,
 	 */
 	if (d1_record_receipt(s, &env, ordinal))
 		return D1_INVALID;
-	d1_apply_one(s, &env, ordinal, digest, d1_op_rights(env.op),
-		     env.op == D1_OP_COMMIT_BATCH, &computed);
+	d1_apply_one(s, &env, env_bytes, env_len, ordinal, digest,
+		     d1_op_rights(env.op), env.op == D1_OP_COMMIT_BATCH,
+		     &computed);
 	if (!d1_record_receipt(s, &env, ordinal))
 		return D1_INVALID;
 	/* Re-execution that disagrees with the log is not this history. */
@@ -4367,7 +4372,8 @@ static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 		 */
 		if (d1_record_receipt(s, &env, 0))
 			return D1_INVALID;
-		d1_apply_control(s, &env, digest, &computed);
+		d1_apply_control(s, &env, request_bytes, request_len, digest,
+				 &computed);
 		if (!d1_record_receipt(s, &env, 0))
 			return D1_INVALID;
 		if (!d1_complete_result_equal(&computed, &logged))
