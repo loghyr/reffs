@@ -5552,6 +5552,315 @@ static void test_a_foreign_request_learns_nothing_about_keys(void)
 	d1_store_free(b);
 }
 
+/* The arm at the door that rewrites the caller's envelope. */
+struct door_rewrite {
+	struct d1_envelope *env;
+	bool take_admission;
+	d1_admission_id admission;
+	bool take_op;
+	uint32_t op;
+	bool take_key;
+	struct d1_opkey key;
+	bool take_payload;
+	uint8_t *payload;
+	bool take_index;
+	bool take_owner;
+	bool take_txn;
+	d1_txn_id txn;
+	uint32_t fired;
+};
+
+static void rewrite_at_the_door(void *arg)
+{
+	struct door_rewrite *d = arg;
+
+	d->fired++;
+	if (d->take_admission)
+		d->env->admission = d->admission;
+	if (d->take_op)
+		d->env->op = d->op;
+	if (d->take_key)
+		d->env->key = d->key;
+	if (d->take_payload)
+		d->payload[0] ^= 0xffu;
+	if (d->take_index)
+		d->env->body.write.entries[0].index = 9;
+	if (d->take_owner)
+		d->env->body.write.entries[0].owner.co_id = 77;
+	if (d->take_txn)
+		d->env->body.lifecycle.entries[0].txn = d->txn;
+}
+
+/*
+ * The door hook is not the request.
+ *
+ * The between-members gap was closed by taking the request once; the
+ * door was still open.  The store ran the arm at the door first of all
+ * and read the caller's envelope afterwards, so the arm ran while the
+ * request was still the caller's memory -- and it is the caller's arm,
+ * running with no lock held.  A foreign admission replaced there with a
+ * local one was admitted and the write became visible.  An operation
+ * replaced there was the operation that ran.  The key replaced there
+ * went into the receipt while the result carried the key before it.
+ *
+ * So the request is read and owned before the call is bracketed, which
+ * is before the bracket runs the arm.  Each leg below arms the door,
+ * requires that the arm really did rewrite the caller's envelope -- an
+ * arm that changed nothing would pass every other check for the wrong
+ * reason -- and then requires that the answer, the receipt, the stored
+ * bytes and the log all describe the request as it was before.
+ */
+static void test_what_the_door_cannot_change(void)
+{
+	struct d1_uuid shared_uuid;
+	struct d1_store *a, *b, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_selection_spec sel;
+	struct d1_view *view;
+	struct door_rewrite d;
+	struct d1_opkey first_key, other_key;
+	static uint8_t data[16];
+	static uint8_t payload[16];
+	uint8_t got[32];
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	const uint8_t *log;
+	size_t len, before, after;
+	uint32_t got_len, records, bad;
+	d1_admission_id adm_a, adm_b, read_b;
+	d1_txn_id ta, tb;
+	d1_version_id seen;
+
+	memset(data, 0x6d, sizeof(data));
+	memset(payload, 0x6e, sizeof(payload));
+	fill_uuid(&shared_uuid, 0x6d);
+	a = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	b = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!a || !b) {
+		d1_store_free(a);
+		d1_store_free(b);
+		return;
+	}
+	d1_store_journal_enable(b);
+	adm_a = d1_fixture_admit(a, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	adm_b = d1_fixture_admit(b, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	read_b = d1_fixture_admit(b, &object, 11, D1_RIGHT_READ);
+
+	/*
+	 * A: the foreign admission the blind review replaced.  A's handle
+	 * is structurally a handle -- the two stores share a UUID, so
+	 * nothing but the issuer tells them apart -- and the arm swaps B's
+	 * own in before the request is read.
+	 */
+	env_init(&env, b, adm_a, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 7, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	memset(&d, 0, sizeof(d));
+	d.env = &env;
+	d.take_admission = true;
+	d.admission = adm_b;
+	(void)journal_of(b, &before);
+	check(d1_fixture_before_admission(b, rewrite_at_the_door, &d) == D1_OK,
+	      "the door is armed");
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "a foreign admission made local at the door is still foreign");
+	check(d.fired == 1, "the arm at the door really ran");
+	check(d1_admission_raw(env.admission) == d1_admission_raw(adm_b),
+	      "and really did rewrite the caller's envelope");
+	check(res.disposition == D1_UNRECORDED,
+	      "the operation recorded nothing");
+	check(!d1_store_visible(b, &object, 7, &seen),
+	      "nothing was written under it");
+	(void)journal_of(b, &after);
+	check(after == before, "and nothing was logged");
+
+	/* B: a supported operation replaced with one this slice refuses. */
+	env_init(&env, b, adm_b, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 8, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	memset(&d, 0, sizeof(d));
+	d.env = &env;
+	d.take_op = true;
+	d.op = D1_OP_BEGIN_REPAIR;
+	check(d1_fixture_before_admission(b, rewrite_at_the_door, &d) == D1_OK,
+	      "the door is armed again");
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the write the store read is the write that ran");
+	check(d.fired == 1 && env.op == D1_OP_BEGIN_REPAIR,
+	      "though the door really did replace the operation");
+	check(d1_store_visible(b, &object, 8, &seen), "and chunk 8 is there");
+
+	/* C: and the other way round -- a refused operation made valid. */
+	env_init(&env, b, adm_b, D1_OP_BEGIN_REPAIR);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 10, 11, 3, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	memset(&d, 0, sizeof(d));
+	d.env = &env;
+	d.take_op = true;
+	d.op = D1_OP_WRITE_BATCH;
+	check(d1_fixture_before_admission(b, rewrite_at_the_door, &d) == D1_OK,
+	      "the door is armed for the refused operation");
+	check(d1_store_apply(b, &env, &res) == D1_UNSUPPORTED,
+	      "an operation this slice cannot express stays refused");
+	check(d.fired == 1 && env.op == D1_OP_WRITE_BATCH,
+	      "though the door really did make it a write");
+	check(!d1_store_visible(b, &object, 10, &seen),
+	      "and chunk 10 was not written");
+
+	/*
+	 * D: the operation key.  The result carried the key from before
+	 * the arm and the receipt was reserved under the key after it, so
+	 * the caller was told one identity and the store kept another.
+	 */
+	env_init(&env, b, adm_b, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 11, 11, 4, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	first_key = env.key;
+	other_key = env.key;
+	other_key.sequence = next_sequence++;
+	memset(&d, 0, sizeof(d));
+	d.env = &env;
+	d.take_key = true;
+	d.key = other_key;
+	check(d1_fixture_before_admission(b, rewrite_at_the_door, &d) == D1_OK,
+	      "the door is armed for the key");
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the write applies");
+	check(d.fired == 1 && env.key.sequence == other_key.sequence,
+	      "and the door really did rename the request");
+	check(memcmp(&res.key, &first_key, sizeof(res.key)) == 0,
+	      "the result carries the key the store read");
+	env.key = first_key;
+	(void)journal_of(b, &before);
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the exact retry under that key answers from the receipt");
+	(void)journal_of(b, &after);
+	check(after == before, "and writes nothing further");
+	env.key = other_key;
+	env.body.write.entries[0].index = 12;
+	env.body.write.entries[0].owner.co_id = 7;
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the key the door named was never reserved at all");
+	(void)journal_of(b, &after);
+	check(after > before, "so that request is a new one");
+
+	/* E: a payload byte, an index and an owner. */
+	env_init(&env, b, adm_b, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 14, 11, 5, payload,
+		    sizeof(payload), true,
+		    &(struct d1_guard){ .never_written = true });
+	memset(&d, 0, sizeof(d));
+	d.env = &env;
+	d.take_payload = true;
+	d.payload = payload;
+	d.take_index = true;
+	d.take_owner = true;
+	check(d1_fixture_before_admission(b, rewrite_at_the_door, &d) == D1_OK,
+	      "the door is armed for the body");
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the write applies");
+	check(d.fired == 1 && payload[0] == (uint8_t)(0x6eu ^ 0xffu) &&
+		      env.body.write.entries[0].index == 9 &&
+		      env.body.write.entries[0].owner.co_id == 77,
+	      "and the door really did rewrite bytes, index and owner");
+	check(d1_store_visible(b, &object, 14, &seen),
+	      "the chunk the store read is the chunk that was written");
+	check(!d1_store_visible(b, &object, 9, &seen),
+	      "and the one the door renamed it to was not");
+	memset(payload, 0x6e, sizeof(payload));
+	ordinary_sel(&sel);
+	if (d1_view_open(b, &object, read_b, &sel, 14u * CHUNK_BYTES,
+			 14u * CHUNK_BYTES + sizeof(payload), &view) == D1_OK) {
+		check(d1_view_read(view, 14u * CHUNK_BYTES, got, sizeof(got),
+				   &got_len) == D1_OK &&
+			      got_len == sizeof(payload) &&
+			      memcmp(got, payload, sizeof(payload)) == 0,
+		      "and the bytes it holds are the bytes the store read");
+		d1_view_close(view);
+	} else {
+		check(false, "a view opens over what was written");
+	}
+
+	/* F: a transaction handle, in the gap before a lifecycle member. */
+	d1_store_verifier(b, verifier);
+	(void)finalize_chunk(b, adm_b, 16, 6, data, sizeof(data),
+			     &(struct d1_guard){ .never_written = true },
+			     d1_version_none(), &tb);
+	(void)finalize_chunk(a, adm_a, 16, 6, data, sizeof(data),
+			     &(struct d1_guard){ .never_written = true },
+			     d1_version_none(), &ta);
+	check(d1_txn_live(tb) && d1_txn_live(ta),
+	      "each store finalizes a chunk of its own");
+	env_init(&env, b, adm_b, D1_OP_COMMIT_BATCH);
+	env.body.lifecycle.range_begin = 16;
+	env.body.lifecycle.range_end = 17;
+	env.body.lifecycle.count = 1;
+	env.body.lifecycle.entries[0].index = 16;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = 6;
+	env.body.lifecycle.entries[0].txn = tb;
+	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+	memset(&d, 0, sizeof(d));
+	d.env = &env;
+	d.take_txn = true;
+	d.txn = ta;
+	check(d1_fixture_before_admission(b, rewrite_at_the_door, &d) == D1_OK,
+	      "the door is armed for the transaction");
+	check(d1_store_apply(b, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the commit runs the transaction the store read");
+	check(d.fired == 1 && d1_txn_raw(env.body.lifecycle.entries[0].txn) ==
+				      d1_txn_raw(ta),
+	      "though the door really did name another store's");
+	check(d1_store_visible(b, &object, 16, &seen),
+	      "and chunk 16 is committed");
+
+	/* Every record B wrote hashes to the digest beside it, and replays. */
+	log = journal_of(b, &len);
+	check(every_entry_digest_matches(log, len, &shared_uuid, &records,
+					 &bad),
+	      "every ENTRY B wrote hashes to its own digest");
+	check(records > 0 && bad == 0, "and there were records to check");
+	rebuilt = d1_store_open(&shared_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "and B's log rebuilds B");
+		check(object_states_agree(b, rebuilt, &object),
+		      "into the same store");
+		d1_store_free(rebuilt);
+	}
+
+	check(d1_fixture_before_admission(b, NULL, NULL) == D1_OK,
+	      "the door is disarmed");
+	d1_store_free(a);
+	d1_store_free(b);
+}
+
 /*
  * What the operation's disposition says when no member ran.
  *
@@ -10929,6 +11238,7 @@ int main(void)
 	test_an_absent_option_is_absent();
 	test_the_door_inside_a_member();
 	test_the_request_the_store_took();
+	test_what_the_door_cannot_change();
 	test_a_foreign_request_learns_nothing_about_keys();
 	test_an_operation_that_ran_nothing_says_so();
 	test_one_number_is_one_member();

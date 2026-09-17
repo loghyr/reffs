@@ -2186,6 +2186,7 @@ static bool d1_journal_event(struct d1_store *s, uint32_t type,
  * re-executes and compares what it computed against what was logged.
  * A whole-request intent could not support that comparison: it says
  * what was asked for, not what happened.
+ *
  */
 static bool d1_journal_entry_event(struct d1_store *s,
 				   const struct d1_envelope *env,
@@ -2747,40 +2748,50 @@ static void d1_apply_control(struct d1_store *s, const struct d1_envelope *env,
 	slot->result = *complete;
 }
 
-/* Defined with the replay path, which adopts a decoded record the same way. */
-static void d1_envelope_adopt(const struct d1_store *s,
-			      struct d1_envelope *env);
-
 /*
  * One request, owned by the call that executes it.
  *
  * A caller owns its envelope and its payload bytes, and the model has
  * no claim on either after the call returns -- so it must have its own
- * copy before it accepts anything.  It did not.  The digest was taken
- * once, at entry, from the caller's memory, and then every member was
- * executed from that same memory across lock intervals the call does
- * not hold, with the fixture's between-members hook making the gap
- * deterministic on purpose.  A caller that changed a local transaction,
- * a payload byte, an index or an owner in that gap had the changed
- * request executed and journalled under the digest of the request that
- * was there before, so the ENTRY bytes did not hash to the digest
- * stamped beside them and the store's own log stopped rebuilding it.
+ * copy before it accepts anything, and it must have it before anything
+ * else in the call can run.  It did not.  The digest was taken from the
+ * caller's memory, every member was executed from that same memory
+ * across lock intervals the call does not hold, and the door hook ran
+ * first of all.  A caller that changed a transaction, a payload byte,
+ * an index or an owner in one of those gaps had the changed request
+ * executed and journalled under the digest of the request that was
+ * there before, and a caller that changed its admission at the door had
+ * a request of another store admitted as a local one.
  *
- * So the call takes the request once, into storage it owns, and reads
- * nothing else afterwards.  The canonical encoding is made first --
- * which is the same encoding the digest binds and the journal records
- * -- and the executed envelope is decoded back out of it, so the bytes
- * that were hashed, the bytes that are recorded and the request that
- * runs are one object by construction.  The decoded payloads point into
- * that buffer, which lives until the call returns.
+ * So the call takes the request before it does anything else, into
+ * storage it owns, and reads the caller's envelope no more.  Two
+ * representations come out of that one reading, because two different
+ * questions are asked of a request and the canonical form answers only
+ * one of them:
  *
- * Provenance is decided before any of this, on the caller's values,
- * because adoption stamps this store on every handle and a handle of
- * another store must be refused rather than naturalised.  After
- * adoption the request is the store's own, which is exactly what replay
- * arranges for a record it has decoded.
+ *   @own is the typed request as the caller wrote it, struct for
+ *   struct.  It carries what the canonical form deliberately does not
+ *   -- which store issued each handle, and of which domain -- so it is
+ *   what provenance and binding are asked of.  It holds no pointer:
+ *   the payload bytes its entries named are in @bytes and nowhere
+ *   else, so there is nothing left in it that could still address the
+ *   caller's memory.
+ *
+ *   @bytes is the canonical encoding of that same reading, and @env is
+ *   decoded back out of it.  This is the encoding the digest binds and
+ *   the journal records, so the bytes that were hashed, the bytes that
+ *   are recorded and the request that runs are one reading of one
+ *   request.  @env's payloads point into @bytes, which lives until the
+ *   call returns.
+ *
+ * Provenance is decided on @own, before @env exists, because adoption
+ * stamps this store on every handle and a handle of another store must
+ * be refused rather than naturalised.  After adoption the request is
+ * the store's own, which is exactly what replay arranges for a record
+ * it has decoded.
  */
 struct d1_request {
+	struct d1_envelope own;
 	uint8_t *bytes;
 	size_t len;
 	struct d1_envelope env;
@@ -2788,20 +2799,66 @@ struct d1_request {
 };
 
 /*
- * Take the request.  The caller's envelope is not read again.
+ * Read the caller's request once, and own what was read.
  *
- * @scratch is the call's own buffer, allocated before the store lock
- * was taken; the store's shared scratch is not used, because it is not
- * this call's to hold across an unlocked interval.
+ * This runs before the call is bracketed and therefore before the door
+ * hook, which is the point: the hook is the caller's, it runs with no
+ * lock held, and what it does to the caller's own memory afterwards
+ * reaches nothing here.
+ *
+ * The encoding is the copy.  A separate arena for the payload bytes
+ * would be a second copy of what @bytes already holds, and the entries
+ * of @own would then point into it -- so the pointers go instead, all
+ * of them, including the ones past the declared count.  Nothing below
+ * asks @own for a payload: the shape test reads the lengths and the
+ * presence of a pointer, provenance reads the handles, and the bytes
+ * themselves are read from @bytes by the request that runs.
+ *
+ * A zero @len is a request the canonical form cannot express, which is
+ * the shape refusal, made here rather than asked again of memory that
+ * is no longer the caller's.  Returning false is the narrower failure:
+ * there was no buffer to read the request into at all.
  */
-static bool d1_request_take(const struct d1_store *s,
-			    const struct d1_envelope *env, uint8_t *scratch,
-			    size_t cap, struct d1_request *r)
+static bool d1_request_snapshot(const struct d1_envelope *env,
+				struct d1_request *r)
 {
-	r->bytes = scratch;
-	r->len = d1_envelope_encode(env, r->bytes, cap);
-	if (!r->len)
-		return false;
+	uint32_t i;
+
+	memset(r, 0, sizeof(*r));
+	r->own = *env;
+	r->bytes = malloc(D1_ENVELOPE_MAX);
+	if (r->bytes)
+		r->len = d1_envelope_encode(env, r->bytes, D1_ENVELOPE_MAX);
+	/*
+	 * Only a write batch has payload pointers, and the body is a
+	 * union: clearing them for any other operation would clear that
+	 * operation's members instead.
+	 */
+	if (r->own.op == D1_OP_WRITE_BATCH)
+		for (i = 0; i < D1_BATCH_ENTRIES_MAX; i++)
+			r->own.body.write.entries[i].payload = NULL;
+	return r->bytes != NULL;
+}
+
+static void d1_request_release(struct d1_request *r)
+{
+	free(r->bytes);
+	r->bytes = NULL;
+}
+
+/* Defined with the replay path, which adopts a decoded record the same way. */
+static void d1_envelope_adopt(const struct d1_store *s,
+			      struct d1_envelope *env);
+
+/*
+ * Make the execution copy, out of the bytes the digest binds.
+ *
+ * The request was read and encoded before the call was bracketed; this
+ * decodes it back, adopts it for this store and hashes the same bytes,
+ * so what runs is what was hashed and what will be recorded.
+ */
+static bool d1_request_take(const struct d1_store *s, struct d1_request *r)
+{
 	if (!d1_envelope_decode(r->bytes, r->len, &r->env))
 		return false;
 	/* The request becomes this store's, exactly as replay's does. */
@@ -2816,12 +2873,10 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	uint8_t digest[D1_DIGEST_BYTES];
 	struct d1_complete_result complete;
 	struct d1_request req;
-	uint8_t *scratch;
 	uint32_t need, count, i;
-	bool commit, conflict, owned, taken;
+	bool commit, conflict, owned, taken, read;
 
 	memset(out, 0, sizeof(*out));
-	out->key = env->key;
 	/*
 	 * Nothing has been recorded yet, and the early returns below --
 	 * a closed store, an operation this slice cannot express, a
@@ -2832,12 +2887,27 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	out->disposition = D1_UNRECORDED;
 
 	/*
+	 * The request is read and owned first, before the call is
+	 * bracketed and so before the door hook the bracket runs.  That
+	 * hook is a caller's, it runs with no lock held, and it used to
+	 * run while the request was still the caller's memory: a foreign
+	 * admission replaced with a local one there was admitted, and an
+	 * operation replaced there was the operation that ran.  Nothing
+	 * below reads @env again -- the request is @req from here.
+	 */
+	read = d1_request_snapshot(env, &req);
+	env = &req.own;
+	out->key = env->key;
+
+	/*
 	 * The call is bracketed for its whole length, not for each of its
 	 * lock intervals: a close must not slip into the gap between two
 	 * members of a batch.
 	 */
-	if (!d1_call_enter(s))
+	if (!d1_call_enter(s)) {
+		d1_request_release(&req);
 		return D1_INVALID;
+	}
 
 	switch (env->op) {
 	case D1_OP_WRITE_BATCH:
@@ -2856,16 +2926,20 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		 * part of the job.
 		 */
 		d1_call_leave(s);
+		d1_request_release(&req);
 		return D1_UNSUPPORTED;
 	}
 
 	/*
 	 * Shape first.  A request whose counts, lengths, tags or members
 	 * are outside the canonical form is refused before anything reads
-	 * a payload, hashes a byte or touches the store.
+	 * the store.  The test was made when the request was read: the
+	 * canonical encoding is the copy, and a request the canonical form
+	 * cannot express has no encoding and no length.
 	 */
-	if (!d1_envelope_validate(env)) {
+	if (read && !req.len) {
 		d1_call_leave(s);
+		d1_request_release(&req);
 		return D1_INVALID;
 	}
 
@@ -2886,16 +2960,21 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		count = env->body.lifecycle.count;
 		break;
 	}
+	/*
+	 * The count is the request's own claim until the shape test has
+	 * passed, and the refusal below is the one case that answers
+	 * without it: bound it to the results there are room for.
+	 */
+	if (count > D1_BATCH_ENTRIES_MAX)
+		count = D1_BATCH_ENTRIES_MAX;
 	out->count = count;
 
 	/*
-	 * The call's own buffer for the request it is about to take.  It
-	 * is allocated before the lock and freed on every exit; the
-	 * store's shared scratch is not used, because holding it across
-	 * the unlocked intervals between members is not this call's right.
+	 * There was no buffer to read the request into, so there is no
+	 * request: nothing has been looked up, reserved or recorded, and
+	 * the answer is the retryable one.
 	 */
-	scratch = malloc(D1_ENVELOPE_MAX);
-	if (!scratch) {
+	if (!read) {
 		for (i = 0; i < count; i++) {
 			struct d1_entry_result *res = &out->entries[i];
 
@@ -2907,6 +2986,7 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		}
 		out->disposition = D1_UNRECORDED;
 		d1_call_leave(s);
+		d1_request_release(&req);
 		return D1_OK;
 	}
 
@@ -2915,32 +2995,29 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	 * gives them: whose request this is, whether the caller is bound
 	 * to the object it names, and only then whether the key is in use.
 	 *
-	 * Provenance and binding are asked of the caller's values, because
-	 * this is the last moment they exist as the caller's: taking the
-	 * request adopts every handle for this store, and a handle of
-	 * another store must be refused rather than naturalised.  A
-	 * request that is not this store's is told nothing about whose key
-	 * is in use -- it never reaches the lookup.
-	 *
-	 * Then the request is taken, and nothing the caller does to its
-	 * own memory afterwards can reach a member, a receipt or the log.
+	 * Provenance and binding are asked of the request as it was read,
+	 * which is the only place the answer exists: the canonical form
+	 * carries a handle's number and not which store issued it, and
+	 * taking the request adopts every handle for this store, so a
+	 * handle of another store must be refused before that rather than
+	 * naturalised by it.  A request that is not this store's is told
+	 * nothing about whose key is in use -- it never reaches the
+	 * lookup.
 	 */
 	pthread_mutex_lock(&s->lock);
 	owned = d1_envelope_owned(s, env) && d1_binding_ok(s, env);
-	taken = owned &&
-		d1_request_take(s, env, scratch, D1_ENVELOPE_MAX, &req);
-	conflict = taken && d1_key_conflicts(s, &env->object.export_uuid,
+	taken = owned && d1_request_take(s, &req);
+	conflict = taken && d1_key_conflicts(s, &req.env.object.export_uuid,
 					     &req.env.key, req.digest);
 	pthread_mutex_unlock(&s->lock);
 
 	if (owned && !taken) {
 		/*
-		 * The request does not fit the canonical form, or does not
-		 * survive its own encoding.  Nothing was looked up and
-		 * nothing reserved.
+		 * The request does not survive its own encoding.  Nothing
+		 * was looked up and nothing reserved.
 		 */
-		free(scratch);
 		d1_call_leave(s);
+		d1_request_release(&req);
 		out->count = 0;
 		out->disposition = D1_UNRECORDED;
 		return D1_INVALID;
@@ -2957,8 +3034,8 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 			d1_store_verifier(s, res->verifier);
 		}
 		out->disposition = owned ? D1_COMPLETED : D1_UNRECORDED;
-		free(scratch);
 		d1_call_leave(s);
+		d1_request_release(&req);
 		return D1_OK;
 	}
 
@@ -2979,8 +3056,8 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		out->index_epoch = complete.index_epoch;
 		out->eof = complete.eof;
 		out->disposition = complete.disposition;
-		free(scratch);
 		d1_call_leave(s);
+		d1_request_release(&req);
 		return D1_OK;
 	}
 
@@ -3059,8 +3136,8 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	 * settles it; see struct d1_result.
 	 */
 	out->disposition = out->entries[0].disposition;
-	free(scratch);
 	d1_call_leave(s);
+	d1_request_release(&req);
 	return D1_OK;
 }
 
