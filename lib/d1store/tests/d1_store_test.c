@@ -5861,6 +5861,159 @@ static void test_what_the_door_cannot_change(void)
 	d1_store_free(b);
 }
 
+/* The arm at the door that rewrites what a read asked for. */
+struct read_rewrite {
+	struct d1_selection_spec *sel;
+	struct d1_objkey *object;
+	uint32_t count;
+	bool take_count;
+	bool take_epoch;
+	bool take_object;
+	uint32_t fired;
+};
+
+static void rewrite_the_selection(void *arg)
+{
+	struct read_rewrite *r = arg;
+
+	r->fired++;
+	if (r->take_count)
+		r->sel->count = r->count;
+	if (r->take_epoch)
+		r->sel->read_epoch = 99;
+	if (r->take_object)
+		r->object->export_uuid.bytes[0] ^= 0xffu;
+}
+
+/*
+ * A read is a request too.
+ *
+ * The door hook runs for every call that enters the store, and a read
+ * enters it the same way a mutation does -- so the selection vector was
+ * checked here, the arm ran, and the resolver read the vector again
+ * afterwards.  A count raised in that window was a count the resolver
+ * believed, and the vector it indexes is sixteen members long: the
+ * caller's arm could walk the resolver off the end of its own argument.
+ * A read epoch or an object key changed there was simply a different
+ * read than the one the caller asked for.
+ *
+ * A read records nothing, so none of this reaches the log -- which is
+ * why it is a read's own answer that has to be right.  The copy is
+ * taken before the call is bracketed, for the same reason the mutation
+ * path takes one.
+ */
+static void test_what_the_door_cannot_change_about_a_read(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_objkey asked;
+	struct d1_selection_spec sel;
+	struct d1_view *view;
+	struct read_rewrite r;
+	struct d1_guard guard;
+	static uint8_t committed[24], pending[24];
+	uint8_t got[64];
+	uint32_t got_len;
+	d1_admission_id admission;
+	d1_txn_id txn;
+	d1_version_id v1, v2, seen;
+
+	memset(committed, 0x71, sizeof(committed));
+	memset(pending, 0x72, sizeof(pending));
+	fill_uuid(&store_uuid, 0x71);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+	v1 = commit_chunk(s, admission, 0, 1, committed, sizeof(committed),
+			  &(struct d1_guard){ .never_written = true },
+			  d1_version_none(), NULL);
+	d1_store_guard(s, &object, 0, &guard);
+	v2 = finalize_chunk(s, admission, 0, 2, pending, sizeof(pending),
+			    &guard, v1, &txn);
+	check(d1_version_live(v1) && d1_version_live(v2),
+	      "one version commits and one finalizes");
+
+	/*
+	 * A: the count, raised past the end of the vector it names.  The
+	 * resolver reads exactly the members the read declared.
+	 */
+	asked = object;
+	owner_sel(&sel, txn, 11, 2, 0);
+	memset(&r, 0, sizeof(r));
+	r.sel = &sel;
+	r.object = &asked;
+	r.take_count = true;
+	r.count = D1_BATCH_ENTRIES_MAX + 8u;
+	check(d1_fixture_before_admission(s, rewrite_the_selection, &r) ==
+		      D1_OK,
+	      "the door is armed for the read");
+	view = NULL;
+	check(d1_view_open(s, &asked, admission, &sel, 0, CHUNK_BYTES, &view) ==
+		      D1_OK,
+	      "the owner view opens on the vector the store read");
+	check(r.fired == 1 && sel.count == D1_BATCH_ENTRIES_MAX + 8u,
+	      "and the door really did raise the caller's count");
+	check(view && d1_view_version(view, 0, &seen) &&
+		      d1_version_eq(seen, v2),
+	      "the view selected the transaction the read named");
+	if (view)
+		d1_view_close(view);
+
+	/* B: the read epoch, which decides whether the selection is the
+	 * caller's at all. */
+	asked = object;
+	owner_sel(&sel, txn, 11, 2, 0);
+	memset(&r, 0, sizeof(r));
+	r.sel = &sel;
+	r.object = &asked;
+	r.take_epoch = true;
+	check(d1_fixture_before_admission(s, rewrite_the_selection, &r) ==
+		      D1_OK,
+	      "the door is armed for the epoch");
+	view = NULL;
+	check(d1_view_open(s, &asked, admission, &sel, 0, CHUNK_BYTES, &view) ==
+		      D1_OK,
+	      "the view opens under the epoch the store read");
+	check(r.fired == 1 && sel.read_epoch == 99u,
+	      "though the door really did change the caller's epoch");
+	if (view)
+		d1_view_close(view);
+
+	/* C: the object key the read and the admission are both judged
+	 * against. */
+	asked = object;
+	ordinary_sel(&sel);
+	memset(&r, 0, sizeof(r));
+	r.sel = &sel;
+	r.object = &asked;
+	r.take_object = true;
+	check(d1_fixture_before_admission(s, rewrite_the_selection, &r) ==
+		      D1_OK,
+	      "the door is armed for the object");
+	view = NULL;
+	check(d1_view_open(s, &asked, admission, &sel, 0, CHUNK_BYTES, &view) ==
+		      D1_OK,
+	      "the view opens on the object the store read");
+	check(r.fired == 1 &&
+		      asked.export_uuid.bytes[0] != object.export_uuid.bytes[0],
+	      "though the door really did rename the caller's object");
+	check(view &&
+		      d1_view_read(view, 0, got, sizeof(got), &got_len) ==
+			      D1_OK &&
+		      got_len == sizeof(committed) &&
+		      memcmp(got, committed, sizeof(committed)) == 0,
+	      "and reads the bytes that object holds");
+	if (view)
+		d1_view_close(view);
+
+	check(d1_fixture_before_admission(s, NULL, NULL) == D1_OK,
+	      "the door is disarmed");
+	d1_store_free(s);
+}
+
 /*
  * What the operation's disposition says when no member ran.
  *
@@ -11239,6 +11392,7 @@ int main(void)
 	test_the_door_inside_a_member();
 	test_the_request_the_store_took();
 	test_what_the_door_cannot_change();
+	test_what_the_door_cannot_change_about_a_read();
 	test_a_foreign_request_learns_nothing_about_keys();
 	test_an_operation_that_ran_nothing_says_so();
 	test_one_number_is_one_member();

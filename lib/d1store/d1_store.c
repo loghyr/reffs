@@ -3260,6 +3260,17 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 	struct d1_admission *a = NULL;
 	struct d1_object *o;
 	struct d1_view *v = NULL;
+	/*
+	 * The read's own copy of what it was asked for.  A read is a
+	 * request too, and the door hook the bracket runs is the caller's:
+	 * the vector was checked here and read again after that hook, so
+	 * a count raised in between was a count the resolver believed and
+	 * the fixed vector it indexes is sixteen members long.  The copy
+	 * is taken before the bracket, and nothing below reads @sel or
+	 * @object again.
+	 */
+	struct d1_selection_spec want = *sel;
+	struct d1_objkey key = *object;
 	/* The version each chunk resolves to, settled before anything is
 	 * pinned. */
 	bool chosen_present[D1_MAX_CHUNKS] = { false };
@@ -3268,14 +3279,14 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 	uint32_t status, i;
 
 	*out = NULL;
-	if (sel->selection != D1_SELECT_ORDINARY &&
-	    sel->selection != D1_SELECT_OWNER)
+	if (want.selection != D1_SELECT_ORDINARY &&
+	    want.selection != D1_SELECT_OWNER)
 		return D1_INVALID;
-	if (sel->selection == D1_SELECT_OWNER &&
-	    (sel->count < D1_BATCH_ENTRIES_MIN ||
-	     sel->count > D1_BATCH_ENTRIES_MAX))
+	if (want.selection == D1_SELECT_OWNER &&
+	    (want.count < D1_BATCH_ENTRIES_MIN ||
+	     want.count > D1_BATCH_ENTRIES_MAX))
 		return D1_INVALID;
-	if (sel->selection == D1_SELECT_ORDINARY && sel->count != 0)
+	if (want.selection == D1_SELECT_ORDINARY && want.count != 0)
 		return D1_INVALID;
 	if (byte_begin >= byte_end)
 		return D1_INVALID;
@@ -3287,8 +3298,8 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 		status = D1_INVALID;
 		goto out;
 	}
-	status = d1_read_admission(s, admission, object,
-				   sel->selection == D1_SELECT_OWNER, &a);
+	status = d1_read_admission(s, admission, &key,
+				   want.selection == D1_SELECT_OWNER, &a);
 	if (status != D1_OK)
 		goto out;
 	/*
@@ -3304,8 +3315,8 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 	 * OWNER selection is the other question: it names transactions,
 	 * and an object with no writes has none to name.
 	 */
-	o = d1_object_find(s, object);
-	if (!o && sel->selection == D1_SELECT_OWNER) {
+	o = d1_object_find(s, &key);
+	if (!o && want.selection == D1_SELECT_OWNER) {
 		status = D1_INVALID;
 		goto out;
 	}
@@ -3322,8 +3333,8 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 	 * The whole selection is settled before a view slot is taken, so a
 	 * refused vector leaves no view and no pins to clean up.
 	 */
-	if (sel->selection == D1_SELECT_OWNER) {
-		status = d1_owner_resolve(s, sel, a, d1_object_slot(s, o),
+	if (want.selection == D1_SELECT_OWNER) {
+		status = d1_owner_resolve(s, &want, a, d1_object_slot(s, o),
 					  chosen_present, chosen);
 		if (status != D1_OK)
 			goto out;
