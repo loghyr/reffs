@@ -3020,12 +3020,21 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		 * the dense prefix replay relies on is the claim that the
 		 * receipts under a key are 0..n-1 -- so recording a later
 		 * member over the hole an earlier one left writes a log
-		 * this store cannot replay, for the rest of its life.  The
-		 * status that used to be checked here missed the one such
-		 * member a live call can produce on its own: caller binding
-		 * is re-asked in every member's lock interval, so an
-		 * admission installed between members turns member 0's
-		 * STALE_AUTH into member 1's receipt at ordinal 1.
+		 * this store cannot replay, for the rest of its life.
+		 *
+		 * The status was checked here once, and missed the member a
+		 * live call could then produce on its own: caller binding
+		 * was re-asked in every member's interval, so an admission
+		 * installed between members turned member 0's STALE_AUTH
+		 * into member 1's receipt at ordinal 1.  That schedule is
+		 * gone -- binding is settled once, at the door, before the
+		 * key is looked up -- and no live call now reaches this
+		 * with an UNRECORDED member whose status is not NOSPC or
+		 * IO.  The disposition stays the test anyway: it is the
+		 * property the dense prefix needs, the status is a
+		 * consequence of today's refusal set, and a member that
+		 * records nothing must stop the batch whatever it was
+		 * refused for.
 		 *
 		 * A semantic refusal is not an interruption: it is a result,
 		 * it has a receipt, and independent later members still run.
