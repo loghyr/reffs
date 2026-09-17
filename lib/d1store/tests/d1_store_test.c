@@ -1674,6 +1674,13 @@ struct parked_call {
 	bool parked;
 	bool resume;
 	/*
+	 * Whether d1_store_apply has returned.  It is the other half of
+	 * the overlap: @parked says the call is inside the store, and this
+	 * says it has not left.  Both are read under @m, so a test can
+	 * state the overlap rather than infer it from timing.
+	 */
+	bool finished;
+	/*
 	 * Which primitive failed, if one did.  The parked thread cannot
 	 * call check() -- the counter it keeps is not shared state -- so
 	 * it records the step here and the main thread reports it after
@@ -1705,6 +1712,13 @@ static void *run_parked_call(void *arg)
 	struct parked_call *p = arg;
 
 	p->status = d1_store_apply(p->s, &p->env, &p->out);
+	if (pthread_mutex_lock(&p->m) != 0) {
+		p->err = 15;
+		return NULL;
+	}
+	p->finished = true;
+	if (pthread_mutex_unlock(&p->m) != 0)
+		p->err = 16;
 	return NULL;
 }
 
@@ -1726,13 +1740,21 @@ static bool parked_step_fails(unsigned int step)
 }
 
 static bool park_a_caller(struct parked_call *p, struct d1_store *s,
-			  d1_admission_id admission, pthread_t *caller)
+			  d1_admission_id admission, bool activate,
+			  pthread_t *caller)
 {
 	memset(p, 0, sizeof(*p));
 	p->s = s;
 	env_init(&p->env, s, admission, D1_OP_WRITE_BATCH);
 	p->env.body.write.count = 1;
 	p->env.body.write.stability = D1_FILE_SYNC;
+	/*
+	 * A caller that wants to see what it wrote asks for activation; a
+	 * caller whose call is about to be refused does not care either
+	 * way and does not ask, so the refusal is judged on the request it
+	 * always made.
+	 */
+	p->env.body.write.activate = activate;
 	write_entry(&p->env.body.write.entries[0], 0, 11, 1, payload_a,
 		    sizeof(payload_a), true,
 		    &(struct d1_guard){ .never_written = true });
@@ -1800,13 +1822,14 @@ static void test_close_does_not_destroy_under_an_arriving_call(void)
 	/* Each step of the setup, failed on purpose: report, never wait. */
 	for (fault = 1; fault <= 3; fault++) {
 		parked_setup_fault = fault;
-		check(!park_a_caller(&p, s, admission, &caller), step[fault]);
+		check(!park_a_caller(&p, s, admission, false, &caller),
+		      step[fault]);
 		check(!p.parked, "and there is no caller to have waited for");
 		parked_setup_fault = 0;
 	}
 
 	/* The caller is inside d1_store_apply and has not been admitted. */
-	check(park_a_caller(&p, s, admission, &caller),
+	check(park_a_caller(&p, s, admission, false, &caller),
 	      "a real caller enters the store and parks at the door");
 
 	check(d1_store_close(s) == D1_OK,
@@ -8947,33 +8970,50 @@ static void *run_concurrent_observer(void *arg)
 }
 
 /*
- * Two callers and an observer, on real threads, at the same time.
+ * Two callers and an observer, on real threads, with the overlap forced.
  *
  * The fixture's hooks make a second call happen inside the first, which
- * is a schedule and not a race: it is one thread, so nothing a
- * sanitiser watches for can appear there however the calls interleave.
- * What that cannot show is whether two calls share anything they hold
- * across an interval neither of them locks -- a buffer the store owns
- * rather than the call, say -- or whether an observer reading the log
- * is synchronised against a writer appending to it.
+ * is a schedule and not a race: it is one thread, so nothing a sanitiser
+ * watches for can appear there however the calls interleave.  What that
+ * cannot show is whether two calls share something they hold across an
+ * interval neither of them locks -- a buffer the store owns rather than
+ * the call, say -- or whether an observer reading the log is
+ * synchronised against a writer appending to it.
  *
- * So these are threads.  Each writer owns its own admission, its own
- * chunks and its own payload, so nothing about the answers depends on
- * the order they run in, and the whole history they leave must still
- * rebuild.  Under ThreadSanitizer this is the oracle for the store's
- * own synchronisation; under the ordinary build it is one more check
- * that concurrent callers get the answers they are owed.
+ * So these are threads.  Starting three of them and joining them was not
+ * an oracle either: a conforming scheduler may run them one after
+ * another, and then the test passes having proved nothing.  Repeating it
+ * makes an overlap likely, and likely is not causal.
+ *
+ * The overlap is therefore made rather than hoped for.  The first caller
+ * parks inside d1_store_apply at the door -- which is after it has read
+ * and owned its request and before its admission is settled -- and stays
+ * there while the second caller and the observer run to completion.
+ * That the first call had not returned is read out of its own state
+ * under its own lock, not inferred from timing.  Only then is it
+ * released, and it must answer for the request it read rather than for
+ * whatever ran while it waited.
+ *
+ * This is also the oracle for a caller that reads its request through
+ * the store's shared buffer instead of its own: the second caller
+ * overwrites that buffer twenty-four times while the first is parked in
+ * it, so the first wakes up holding someone else's request.  It fails
+ * here every time, by construction, and not on a schedule that happened
+ * to differ.
  */
 static void test_two_callers_and_an_observer_at_once(void)
 {
 	struct d1_uuid store_uuid;
 	struct d1_store *s, *rebuilt;
-	struct concurrent_caller one, two;
+	struct parked_call first;
+	struct concurrent_caller second;
 	struct concurrent_observer watcher;
-	pthread_t ta, tb, tc;
+	pthread_t parked, writer, observer;
 	const uint8_t *log;
 	size_t len;
 	uint32_t i;
+	bool started_writer = false, started_observer = false, overlapped;
+	d1_admission_id adm_a, adm_b;
 	d1_version_id seen;
 
 	fill_uuid(&store_uuid, 0x8d);
@@ -8981,57 +9021,86 @@ static void test_two_callers_and_an_observer_at_once(void)
 	if (!s)
 		return;
 	d1_store_journal_enable(s);
+	adm_a = d1_fixture_admit(s, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	adm_b = d1_fixture_admit(s, &object, 12,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
 
-	memset(&one, 0, sizeof(one));
-	one.s = s;
-	one.writer = 11;
-	one.first_index = 0;
-	one.rounds = 24;
-	one.first_sequence = next_sequence;
-	next_sequence += one.rounds;
-	one.admission = d1_fixture_admit(
-		s, &object, 11, D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
-	memset(&two, 0, sizeof(two));
-	two.s = s;
-	two.writer = 12;
-	two.first_index = 32;
-	two.rounds = 24;
-	two.first_sequence = next_sequence;
-	next_sequence += two.rounds;
-	two.admission = d1_fixture_admit(
-		s, &object, 12, D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	memset(&second, 0, sizeof(second));
+	second.s = s;
+	second.admission = adm_b;
+	second.writer = 12;
+	second.first_index = 32;
+	second.rounds = 24;
+	second.first_sequence = next_sequence;
+	next_sequence += second.rounds;
 	memset(&watcher, 0, sizeof(watcher));
 	watcher.s = s;
 	watcher.rounds = 48;
 
-	if (pthread_create(&ta, NULL, run_concurrent_writer, &one) != 0) {
+	/*
+	 * The first caller is inside its public call, past the point where
+	 * it read its request, and it stays there until it is let go.
+	 */
+	check(park_a_caller(&first, s, adm_a, true, &parked),
+	      "the first caller enters the store and parks inside its call");
+	if (!first.parked) {
 		d1_store_free(s);
 		return;
 	}
-	if (pthread_create(&tb, NULL, run_concurrent_writer, &two) != 0) {
-		check(pthread_join(ta, NULL) == 0, "the first writer joins");
-		d1_store_free(s);
-		return;
-	}
-	if (pthread_create(&tc, NULL, run_concurrent_observer, &watcher) != 0) {
-		check(pthread_join(ta, NULL) == 0, "the first writer joins");
-		check(pthread_join(tb, NULL) == 0, "the second writer joins");
-		d1_store_free(s);
-		return;
-	}
-	check(pthread_join(ta, NULL) == 0 && pthread_join(tb, NULL) == 0 &&
-		      pthread_join(tc, NULL) == 0,
-	      "both writers and the observer finish");
-	check(one.wrote == one.rounds && two.wrote == two.rounds,
-	      "every write each caller made was accepted");
-	check(watcher.taken == watcher.rounds,
-	      "and every snapshot the observer asked for was answered");
 
-	for (i = 0; i < one.rounds; i++)
-		check(d1_store_visible(s, &object, one.first_index + i, &seen),
-		      "the first caller's chunks are all published");
-	for (i = 0; i < two.rounds; i++)
-		check(d1_store_visible(s, &object, two.first_index + i, &seen),
+	started_writer = pthread_create(&writer, NULL, run_concurrent_writer,
+					&second) == 0;
+	check(started_writer, "the second caller starts");
+	started_observer = pthread_create(&observer, NULL,
+					  run_concurrent_observer,
+					  &watcher) == 0;
+	check(started_observer, "the observer starts");
+	/*
+	 * Joined one at a time and checked one at a time: a combined test
+	 * would skip the second join whenever the first failed, and leave
+	 * a thread running into a store this test is about to free.
+	 */
+	if (started_writer)
+		check(pthread_join(writer, NULL) == 0,
+		      "the second caller is joined");
+	if (started_observer)
+		check(pthread_join(observer, NULL) == 0,
+		      "the observer is joined");
+
+	/* The overlap, read out of the parked call rather than assumed. */
+	check(pthread_mutex_lock(&first.m) == 0,
+	      "the overlap is read under the parked caller's lock");
+	overlapped = first.parked && !first.finished;
+	check(pthread_mutex_unlock(&first.m) == 0, "and the lock goes back");
+	check(overlapped,
+	      "the first call was inside the store for the whole of the "
+	      "second's");
+	check(!started_writer || second.wrote == second.rounds,
+	      "every write the second caller made was accepted");
+	check(!started_observer || watcher.taken == watcher.rounds,
+	      "and every snapshot the observer asked for was answered");
+	check(!d1_store_visible(s, &object, 0, &seen),
+	      "and the parked call has published nothing yet");
+
+	/* Released, joined, and answering for the request it read. */
+	check(pthread_mutex_lock(&first.m) == 0, "the release takes the lock");
+	first.resume = true;
+	check(pthread_cond_signal(&first.cv) == 0, "and signals the caller");
+	check(pthread_mutex_unlock(&first.m) == 0, "and lets the lock go");
+	check(pthread_join(parked, NULL) == 0, "the parked caller is joined");
+	check(first.err == 0, "with every primitive inside it succeeding");
+	check(first.status == D1_OK && first.out.count == 1 &&
+		      first.out.entries[0].status == D1_OK,
+	      "and it ran the request it read, not the one that ran while "
+	      "it waited");
+	check(d1_store_visible(s, &object, 0, &seen),
+	      "so its own chunk is the one it published");
+
+	for (i = 0; i < second.rounds; i++)
+		check(!started_writer ||
+			      d1_store_visible(s, &object,
+					       second.first_index + i, &seen),
 		      "the second caller's chunks are all published");
 
 	log = journal_of(s, &len);
@@ -9043,6 +9112,9 @@ static void test_two_callers_and_an_observer_at_once(void)
 		      "into the same store");
 		d1_store_free(rebuilt);
 	}
+	check(pthread_cond_destroy(&first.cv) == 0,
+	      "the condition is destroyed");
+	check(pthread_mutex_destroy(&first.m) == 0, "and the mutex with it");
 	d1_store_free(s);
 }
 
