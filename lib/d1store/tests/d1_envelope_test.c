@@ -289,6 +289,231 @@ static void test_round_trip(void)
 	      "guard predicate survives");
 }
 
+/*
+ * Nothing the reducer reads is lost between encode and decode.
+ *
+ * The store executes the request it decodes out of its own canonical
+ * copy, so a field the encoder writes and the decoder misplaces is not
+ * a codec curiosity: it is a request executed differently from the one
+ * that was validated, under a digest that binds the bytes and not the
+ * difference.  The round-trip test beside this one checks a write
+ * envelope's header, counts and payload; this checks every field of
+ * every body the reducer reads, each set to a value nothing else uses.
+ */
+static bool owner_same(const struct d1_owner *a, const struct d1_owner *b)
+{
+	return a->cohort.raw == b->cohort.raw && a->writer == b->writer &&
+	       a->co_id == b->co_id;
+}
+
+static bool header_same(const struct d1_envelope *a,
+			const struct d1_envelope *b)
+{
+	return memcmp(&a->object, &b->object, sizeof(a->object)) == 0 &&
+	       a->admission.raw == b->admission.raw &&
+	       a->incarnation == b->incarnation &&
+	       memcmp(&a->key.origin, &b->key.origin, sizeof(a->key.origin)) ==
+		       0 &&
+	       a->key.sequence == b->key.sequence &&
+	       a->key.ordinal == b->key.ordinal && a->op == b->op;
+}
+
+static bool round_trip(const struct d1_envelope *env, struct d1_envelope *back)
+{
+	size_t len;
+
+	if (!scratch)
+		return false;
+	len = d1_envelope_encode(env, scratch, D1_ENVELOPE_MAX);
+	if (!len)
+		return false;
+	return d1_envelope_decode(scratch, len, back);
+}
+
+static void test_the_round_trip_keeps_every_field(void)
+{
+	struct d1_envelope env, back;
+	struct d1_write_entry *w;
+	struct d1_lifecycle_entry *l;
+	struct d1_rollback_entry *r;
+	struct d1_control_batch *k;
+	unsigned int i;
+
+	/* A write, with every field distinctive. */
+	make_write(&env);
+	env.incarnation = 0x0102030405060708ull;
+	env.key.sequence = 0x1122334455667788ull;
+	env.key.ordinal = 3;
+	env.body.write.count = 2;
+	env.body.write.stability = D1_DATA_SYNC;
+	env.body.write.activate = false;
+	w = &env.body.write.entries[0];
+	w->index = 5;
+	w->owner.cohort.raw = 0x9988776655443322ull;
+	w->owner.writer = 0x1234u;
+	w->owner.co_id = 0x5678u;
+	w->guard_check = true;
+	w->expected.never_written = false;
+	w->expected.generation = 0x4321u;
+	w->expected.writer = 0x8765u;
+	env.body.write.entries[1] = *w;
+	env.body.write.entries[1].index = 6;
+	env.body.write.entries[1].owner.co_id = 0x5679u;
+	check(round_trip(&env, &back), "a write envelope round-trips");
+	check(header_same(&env, &back), "and its header is unchanged");
+	check(back.body.write.count == 2 &&
+		      back.body.write.stability == D1_DATA_SYNC &&
+		      !back.body.write.activate,
+	      "with its count, stability and activation");
+	for (i = 0; i < 2; i++) {
+		const struct d1_write_entry *a = &env.body.write.entries[i];
+		const struct d1_write_entry *b = &back.body.write.entries[i];
+
+		check(a->index == b->index && owner_same(&a->owner, &b->owner),
+		      "each entry keeps its index and owner");
+		check(a->guard_check == b->guard_check &&
+			      a->expected.never_written ==
+				      b->expected.never_written &&
+			      a->expected.generation ==
+				      b->expected.generation &&
+			      a->expected.writer == b->expected.writer,
+		      "and its guard predicate exactly");
+		check(a->payload_len == b->payload_len &&
+			      memcmp(a->payload, b->payload, a->payload_len) ==
+				      0,
+		      "and its payload bytes");
+		check(memcmp(&a->checksum, &b->checksum, sizeof(a->checksum)) ==
+			      0,
+		      "and its checksum");
+	}
+
+	/* A lifecycle batch, including the option a member may omit. */
+	make_write(&env);
+	env.op = D1_OP_COMMIT_BATCH;
+	memset(&env.body, 0, sizeof(env.body));
+	env.body.lifecycle.range_begin = 4;
+	env.body.lifecycle.range_end = 9;
+	env.body.lifecycle.count = 2;
+	for (i = 0; i < D1_VERIFIER_BYTES; i++)
+		env.body.lifecycle.prior_verifier[i] = (uint8_t)(0xa0 + i);
+	l = &env.body.lifecycle.entries[0];
+	l->index = 4;
+	l->owner.cohort.raw = 11;
+	l->owner.writer = 22;
+	l->owner.co_id = 33;
+	l->txn.raw = 0xfeedfaceull;
+	l->predecessor_present = true;
+	l->predecessor.raw = 0xdeadbeefull;
+	env.body.lifecycle.entries[1] = *l;
+	env.body.lifecycle.entries[1].index = 5;
+	env.body.lifecycle.entries[1].txn.raw = 0xfeedfacfull;
+	env.body.lifecycle.entries[1].predecessor_present = false;
+	env.body.lifecycle.entries[1].predecessor.raw = 0;
+	check(round_trip(&env, &back), "a lifecycle envelope round-trips");
+	check(header_same(&env, &back), "and its header is unchanged");
+	check(back.body.lifecycle.range_begin == 4 &&
+		      back.body.lifecycle.range_end == 9 &&
+		      back.body.lifecycle.count == 2 &&
+		      memcmp(back.body.lifecycle.prior_verifier,
+			     env.body.lifecycle.prior_verifier,
+			     D1_VERIFIER_BYTES) == 0,
+	      "with its range, count and prior verifier");
+	for (i = 0; i < 2; i++) {
+		const struct d1_lifecycle_entry *a =
+			&env.body.lifecycle.entries[i];
+		const struct d1_lifecycle_entry *b =
+			&back.body.lifecycle.entries[i];
+
+		check(a->index == b->index &&
+			      owner_same(&a->owner, &b->owner) &&
+			      a->txn.raw == b->txn.raw,
+		      "each entry keeps its index, owner and transaction");
+		check(a->predecessor_present == b->predecessor_present &&
+			      a->predecessor.raw == b->predecessor.raw,
+		      "and its predecessor option exactly as it was");
+	}
+
+	/* A rollback batch, with all three of its options set and clear. */
+	make_write(&env);
+	env.op = D1_OP_ROLLBACK_BATCH;
+	memset(&env.body, 0, sizeof(env.body));
+	env.body.rollback.range_begin = 2;
+	env.body.rollback.range_end = 8;
+	env.body.rollback.count = 2;
+	r = &env.body.rollback.entries[0];
+	r->index = 2;
+	r->owner.cohort.raw = 44;
+	r->owner.writer = 55;
+	r->owner.co_id = 66;
+	r->txn.raw = 0x1111ull;
+	r->visible_present = true;
+	r->visible.raw = 0x2222ull;
+	r->predecessor_present = true;
+	r->predecessor.raw = 0x3333ull;
+	r->custody_present = true;
+	r->custody.raw = 0x4444ull;
+	env.body.rollback.entries[1] = *r;
+	env.body.rollback.entries[1].index = 3;
+	env.body.rollback.entries[1].txn.raw = 0x1112ull;
+	env.body.rollback.entries[1].visible_present = false;
+	env.body.rollback.entries[1].visible.raw = 0;
+	env.body.rollback.entries[1].predecessor_present = false;
+	env.body.rollback.entries[1].predecessor.raw = 0;
+	env.body.rollback.entries[1].custody_present = false;
+	env.body.rollback.entries[1].custody.raw = 0;
+	check(round_trip(&env, &back), "a rollback envelope round-trips");
+	check(back.body.rollback.range_begin == 2 &&
+		      back.body.rollback.range_end == 8 &&
+		      back.body.rollback.count == 2,
+	      "with its range and count");
+	for (i = 0; i < 2; i++) {
+		const struct d1_rollback_entry *a =
+			&env.body.rollback.entries[i];
+		const struct d1_rollback_entry *b =
+			&back.body.rollback.entries[i];
+
+		check(a->index == b->index &&
+			      owner_same(&a->owner, &b->owner) &&
+			      a->txn.raw == b->txn.raw,
+		      "each entry keeps its index, owner and transaction");
+		check(a->visible_present == b->visible_present &&
+			      a->visible.raw == b->visible.raw &&
+			      a->predecessor_present ==
+				      b->predecessor_present &&
+			      a->predecessor.raw == b->predecessor.raw &&
+			      a->custody_present == b->custody_present &&
+			      a->custody.raw == b->custody.raw,
+		      "and all three of its options exactly as they were");
+	}
+
+	/* A control operation, with its two optional fields present. */
+	make_write(&env);
+	env.op = D1_OP_RECOVERY_ADMIT;
+	memset(&env.body, 0, sizeof(env.body));
+	k = &env.body.control;
+	k->count = 2;
+	k->txns[0].raw = 0xaaaaull;
+	k->txns[1].raw = 0xbbbbull;
+	k->old_admission.raw = 0xccccull;
+	k->new_admission_present = true;
+	k->new_admission.raw = 0xddddull;
+	k->read_epoch_present = true;
+	k->read_epoch = 0x123456789aull;
+	check(round_trip(&env, &back), "a control envelope round-trips");
+	check(header_same(&env, &back), "and its header is unchanged");
+	check(back.body.control.count == 2 &&
+		      back.body.control.txns[0].raw == 0xaaaaull &&
+		      back.body.control.txns[1].raw == 0xbbbbull,
+	      "with every transaction it named");
+	check(back.body.control.old_admission.raw == 0xccccull &&
+		      back.body.control.new_admission_present &&
+		      back.body.control.new_admission.raw == 0xddddull,
+	      "and both admissions");
+	check(back.body.control.read_epoch_present &&
+		      back.body.control.read_epoch == 0x123456789aull,
+	      "and the read epoch it granted");
+}
+
 /* Every field is inside the digest: change one, and it changes. */
 static void test_digest_binds_every_field(void)
 {
@@ -509,6 +734,7 @@ int main(void)
 	}
 	test_golden_write_envelope();
 	test_round_trip();
+	test_the_round_trip_keeps_every_field();
 	test_digest_binds_every_field();
 	test_decoder_refusals();
 	test_lifecycle_and_control();
