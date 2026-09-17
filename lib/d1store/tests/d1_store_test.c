@@ -96,16 +96,31 @@ static void fill_uuid(struct d1_uuid *u, uint8_t base)
 		u->bytes[i] = (uint8_t)(base + i);
 }
 
-static void env_init(struct d1_envelope *env, struct d1_store *s,
-		     d1_admission_id admission, uint32_t op)
+/*
+ * The same, under a key sequence the caller chose.
+ *
+ * @next_sequence is one counter for the whole file, which is fine for a
+ * test that runs on one thread and is a data race for one that does
+ * not.  A concurrent caller reserves its own run of sequence numbers
+ * before its threads start and passes them in here.
+ */
+static void env_init_seq(struct d1_envelope *env, struct d1_store *s,
+			 d1_admission_id admission, uint32_t op,
+			 uint64_t sequence)
 {
 	memset(env, 0, sizeof(*env));
 	env->object = object;
 	env->admission = admission;
 	env->incarnation = d1_store_incarnation(s);
 	env->key.origin = origin;
-	env->key.sequence = next_sequence++;
+	env->key.sequence = sequence;
 	env->op = op;
+}
+
+static void env_init(struct d1_envelope *env, struct d1_store *s,
+		     d1_admission_id admission, uint32_t op)
+{
+	env_init_seq(env, s, admission, op, next_sequence++);
 }
 
 static void write_entry(struct d1_write_entry *e, uint64_t index,
@@ -8863,6 +8878,174 @@ static void test_owner_vector_is_validated_whole(void)
 	d1_store_free(s);
 }
 
+/* One of several callers driving the store at the same time. */
+struct concurrent_caller {
+	struct d1_store *s;
+	d1_admission_id admission;
+	uint32_t writer;
+	uint64_t first_index;
+	/* Its own run of operation keys, reserved before it starts. */
+	uint64_t first_sequence;
+	uint32_t rounds;
+	uint32_t wrote;
+	/*
+	 * Big enough that reading the request is real work.  A caller that
+	 * read it through a buffer of the store's rather than its own
+	 * would have a window wide enough for the other caller to be
+	 * inside it, which is what makes that a race and not a theory.
+	 */
+	uint8_t payload[2048];
+};
+
+static void *run_concurrent_writer(void *arg)
+{
+	struct concurrent_caller *c = arg;
+	struct d1_envelope env;
+	struct d1_result res;
+	uint32_t i;
+
+	for (i = 0; i < c->rounds; i++) {
+		memset(c->payload, (uint8_t)(c->writer + i),
+		       sizeof(c->payload));
+		env_init_seq(&env, c->s, c->admission, D1_OP_WRITE_BATCH,
+			     c->first_sequence + i);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		env.body.write.activate = true;
+		write_entry(&env.body.write.entries[0], c->first_index + i,
+			    c->writer, 100u * c->writer + i, c->payload,
+			    sizeof(c->payload), true,
+			    &(struct d1_guard){ .never_written = true });
+		if (d1_store_apply(c->s, &env, &res) == D1_OK &&
+		    res.entries[0].status == D1_OK)
+			c->wrote++;
+	}
+	return NULL;
+}
+
+/* An observer taking snapshots of the log while the writers write. */
+struct concurrent_observer {
+	struct d1_store *s;
+	uint32_t rounds;
+	uint32_t taken;
+};
+
+static void *run_concurrent_observer(void *arg)
+{
+	struct concurrent_observer *o = arg;
+	uint32_t i;
+
+	for (i = 0; i < o->rounds; i++) {
+		uint8_t *snap = NULL;
+		size_t len = 0;
+
+		if (d1_store_journal_snapshot(o->s, &snap, &len) == D1_OK)
+			o->taken++;
+		free(snap);
+	}
+	return NULL;
+}
+
+/*
+ * Two callers and an observer, on real threads, at the same time.
+ *
+ * The fixture's hooks make a second call happen inside the first, which
+ * is a schedule and not a race: it is one thread, so nothing a
+ * sanitiser watches for can appear there however the calls interleave.
+ * What that cannot show is whether two calls share anything they hold
+ * across an interval neither of them locks -- a buffer the store owns
+ * rather than the call, say -- or whether an observer reading the log
+ * is synchronised against a writer appending to it.
+ *
+ * So these are threads.  Each writer owns its own admission, its own
+ * chunks and its own payload, so nothing about the answers depends on
+ * the order they run in, and the whole history they leave must still
+ * rebuild.  Under ThreadSanitizer this is the oracle for the store's
+ * own synchronisation; under the ordinary build it is one more check
+ * that concurrent callers get the answers they are owed.
+ */
+static void test_two_callers_and_an_observer_at_once(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct concurrent_caller one, two;
+	struct concurrent_observer watcher;
+	pthread_t ta, tb, tc;
+	const uint8_t *log;
+	size_t len;
+	uint32_t i;
+	d1_version_id seen;
+
+	fill_uuid(&store_uuid, 0x8d);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+
+	memset(&one, 0, sizeof(one));
+	one.s = s;
+	one.writer = 11;
+	one.first_index = 0;
+	one.rounds = 24;
+	one.first_sequence = next_sequence;
+	next_sequence += one.rounds;
+	one.admission = d1_fixture_admit(
+		s, &object, 11, D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	memset(&two, 0, sizeof(two));
+	two.s = s;
+	two.writer = 12;
+	two.first_index = 32;
+	two.rounds = 24;
+	two.first_sequence = next_sequence;
+	next_sequence += two.rounds;
+	two.admission = d1_fixture_admit(
+		s, &object, 12, D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	memset(&watcher, 0, sizeof(watcher));
+	watcher.s = s;
+	watcher.rounds = 48;
+
+	if (pthread_create(&ta, NULL, run_concurrent_writer, &one) != 0) {
+		d1_store_free(s);
+		return;
+	}
+	if (pthread_create(&tb, NULL, run_concurrent_writer, &two) != 0) {
+		check(pthread_join(ta, NULL) == 0, "the first writer joins");
+		d1_store_free(s);
+		return;
+	}
+	if (pthread_create(&tc, NULL, run_concurrent_observer, &watcher) != 0) {
+		check(pthread_join(ta, NULL) == 0, "the first writer joins");
+		check(pthread_join(tb, NULL) == 0, "the second writer joins");
+		d1_store_free(s);
+		return;
+	}
+	check(pthread_join(ta, NULL) == 0 && pthread_join(tb, NULL) == 0 &&
+		      pthread_join(tc, NULL) == 0,
+	      "both writers and the observer finish");
+	check(one.wrote == one.rounds && two.wrote == two.rounds,
+	      "every write each caller made was accepted");
+	check(watcher.taken == watcher.rounds,
+	      "and every snapshot the observer asked for was answered");
+
+	for (i = 0; i < one.rounds; i++)
+		check(d1_store_visible(s, &object, one.first_index + i, &seen),
+		      "the first caller's chunks are all published");
+	for (i = 0; i < two.rounds; i++)
+		check(d1_store_visible(s, &object, two.first_index + i, &seen),
+		      "the second caller's chunks are all published");
+
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "and the interleaved history rebuilds");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
 /*
  * A record that names an admission no CONTROL installed.
  *
@@ -11806,6 +11989,7 @@ int main(void)
 	test_initial_guard_is_zero_zero();
 	test_writer_must_be_the_granted_one();
 	test_owner_vector_is_validated_whole();
+	test_two_callers_and_an_observer_at_once();
 	test_a_record_that_names_no_admission();
 	test_record_tags_are_validated();
 	test_operation_key_binds_the_whole_envelope();
