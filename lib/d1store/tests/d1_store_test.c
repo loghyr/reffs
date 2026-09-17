@@ -8864,6 +8864,170 @@ static void test_owner_vector_is_validated_whole(void)
 }
 
 /*
+ * A record that names an admission no CONTROL installed.
+ *
+ * The reducer asks two questions of every request that reaches it:
+ * whether its handles are this store's, and whether the caller is bound
+ * to the object it names.  On the public path both are a re-check --
+ * the call settled them at the door.  Replay enters the reducer
+ * directly, and it adopts every decoded handle for the store it is
+ * rebuilding, so the first question is a tautology there by
+ * construction.  The second is not: a record can name an admission that
+ * no CONTROL record ever installed, and adoption does not install it.
+ *
+ * Refusing that is what keeps a spliced log from rebuilding a state no
+ * writer ever claimed.  Without it the reducer runs the record, the
+ * rights check refuses it as a live caller would be refused, the
+ * refusal is a recorded one -- so a receipt appears -- and the logged
+ * result it is compared against is the identical refusal.  The rebuild
+ * then accepts a member the live writer could not have emitted.
+ *
+ * So the forged record here is built out of one the writer really did
+ * emit: a write under a revoked admission, which is refused STALE_AUTH
+ * and recorded, because that is the one shape whose logged result a
+ * door-less reducer would reproduce.  Only the admission it names is
+ * changed, and the request digest recomputed to match, so nothing
+ * structural is wrong with it.
+ */
+static void test_a_record_that_names_no_admission(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *target;
+	struct d1_journal_cursor cur;
+	struct d1_envelope env, forged;
+	struct d1_result res;
+	static uint8_t copy[65536];
+	static uint8_t rebuilt_bytes[D1_ENVELOPE_MAX];
+	const uint8_t *log, *body;
+	size_t len, at = 0, env_at = 0;
+	uint32_t type, blen, env_len = 0, total, crc, i;
+	uint64_t lsn, incarnation;
+	static uint8_t data[8];
+	d1_admission_id admission, doomed;
+	d1_version_id seen;
+
+	memset(data, 0x83, sizeof(data));
+	fill_uuid(&store_uuid, 0x83);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	admission = d1_fixture_admit(live, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	check(d1_version_live(
+		      commit_chunk(live, admission, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
+	      "a history to rebuild");
+
+	/*
+	 * The one recorded refusal a door-less reducer would reproduce:
+	 * the admission is installed and bound, so the caller binding
+	 * holds, and it is revoked, so the rights check does not.
+	 */
+	doomed = d1_fixture_admit(live, &object, 11,
+				  D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	d1_fixture_revoke(live, doomed);
+	env_init(&env, live, doomed, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	write_entry(&env.body.write.entries[0], 1, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH &&
+		      res.entries[0].disposition == D1_COMPLETED,
+	      "a write under a revoked admission is refused and recorded");
+
+	log = journal_of(live, &len);
+	check(len <= sizeof(copy), "the log fits the fixture buffer");
+	if (len > sizeof(copy)) {
+		d1_store_free(live);
+		return;
+	}
+	memcpy(copy, log, len);
+
+	/* The last ENTRY record is the recorded refusal. */
+	d1_journal_cursor_init(&cur, log, len, &store_uuid);
+	while (d1_journal_next(&cur, &type, &lsn, &incarnation, &body, &blen) ==
+	       D1_JOURNAL_RECORD) {
+		struct d1_cursor rec;
+		const uint8_t *env_bytes;
+		uint32_t n;
+
+		if (type != D1_REC_ENTRY)
+			continue;
+		d1_dec_init(&rec, body, blen);
+		if (!d1_dec_bytes_ref(&rec, &env_bytes, &n, D1_ENVELOPE_MAX))
+			break;
+		at = (size_t)(body - log) - D1_JOURNAL_HEADER_BYTES;
+		env_at = (size_t)(env_bytes - log);
+		env_len = n;
+	}
+	check(env_len != 0, "the log has an ENTRY record to work from");
+	if (!env_len) {
+		d1_store_free(live);
+		return;
+	}
+	check(d1_envelope_decode(log + env_at, env_len, &forged) &&
+		      d1_admission_raw(forged.admission) ==
+			      d1_admission_raw(doomed),
+	      "and it is the one the revoked admission wrote");
+
+	/*
+	 * An admission number no ADMIT record installed.  It is a u64 on
+	 * the wire, so the record's length does not move and only the
+	 * bytes the digest covers change.
+	 */
+	forged.admission.raw = d1_admission_raw(doomed) + 1000u;
+	check(d1_envelope_encode(&forged, rebuilt_bytes,
+				 sizeof(rebuilt_bytes)) == env_len,
+	      "the forged request encodes to the same length");
+	memcpy(copy + env_at, rebuilt_bytes, env_len);
+	/* The digest follows the bytes and the ordinal; recompute it. */
+	d1_request_digest(copy + env_at, env_len, copy + env_at + env_len + 4u);
+	total = ((uint32_t)copy[at + 12] << 24) |
+		((uint32_t)copy[at + 13] << 16) |
+		((uint32_t)copy[at + 14] << 8) | (uint32_t)copy[at + 15];
+	crc = d1_crc32c(copy + at, total - D1_JOURNAL_TRAILER_BYTES);
+	for (i = 0; i < 4u; i++)
+		copy[at + total - 4u + i] = (uint8_t)(crc >> (24u - 8u * i));
+
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, copy, len) == D1_INVALID,
+		      "a record naming an admission nothing installed "
+		      "is refused");
+		check(d1_store_apply(target, &env, &res) == D1_INVALID,
+		      "and the store the failed rebuild leaves serves nothing");
+		d1_store_free(target);
+	}
+
+	/* The untouched log still rebuilds, so the forgery is the change. */
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, log, len) == D1_OK,
+		      "and the unmodified log still rebuilds");
+		check(d1_store_visible(target, &object, 0, &seen),
+		      "into the store that wrote it");
+		/*
+		 * And the request the forgery claims was recorded is one
+		 * the live path refuses outright: the admission it names
+		 * was never installed, so nothing is written and nothing
+		 * is recorded under it.
+		 */
+		env.admission = forged.admission;
+		check(d1_store_apply(target, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_STALE_AUTH &&
+			      res.entries[0].disposition == D1_UNRECORDED,
+		      "and no live caller could have produced that record");
+		d1_store_free(target);
+	}
+
+	d1_store_free(live);
+}
+
+/*
  * A record's outer tag is checked before anything is dispatched on it,
  * and has to agree with the schema it carries.
  *
@@ -11642,6 +11806,7 @@ int main(void)
 	test_initial_guard_is_zero_zero();
 	test_writer_must_be_the_granted_one();
 	test_owner_vector_is_validated_whole();
+	test_a_record_that_names_no_admission();
 	test_record_tags_are_validated();
 	test_operation_key_binds_the_whole_envelope();
 	test_unused_key_is_not_bound();
