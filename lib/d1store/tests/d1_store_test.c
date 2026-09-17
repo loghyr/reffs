@@ -4663,10 +4663,17 @@ struct precedence_case {
  * for every pair a client can actually construct.
  *
  * Each row builds one entry carrying two faults and asserts the answer.
- * Five of these rows are the pairs that a reordering of the shipped
- * code would change: checksum against writer, against activation, and
- * against the absent guard; the absent guard against the writer; and
- * geometry against the writer.
+ * The rows are not chosen.  They are every pair among the refusals this
+ * half decides whose two statuses differ and whose relative order can
+ * be changed on its own, with the single-fault corners kept so the
+ * pairs have something to be read against.  How many of them a
+ * reordering would change is the mutation set's answer rather than a
+ * number kept in a comment here, where it goes stale the next time a
+ * row is added.
+ *
+ * This is one half of the order.  The boundary between it and the
+ * chunk's own state -- the guard predicate and the pending transaction
+ * -- is the next test, which derives that set the same way.
  */
 static void test_the_order_of_two_refusals_is_fixed(void)
 {
@@ -4772,6 +4779,202 @@ static void test_the_order_of_two_refusals_is_fixed(void)
 			      res.entries[0].status == c->expect,
 		      c->what);
 	}
+
+	d1_store_free(s);
+}
+
+/*
+ * One row of the request/state boundary: a request that is wrong on its
+ * own face, about a chunk that is in a state the request also gets
+ * wrong.
+ */
+struct boundary_case {
+	const char *what;
+	/* The request-only fault. */
+	bool bad_geometry;
+	bool long_payload;
+	bool bad_writer;
+	bool omit_guard;
+	bool ask_activate;
+	bool bad_checksum;
+	bool reuse_owner;
+	bool multi_writer;
+	/* Which chunk, and so which state fault. */
+	uint64_t index;
+	/*
+	 * Whether the request expects the guard the chunk actually has.
+	 * A row that does not is a stale-guard row; a row that does is
+	 * left with the chunk's pending transaction as its only state
+	 * fault.
+	 */
+	bool guard_matches;
+	uint32_t expect;
+	uint32_t expect_disposition;
+};
+
+/*
+ * A request is judged on its own face before the chunk it names.
+ *
+ * The frozen order in d1_do_write_entry has two halves.  The first asks
+ * only about the request and the grant it came with; the second asks
+ * about the store.  The table above pins the order inside the first
+ * half, and says nothing about the boundary between them -- so a
+ * checksum that does not verify, sent against a chunk whose guard has
+ * moved, was answered CHECKSUM by the shipped code and GUARDED by a
+ * reordering of it, with both passing every shipped suite.
+ *
+ * The boundary matters for the same reason the rest of the order does:
+ * the answer is in the receipt, replay compares it, and a request that
+ * is malformed on its face must not have its answer decided by state
+ * the caller cannot see.
+ *
+ * The pairs are derived rather than chosen.  Seven refusals are decided
+ * on the request alone -- geometry, payload length, writer, an absent
+ * guard, activation, checksum and owner -- and two on the chunk: a
+ * guard predicate that does not match, and a chunk that already holds
+ * an uncommitted transaction.  Of those fourteen combinations two
+ * cannot be built: a chunk outside the object's declared geometry can
+ * never have been written, so it can hold no pending transaction, and a
+ * request that omits its guard predicate has none to be stale.  The
+ * other twelve are here, and each is one write carrying exactly two
+ * faults.
+ *
+ * The store is opened small on purpose -- eight chunks of geometry
+ * inside a table of sixty-four -- so that an index past the object's
+ * end is still an index the chunk table has a row for.  Otherwise the
+ * geometry rows would only ever be racing the capacity refusal, which
+ * is pinned elsewhere.
+ */
+static void test_a_request_is_judged_before_the_chunk_it_names(void)
+{
+	static const struct boundary_case cases[] = {
+		/* Against a chunk whose guard is not the one expected. */
+		{ "geometry outranks a stale guard", true, false, false, false,
+		  false, false, false, false, 8, false, D1_INVALID,
+		  D1_COMPLETED },
+		{ "the payload bound outranks a stale guard", false, true,
+		  false, false, false, false, false, false, 0, false,
+		  D1_INVALID, D1_COMPLETED },
+		{ "the writer outranks a stale guard", false, false, true,
+		  false, false, false, false, false, 0, false, D1_STALE_AUTH,
+		  D1_COMPLETED },
+		{ "asking to activate outranks a stale guard", false, false,
+		  false, false, true, false, false, true, 0, false, D1_INVALID,
+		  D1_COMPLETED },
+		{ "the checksum outranks a stale guard", false, false, false,
+		  false, false, true, false, false, 0, false, D1_CHECKSUM,
+		  D1_COMPLETED },
+		{ "a reused owner outranks a stale guard", false, false, false,
+		  false, false, false, true, false, 0, false, D1_OWNER_CONFLICT,
+		  D1_COMPLETED },
+		/* Against a chunk that already holds a transaction. */
+		{ "the payload bound outranks a pending transaction", false,
+		  true, false, false, false, false, false, false, 1, true,
+		  D1_INVALID, D1_COMPLETED },
+		{ "the writer outranks a pending transaction", false, false,
+		  true, false, false, false, false, false, 1, true,
+		  D1_STALE_AUTH, D1_COMPLETED },
+		{ "an omitted guard outranks a pending transaction", false,
+		  false, false, true, false, false, false, true, 1, true,
+		  D1_INVALID, D1_COMPLETED },
+		{ "asking to activate outranks a pending transaction", false,
+		  false, false, false, true, false, false, true, 1, true,
+		  D1_INVALID, D1_COMPLETED },
+		{ "the checksum outranks a pending transaction", false, false,
+		  false, false, false, true, false, false, 1, true, D1_CHECKSUM,
+		  D1_COMPLETED },
+		{ "a reused owner outranks a pending transaction", false, false,
+		  false, false, false, false, true, false, 1, true,
+		  D1_OWNER_CONFLICT, D1_COMPLETED },
+	};
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_guard actual, expected;
+	static uint8_t data[16];
+	static uint8_t big[CHUNK_BYTES + 1u];
+	uint32_t i;
+	d1_admission_id single, multi;
+	d1_version_id seen;
+
+	memset(data, 0x7a, sizeof(data));
+	memset(big, 0x7a, sizeof(big));
+	fill_uuid(&store_uuid, 0x7a);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, 8u * CHUNK_BYTES);
+	if (!s)
+		return;
+	single = d1_fixture_admit(s, &object, 11,
+				  D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	multi = d1_fixture_admit(s, &object, 12, D1_RIGHT_WRITE);
+
+	/*
+	 * Chunk 0 is committed, so its guard has moved on and an owner is
+	 * bound to it.  Chunk 1 is written and left prepared, so it holds
+	 * a transaction and its guard has moved on too -- which is why the
+	 * pending rows expect that guard rather than the initial one, and
+	 * so carry the pending transaction as their only state fault.
+	 */
+	check(d1_version_live(
+		      commit_chunk(s, single, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
+	      "chunk 0 is committed, binding an owner");
+	env_init(&env, s, single, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 2, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "chunk 1 is written and left prepared");
+	check(!d1_store_visible(s, &object, 1, &seen),
+	      "so it holds a transaction and publishes nothing");
+
+	for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		const struct boundary_case *c = &cases[i];
+		uint32_t writer = c->multi_writer ? 12 : 11;
+		uint32_t co_id = c->reuse_owner ? 1 : 30 + i;
+		uint32_t len = c->long_payload ? CHUNK_BYTES + 1u :
+						 (uint32_t)sizeof(data);
+
+		d1_store_guard(s, &object, c->index, &actual);
+		if (c->guard_matches)
+			expected = actual;
+		else if (actual.never_written)
+			expected = (struct d1_guard){ .never_written = false,
+						      .generation = 3,
+						      .writer = 11 };
+		else
+			expected = (struct d1_guard){ .never_written = true };
+
+		env_init(&env, s, c->multi_writer ? multi : single,
+			 D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		env.body.write.activate = c->ask_activate;
+		write_entry(&env.body.write.entries[0], c->index,
+			    c->bad_writer ? 99 : writer, co_id, big, len,
+			    !c->omit_guard, &expected);
+		if (c->reuse_owner)
+			env.body.write.entries[0].owner.writer = 11;
+		if (c->bad_checksum)
+			env.body.write.entries[0].checksum.digest[0] ^= 0xffu;
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == c->expect &&
+			      res.entries[0].disposition ==
+				      c->expect_disposition,
+		      c->what);
+	}
+
+	/*
+	 * And the two combinations the derivation leaves out really are
+	 * out: a chunk past the declared geometry has never been written,
+	 * so nothing is pending there, and a request that omits its guard
+	 * predicate is not compared against one.
+	 */
+	check(!d1_store_visible(s, &object, 8, &seen),
+	      "the chunk past the geometry holds nothing to conflict with");
 
 	d1_store_free(s);
 }
@@ -11399,6 +11602,7 @@ int main(void)
 	test_an_exhausted_counter_refuses();
 	test_an_exhausted_epoch_refuses();
 	test_the_order_of_two_refusals_is_fixed();
+	test_a_request_is_judged_before_the_chunk_it_names();
 	test_a_handle_names_its_own_kind();
 	test_replay_rebuilds_the_same_handles();
 	test_geometry_is_asked_before_the_object_table();
