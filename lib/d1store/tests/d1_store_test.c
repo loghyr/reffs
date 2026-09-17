@@ -4649,6 +4649,8 @@ struct precedence_case {
 	/* Which admission to send it under. */
 	bool multi_writer;
 	uint32_t expect;
+	/* A payload one byte past the declared chunk size. */
+	bool long_payload;
 };
 
 /*
@@ -4671,41 +4673,61 @@ static void test_the_order_of_two_refusals_is_fixed(void)
 	static const struct precedence_case cases[] = {
 		/* One fault at a time, so the matrix has its corners. */
 		{ "geometry alone", true, false, false, false, false, false,
-		  false, D1_INVALID },
+		  false, D1_INVALID, false },
 		{ "a writer that is not the granted one", false, true, false,
-		  false, false, false, false, D1_STALE_AUTH },
+		  false, false, false, false, D1_STALE_AUTH, false },
 		{ "an omitted guard under a multi-writer grant", false, false,
-		  true, false, false, false, true, D1_INVALID },
+		  true, false, false, false, true, D1_INVALID, false },
 		{ "a multi-writer grant asking to activate", false, false,
-		  false, true, false, false, true, D1_INVALID },
+		  false, true, false, false, true, D1_INVALID, false },
 		{ "a checksum that does not verify", false, false, false, false,
-		  true, false, false, D1_CHECKSUM },
+		  true, false, false, D1_CHECKSUM, false },
 		{ "an owner bound elsewhere", false, false, false, false, false,
-		  true, false, D1_OWNER_CONFLICT },
+		  true, false, D1_OWNER_CONFLICT, false },
 		/* The five pairs a reorder would change. */
 		{ "geometry outranks the writer", true, true, false, false,
-		  false, false, false, D1_INVALID },
+		  false, false, false, D1_INVALID, false },
 		{ "the writer outranks an omitted guard", false, true, true,
-		  false, false, false, true, D1_STALE_AUTH },
+		  false, false, false, true, D1_STALE_AUTH, false },
 		{ "an omitted guard outranks the checksum", false, false, true,
-		  false, true, false, true, D1_INVALID },
+		  false, true, false, true, D1_INVALID, false },
 		{ "asking to activate outranks the checksum", false, false,
-		  false, true, true, false, true, D1_INVALID },
+		  false, true, true, false, true, D1_INVALID, false },
 		{ "the writer outranks the checksum", false, true, false, false,
-		  true, false, false, D1_STALE_AUTH },
+		  true, false, false, D1_STALE_AUTH, false },
 		/* And the two the last cycle pinned, kept in the table. */
 		{ "the checksum outranks a reused owner", false, false, false,
-		  false, true, true, false, D1_CHECKSUM },
+		  false, true, true, false, D1_CHECKSUM, false },
+		/*
+		 * The payload bound and the activation question against
+		 * everything below them.  A reorder of any of these four
+		 * changes a recorded answer and nothing else in the table
+		 * sees it: the chain the rows above pin is
+		 * GEO > WR > AG > CK > OW, with WR > CK and AC > CK, which
+		 * leaves the length check unpinned against the writer, the
+		 * checksum and the owner, and activation unpinned against
+		 * the writer.
+		 */
+		{ "the payload bound outranks the writer", false, true, false,
+		  false, false, false, false, D1_INVALID, true },
+		{ "the payload bound outranks the checksum", false, false,
+		  false, false, true, false, false, D1_INVALID, true },
+		{ "the payload bound outranks a reused owner", false, false,
+		  false, false, false, true, false, D1_INVALID, true },
+		{ "the writer outranks asking to activate", false, true, false,
+		  true, false, false, true, D1_STALE_AUTH, false },
 	};
 	struct d1_uuid store_uuid;
 	struct d1_store *s;
 	struct d1_envelope env;
 	struct d1_result res;
 	static uint8_t data[16];
+	static uint8_t big[CHUNK_BYTES + 1u];
 	uint32_t i;
 	d1_admission_id single, multi;
 
 	memset(data, 0x41, sizeof(data));
+	memset(big, 0x41, sizeof(big));
 	fill_uuid(&store_uuid, 0x41);
 	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (!s)
@@ -4730,6 +4752,8 @@ static void test_the_order_of_two_refusals_is_fixed(void)
 		uint32_t writer = c->multi_writer ? 12 : 11;
 		uint64_t index = c->bad_geometry ? MAX_FILE_BYTES : 4;
 		uint32_t co_id = c->reuse_owner ? 1 : 20 + i;
+		uint32_t len = c->long_payload ? CHUNK_BYTES + 1u :
+						 (uint32_t)sizeof(data);
 
 		env_init(&env, s, c->multi_writer ? multi : single,
 			 D1_OP_WRITE_BATCH);
@@ -4737,8 +4761,8 @@ static void test_the_order_of_two_refusals_is_fixed(void)
 		env.body.write.stability = D1_FILE_SYNC;
 		env.body.write.activate = c->ask_activate;
 		write_entry(&env.body.write.entries[0], index,
-			    c->bad_writer ? 99 : writer, co_id, data,
-			    sizeof(data), !c->omit_guard,
+			    c->bad_writer ? 99 : writer, co_id, big, len,
+			    !c->omit_guard,
 			    &(struct d1_guard){ .never_written = true });
 		if (c->reuse_owner)
 			env.body.write.entries[0].owner.writer = 11;
@@ -5526,6 +5550,67 @@ static void test_a_foreign_request_learns_nothing_about_keys(void)
 
 	d1_store_free(a);
 	d1_store_free(b);
+}
+
+/*
+ * What the operation's disposition says when no member ran.
+ *
+ * The field answers for the operation: COMPLETED when any member
+ * recorded, UNRECORDED when none did.  Three returns leave before any
+ * member exists -- a closed store, an operation this slice cannot
+ * express, and a request the canonical form cannot express -- and all
+ * three used to report COMPLETED, which is the opposite of what
+ * happened.  The status distinguishes them, but a caller reading the
+ * field the header describes was told a record exists.
+ */
+static void test_an_operation_that_ran_nothing_says_so(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t data[16];
+	d1_admission_id admission;
+
+	memset(data, 0x5b, sizeof(data));
+	fill_uuid(&store_uuid, 0x5b);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	/* An operation this slice does not implement. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.op = D1_OP_BEGIN_REPAIR;
+	memset(&res, 0xee, sizeof(res));
+	check(d1_store_apply(s, &env, &res) == D1_UNSUPPORTED,
+	      "an operation this slice cannot express is unsupported");
+	check(res.disposition == D1_UNRECORDED,
+	      "and the operation recorded nothing");
+
+	/* A request the canonical form cannot express. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 0;
+	memset(&res, 0xee, sizeof(res));
+	check(d1_store_apply(s, &env, &res) == D1_INVALID,
+	      "a malformed request is invalid");
+	check(res.disposition == D1_UNRECORDED, "and recorded nothing either");
+
+	/* And a store that is no longer serving. */
+	check(d1_store_close(s) == D1_OK, "the store closes");
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	memset(&res, 0xee, sizeof(res));
+	check(d1_store_apply(s, &env, &res) == D1_INVALID,
+	      "a closed store refuses the call");
+	check(res.disposition == D1_UNRECORDED,
+	      "and reports that nothing was recorded");
+
+	check(d1_store_destroy(s) == D1_OK, "and it destroys");
 }
 
 /*
@@ -10845,6 +10930,7 @@ int main(void)
 	test_the_door_inside_a_member();
 	test_the_request_the_store_took();
 	test_a_foreign_request_learns_nothing_about_keys();
+	test_an_operation_that_ran_nothing_says_so();
 	test_one_number_is_one_member();
 	test_an_exhausted_counter_refuses();
 	test_an_exhausted_epoch_refuses();

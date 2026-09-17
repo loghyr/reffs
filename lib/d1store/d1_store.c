@@ -2822,7 +2822,14 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 
 	memset(out, 0, sizeof(*out));
 	out->key = env->key;
-	out->disposition = D1_COMPLETED;
+	/*
+	 * Nothing has been recorded yet, and the early returns below --
+	 * a closed store, an operation this slice cannot express, a
+	 * malformed request -- record nothing at all.  The member loop
+	 * sets this from its members when there are members; until then
+	 * the honest answer is that the operation left no record.
+	 */
+	out->disposition = D1_UNRECORDED;
 
 	/*
 	 * The call is bracketed for its whole length, not for each of its
