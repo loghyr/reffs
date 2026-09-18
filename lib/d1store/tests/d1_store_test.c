@@ -15173,10 +15173,11 @@ static void test_replay_requires_the_record_to_have_happened(void)
 		"a duplicated control record is refused",
 		"an ENTRY whose caller was never bound is refused",
 		"an ENTRY refused for its key is refused",
+		"a duplicated cohort record is refused",
 	};
 	unsigned int pass;
 
-	for (pass = 0; pass < 3; pass++) {
+	for (pass = 0; pass < 4; pass++) {
 		struct d1_uuid store_uuid;
 		struct d1_store *live, *target;
 		struct d1_envelope env, crafted;
@@ -15207,7 +15208,7 @@ static void test_replay_requires_the_record_to_have_happened(void)
 		d1_store_journal_enable(live);
 		d1_store_verifier(live, verifier);
 		admission = d1_fixture_admit(live, &object, 11,
-					     D1_RIGHT_WRITE |
+					     D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
 						     D1_RIGHT_SINGLE_WRITER);
 		env_init(&env, live, admission, D1_OP_WRITE_BATCH);
 		env.body.write.count = 1;
@@ -15236,6 +15237,25 @@ static void test_replay_requires_the_record_to_have_happened(void)
 			check(d1_store_apply(live, &env, &res) == D1_OK &&
 				      res.entries[0].status == D1_STALE_AUTH,
 			      "and one control record, recorded as a refusal");
+		} else if (pass == 3) {
+			/*
+			 * And a repair the reducer records as a refusal,
+			 * which is a cohort record with a receipt: the
+			 * successor it names is not the one the chunk
+			 * holds.
+			 */
+			env_init(&env, live, admission, D1_OP_MARK_ERROR);
+			env.body.repair.range_begin = 0;
+			env.body.repair.range_end = 1;
+			env.body.repair.count = 1;
+			repair_member(&env.body.repair.entries[0], 0, 0, 2,
+				      d1_fixture_custody_handle(live, 1),
+				      d1_fixture_version_handle(live, 999),
+				      d1_version_none());
+			check(d1_store_apply(live, &env, &res) == D1_OK &&
+				      res.entries[0].disposition ==
+					      D1_COMPLETED,
+			      "and one cohort record, recorded as a refusal");
 		}
 
 		log = journal_of(live, &len);
@@ -15247,14 +15267,14 @@ static void test_replay_requires_the_record_to_have_happened(void)
 			return;
 		}
 
-		if (pass == 0) {
+		if (pass == 0 || pass == 3) {
 			/* The last record again, under the next LSN. */
 			const uint8_t *last = log + at[records - 1];
 
 			blen = record_bytes(last) - D1_JOURNAL_HEADER_BYTES -
 			       D1_JOURNAL_TRAILER_BYTES;
 			memcpy(body, last + D1_JOURNAL_HEADER_BYTES, blen);
-			type = D1_REC_CONTROL;
+			type = pass == 0 ? D1_REC_CONTROL : D1_REC_COHORT;
 		} else {
 			if (pass == 1) {
 				/* A handle the store never issued. */
@@ -15421,6 +15441,116 @@ static void test_replay_refuses_a_record_that_found_no_room(void)
 	if (target) {
 		check(d1_store_replay(target, copy, used) == D1_INVALID,
 		      "a record of a member that found no room is refused");
+		d1_store_free(target);
+	}
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, log, len) == D1_OK,
+		      "while the log as written still rebuilds");
+		check(states_agree(live, target), "into the same store");
+		d1_store_free(target);
+	}
+	d1_store_free(live);
+}
+
+/*
+ * The same rule on the record family a repair appends.
+ *
+ * A cohort record claims that reducing it created the one receipt a
+ * repair answers with.  The claim is checked on both sides of the
+ * reducer, not derived from the status: a repair whose caller is bound
+ * to another object is refused STALE_AUTH and records nothing, and the
+ * live writer appends nothing for it -- so a record of it is a record
+ * that never happened, carrying exactly the result the reducer
+ * recomputes.
+ *
+ * The CONTROL path has had this test since the previous slice.  The
+ * cohort family was given the same two checks when it was added and
+ * neither was driven, which an operator found and this closes.
+ */
+static void test_a_cohort_record_that_recorded_nothing(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *target;
+	struct d1_objkey elsewhere;
+	struct d1_envelope crafted;
+	struct d1_complete_result made;
+	struct d1_result res;
+	static uint8_t copy[65536];
+	static uint8_t scratch[65536];
+	static uint8_t body[8192];
+	static uint8_t bytes[4096];
+	static uint8_t result[512];
+	static uint8_t data[16];
+	uint8_t digest[D1_DIGEST_BYTES];
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	const uint8_t *log;
+	size_t len, before = 0, at[16], used, env_len, res_len;
+	unsigned int records;
+	uint32_t blen;
+	d1_admission_id admission, stranger;
+
+	memset(data, 0x2a, sizeof(data));
+	fill_uuid(&store_uuid, 0xa5);
+	elsewhere.export_uuid = object.export_uuid;
+	fill_uuid(&elsewhere.object_uuid, 0xa6);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	d1_store_verifier(live, verifier);
+	admission = d1_fixture_admit(live, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	check(d1_version_live(
+		      commit_chunk(live, admission, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
+	      "a history with work in it");
+
+	/* A repair handle for a different object: admitted, not bound. */
+	stranger = d1_fixture_admit(live, &elsewhere, 11, D1_RIGHT_REPAIR);
+	(void)journal_of(live, &before);
+	env_init(&crafted, live, stranger, D1_OP_MARK_ERROR);
+	crafted.object = object;
+	crafted.body.repair.range_begin = 0;
+	crafted.body.repair.range_end = 1;
+	crafted.body.repair.count = 1;
+	repair_member(&crafted.body.repair.entries[0], 0, 0, 2,
+		      d1_fixture_custody_handle(live, 1),
+		      d1_fixture_version_handle(live, 1), d1_version_none());
+	check(d1_store_apply(live, &crafted, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "a repair whose handle is bound elsewhere records nothing");
+	log = journal_of(live, &len);
+	check(len == before, "and the writer appended nothing for it");
+
+	/* A record of it, carrying the result the reducer computes. */
+	crafted_result(&made, &crafted.key, D1_STALE_AUTH, D1_UNRECORDED,
+		       verifier);
+	env_len = d1_envelope_encode(&crafted, bytes, sizeof(bytes));
+	res_len = d1_complete_result_encode(&made, result, sizeof(result));
+	check(env_len && res_len &&
+		      d1_envelope_digest(&crafted, scratch, sizeof(scratch),
+					 digest),
+	      "the record it did not write encodes");
+	records = index_log(log, len, at, 16);
+	check(len + 4096u <= sizeof(copy), "and the log fits a copy");
+	if (!env_len || !res_len || len + 4096u > sizeof(copy)) {
+		d1_store_free(live);
+		return;
+	}
+	blen = cohort_body(body, bytes, (uint32_t)env_len, digest, result,
+			   (uint32_t)res_len);
+	memcpy(copy, log, len);
+	used = len + frame_record(copy + len, D1_REC_COHORT, &store_uuid,
+				  (uint64_t)records + 1u, 1, body, blen);
+
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, copy, used) == D1_INVALID,
+		      "a cohort record that recorded nothing is refused");
 		d1_store_free(target);
 	}
 	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
@@ -16339,6 +16469,7 @@ int main(void)
 	test_replay_requires_the_record_to_have_happened();
 	test_replay_refuses_a_record_that_found_no_room();
 	test_a_control_record_that_recorded_nothing();
+	test_a_cohort_record_that_recorded_nothing();
 	test_a_batch_stops_at_its_first_unrecorded_member();
 	test_fixture_control_records_are_canonical();
 	test_fixture_records_carry_an_outcome_that_was_logged();
