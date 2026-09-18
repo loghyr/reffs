@@ -9020,6 +9020,7 @@ static void test_a_request_read_at_the_door_is_the_one_that_runs(void)
 	size_t len;
 	uint32_t i;
 	bool started_writer = false, started_observer = false, overlapped;
+	bool started_parked;
 	d1_admission_id adm_a, adm_b;
 	d1_version_id seen;
 
@@ -9049,9 +9050,27 @@ static void test_a_request_read_at_the_door_is_the_one_that_runs(void)
 	 * The first caller is inside its public call, past the point where
 	 * it read its request, and it stays there until it is let go.
 	 */
-	check(park_a_caller(&first, s, adm_a, true, &parked),
+	started_parked = park_a_caller(&first, s, adm_a, true, &parked);
+	check(started_parked,
 	      "the first caller enters the store and parks inside its call");
+	if (!started_parked) {
+		d1_store_free(s);
+		return;
+	}
 	if (!first.parked) {
+		/* The thread exists; let it go and take it back. */
+		check(pthread_mutex_lock(&first.m) == 0,
+		      "the release takes the lock");
+		first.resume = true;
+		check(pthread_cond_signal(&first.cv) == 0,
+		      "and signals the caller");
+		check(pthread_mutex_unlock(&first.m) == 0,
+		      "and lets the lock go");
+		check(pthread_join(parked, NULL) == 0,
+		      "and the caller is joined anyway");
+		check(pthread_cond_destroy(&first.cv) == 0,
+		      "its condition is released");
+		check(pthread_mutex_destroy(&first.m) == 0, "and its mutex");
 		d1_store_free(s);
 		return;
 	}
@@ -9233,6 +9252,7 @@ static void test_an_admitted_call_spans_another(void)
 	size_t len, before, after;
 	uint32_t got_len, i;
 	bool started_writer = false, started_observer = false, overlapped;
+	bool started_worker;
 	d1_admission_id adm_a, adm_b;
 	d1_version_id seen, member_one_version, member_two_version;
 
@@ -9261,20 +9281,28 @@ static void test_an_admitted_call_spans_another(void)
 	watcher.s = s;
 	watcher.rounds = 48;
 
-	check(park_a_batch(&first, s, adm_a, 1, member_one, member_two,
-			   (uint32_t)sizeof(member_one), &worker),
-	      "a two-member batch starts");
+	/*
+	 * A true return means the worker exists, whether or not it parked;
+	 * a false one means nothing was left running and nothing was left
+	 * initialized.  Cleaning up on the error code instead would join a
+	 * thread that was never created.
+	 */
+	started_worker = park_a_batch(&first, s, adm_a, 1, member_one,
+				      member_two, (uint32_t)sizeof(member_one),
+				      &worker);
+	check(started_worker, "a two-member batch starts");
+	if (!started_worker) {
+		d1_store_free(s);
+		return;
+	}
 	if (!first.parked) {
 		check(false, "and parks between its members");
-		if (first.err) {
-			release_parked_member(&first);
-			check(pthread_join(worker, NULL) == 0,
-			      "the worker is joined anyway");
-			check(pthread_cond_destroy(&first.cv) == 0,
-			      "its condition is released");
-			check(pthread_mutex_destroy(&first.m) == 0,
-			      "and its mutex");
-		}
+		release_parked_member(&first);
+		check(pthread_join(worker, NULL) == 0,
+		      "the worker is joined anyway");
+		check(pthread_cond_destroy(&first.cv) == 0,
+		      "its condition is released");
+		check(pthread_mutex_destroy(&first.m) == 0, "and its mutex");
 		d1_store_free(s);
 		return;
 	}
@@ -9327,12 +9355,29 @@ static void test_an_admitted_call_spans_another(void)
 	check(d1_version_live(member_two_version),
 	      "member 1 returned a version");
 
-	/* The bytes, read back through a view over member 1's chunk. */
+	/*
+	 * The bytes, read back through a view over both chunks.  Member 1
+	 * is the one the parked schedule is about, but member 0 ran before
+	 * the park and is just as much this call's work: a control that
+	 * corrupted only the member that had already published would
+	 * otherwise pass, which is exactly what the seventeenth review
+	 * demonstrated with two synthetic corruptors.
+	 */
 	ordinary_sel(&sel);
-	if (d1_view_open(s, &object, adm_a, &sel, 2u * CHUNK_BYTES,
+	if (d1_view_open(s, &object, adm_a, &sel, CHUNK_BYTES,
 			 2u * CHUNK_BYTES + sizeof(member_two),
 			 &view) == D1_OK) {
-		check(d1_view_read(view, 2u * CHUNK_BYTES, got, sizeof(got),
+		check(d1_view_read(view, CHUNK_BYTES, got,
+				   (uint32_t)sizeof(member_one),
+				   &got_len) == D1_OK &&
+			      got_len == sizeof(member_one) &&
+			      memcmp(got, member_one, sizeof(member_one)) == 0,
+		      "member 0 holds its own payload");
+		check(d1_view_version(view, 1, &seen) &&
+			      d1_version_eq(seen, member_one_version),
+		      "and the version it names is the one member 0 returned");
+		check(d1_view_read(view, 2u * CHUNK_BYTES, got,
+				   (uint32_t)sizeof(member_two),
 				   &got_len) == D1_OK &&
 			      got_len == sizeof(member_two) &&
 			      memcmp(got, member_two, sizeof(member_two)) == 0,
@@ -9343,16 +9388,19 @@ static void test_an_admitted_call_spans_another(void)
 		      "and the version it names is the one member 1 returned");
 		d1_view_close(view);
 	} else {
-		check(false, "a view opens over member 1's chunk");
+		check(false, "a view opens over both members' chunks");
 	}
 
-	/* The receipt at that ordinal, answered from the record. */
+	/* Both receipts, answered from the record at their own ordinals. */
 	retry = first.env;
 	(void)journal_of(s, &before);
 	check(d1_store_apply(s, &retry, &res) == D1_OK && res.count == 2 &&
-		      res.entries[1].status == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      d1_version_eq(res.entries[0].version, member_one_version),
+	      "the exact retry answers ordinal 0 from the same receipt");
+	check(res.entries[1].status == D1_OK &&
 		      d1_version_eq(res.entries[1].version, member_two_version),
-	      "the exact retry answers ordinal 1 from the same receipt");
+	      "and ordinal 1 from its own");
 	(void)journal_of(s, &after);
 	check(after == before, "and writes nothing further");
 
@@ -9378,6 +9426,142 @@ static void test_an_admitted_call_spans_another(void)
 						       second.first_index + i,
 						       &seen),
 			      "and the second caller's chunks too");
+		d1_store_free(rebuilt);
+	}
+
+	check(pthread_cond_destroy(&first.cv) == 0,
+	      "the condition is destroyed");
+	check(pthread_mutex_destroy(&first.m) == 0, "and the mutex with it");
+	d1_store_free(s);
+}
+
+/*
+ * A control operation, run in the gap between two members.
+ *
+ * Section 8 revalidates the current admission at each member rather
+ * than once for the call: a batch is not a promise that the authority
+ * it started under survives it.  The between-member gap is where that
+ * can be shown, and nothing showed it -- every control test so far ran
+ * between calls, not inside one.
+ *
+ * So a two-member batch is parked after member 0 has published, and
+ * while it waits its writer's lease expires and a control caller reaps
+ * an older transaction of that same expired handle.  Member 1 then
+ * revalidates and is refused.
+ *
+ * The refusal is a result and not an interruption: it is recorded, so
+ * the exact retry answers both ordinals from their receipts and writes
+ * nothing further, and the log -- one batch with a control event inside
+ * it -- rebuilds the store it came from.
+ */
+static void test_a_control_runs_between_two_members(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct parked_member first;
+	struct d1_envelope reap, retry;
+	struct d1_result res;
+	pthread_t worker;
+	static uint8_t member_one[32], member_two[32], older[32];
+	const uint8_t *log;
+	size_t len, before, after;
+	bool started_worker;
+	d1_admission_id adm_a, ctl;
+	d1_txn_id older_txn;
+	d1_version_id seen;
+
+	memset(member_one, 0xa1, sizeof(member_one));
+	memset(member_two, 0xa2, sizeof(member_two));
+	memset(older, 0xa3, sizeof(older));
+	fill_uuid(&store_uuid, 0xa1);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	adm_a = d1_fixture_admit(s, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	ctl = d1_fixture_admit(s, &object, 11, D1_RIGHT_CONTROL);
+
+	/* Work of the writer's own, from before the batch, left finalized. */
+	(void)finalize_chunk(s, adm_a, 5, 7, older, sizeof(older),
+			     &(struct d1_guard){ .never_written = true },
+			     d1_version_none(), &older_txn);
+	check(d1_txn_live(older_txn),
+	      "the writer has an older transaction to be reaped");
+
+	started_worker = park_a_batch(&first, s, adm_a, 1, member_one,
+				      member_two, (uint32_t)sizeof(member_one),
+				      &worker);
+	check(started_worker, "a two-member batch starts");
+	if (!started_worker) {
+		d1_store_free(s);
+		return;
+	}
+	if (!first.parked) {
+		check(false, "and parks between its members");
+		release_parked_member(&first);
+		check(pthread_join(worker, NULL) == 0,
+		      "the worker is joined anyway");
+		check(pthread_cond_destroy(&first.cv) == 0,
+		      "its condition is released");
+		check(pthread_mutex_destroy(&first.m) == 0, "and its mutex");
+		d1_store_free(s);
+		return;
+	}
+
+	check(d1_store_visible(s, &object, 1, &seen),
+	      "member 0 has published, so the call is admitted");
+	check(d1_store_close(s) == D1_BUSY,
+	      "and the store refuses to close while it waits");
+
+	/* The writer's lease goes, and a control caller reaps its work. */
+	d1_fixture_expire(s, adm_a);
+	env_init(&reap, s, ctl, D1_OP_LEASE_REAP);
+	reap.body.control.count = 1;
+	reap.body.control.txns[0] = older_txn;
+	reap.body.control.old_admission = adm_a;
+	check(d1_store_apply(s, &reap, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a lease reap runs while the batch is parked between members");
+	check(res.entries[0].phase == D1_PHASE_ROLLED_BACK,
+	      "and rolls the expired handle's older transaction back");
+
+	/* Member 1 revalidates against the authority that is left. */
+	release_parked_member(&first);
+	check(pthread_join(worker, NULL) == 0, "the parked batch is joined");
+	check(first.err == 0, "with every primitive inside it succeeding");
+	check(first.status == D1_OK && first.out.count == 2,
+	      "the batch answers for both its members");
+	check(first.out.entries[0].status == D1_OK &&
+		      first.out.entries[0].disposition == D1_COMPLETED,
+	      "member 0 kept the answer it had already earned");
+	check(first.out.entries[1].status == D1_STALE_AUTH,
+	      "and member 1 is refused under the lease that expired "
+	      "beneath it");
+	check(first.out.entries[1].disposition == D1_COMPLETED,
+	      "the refusal is recorded, because it is a result and not an "
+	      "interruption");
+	check(!d1_store_visible(s, &object, 2, &seen),
+	      "so member 1 published nothing");
+
+	/* Both ordinals answer from their receipts. */
+	retry = first.env;
+	(void)journal_of(s, &before);
+	check(d1_store_apply(s, &retry, &res) == D1_OK && res.count == 2 &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[1].status == D1_STALE_AUTH,
+	      "the exact retry answers both ordinals from their receipts");
+	(void)journal_of(s, &after);
+	check(after == before, "and writes nothing further");
+
+	/* And a batch with a control event inside it rebuilds. */
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "the log rebuilds with the control inside the batch");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
 		d1_store_free(rebuilt);
 	}
 
@@ -12332,6 +12516,7 @@ int main(void)
 	test_owner_vector_is_validated_whole();
 	test_a_request_read_at_the_door_is_the_one_that_runs();
 	test_an_admitted_call_spans_another();
+	test_a_control_runs_between_two_members();
 	test_a_record_that_names_no_admission();
 	test_record_tags_are_validated();
 	test_operation_key_binds_the_whole_envelope();
