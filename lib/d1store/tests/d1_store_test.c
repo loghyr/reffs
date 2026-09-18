@@ -11750,6 +11750,214 @@ static void test_a_repair_member_is_a_transaction(void)
 }
 
 /*
+ * A cohort that carries both modes can be released.
+ *
+ * Section 7 lets one local cohort contain both, explicitly tagged per
+ * member, and requires each member's predicate to pass before a
+ * whole-vector unlock.  A clear_error that refused the whole call
+ * because a NOPRE member was in the vector made that sentence
+ * unreachable: begin_repair accepted the mixed vector, commit_repair
+ * published it, and then nothing could clear or unlock it.  The chunks
+ * stayed locked for the store's life -- a trap laid by the call that
+ * accepted the request.
+ *
+ * So the clear validates the whole cohort and clears the ERROR subset,
+ * and the unlock asks each member for the predicate its own mode has:
+ * a NOPRE member needs the commit, an ERROR member needs the clear as
+ * well.  A cohort with no ERROR member in it is the request that is
+ * really invalid, because there is nothing for a clear to do.
+ */
+static void test_a_mixed_cohort_clears_and_unlocks(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32], fixed[32];
+	static uint8_t certificate[D1_CERTIFICATE_BYTES];
+	struct d1_guard guard;
+	const uint8_t *log;
+	size_t len;
+	uint32_t i;
+	d1_admission_id admission;
+	d1_version_id marked, marked_gone, nopre, nopre_gone, seen;
+	d1_custody_id marked_custody, nopre_custody;
+	d1_repair_id cohort;
+
+	memset(older, 0x91, sizeof(older));
+	memset(newer, 0x92, sizeof(newer));
+	memset(fixed, 0x93, sizeof(fixed));
+	memset(certificate, 0x94, sizeof(certificate));
+	fill_uuid(&store_uuid, 0x9b);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	/* Chunk 0 will carry an episode; chunk 1 is a NOPRE case. */
+	marked = make_a_repair_case(s, admission, 0, 1, older, newer,
+				    (uint32_t)sizeof(older), &marked_gone);
+	nopre = make_a_repair_case(s, admission, 1, 5, older, newer,
+				   (uint32_t)sizeof(older), &nopre_gone);
+	check(d1_version_live(marked) && d1_version_live(nopre),
+	      "two chunks are repair cases");
+	marked_custody = d1_fixture_custody(s, marked);
+	nopre_custody = d1_fixture_custody(s, nopre);
+
+	env_init(&env, s, admission, D1_OP_MARK_ERROR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 40, marked_custody,
+		      marked, marked_gone);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "one of them is marked in error");
+
+	/* One cohort, both modes. */
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_ERROR, 40,
+		      marked_custody, marked, marked_gone);
+	repair_member(&env.body.repair.entries[1], 1, D1_REPAIR_NOPRE, 41,
+		      nopre_custody, nopre, nopre_gone);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a cohort opens over both of them");
+	cohort = res.entries[0].cohort;
+
+	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	for (i = 0; i < 2u; i++) {
+		repair_member(&env.body.repair.entries[i], i, 0, 40 + i,
+			      d1_custody_none(), d1_version_none(),
+			      d1_version_none());
+		env.body.repair.entries[i].payload_present = true;
+		env.body.repair.entries[i].payload = fixed;
+		env.body.repair.entries[i].payload_len =
+			(uint32_t)sizeof(fixed);
+		d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+				    &env.body.repair.entries[i].checksum);
+	}
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "both replacements stage");
+
+	env_init(&env, s, admission, D1_OP_FINALIZE_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	for (i = 0; i < 2u; i++)
+		repair_member(&env.body.repair.entries[i], i, 0, 40 + i,
+			      d1_custody_none(), d1_version_none(),
+			      d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the cohort finalizes");
+
+	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	for (i = 0; i < 2u; i++)
+		repair_member(&env.body.repair.entries[i], i, 0, 40 + i,
+			      d1_custody_none(), d1_version_none(),
+			      d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and publishes both members at one epoch");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_raw(seen) != d1_version_raw(marked),
+	      "the marked chunk holds its replacement");
+	check(d1_store_visible(s, &object, 1, &seen) &&
+		      d1_version_raw(seen) != d1_version_raw(nopre),
+	      "and so does the other");
+
+	/* An unlock before the clear is refused, for the ERROR member. */
+	env_init(&env, s, admission, D1_OP_UNLOCK);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	for (i = 0; i < 2u; i++)
+		repair_member(&env.body.repair.entries[i], i, 0, 40 + i,
+			      d1_custody_none(), d1_version_none(),
+			      d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_BAD_PHASE,
+	      "an unlock before the clear is refused");
+
+	d1_fixture_certificate(s, certificate);
+	env_init(&env, s, admission, D1_OP_CLEAR_ERROR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	for (i = 0; i < 2u; i++)
+		repair_member(&env.body.repair.entries[i], i, 0, 40 + i,
+			      d1_custody_none(), d1_version_none(),
+			      d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	env.body.repair.certificate_present = true;
+	memcpy(env.body.repair.certificate, certificate, sizeof(certificate));
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a clear naming the whole cohort clears the error member");
+
+	env_init(&env, s, admission, D1_OP_UNLOCK);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	for (i = 0; i < 2u; i++)
+		repair_member(&env.body.repair.entries[i], i, 0, 40 + i,
+			      d1_custody_none(), d1_version_none(),
+			      d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the whole vector then unlocks");
+
+	/* Both chunks are ordinary writers' again. */
+	for (i = 0; i < 2u; i++) {
+		d1_store_guard(s, &object, i, &guard);
+		env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], i, 11, 50 + i, older,
+			    sizeof(older), true, &guard);
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and an ordinary writer has the chunk back");
+	}
+
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "a log with a mixed cohort in it rebuilds");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
  * A record that names an admission no CONTROL installed.
  *
  * The reducer asks two questions of every request that reaches it:
@@ -14705,6 +14913,7 @@ int main(void)
 	test_an_error_repair_clears_and_unlocks_separately();
 	test_a_marked_version_is_quarantined();
 	test_a_repair_member_is_a_transaction();
+	test_a_mixed_cohort_clears_and_unlocks();
 	test_an_envelope_control_carries_its_digest();
 	test_a_fenced_handle_answers_three_ways();
 	test_a_record_that_names_no_admission();

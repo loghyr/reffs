@@ -2888,6 +2888,7 @@ static uint32_t d1_do_clear_error(struct d1_store *s,
 				  struct d1_repair_undo *u)
 {
 	const struct d1_repair_batch *rb = &env->body.repair;
+	uint32_t errors = 0;
 	uint32_t i;
 
 	if (cohort->phase != D1_PHASE_COMMITTED)
@@ -2895,14 +2896,24 @@ static uint32_t d1_do_clear_error(struct d1_store *s,
 	if (!s->certificate_present ||
 	    memcmp(s->certificate, rb->certificate, D1_CERTIFICATE_BYTES) != 0)
 		return D1_STALE_AUTH;
+	/*
+	 * Section 7 lets one local cohort carry both modes, and a NOPRE
+	 * member has no episode to clear.  So the whole vector is
+	 * validated -- it is the cohort's vector and every call names all
+	 * of it -- while only the ERROR subset is cleared.  Refusing the
+	 * call because a NOPRE member is in it would make the memo's
+	 * mixed-mode unlock unreachable and leave an accepted cohort
+	 * locked for the store's life; a cohort with nothing to clear is
+	 * the request that is actually invalid.
+	 */
 	for (i = 0; i < cohort->count; i++) {
 		struct d1_repair_member *m = &cohort->member[i];
 		struct d1_chunk *chunk = &o->chunks[m->index];
 
 		res->guard = chunk->guard;
-		/* A NOPRE member has nothing to clear and says so. */
 		if (m->mode != D1_REPAIR_ERROR)
-			return D1_INVALID;
+			continue;
+		errors++;
 		if (!chunk->error_present || chunk->error_cleared)
 			return D1_BAD_PHASE;
 		if (chunk->error_custody != m->custody)
@@ -2910,11 +2921,15 @@ static uint32_t d1_do_clear_error(struct d1_store *s,
 		if (chunk->error_version != m->successor)
 			return D1_OWNER_CONFLICT;
 	}
+	if (!errors)
+		return D1_INVALID;
 
 	for (i = 0; i < cohort->count; i++) {
 		struct d1_repair_member *m = &cohort->member[i];
 		struct d1_chunk *chunk = &o->chunks[m->index];
 
+		if (m->mode != D1_REPAIR_ERROR)
+			continue;
 		d1_repair_undo_chunk(u, chunk);
 		chunk->error_cleared = true;
 	}
