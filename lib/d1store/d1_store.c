@@ -2131,6 +2131,16 @@ static bool d1_verifier_matches(const struct d1_store *s,
  * vector: the cohort row it took or changed, and every chunk it held.
  */
 struct d1_repair_undo {
+	/*
+	 * Whether what this call did survives its own error status.
+	 * Almost every refused transition in this model changes nothing;
+	 * section 7's cohort abort is the exception it names explicitly --
+	 * a failed payload checksum abandons every still-private member
+	 * in one durable event, and the result carries ABORTED beside the
+	 * error.  So the abort says so here rather than being undone with
+	 * everything else.
+	 */
+	bool keep;
 	struct d1_repair *fresh;
 	struct d1_repair *cohort;
 	struct d1_repair cohort_before;
@@ -2382,6 +2392,221 @@ static uint32_t d1_do_abort_repair(struct d1_store *s, struct d1_repair *cohort,
 }
 
 /*
+ * Stage the whole replacement vector, or abort the whole cohort.
+ *
+ * Section 7: prepare_repair validates and stages the COMPLETE vector
+ * atomically.  Once an authorized, correct-phase call has begun
+ * evaluating member predicates, a failed payload checksum or a changed
+ * predecessor aborts every still-private member in one durable cohort
+ * event -- and the result carries ABORTED alongside its error status,
+ * so the caller is told both what was wrong and what became of the
+ * repair.  A failure before that point, one that could not stage
+ * anything, leaves the cohort as it was.
+ */
+static uint32_t
+d1_do_prepare_repair(struct d1_store *s, const struct d1_envelope *env,
+		     struct d1_repair *cohort, struct d1_object *o,
+		     struct d1_entry_result *res, struct d1_repair_undo *u)
+{
+	const struct d1_repair_batch *rb = &env->body.repair;
+	uint32_t status = D1_OK;
+	uint32_t i;
+
+	if (cohort->phase != D1_PHASE_ADMITTED)
+		return D1_BAD_PHASE;
+
+	/*
+	 * Room first, before any predicate is evaluated: a cohort that
+	 * cannot be staged for want of a row has nothing to abort, and
+	 * section 7 keeps allocation failure UNRECORDED and the previous
+	 * whole cohort state intact.
+	 */
+	for (i = 0; i < cohort->count; i++) {
+		struct d1_version *spare = NULL;
+		uint32_t j, taken = 0;
+
+		for (j = 0; j < D1_MAX_VERSIONS; j++) {
+			if (s->versions[j].used)
+				continue;
+			if (taken++ == i) {
+				spare = &s->versions[j];
+				break;
+			}
+		}
+		if (!spare)
+			return D1_NOSPC;
+	}
+	if (d1_next_version_seen(s) == UINT64_MAX)
+		return D1_NOSPC;
+
+	d1_repair_undo_cohort(u, cohort);
+	for (i = 0; i < cohort->count; i++) {
+		const struct d1_repair_entry *e = &rb->entries[i];
+		struct d1_repair_member *m = &cohort->member[i];
+		struct d1_chunk *chunk = &o->chunks[m->index];
+		struct d1_version *ver = NULL;
+		uint32_t j;
+
+		res->guard = chunk->guard;
+		/*
+		 * The state the cohort captured has to still be there.  A
+		 * successor that moved underneath the repair is section 7's
+		 * "changed predecessor": the repair is about a version that
+		 * is no longer the one it was opened over.
+		 */
+		if (!chunk->visible_present || chunk->visible != m->successor) {
+			status = D1_OWNER_CONFLICT;
+			break;
+		}
+		if (!d1_checksum_verify(&e->checksum, e->payload,
+					e->payload_len)) {
+			status = D1_CHECKSUM;
+			break;
+		}
+		for (j = 0; j < D1_MAX_VERSIONS && !ver; j++)
+			if (!s->versions[j].used)
+				ver = &s->versions[j];
+		if (!ver) {
+			status = D1_NOSPC;
+			break;
+		}
+		memset(ver, 0, sizeof(*ver));
+		ver->used = true;
+		ver->id = s->next_version++;
+		ver->object = d1_object_slot(s, o);
+		ver->index = m->index;
+		memcpy(ver->bytes, e->payload, e->payload_len);
+		ver->len = e->payload_len;
+		ver->checksum = e->checksum;
+		ver->owner = m->owner;
+		/*
+		 * Section 7: the replacement records the displaced
+		 * successor as its predecessor if that payload is retained.
+		 */
+		ver->predecessor_present = true;
+		ver->predecessor = m->successor;
+		m->staged = true;
+		m->version = ver->id;
+	}
+
+	if (status == D1_NOSPC)
+		return status;
+	if (status != D1_OK) {
+		/*
+		 * One durable cohort event: every still-private member is
+		 * abandoned together, and the result says so.
+		 */
+		for (i = 0; i < cohort->count; i++) {
+			struct d1_repair_member *m = &cohort->member[i];
+			struct d1_chunk *chunk = &o->chunks[m->index];
+			struct d1_version *ver;
+
+			d1_repair_undo_chunk(u, chunk);
+			chunk->repair_present = false;
+			chunk->repair = 0;
+			if (!m->staged)
+				continue;
+			ver = d1_version_find(s, d1_version_of(s, m->version));
+			if (ver)
+				ver->used = false;
+			m->staged = false;
+			m->version = 0;
+		}
+		cohort->phase = D1_PHASE_ABORTED;
+		res->phase = cohort->phase;
+		res->cohort_present = true;
+		res->cohort = d1_repair_of(s, cohort->id);
+		u->keep = true;
+		return status;
+	}
+
+	cohort->phase = D1_PHASE_PREPARED;
+	res->phase = cohort->phase;
+	res->cohort_present = true;
+	res->cohort = d1_repair_of(s, cohort->id);
+	return D1_OK;
+}
+
+/*
+ * Move the whole cohort from PREPARED to FINALIZED.
+ *
+ * Section 7 finalizes the cohort rather than its members: there is no
+ * half-finalized local set, so this is one phase change or none.
+ */
+static uint32_t d1_do_finalize_repair(struct d1_repair *cohort,
+				      struct d1_entry_result *res,
+				      struct d1_repair_undo *u,
+				      const struct d1_store *s)
+{
+	if (cohort->phase != D1_PHASE_PREPARED)
+		return D1_BAD_PHASE;
+	d1_repair_undo_cohort(u, cohort);
+	cohort->phase = D1_PHASE_FINALIZED;
+	res->phase = cohort->phase;
+	res->cohort_present = true;
+	res->cohort = d1_repair_of(s, cohort->id);
+	return D1_OK;
+}
+
+/*
+ * Publish the whole local vector at one index epoch.
+ *
+ * Section 7 requires every member FINALIZED, the exact vector and
+ * order, live custody and unchanged predecessors, and then publishes
+ * the whole thing at once.  A premature COMMIT is refused without a
+ * transition -- the memo's G2 -- so the cohort is still PREPARED
+ * afterwards and a FINALIZE followed by a new COMMIT is what it needs.
+ *
+ * The members stay locked after this.  COMMIT never clears an ERROR
+ * episode and never releases custody; unlock is a separate call and
+ * clear_error is a separate call before it for the ERROR members.
+ */
+static uint32_t d1_do_commit_repair(struct d1_store *s,
+				    struct d1_repair *cohort,
+				    struct d1_object *o,
+				    struct d1_entry_result *res,
+				    struct d1_repair_undo *u)
+{
+	uint32_t i;
+
+	if (cohort->phase != D1_PHASE_FINALIZED)
+		return D1_BAD_PHASE;
+	for (i = 0; i < cohort->count; i++) {
+		struct d1_repair_member *m = &cohort->member[i];
+		struct d1_chunk *chunk = &o->chunks[m->index];
+		struct d1_custody *custody;
+
+		res->guard = chunk->guard;
+		if (!m->staged)
+			return D1_INVALID;
+		if (!chunk->visible_present || chunk->visible != m->successor)
+			return D1_OWNER_CONFLICT;
+		custody = d1_custody_find(s, d1_custody_of(s, m->custody));
+		if (!custody || custody->version != m->successor)
+			return D1_STALE_AUTH;
+	}
+	if (d1_index_epoch_seen(s) == UINT64_MAX)
+		return D1_NOSPC;
+
+	d1_repair_undo_cohort(u, cohort);
+	for (i = 0; i < cohort->count; i++) {
+		struct d1_repair_member *m = &cohort->member[i];
+		struct d1_chunk *chunk = &o->chunks[m->index];
+
+		d1_repair_undo_chunk(u, chunk);
+		d1_publish_visible(s, chunk, m->version);
+		chunk->repair_locked = true;
+	}
+	/* One epoch for the whole vector, not one for each member. */
+	s->index_epoch++;
+	cohort->phase = D1_PHASE_COMMITTED;
+	res->phase = cohort->phase;
+	res->cohort_present = true;
+	res->cohort = d1_repair_of(s, cohort->id);
+	return D1_OK;
+}
+
+/*
  * The whole of a repair operation, whichever one it is.
  *
  * Every one of them names a vector, and every one but begin_repair
@@ -2426,6 +2651,12 @@ static uint32_t d1_do_repair(struct d1_store *s, const struct d1_envelope *env,
 	}
 
 	switch (env->op) {
+	case D1_OP_PREPARE_REPAIR:
+		return d1_do_prepare_repair(s, env, cohort, o, res, u);
+	case D1_OP_FINALIZE_REPAIR:
+		return d1_do_finalize_repair(cohort, res, u, s);
+	case D1_OP_COMMIT_REPAIR:
+		return d1_do_commit_repair(s, cohort, o, res, u);
 	case D1_OP_ABORT_REPAIR:
 		return d1_do_abort_repair(s, cohort, o, res, u);
 	default:
@@ -3320,7 +3551,11 @@ static void d1_apply_repair(struct d1_store *s, const struct d1_envelope *env,
 		complete->disposition = D1_UNRECORDED;
 		return;
 	}
-	if (status != D1_OK)
+	/*
+	 * A refusal changes nothing, unless it is the one section 7 makes
+	 * a transition in its own right; see d1_repair_undo.
+	 */
+	if (status != D1_OK && !undo.keep)
 		d1_repair_undo_apply(&undo);
 	res->status = status;
 	complete->index_epoch = s->index_epoch;
@@ -3521,6 +3756,9 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	case D1_OP_RECOVERY_ADMIT:
 	case D1_OP_LEASE_REAP:
 	case D1_OP_BEGIN_REPAIR:
+	case D1_OP_PREPARE_REPAIR:
+	case D1_OP_FINALIZE_REPAIR:
+	case D1_OP_COMMIT_REPAIR:
 	case D1_OP_ABORT_REPAIR:
 		/* One table, shared with replay; see d1_op_rights. */
 		need = d1_op_rights(env->op);
@@ -3560,6 +3798,9 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	case D1_OP_RECOVERY_ADMIT:
 	case D1_OP_LEASE_REAP:
 	case D1_OP_BEGIN_REPAIR:
+	case D1_OP_PREPARE_REPAIR:
+	case D1_OP_FINALIZE_REPAIR:
+	case D1_OP_COMMIT_REPAIR:
 	case D1_OP_ABORT_REPAIR:
 		/*
 		 * A control operation answers once for the whole of it, and

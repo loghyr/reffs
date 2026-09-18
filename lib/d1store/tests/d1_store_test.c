@@ -639,9 +639,9 @@ static void test_unsupported(void)
 		 * implemented; the last never will.
 		 */
 		static const uint32_t unimplemented[] = {
-			D1_OP_MARK_ERROR,      D1_OP_PREPARE_REPAIR,
-			D1_OP_FINALIZE_REPAIR, D1_OP_COMMIT_REPAIR,
-			D1_OP_CLEAR_ERROR,     D1_OP_UNLOCK,
+			D1_OP_MARK_ERROR,
+			D1_OP_CLEAR_ERROR,
+			D1_OP_UNLOCK,
 			0xd1d1d1d1u,
 		};
 		unsigned int i;
@@ -10222,6 +10222,242 @@ static void test_a_repair_opens_only_over_what_it_may_repair(void)
 }
 
 /*
+ * Make one chunk a NOPRE repair case: a replacement over a predecessor
+ * that is then released, so a rollback of it would find nothing to put
+ * back.  Answers the version the chunk now holds.
+ */
+static d1_version_id make_a_repair_case(struct d1_store *s,
+					d1_admission_id admission,
+					uint64_t index, uint32_t co_id,
+					const uint8_t *old_bytes,
+					const uint8_t *new_bytes, uint32_t len,
+					d1_version_id *displaced)
+{
+	struct d1_guard guard;
+	d1_version_id older, newer;
+
+	older = commit_chunk(s, admission, index, co_id, old_bytes, len,
+			     &(struct d1_guard){ .never_written = true },
+			     d1_version_none(), NULL);
+	if (!d1_version_live(older))
+		return d1_version_none();
+	d1_store_guard(s, &object, index, &guard);
+	newer = commit_chunk(s, admission, index, co_id + 1u, new_bytes, len,
+			     &guard, older, NULL);
+	if (!d1_version_live(newer))
+		return d1_version_none();
+	if (!d1_fixture_release_predecessor(s, older))
+		return d1_version_none();
+	*displaced = older;
+	return newer;
+}
+
+/*
+ * A repair publishes its whole vector or none of it.
+ *
+ * The memo's F3 and G2.  A NOPRE cohort staged, finalized and committed
+ * makes its replacement visible at one index epoch and leaves the
+ * member locked -- COMMIT never clears an episode and never releases
+ * custody, so the chunk is not an ordinary writer's again until it is
+ * unlocked.  A COMMIT asked before the FINALIZE is refused without a
+ * transition, which is what "premature COMMIT leaves PREPARED" means:
+ * the cohort is exactly where it was and a FINALIZE followed by a new
+ * COMMIT is what it needs.
+ *
+ * And G1: once a correct-phase call starts evaluating member
+ * predicates, a failed payload checksum abandons every still-private
+ * member together.  The result carries that error and the cohort's
+ * ABORTED phase in the same answer, because the caller needs both.
+ */
+static void test_a_repair_publishes_its_whole_vector_or_none(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32], fixed[32];
+	struct d1_guard guard;
+	const uint8_t *log;
+	size_t len, before, after;
+	d1_admission_id admission;
+	d1_version_id one, two, one_gone, two_gone, seen;
+	d1_custody_id one_custody, two_custody;
+	d1_repair_id cohort;
+
+	memset(older, 0xf1, sizeof(older));
+	memset(newer, 0xf2, sizeof(newer));
+	memset(fixed, 0xf3, sizeof(fixed));
+	fill_uuid(&store_uuid, 0xf1);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	one = make_a_repair_case(s, admission, 0, 1, older, newer,
+				 (uint32_t)sizeof(older), &one_gone);
+	two = make_a_repair_case(s, admission, 1, 3, older, newer,
+				 (uint32_t)sizeof(older), &two_gone);
+	check(d1_version_live(one) && d1_version_live(two),
+	      "two chunks are repair cases");
+	one_custody = d1_fixture_custody(s, one);
+	two_custody = d1_fixture_custody(s, two);
+
+	/* One member, opened and staged. */
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_NOPRE, 40,
+		      one_custody, one, one_gone);
+	check(d1_store_apply(s, &env, &res) == D1_OK, "a repair opens");
+	check(res.entries[0].status == D1_OK && res.entries[0].cohort_present,
+	      "over the member that lost its predecessor");
+	cohort = res.entries[0].cohort;
+
+	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 40, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_PREPARED,
+	      "the replacement is staged and the cohort is prepared");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_raw(seen) == d1_version_raw(one),
+	      "and nothing is published yet");
+
+	/* G2: a commit before the finalize changes nothing. */
+	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 40, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_BAD_PHASE,
+	      "a commit before the finalize is refused");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_raw(seen) == d1_version_raw(one),
+	      "and publishes nothing");
+
+	env_init(&env, s, admission, D1_OP_FINALIZE_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 40, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_FINALIZED,
+	      "the cohort finalizes, which is what it needed");
+
+	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 40, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_COMMITTED,
+	      "and then it commits");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_raw(seen) != d1_version_raw(one),
+	      "the replacement is what the chunk holds");
+	d1_store_guard(s, &object, 0, &guard);
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 45, older, sizeof(older),
+		    true, &guard);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_GUARDED,
+	      "and it is still locked, because a commit unlocks nothing");
+
+	/* G1: a vector one of whose payloads does not verify. */
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 1;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 1, D1_REPAIR_NOPRE, 50,
+		      two_custody, two, two_gone);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a second repair opens");
+	cohort = res.entries[0].cohort;
+
+	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
+	env.body.repair.range_begin = 1;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 1, 0, 50, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	env.body.repair.entries[0].checksum.digest[0] ^= 0xffu;
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_CHECKSUM,
+	      "a payload that does not verify is refused");
+	check(res.entries[0].phase == D1_PHASE_ABORTED,
+	      "and the answer carries the cohort's abort as well");
+	check(d1_store_visible(s, &object, 1, &seen) &&
+		      d1_version_raw(seen) == d1_version_raw(two),
+	      "nothing of it is visible");
+	(void)journal_of(s, &before);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_CHECKSUM &&
+		      res.entries[0].phase == D1_PHASE_ABORTED,
+	      "and the exact retry answers the same");
+	(void)journal_of(s, &after);
+	check(after == before, "writing nothing further");
+
+	/* The aborted cohort gave its chunk back. */
+	d1_store_guard(s, &object, 1, &guard);
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 55, older, sizeof(older),
+		    true, &guard);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "an abandoned repair leaves its chunk to ordinary writers");
+
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "a log with a published repair in it rebuilds");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
  * A record that names an admission no CONTROL installed.
  *
  * The reducer asks two questions of every request that reaches it:
@@ -13171,6 +13407,7 @@ int main(void)
 	test_the_order_of_two_lifecycle_refusals_is_fixed();
 	test_a_mixed_rollback_answers_each_member_for_itself();
 	test_a_repair_opens_only_over_what_it_may_repair();
+	test_a_repair_publishes_its_whole_vector_or_none();
 	test_a_record_that_names_no_admission();
 	test_record_tags_are_validated();
 	test_operation_key_binds_the_whole_envelope();
