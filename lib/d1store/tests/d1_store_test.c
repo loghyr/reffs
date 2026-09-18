@@ -10848,11 +10848,17 @@ static void test_an_envelope_control_carries_its_digest(void)
 	 * naming an admission no ADMIT installed, with its digest
 	 * recomputed over the forged bytes, is structurally perfect: the
 	 * digest agrees, the CRC agrees, nothing about the record is
-	 * malformed.  What refuses it is that reducing it creates no
-	 * receipt -- the reducer answers the forged authority
-	 * STALE_AUTH and records nothing, and a durable record claims an
-	 * event that did not happen.  The ENTRY path has had that check
-	 * since the first slice; this is the CONTROL path's.
+	 * malformed.  Live it is refused because reducing it creates no
+	 * receipt -- the reducer answers the forged authority STALE_AUTH
+	 * and records nothing, and a durable record claims an event that
+	 * did not happen.
+	 *
+	 * This check cannot say so on its own: the forgery keeps the
+	 * result the writer logged, so a store without the receipt check
+	 * still refuses it for the result it recomputes.  What the check
+	 * pins is that the forgery is refused at all.  The receipt rule
+	 * itself is pinned by test_a_control_record_that_recorded_nothing,
+	 * whose record carries the result the reducer does compute.
 	 */
 	memcpy(copy, log, len);
 	check(d1_envelope_decode(log + env_at, env_len, &forged),
@@ -13741,10 +13747,21 @@ static uint32_t entry_body(uint8_t *out, const uint8_t *env_bytes,
 	return at + res_len;
 }
 
-/* body := u32(kind) bytes(request) bytes(result) */
+/*
+ * body := u32(kind) bytes(request) [raw(digest) if ENVELOPE]
+ *         bytes(result)
+ *
+ * An Envelope control carries the request digest, between the request
+ * and the result, because the live writer emits one there.  A fixture
+ * that left it out did not build the record it claimed to: the decoder
+ * read the result's length prefix out of the digest's first four bytes
+ * and refused the record for its shape, so every test framing one
+ * stopped at d1_dec_finished and never reached the refusal it was
+ * written for.  An ENVELOPE caller must supply the digest.
+ */
 static uint32_t control_body(uint8_t *out, uint32_t kind, const uint8_t *req,
-			     uint32_t req_len, const uint8_t *res_bytes,
-			     uint32_t res_len)
+			     uint32_t req_len, const uint8_t *digest,
+			     const uint8_t *res_bytes, uint32_t res_len)
 {
 	uint32_t at = 0;
 
@@ -13754,6 +13771,10 @@ static uint32_t control_body(uint8_t *out, uint32_t kind, const uint8_t *req,
 	at += 4;
 	memcpy(out + at, req, req_len);
 	at += req_len;
+	if (kind == D1_CTL_ENVELOPE) {
+		memcpy(out + at, digest, D1_DIGEST_BYTES);
+		at += D1_DIGEST_BYTES;
+	}
 	put_be32(out + at, res_len);
 	at += 4;
 	memcpy(out + at, res_bytes, res_len);
@@ -13931,7 +13952,7 @@ static void test_records_must_name_what_they_carry(void)
 		}
 		if (pass == 2)
 			blen = control_body(body, D1_CTL_ENVELOPE, bytes,
-					    (uint32_t)env_len, result,
+					    (uint32_t)env_len, digest, result,
 					    (uint32_t)res_len);
 		else
 			blen = entry_body(body, bytes, (uint32_t)env_len,
@@ -14353,7 +14374,7 @@ static void test_a_control_record_that_recorded_nothing(void)
 		return;
 	}
 	blen = control_body(body, D1_CTL_ENVELOPE, bytes, (uint32_t)env_len,
-			    result, (uint32_t)res_len);
+			    digest, result, (uint32_t)res_len);
 	memcpy(copy, log, len);
 	used = len + frame_record(copy + len, D1_REC_CONTROL, &store_uuid,
 				  (uint64_t)records + 1u, 1, body, blen);
@@ -14631,7 +14652,7 @@ static void test_fixture_control_records_are_canonical(void)
 
 		/* The record put back untouched is still the log as written. */
 		blen = control_body(body, parts.kind, parts.request,
-				    parts.request_len, parts.result,
+				    parts.request_len, NULL, parts.result,
 				    parts.result_len);
 		used = splice_record(
 			copy, log, len, at, (unsigned int)which, record,
@@ -14660,7 +14681,7 @@ static void test_fixture_control_records_are_canonical(void)
 			return;
 		}
 		blen = control_body(body, parts.kind, bytes, (uint32_t)req_len,
-				    parts.result, parts.result_len);
+				    NULL, parts.result, parts.result_len);
 		used = splice_record(
 			copy, log, len, at, (unsigned int)which, record,
 			frame_record(record, D1_REC_CONTROL, &store_uuid,
@@ -14776,7 +14797,7 @@ static void test_fixture_records_carry_an_outcome_that_was_logged(void)
 			return;
 		}
 		blen = control_body(body, request.kind, bytes,
-				    (uint32_t)req_len, encoded,
+				    (uint32_t)req_len, NULL, encoded,
 				    (uint32_t)res_len);
 		memcpy(copy, log, after);
 		used = after + frame_record(copy + after, D1_REC_CONTROL,
