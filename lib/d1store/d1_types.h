@@ -253,6 +253,7 @@ enum d1_handle_kind {
 	D1_HANDLE_VERSION = 3,
 	D1_HANDLE_CUSTODY = 4,
 	D1_HANDLE_REPAIR = 5,
+	D1_HANDLE_POSTCOND = 6,
 };
 
 typedef struct d1_admission_id {
@@ -349,6 +350,21 @@ typedef struct d1_repair_id {
 } d1_repair_id;
 
 /*
+ * The postcondition a refused rollback leaves behind.
+ *
+ * Section 4 makes it part of the rollback result, and section 7 has
+ * NOPRE repair "consume a retained postcondition bound to that
+ * unchanged successor".  The store mints it, keeps what it was bound
+ * to, and resolves it against its own table, so it is a handle like
+ * the rest.
+ */
+typedef struct d1_postcond_id {
+	uint64_t raw;
+	uint32_t _kind;
+	uint64_t _instance;
+} d1_postcond_id;
+
+/*
  * The canonical value of a handle: the one part of it the wire and the
  * journal carry, and the only part two stores that ran the same history
  * agree about.
@@ -374,6 +390,11 @@ static inline uint64_t d1_custody_raw(d1_custody_id id)
 }
 
 static inline uint64_t d1_repair_raw(d1_repair_id id)
+{
+	return id.raw;
+}
+
+static inline uint64_t d1_postcond_raw(d1_postcond_id id)
 {
 	return id.raw;
 }
@@ -419,6 +440,13 @@ static inline d1_repair_id d1_repair_none(void)
 	return id;
 }
 
+static inline d1_postcond_id d1_postcond_none(void)
+{
+	d1_postcond_id id = { 0, D1_HANDLE_NONE, 0 };
+
+	return id;
+}
+
 /*
  * Whether a handle names anything: zero is absent, everywhere.
  *
@@ -454,6 +482,11 @@ static inline bool d1_cohort_live(d1_cohort_id id)
 }
 
 static inline bool d1_repair_live(d1_repair_id id)
+{
+	return id.raw != 0;
+}
+
+static inline bool d1_postcond_live(d1_postcond_id id)
 {
 	return id.raw != 0;
 }
@@ -495,6 +528,12 @@ static inline bool d1_custody_eq(d1_custody_id a, d1_custody_id b)
 }
 
 static inline bool d1_repair_eq(d1_repair_id a, d1_repair_id b)
+{
+	return a.raw == b.raw && a._kind == b._kind &&
+	       a._instance == b._instance;
+}
+
+static inline bool d1_postcond_eq(d1_postcond_id a, d1_postcond_id b)
 {
 	return a.raw == b.raw && a._kind == b._kind &&
 	       a._instance == b._instance;

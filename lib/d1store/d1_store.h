@@ -48,6 +48,13 @@
  * is a table of vectors rather than of members.
  */
 #define D1_MAX_REPAIRS 8u
+/*
+ * Postconditions the store retains.  A refused rollback mints one and
+ * a NOPRE repair consumes it; under section 6's retain-everything
+ * policy a consumed row stays, so this is a lifetime cap and not a
+ * count of outstanding ones.
+ */
+#define D1_MAX_POSTCONDS 32u
 #define D1_MAX_INTERVALS 64u
 #define D1_MAX_VIEWS 32u
 
@@ -67,6 +74,14 @@ struct d1_entry_result {
 	 */
 	bool cohort_present;
 	d1_repair_id cohort;
+	/*
+	 * The postcondition a rollback that answered NO_PREDECESSOR left
+	 * behind, bound to the successor it did not replace.  Section 4
+	 * makes it part of the rollback result; it is what a later NOPRE
+	 * repair of that successor consumes.
+	 */
+	bool postcond_present;
+	d1_postcond_id postcond;
 	/* The guard as it stands after the entry, or as it stood on refusal. */
 	struct d1_guard guard;
 	struct d1_owner owner;
@@ -290,6 +305,21 @@ void d1_fixture_certificate(struct d1_store *s,
  * this store, exactly as the other handle constructors do.
  */
 d1_repair_id d1_fixture_repair_handle(struct d1_store *s, uint64_t raw);
+
+/*
+ * Name a rollback postcondition by its canonical value, for the same
+ * reasons: a rebuild, a reopen and a stale-handle test all need one
+ * without the refused rollback that would issue it.
+ */
+d1_postcond_id d1_fixture_postcond_handle(struct d1_store *s, uint64_t raw);
+
+/*
+ * What a postcondition the store holds was bound to, for the tests
+ * that need to name a wrong one.  Answers false for a handle this
+ * store never issued.
+ */
+bool d1_fixture_postcond(struct d1_store *s, d1_postcond_id id, uint64_t *index,
+			 d1_version_id *successor, bool *consumed);
 
 /*
  * The handles one member of a repair cohort holds: its own repair

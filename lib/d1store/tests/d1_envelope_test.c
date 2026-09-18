@@ -716,6 +716,9 @@ static void make_repair(struct d1_envelope *env, uint32_t op)
 		e->owner.co_id = 0x4400u + i;
 		e->custody_present = state;
 		e->custody.raw = state ? 0x5500u + i : 0u;
+		/* A NOPRE member, and only one, consumes a postcondition. */
+		e->postcond_present = e->mode == D1_REPAIR_NOPRE;
+		e->postcond.raw = e->postcond_present ? 0x5a00u + i : 0u;
 		e->successor_present = state;
 		e->successor.raw = state ? 0x6600u + i : 0u;
 		/* The one genuinely optional field: NOPRE has none. */
@@ -747,6 +750,9 @@ static bool repair_entry_same(const struct d1_repair_entry *a,
 		return false;
 	if (a->custody_present != b->custody_present ||
 	    a->custody.raw != b->custody.raw)
+		return false;
+	if (a->postcond_present != b->postcond_present ||
+	    a->postcond.raw != b->postcond.raw)
 		return false;
 	if (a->successor_present != b->successor_present ||
 	    a->successor.raw != b->successor.raw)
@@ -886,6 +892,22 @@ static void test_a_repair_option_belongs_to_its_operation(void)
 	env.body.repair.entries[1].payload_present = false;
 	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
 	      "and a prepare stages its whole vector");
+
+	/* The postcondition, which is a NOPRE begin member's alone. */
+	make_repair(&env, D1_OP_BEGIN_REPAIR);
+	env.body.repair.entries[0].postcond_present = true;
+	env.body.repair.entries[0].postcond.raw = 6;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "an ERROR member consumes no postcondition");
+	make_repair(&env, D1_OP_BEGIN_REPAIR);
+	env.body.repair.entries[1].postcond_present = false;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "and a NOPRE member always consumes one");
+	make_repair(&env, D1_OP_UNLOCK);
+	env.body.repair.entries[0].postcond_present = true;
+	env.body.repair.entries[0].postcond.raw = 6;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "and no later call in the repair names it again");
 
 	/* The certificate, which is clear_error's alone. */
 	make_repair(&env, D1_OP_UNLOCK);

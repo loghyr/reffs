@@ -198,6 +198,39 @@ struct d1_admission {
 	bool expired;
 };
 
+/*
+ * What a refused rollback left behind.
+ *
+ * Section 7: a rollback of committed data whose predecessor is missing
+ * or released "leaves current data in place and records NO_PREDECESSOR
+ * plus index, successor, predecessor disposition, owner, custody and
+ * eligibility", and section 4 returns the caller a durable
+ * postcondition handle for it.  That handle is what a later NOPRE
+ * repair consumes, which is why this row exists at all: the memo
+ * authorizes a NOPRE repair on a rollback that was actually attempted
+ * and refused, not on a state that would refuse one if it were.
+ *
+ * So this is not partial mutation a refusal forgot to undo.  It is the
+ * result the refusal returned, and the entry keeps it the way an
+ * accepted entry keeps a version.
+ */
+struct d1_postcond {
+	bool used;
+	uint64_t id;
+	uint32_t object;
+	uint64_t index;
+	/* The version left in place, and the owner it belongs to. */
+	uint64_t successor;
+	struct d1_owner owner;
+	/* What the rollback found where the predecessor should be. */
+	bool predecessor_present;
+	uint64_t predecessor;
+	bool predecessor_released;
+	/* The repair custody the refused rollback was presented with. */
+	uint64_t custody;
+	bool consumed;
+};
+
 /* (export UUID, cohort, writer, co_id) -> one object, chunk and version. */
 struct d1_owner_assoc {
 	bool used;
@@ -301,9 +334,11 @@ struct d1_store {
 	struct d1_receipt receipts[D1_MAX_RECEIPTS];
 	struct d1_custody custody[D1_MAX_CUSTODY];
 	struct d1_repair repairs[D1_MAX_REPAIRS];
+	struct d1_postcond postconds[D1_MAX_POSTCONDS];
 	struct d1_view views[D1_MAX_VIEWS];
 	uint64_t next_custody;
 	uint64_t next_repair;
+	uint64_t next_postcond;
 	/*
 	 * The cross-DS completion certificate clear_error requires.  What
 	 * issues one is outside D1 entirely, so a fixture stands in for
@@ -534,6 +569,7 @@ struct d1_store *d1_store_open(const struct d1_uuid *store_uuid,
 	s->next_admission = 1;
 	s->next_custody = 1;
 	s->next_repair = 1;
+	s->next_postcond = 1;
 	return s;
 }
 
@@ -556,7 +592,7 @@ static bool d1_store_pristine(const struct d1_store *s)
 		return false;
 	if (s->next_txn != 1u || s->next_version != 1u ||
 	    s->next_admission != 1u || s->next_custody != 1u ||
-	    s->next_repair != 1u)
+	    s->next_repair != 1u || s->next_postcond != 1u)
 		return false;
 	if (s->journaling || s->replayed_lsn)
 		return false;
@@ -580,6 +616,9 @@ static bool d1_store_pristine(const struct d1_store *s)
 			return false;
 	for (i = 0; i < D1_MAX_REPAIRS; i++)
 		if (s->repairs[i].used)
+			return false;
+	for (i = 0; i < D1_MAX_POSTCONDS; i++)
+		if (s->postconds[i].used)
 			return false;
 	for (i = 0; i < D1_MAX_OWNERS; i++)
 		if (s->owners[i].used)
@@ -1171,6 +1210,42 @@ static struct d1_repair *d1_repair_find(struct d1_store *s, d1_repair_id id)
 	return NULL;
 }
 
+static d1_postcond_id d1_postcond_of(const struct d1_store *s, uint64_t raw)
+{
+	d1_postcond_id id = d1_postcond_none();
+
+	if (raw) {
+		id.raw = raw;
+		id._kind = D1_HANDLE_POSTCOND;
+		id._instance = s->instance;
+	}
+	return id;
+}
+
+static struct d1_postcond *d1_postcond_find(struct d1_store *s,
+					    d1_postcond_id id)
+{
+	uint32_t i;
+
+	if (!d1_handle_ours(s, id.raw, id._kind, id._instance,
+			    D1_HANDLE_POSTCOND))
+		return NULL;
+	for (i = 0; i < D1_MAX_POSTCONDS; i++)
+		if (s->postconds[i].used && s->postconds[i].id == id.raw)
+			return &s->postconds[i];
+	return NULL;
+}
+
+static struct d1_postcond *d1_postcond_spare(struct d1_store *s)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_POSTCONDS; i++)
+		if (!s->postconds[i].used)
+			return &s->postconds[i];
+	return NULL;
+}
+
 static struct d1_txn *d1_txn_find(struct d1_store *s, d1_txn_id id)
 {
 	uint32_t i;
@@ -1498,9 +1573,20 @@ struct d1_undo {
 	struct d1_txn *fresh_txn;
 	struct d1_version *fresh_version;
 	struct d1_owner_assoc *fresh_assoc;
+	struct d1_postcond *fresh_postcond;
+	/*
+	 * Whether what this entry did survives its own error status.
+	 * Section 7's NO_PREDECESSOR rollback is the one entry that says
+	 * yes: the postcondition it records is the result it returned,
+	 * and section 4 hands the caller a handle to it.  Everything else
+	 * a refused entry touched goes back; see d1_repair_undo, which
+	 * says the same for the cohort abort.
+	 */
+	bool keep;
 	uint64_t epoch_before;
 	uint64_t next_txn_before;
 	uint64_t next_version_before;
+	uint64_t next_postcond_before;
 	/*
 	 * The injected index fault is consumed, and the overlay flag set,
 	 * at publication.  They are unjournalled harness state, so they
@@ -1517,6 +1603,7 @@ static void d1_undo_begin(struct d1_store *s, struct d1_undo *u)
 	u->epoch_before = s->index_epoch;
 	u->next_txn_before = s->next_txn;
 	u->next_version_before = s->next_version;
+	u->next_postcond_before = s->next_postcond;
 	u->fail_index_before = s->fail_next_index;
 	u->overlay_before = s->overlay_active;
 }
@@ -1557,6 +1644,9 @@ static void d1_undo_apply(struct d1_store *s, struct d1_undo *u)
 		u->fresh_version->used = false;
 	if (u->fresh_assoc)
 		u->fresh_assoc->used = false;
+	if (u->fresh_postcond)
+		u->fresh_postcond->used = false;
+	s->next_postcond = u->next_postcond_before;
 	s->index_epoch = u->epoch_before;
 	s->next_txn = u->next_txn_before;
 	s->next_version = u->next_version_before;
@@ -1582,6 +1672,11 @@ static uint64_t d1_next_txn_seen(const struct d1_store *s)
 static uint64_t d1_next_version_seen(const struct d1_store *s)
 {
 	return s->exhaust_ids ? UINT64_MAX : s->next_version;
+}
+
+static uint64_t d1_next_postcond_seen(const struct d1_store *s)
+{
+	return s->exhaust_ids ? UINT64_MAX : s->next_postcond;
 }
 
 static uint64_t d1_index_epoch_seen(const struct d1_store *s)
@@ -2190,12 +2285,40 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 		       d1_version_find(s, d1_version_of(s, ver->predecessor)) :
 		       NULL;
 	if (!pred || pred->released) {
+		struct d1_postcond *p;
+
 		/*
 		 * Nothing to put back.  The current data stays, no episode
 		 * is created, and the entry names the predecessor it was
 		 * looking for.
+		 *
+		 * Section 4 also answers with a durable postcondition
+		 * handle, and section 7 has a NOPRE repair consume it.  So
+		 * this refusal records one bound to the successor it did
+		 * not replace, and keeps it: the postcondition is the
+		 * result, not a mutation the refusal failed to undo.  A
+		 * store with no row left has not recorded the result it
+		 * would return, so it answers NOSPC and records nothing.
 		 */
+		p = d1_postcond_spare(s);
+		if (!p || d1_next_postcond_seen(s) == UINT64_MAX)
+			return D1_NOSPC;
+		u->fresh_postcond = p;
+		memset(p, 0, sizeof(*p));
+		p->used = true;
+		p->id = s->next_postcond++;
+		p->object = d1_object_slot(s, o);
+		p->index = e->index;
+		p->successor = ver->id;
+		p->owner = ver->owner;
+		p->predecessor_present = ver->predecessor_present;
+		p->predecessor = ver->predecessor;
+		p->predecessor_released = pred != NULL;
+		p->custody = e->custody.raw;
+		res->postcond_present = true;
+		res->postcond = d1_postcond_of(s, p->id);
 		res->phase = txn->phase;
+		u->keep = true;
 		return D1_NO_PREDECESSOR;
 	}
 	/* The epoch this publication advances; see d1_do_write_entry. */
@@ -2269,6 +2392,10 @@ struct d1_repair_undo {
 	uint32_t owner_count;
 	struct d1_owner_assoc *owner[D1_BATCH_ENTRIES_MAX];
 	struct d1_owner_assoc owner_before[D1_BATCH_ENTRIES_MAX];
+	/* Postconditions a NOPRE member consumed, restored unconsumed. */
+	uint32_t postcond_count;
+	struct d1_postcond *postcond[D1_BATCH_ENTRIES_MAX];
+	struct d1_postcond postcond_before[D1_BATCH_ENTRIES_MAX];
 	bool fail_index_before;
 	bool overlay_before;
 };
@@ -2325,6 +2452,21 @@ static void d1_repair_undo_owner(struct d1_repair_undo *u,
 	u->owner_count++;
 }
 
+static void d1_repair_undo_postcond(struct d1_repair_undo *u,
+				    struct d1_postcond *p)
+{
+	uint32_t i;
+
+	for (i = 0; i < u->postcond_count; i++)
+		if (u->postcond[i] == p)
+			return;
+	if (u->postcond_count >= D1_BATCH_ENTRIES_MAX)
+		return;
+	u->postcond[u->postcond_count] = p;
+	u->postcond_before[u->postcond_count] = *p;
+	u->postcond_count++;
+}
+
 static void d1_repair_undo_cohort(struct d1_repair_undo *u,
 				  struct d1_repair *cohort)
 {
@@ -2353,51 +2495,14 @@ static void d1_repair_undo_apply(struct d1_store *s, struct d1_repair_undo *u)
 	}
 	for (i = 0; i < u->owner_count; i++)
 		*u->owner[i] = u->owner_before[i];
+	for (i = 0; i < u->postcond_count; i++)
+		*u->postcond[i] = u->postcond_before[i];
 	s->index_epoch = u->epoch_before;
 	s->next_version = u->next_version_before;
 	s->next_txn = u->next_txn_before;
 	s->next_repair = u->next_repair_before;
 	s->fail_next_index = u->fail_index_before;
 	s->overlay_active = u->overlay_before;
-}
-
-/*
- * Whether a NOPRE repair of this chunk's current version is authorized.
- *
- * Section 7 has NOPRE "consume a retained postcondition bound to that
- * unchanged successor".  The postcondition is not stored: a semantic
- * refusal in this model changes nothing, and the rollback that produces
- * NO_PREDECESSOR is a refusal, so anything it wrote would be undone on
- * the way out.  So the same question is asked of the same state instead
- * -- would a rollback of this exact version answer NO_PREDECESSOR? --
- * which is true of a version whose recorded predecessor is absent or
- * released, and false of one that has a predecessor to put back.
- *
- * The difference from a stored postcondition is that no prior rollback
- * attempt is required.  The state is the same either way, the custody
- * requirement is unchanged, and replay reaches the same answer without
- * a postcondition to reconstruct.  It is a choice, and it is the one
- * open question this reducer's shape leaves.
- */
-static bool d1_nopre_eligible(struct d1_store *s, const struct d1_chunk *chunk)
-{
-	const struct d1_version *ver, *pred;
-
-	if (!chunk->visible_present)
-		return false;
-	ver = d1_version_find(s, d1_version_of(s, chunk->visible));
-	if (!ver)
-		return false;
-	/*
-	 * A version that never had a predecessor is not a repair case:
-	 * nothing was lost, so there is nothing a replacement stands in
-	 * for.  NOPRE is about a predecessor that was there and is not
-	 * reachable now.
-	 */
-	if (!ver->predecessor_present)
-		return false;
-	pred = d1_version_find(s, d1_version_of(s, ver->predecessor));
-	return !pred || pred->released;
 }
 
 /*
@@ -2459,19 +2564,58 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 		     ver->predecessor != e->predecessor.raw))
 			return D1_NO_PREDECESSOR;
 		if (e->mode == D1_REPAIR_NOPRE) {
+			struct d1_postcond *p;
+
 			/* An episode is what an ERROR repair is for. */
 			if (chunk->error_present)
 				return D1_BAD_PHASE;
 			/*
 			 * Section 7's F2: only the members that are NOPRE
 			 * cases authorize a NOPRE repair, never their
-			 * neighbours.  A member whose rollback restored its
-			 * predecessor, or which never had one, is not one --
-			 * and because the whole vector is validated before a
-			 * row is taken, naming it admits no cohort at all.
+			 * neighbours -- and what makes a member one is the
+			 * postcondition a refused rollback of this exact
+			 * successor left behind, which this consumes.  A
+			 * state that would answer NO_PREDECESSOR is not an
+			 * authorization: no rollback was attempted, so no
+			 * result authorized anything.
+			 *
+			 * The whole vector is validated before a row is
+			 * taken, so naming an ineligible member admits no
+			 * cohort at all, and a vector that names one
+			 * postcondition twice admits none either.
 			 */
-			if (!d1_nopre_eligible(s, chunk))
+			for (j = 0; j < i; j++)
+				if (rb->entries[j].postcond_present &&
+				    rb->entries[j].postcond.raw ==
+					    e->postcond.raw)
+					return D1_INVALID;
+			p = d1_postcond_find(s, e->postcond);
+			if (!p)
+				return D1_STALE_AUTH;
+			if (p->consumed)
 				return D1_BAD_PHASE;
+			if (p->object != d1_object_slot(s, o) ||
+			    p->index != e->index)
+				return D1_INVALID;
+			/*
+			 * Bound to the unchanged successor: the version the
+			 * rollback left in place has to still be the one
+			 * this member is repairing.
+			 *
+			 * The owner the postcondition recorded is not
+			 * compared beside it, because it would say nothing
+			 * further: section 3 gives a version one owner and
+			 * an owner one version, so a postcondition whose
+			 * successor is still visible is one whose owner is
+			 * too.  It is recorded because section 7 records
+			 * it; what it is for is the caller reading its own
+			 * refusal back.
+			 */
+			if (p->successor != chunk->visible)
+				return D1_OWNER_CONFLICT;
+			/* And to the custody that rollback was made under. */
+			if (p->custody != e->custody.raw)
+				return D1_STALE_AUTH;
 		} else {
 			if (!chunk->error_present)
 				return D1_BAD_PHASE;
@@ -2609,6 +2753,16 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 		d1_owner_bind(assoc, &env->object.export_uuid, &e->owner);
 		assoc->object = row->object;
 		assoc->index = e->index;
+		if (e->mode == D1_REPAIR_NOPRE) {
+			struct d1_postcond *p =
+				d1_postcond_find(s, e->postcond);
+
+			/* Validated above; consumed exactly once. */
+			if (!p)
+				return D1_INVALID;
+			d1_repair_undo_postcond(u, p);
+			p->consumed = true;
+		}
 		d1_repair_undo_chunk(u, chunk);
 		chunk->repair_present = true;
 		chunk->repair = row->id;
@@ -3912,7 +4066,7 @@ static void d1_apply_one(struct d1_store *s, const struct d1_envelope *env,
 	 * fields the handler filled are copies taken before it mutated, so
 	 * they still describe what the caller was refused against.
 	 */
-	if (status != D1_OK)
+	if (status != D1_OK && !undo.keep)
 		d1_undo_apply(s, &undo);
 
 record:
@@ -5416,6 +5570,29 @@ d1_repair_id d1_fixture_repair_handle(struct d1_store *s, uint64_t raw)
 	return d1_repair_of(s, raw);
 }
 
+d1_postcond_id d1_fixture_postcond_handle(struct d1_store *s, uint64_t raw)
+{
+	return d1_postcond_of(s, raw);
+}
+
+bool d1_fixture_postcond(struct d1_store *s, d1_postcond_id id, uint64_t *index,
+			 d1_version_id *successor, bool *consumed)
+{
+	const struct d1_postcond *p;
+	bool found = false;
+
+	pthread_mutex_lock(&s->lock);
+	p = d1_postcond_find(s, id);
+	if (p) {
+		*index = p->index;
+		*successor = d1_version_of(s, p->successor);
+		*consumed = p->consumed;
+		found = true;
+	}
+	pthread_mutex_unlock(&s->lock);
+	return found;
+}
+
 bool d1_fixture_repair_member(struct d1_store *s, d1_repair_id cohort,
 			      uint32_t index, d1_txn_id *txn,
 			      d1_version_id *version)
@@ -5695,6 +5872,7 @@ static void d1_envelope_adopt(const struct d1_store *s, struct d1_envelope *env)
 				&env->body.repair.entries[i];
 
 			e->custody = d1_custody_of(s, e->custody.raw);
+			e->postcond = d1_postcond_of(s, e->postcond.raw);
 			e->successor = d1_version_of(s, e->successor.raw);
 			e->predecessor = d1_version_of(s, e->predecessor.raw);
 		}

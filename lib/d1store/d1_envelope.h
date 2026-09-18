@@ -107,6 +107,14 @@ struct d1_repair_entry {
 	/* The repair custody over the successor this member repairs. */
 	bool custody_present;
 	d1_custody_id custody;
+	/*
+	 * begin_repair of a NOPRE member only: the postcondition a
+	 * refused rollback of this successor left behind, which is what
+	 * authorizes the repair.  Section 7 has NOPRE consume it; an
+	 * ERROR member has an episode instead and carries none.
+	 */
+	bool postcond_present;
+	d1_postcond_id postcond;
 	/* The state the member captured and expects to find unchanged. */
 	bool successor_present;
 	d1_version_id successor;

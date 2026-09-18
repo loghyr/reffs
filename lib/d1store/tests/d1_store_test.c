@@ -10000,6 +10000,24 @@ static void repair_member(struct d1_repair_entry *e, uint64_t index,
 }
 
 /*
+ * One NOPRE member of a begin_repair vector.
+ *
+ * Section 7 has NOPRE consume the postcondition a refused rollback of
+ * this successor left, so that handle is part of the member and only
+ * of a NOPRE one.
+ */
+static void repair_nopre(struct d1_repair_entry *e, uint64_t index,
+			 uint32_t co_id, d1_custody_id custody,
+			 d1_version_id successor, d1_version_id predecessor,
+			 d1_postcond_id postcond)
+{
+	repair_member(e, index, D1_REPAIR_NOPRE, co_id, custody, successor,
+		      predecessor);
+	e->postcond_present = d1_postcond_live(postcond);
+	e->postcond = postcond;
+}
+
+/*
  * A repair opens over the members that are repair cases, or over none.
  *
  * The memo's F2: with one chunk whose rollback restored its predecessor
@@ -10011,13 +10029,11 @@ static void repair_member(struct d1_repair_entry *e, uint64_t index,
  * member it may not repair leaves nothing behind, and the next repair
  * gets the cohort the refused one did not.
  *
- * What NOPRE eligibility means here is a choice worth attacking.  The
- * memo has NOPRE consume a retained postcondition; this model asks the
- * same question of the same state instead -- would a rollback of this
- * exact version find nothing to put back? -- because a semantic refusal
- * changes nothing in this model, so the rollback that produced
- * NO_PREDECESSOR could not have left a postcondition behind.  The
- * observable difference is that no prior rollback attempt is required.
+ * What makes a member eligible is the postcondition its own refused
+ * rollback recorded, so the neighbour whose rollback succeeded has
+ * none of its own -- and naming the eligible member's, which is the
+ * strongest form of the attack, does not make it one either: a
+ * postcondition names the chunk it was recorded for.
  */
 static void test_a_repair_opens_only_over_what_it_may_repair(void)
 {
@@ -10033,6 +10049,7 @@ static void test_a_repair_opens_only_over_what_it_may_repair(void)
 	d1_version_id kept_old, kept_new, gone_old, gone_new, seen;
 	d1_txn_id kept_txn, gone_txn;
 	d1_custody_id kept_custody, gone_custody, restored_custody;
+	d1_postcond_id gone_post;
 	d1_repair_id cohort;
 
 	memset(first, 0xe1, sizeof(first));
@@ -10096,6 +10113,11 @@ static void test_a_repair_opens_only_over_what_it_may_repair(void)
 		      res.entries[0].status == D1_OK &&
 		      res.entries[1].status == D1_NO_PREDECESSOR,
 	      "one rollback restores and the other finds nothing to restore");
+	check(!res.entries[0].postcond_present,
+	      "the member that was restored records no postcondition");
+	check(res.entries[1].postcond_present,
+	      "and the member that was not records one");
+	gone_post = res.entries[1].postcond;
 
 	/* Custody over what each chunk now holds. */
 	restored_custody = d1_fixture_custody(s, kept_old);
@@ -10103,17 +10125,22 @@ static void test_a_repair_opens_only_over_what_it_may_repair(void)
 		      d1_custody_live(gone_custody),
 	      "custody is issued over what is visible now");
 
-	/* F2: a NOPRE repair over the pair admits no cohort. */
+	/*
+	 * F2: a NOPRE repair over the pair admits no cohort.  The member
+	 * that lost nothing has no postcondition of its own, so the
+	 * request hands it its neighbour's -- which names a chunk that is
+	 * not this member's.
+	 */
 	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
 	env.body.repair.range_begin = 0;
 	env.body.repair.range_end = 2;
 	env.body.repair.count = 2;
-	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_NOPRE, 20,
-		      restored_custody, kept_old, d1_version_none());
-	repair_member(&env.body.repair.entries[1], 1, D1_REPAIR_NOPRE, 21,
-		      gone_custody, gone_new, gone_old);
+	repair_nopre(&env.body.repair.entries[0], 0, 20, restored_custody,
+		     kept_old, d1_version_none(), gone_post);
+	repair_nopre(&env.body.repair.entries[1], 1, 21, gone_custody, gone_new,
+		     gone_old, gone_post);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
-		      res.entries[0].status == D1_BAD_PHASE,
+		      res.entries[0].status == D1_INVALID,
 	      "a NOPRE repair will not widen to a member that lost nothing");
 	check(!res.entries[0].cohort_present,
 	      "and it opens no cohort to carry it");
@@ -10121,7 +10148,7 @@ static void test_a_repair_opens_only_over_what_it_may_repair(void)
 	      "the refusal is recorded");
 	(void)journal_of(s, &before);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
-		      res.entries[0].status == D1_BAD_PHASE,
+		      res.entries[0].status == D1_INVALID,
 	      "and the exact retry answers from the receipt");
 	(void)journal_of(s, &after);
 	check(after == before, "writing nothing further");
@@ -10131,8 +10158,8 @@ static void test_a_repair_opens_only_over_what_it_may_repair(void)
 	env.body.repair.range_begin = 1;
 	env.body.repair.range_end = 2;
 	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 1, D1_REPAIR_NOPRE, 21,
-		      gone_custody, gone_new, gone_old);
+	repair_nopre(&env.body.repair.entries[0], 1, 21, gone_custody, gone_new,
+		     gone_old, gone_post);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "the member that lost its predecessor opens a repair");
@@ -10159,8 +10186,8 @@ static void test_a_repair_opens_only_over_what_it_may_repair(void)
 	env.body.repair.range_begin = 1;
 	env.body.repair.range_end = 2;
 	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 1, D1_REPAIR_NOPRE, 22,
-		      gone_custody, gone_new, gone_old);
+	repair_nopre(&env.body.repair.entries[0], 1, 22, gone_custody, gone_new,
+		     gone_old, gone_post);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_QUARANTINED,
 	      "nor does a second repair take a chunk the first holds");
@@ -10216,20 +10243,64 @@ static void test_a_repair_opens_only_over_what_it_may_repair(void)
 }
 
 /*
- * Make one chunk a NOPRE repair case: a replacement over a predecessor
- * that is then released, so a rollback of it would find nothing to put
- * back.  Answers the version the chunk now holds.
+ * Make one chunk a NOPRE repair case.
+ *
+ * A replacement over a predecessor that is then released, and then the
+ * rollback of that replacement which section 7 refuses NO_PREDECESSOR:
+ * that refusal is what records the postcondition a NOPRE repair
+ * consumes, so a chunk is not a repair case until a rollback has
+ * actually been attempted on it.
+ *
+ * Answers the version the chunk now holds, and hands back the custody
+ * the rollback was made under -- which is the custody the repair must
+ * present again -- and the postcondition it left.
  */
-static d1_version_id make_a_repair_case(struct d1_store *s,
-					d1_admission_id admission,
-					uint64_t index, uint32_t co_id,
-					const uint8_t *old_bytes,
-					const uint8_t *new_bytes, uint32_t len,
-					d1_version_id *displaced)
+static d1_postcond_id
+refuse_a_rollback(struct d1_store *s, d1_admission_id admission, uint64_t index,
+		  uint32_t co_id, d1_txn_id txn, d1_version_id successor,
+		  d1_version_id predecessor, d1_custody_id custody)
+{
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_rollback_entry *e;
+
+	env_init(&env, s, admission, D1_OP_ROLLBACK_BATCH);
+	env.body.rollback.range_begin = index;
+	env.body.rollback.range_end = index + 1u;
+	env.body.rollback.count = 1;
+	e = &env.body.rollback.entries[0];
+	e->index = index;
+	e->owner.cohort.raw = 1;
+	e->owner.writer = 11;
+	e->owner.co_id = co_id;
+	e->txn = txn;
+	e->visible_present = true;
+	e->visible = successor;
+	e->predecessor_present = true;
+	e->predecessor = predecessor;
+	e->custody_present = true;
+	e->custody = custody;
+	if (d1_store_apply(s, &env, &res) != D1_OK ||
+	    res.entries[0].status != D1_NO_PREDECESSOR ||
+	    !res.entries[0].postcond_present)
+		return d1_postcond_none();
+	return res.entries[0].postcond;
+}
+
+static d1_version_id
+make_a_repair_case(struct d1_store *s, d1_admission_id admission,
+		   uint64_t index, uint32_t co_id, const uint8_t *old_bytes,
+		   const uint8_t *new_bytes, uint32_t len,
+		   d1_version_id *displaced, d1_custody_id *custody,
+		   d1_postcond_id *postcond, d1_txn_id *txn_out)
 {
 	struct d1_guard guard;
 	d1_version_id older, newer;
+	d1_txn_id txn;
 
+	*custody = d1_custody_none();
+	*postcond = d1_postcond_none();
+	*txn_out = d1_txn_none();
 	older = commit_chunk(s, admission, index, co_id, old_bytes, len,
 			     &(struct d1_guard){ .never_written = true },
 			     d1_version_none(), NULL);
@@ -10237,11 +10308,19 @@ static d1_version_id make_a_repair_case(struct d1_store *s,
 		return d1_version_none();
 	d1_store_guard(s, &object, index, &guard);
 	newer = commit_chunk(s, admission, index, co_id + 1u, new_bytes, len,
-			     &guard, older, NULL);
+			     &guard, older, &txn);
 	if (!d1_version_live(newer))
 		return d1_version_none();
 	if (!d1_fixture_release_predecessor(s, older))
 		return d1_version_none();
+	*custody = d1_fixture_custody(s, newer);
+	if (!d1_custody_live(*custody))
+		return d1_version_none();
+	*postcond = refuse_a_rollback(s, admission, index, co_id + 1u, txn,
+				      newer, older, *custody);
+	if (!d1_postcond_live(*postcond))
+		return d1_version_none();
+	*txn_out = txn;
 	*displaced = older;
 	return newer;
 }
@@ -10276,6 +10355,8 @@ static void test_a_repair_publishes_its_whole_vector_or_none(void)
 	d1_admission_id admission;
 	d1_version_id one, two, one_gone, two_gone, seen;
 	d1_custody_id one_custody, two_custody;
+	d1_postcond_id one_post, two_post;
+	d1_txn_id one_txn, two_txn;
 	d1_repair_id cohort;
 
 	memset(older, 0xf1, sizeof(older));
@@ -10291,21 +10372,21 @@ static void test_a_repair_publishes_its_whole_vector_or_none(void)
 					     D1_RIGHT_REPAIR |
 					     D1_RIGHT_SINGLE_WRITER);
 	one = make_a_repair_case(s, admission, 0, 1, older, newer,
-				 (uint32_t)sizeof(older), &one_gone);
+				 (uint32_t)sizeof(older), &one_gone,
+				 &one_custody, &one_post, &one_txn);
 	two = make_a_repair_case(s, admission, 1, 3, older, newer,
-				 (uint32_t)sizeof(older), &two_gone);
+				 (uint32_t)sizeof(older), &two_gone,
+				 &two_custody, &two_post, &two_txn);
 	check(d1_version_live(one) && d1_version_live(two),
 	      "two chunks are repair cases");
-	one_custody = d1_fixture_custody(s, one);
-	two_custody = d1_fixture_custody(s, two);
 
 	/* One member, opened and staged. */
 	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
 	env.body.repair.range_begin = 0;
 	env.body.repair.range_end = 1;
 	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_NOPRE, 40,
-		      one_custody, one, one_gone);
+	repair_nopre(&env.body.repair.entries[0], 0, 40, one_custody, one,
+		     one_gone, one_post);
 	check(d1_store_apply(s, &env, &res) == D1_OK, "a repair opens");
 	check(res.entries[0].status == D1_OK && res.entries[0].cohort_present,
 	      "over the member that lost its predecessor");
@@ -10391,8 +10472,8 @@ static void test_a_repair_publishes_its_whole_vector_or_none(void)
 	env.body.repair.range_begin = 1;
 	env.body.repair.range_end = 2;
 	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 1, D1_REPAIR_NOPRE, 50,
-		      two_custody, two, two_gone);
+	repair_nopre(&env.body.repair.entries[0], 1, 50, two_custody, two,
+		     two_gone, two_post);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "a second repair opens");
@@ -11233,6 +11314,8 @@ static void test_a_repair_does_not_reach_into_an_open_view(void)
 	d1_admission_id admission;
 	d1_version_id broken, displaced, seen;
 	d1_custody_id custody;
+	d1_postcond_id postcond;
+	d1_txn_id txn;
 	d1_repair_id cohort;
 
 	memset(older, 0x61, sizeof(older));
@@ -11247,9 +11330,9 @@ static void test_a_repair_does_not_reach_into_an_open_view(void)
 					     D1_RIGHT_REPAIR |
 					     D1_RIGHT_SINGLE_WRITER);
 	broken = make_a_repair_case(s, admission, 0, 1, older, newer,
-				    (uint32_t)sizeof(older), &displaced);
+				    (uint32_t)sizeof(older), &displaced,
+				    &custody, &postcond, &txn);
 	check(d1_version_live(broken), "a chunk is a repair case");
-	custody = d1_fixture_custody(s, broken);
 
 	/* A reader is already looking at it. */
 	ordinary_sel(&sel);
@@ -11261,8 +11344,8 @@ static void test_a_repair_does_not_reach_into_an_open_view(void)
 	env.body.repair.range_begin = 0;
 	env.body.repair.range_end = 1;
 	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_NOPRE, 90,
-		      custody, broken, displaced);
+	repair_nopre(&env.body.repair.entries[0], 0, 90, custody, broken,
+		     displaced, postcond);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "a repair opens while it reads");
@@ -11306,13 +11389,21 @@ static void test_a_repair_does_not_reach_into_an_open_view(void)
 		      memcmp(got, newer, sizeof(newer)) == 0,
 	      "and still reads its bytes");
 
-	/* And the same through a repair that publishes. */
+	/*
+	 * And the same through a repair that publishes.  The abandoned
+	 * repair consumed the postcondition that authorized it, so this
+	 * one needs a rollback of its own to be refused first.
+	 */
+	postcond = refuse_a_rollback(s, admission, 0, 2, txn, broken, displaced,
+				     custody);
+	check(d1_postcond_live(postcond),
+	      "a second refused rollback authorizes a second repair");
 	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
 	env.body.repair.range_begin = 0;
 	env.body.repair.range_end = 1;
 	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_NOPRE, 91,
-		      custody, broken, displaced);
+	repair_nopre(&env.body.repair.entries[0], 0, 91, custody, broken,
+		     displaced, postcond);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "a second repair opens");
@@ -11623,8 +11714,9 @@ static void test_a_repair_member_is_a_transaction(void)
 	d1_admission_id admission, control;
 	d1_version_id broken, displaced, staged;
 	d1_custody_id custody;
+	d1_postcond_id postcond;
 	d1_repair_id cohort;
-	d1_txn_id member;
+	d1_txn_id member, txn;
 
 	memset(older, 0x81, sizeof(older));
 	memset(newer, 0x82, sizeof(newer));
@@ -11640,16 +11732,16 @@ static void test_a_repair_member_is_a_transaction(void)
 					     D1_RIGHT_SINGLE_WRITER);
 	control = d1_fixture_admit(s, &object, 11, D1_RIGHT_CONTROL);
 	broken = make_a_repair_case(s, admission, 0, 1, older, newer,
-				    (uint32_t)sizeof(older), &displaced);
+				    (uint32_t)sizeof(older), &displaced,
+				    &custody, &postcond, &txn);
 	check(d1_version_live(broken), "a chunk is a repair case");
-	custody = d1_fixture_custody(s, broken);
 
 	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
 	env.body.repair.range_begin = 0;
 	env.body.repair.range_end = 1;
 	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_NOPRE, 95,
-		      custody, broken, displaced);
+	repair_nopre(&env.body.repair.entries[0], 0, 95, custody, broken,
+		     displaced, postcond);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "a repair opens");
@@ -11788,6 +11880,8 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 	d1_admission_id admission;
 	d1_version_id marked, marked_gone, nopre, nopre_gone, seen;
 	d1_custody_id marked_custody, nopre_custody;
+	d1_postcond_id marked_post, nopre_post;
+	d1_txn_id marked_txn, nopre_txn;
 	d1_repair_id cohort;
 
 	memset(older, 0x91, sizeof(older));
@@ -11805,13 +11899,13 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 					     D1_RIGHT_SINGLE_WRITER);
 	/* Chunk 0 will carry an episode; chunk 1 is a NOPRE case. */
 	marked = make_a_repair_case(s, admission, 0, 1, older, newer,
-				    (uint32_t)sizeof(older), &marked_gone);
+				    (uint32_t)sizeof(older), &marked_gone,
+				    &marked_custody, &marked_post, &marked_txn);
 	nopre = make_a_repair_case(s, admission, 1, 5, older, newer,
-				   (uint32_t)sizeof(older), &nopre_gone);
+				   (uint32_t)sizeof(older), &nopre_gone,
+				   &nopre_custody, &nopre_post, &nopre_txn);
 	check(d1_version_live(marked) && d1_version_live(nopre),
 	      "two chunks are repair cases");
-	marked_custody = d1_fixture_custody(s, marked);
-	nopre_custody = d1_fixture_custody(s, nopre);
 
 	env_init(&env, s, admission, D1_OP_MARK_ERROR);
 	env.body.repair.range_begin = 0;
@@ -11830,8 +11924,8 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 	env.body.repair.count = 2;
 	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_ERROR, 40,
 		      marked_custody, marked, marked_gone);
-	repair_member(&env.body.repair.entries[1], 1, D1_REPAIR_NOPRE, 41,
-		      nopre_custody, nopre, nopre_gone);
+	repair_nopre(&env.body.repair.entries[1], 1, 41, nopre_custody, nopre,
+		     nopre_gone, nopre_post);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "a cohort opens over both of them");
@@ -11964,6 +12058,245 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 }
 
 /*
+ * A NOPRE repair consumes a postcondition; it does not read the state.
+ *
+ * Section 4 answers a rollback with "co-indexed status and durable
+ * postcondition handle", and section 7 has NOPRE "consume a retained
+ * postcondition bound to that unchanged successor plus replacement
+ * owner/custody".  So the authorization is a result the store returned
+ * for a rollback that was actually attempted, and not a property of
+ * the state: a chunk that would answer NO_PREDECESSOR if anyone asked
+ * is not repairable until somebody asks.
+ *
+ * The postcondition is the refused rollback's durable result and it
+ * survives the refusal, the way an accepted entry's version survives.
+ * Everything it is bound to is checked again when it is consumed --
+ * the chunk it names, the successor it was recorded for, and the
+ * custody it was made under -- and it is consumed once.
+ */
+static void test_a_nopre_repair_consumes_a_postcondition(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_rollback_entry *r;
+	static uint8_t older[32], newer[32], fixed[32];
+	struct d1_guard guard;
+	const uint8_t *log;
+	size_t len, before, after;
+	uint64_t at;
+	bool consumed;
+	d1_admission_id admission;
+	d1_version_id broken, displaced, replaced, seen, kept, gone;
+	d1_custody_id custody, replaced_custody, kept_custody, other_custody;
+	d1_postcond_id post, again, back;
+	d1_txn_id txn;
+	d1_repair_id cohort;
+
+	memset(older, 0xd1, sizeof(older));
+	memset(newer, 0xd2, sizeof(newer));
+	memset(fixed, 0xd3, sizeof(fixed));
+	fill_uuid(&store_uuid, 0x9d);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	broken = make_a_repair_case(s, admission, 0, 1, older, newer,
+				    (uint32_t)sizeof(older), &displaced,
+				    &custody, &post, &txn);
+	check(d1_version_live(broken) && d1_postcond_live(post),
+	      "a refused rollback answers with a postcondition");
+	check(d1_fixture_postcond(s, post, &at, &seen, &consumed) && at == 0 &&
+		      d1_version_raw(seen) == d1_version_raw(broken) &&
+		      !consumed,
+	      "bound to the chunk and the successor it did not replace");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_raw(seen) == d1_version_raw(broken),
+	      "and the chunk still holds what the rollback left in place");
+
+	/* The exact retry answers the same handle and appends nothing. */
+	env_init(&env, s, admission, D1_OP_ROLLBACK_BATCH);
+	env.body.rollback.range_begin = 0;
+	env.body.rollback.range_end = 1;
+	env.body.rollback.count = 1;
+	r = &env.body.rollback.entries[0];
+	r->index = 0;
+	r->owner.cohort.raw = 1;
+	r->owner.writer = 11;
+	r->owner.co_id = 2;
+	r->txn = txn;
+	r->visible_present = true;
+	r->visible = broken;
+	r->predecessor_present = true;
+	r->predecessor = displaced;
+	r->custody_present = true;
+	r->custody = custody;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_NO_PREDECESSOR &&
+		      res.entries[0].postcond_present,
+	      "a second refused rollback answers with a postcondition too");
+	again = res.entries[0].postcond;
+	check(d1_postcond_raw(again) != d1_postcond_raw(post),
+	      "a different one, because it is a different attempt");
+	(void)journal_of(s, &before);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_NO_PREDECESSOR &&
+		      d1_postcond_raw(res.entries[0].postcond) ==
+			      d1_postcond_raw(again),
+	      "and the exact retry answers the one it already recorded");
+	(void)journal_of(s, &after);
+	check(after == before, "having recorded nothing further");
+
+	/* Chunk 1 is the same state with no rollback behind it. */
+	kept = commit_chunk(s, admission, 1, 10, older, sizeof(older),
+			    &(struct d1_guard){ .never_written = true },
+			    d1_version_none(), NULL);
+	d1_store_guard(s, &object, 1, &guard);
+	gone = commit_chunk(s, admission, 1, 11, newer, sizeof(newer), &guard,
+			    kept, NULL);
+	check(d1_version_live(gone) && d1_fixture_release_predecessor(s, kept),
+	      "a chunk whose predecessor is released and nothing rolled back");
+	kept_custody = d1_fixture_custody(s, gone);
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 1;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 1, 12, kept_custody, gone,
+		     kept, d1_fixture_postcond_handle(s, 9999));
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH &&
+		      !res.entries[0].cohort_present,
+	      "a postcondition the store never issued repairs nothing");
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 1;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 1, 13, kept_custody, gone,
+		     kept, post);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_INVALID &&
+		      !res.entries[0].cohort_present,
+	      "and another chunk's postcondition repairs nothing either");
+	d1_store_guard(s, &object, 1, &guard);
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 14, fixed,
+		    (uint32_t)sizeof(fixed), true, &guard);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the chunk neither refusal touched is an ordinary writer's");
+
+	/* And one presented under custody its rollback was not made under. */
+	other_custody = d1_fixture_custody(s, broken);
+	check(d1_custody_live(other_custody) &&
+		      d1_custody_raw(other_custody) != d1_custody_raw(custody),
+	      "a second custody is issued over the same version");
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 0, 15, other_custody, broken,
+		     displaced, post);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH &&
+		      !res.entries[0].cohort_present,
+	      "a postcondition presented under other custody repairs nothing");
+
+	/* The postcondition its own rollback recorded opens the repair. */
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 0, 20, custody, broken,
+		     displaced, post);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].cohort_present,
+	      "the postcondition of this chunk's own rollback opens a repair");
+	cohort = res.entries[0].cohort;
+	check(d1_fixture_postcond(s, post, &at, &seen, &consumed) && consumed,
+	      "and is consumed by it");
+
+	env_init(&env, s, admission, D1_OP_ABORT_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 20, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "abandoning the repair gives the chunk back");
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 0, 21, custody, broken,
+		     displaced, post);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_BAD_PHASE &&
+		      !res.entries[0].cohort_present,
+	      "and a consumed postcondition does not open a second");
+
+	/*
+	 * And one whose successor moved underneath it.  An ordinary write
+	 * replaces the version the retained postcondition was recorded
+	 * for, so the request names the new one and the postcondition
+	 * still names the old.
+	 */
+	d1_store_guard(s, &object, 0, &guard);
+	replaced = commit_chunk(s, admission, 0, 22, fixed, sizeof(fixed),
+				&guard, broken, NULL);
+	check(d1_version_live(replaced), "an ordinary write replaces it");
+	replaced_custody = d1_fixture_custody(s, replaced);
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 0, 23, replaced_custody,
+		     replaced, broken, again);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OWNER_CONFLICT &&
+		      !res.entries[0].cohort_present,
+	      "a postcondition whose successor moved repairs nothing");
+
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "a log with postconditions in it rebuilds the store");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		back = d1_fixture_postcond_handle(rebuilt,
+						  d1_postcond_raw(post));
+		check(d1_fixture_postcond(rebuilt, back, &at, &seen,
+					  &consumed) &&
+			      at == 0 &&
+			      d1_version_raw(seen) == d1_version_raw(broken) &&
+			      consumed,
+		      "and holds the consumed postcondition, still bound");
+		back = d1_fixture_postcond_handle(rebuilt,
+						  d1_postcond_raw(again));
+		check(d1_fixture_postcond(rebuilt, back, &at, &seen,
+					  &consumed) &&
+			      !consumed,
+		      "and the one nothing consumed, unconsumed");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
  * A repair replacement's owner is an owner like any other.
  *
  * Section 3's association key -- (export UUID, cohort, writer, co_id)
@@ -11992,6 +12325,8 @@ static void test_a_repair_owner_is_an_owner(void)
 	d1_admission_id admission, readmit;
 	d1_version_id zero, zero_gone, one, one_gone;
 	d1_custody_id zero_custody, one_custody;
+	d1_postcond_id zero_post, one_post;
+	d1_txn_id zero_txn, one_txn;
 	d1_repair_id cohort;
 
 	memset(older, 0xc1, sizeof(older));
@@ -12008,13 +12343,13 @@ static void test_a_repair_owner_is_an_owner(void)
 					     D1_RIGHT_SINGLE_WRITER);
 	/* Owners 1 and 2 take chunk 0; owners 5 and 6 take chunk 1. */
 	zero = make_a_repair_case(s, admission, 0, 1, older, newer,
-				  (uint32_t)sizeof(older), &zero_gone);
+				  (uint32_t)sizeof(older), &zero_gone,
+				  &zero_custody, &zero_post, &zero_txn);
 	one = make_a_repair_case(s, admission, 1, 5, older, newer,
-				 (uint32_t)sizeof(older), &one_gone);
+				 (uint32_t)sizeof(older), &one_gone,
+				 &one_custody, &one_post, &one_txn);
 	check(d1_version_live(zero) && d1_version_live(one),
 	      "two chunks are repair cases");
-	zero_custody = d1_fixture_custody(s, zero);
-	one_custody = d1_fixture_custody(s, one);
 	d1_store_guard(s, &object, 0, &zero_guard);
 	d1_store_guard(s, &object, 1, &one_guard);
 
@@ -12023,10 +12358,10 @@ static void test_a_repair_owner_is_an_owner(void)
 	env.body.repair.range_begin = 0;
 	env.body.repair.range_end = 2;
 	env.body.repair.count = 2;
-	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_NOPRE, 40,
-		      zero_custody, zero, zero_gone);
-	repair_member(&env.body.repair.entries[1], 1, D1_REPAIR_NOPRE, 40,
-		      one_custody, one, one_gone);
+	repair_nopre(&env.body.repair.entries[0], 0, 40, zero_custody, zero,
+		     zero_gone, zero_post);
+	repair_nopre(&env.body.repair.entries[1], 1, 40, one_custody, one,
+		     one_gone, one_post);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OWNER_CONFLICT &&
 		      !res.entries[0].cohort_present,
@@ -12042,8 +12377,8 @@ static void test_a_repair_owner_is_an_owner(void)
 	env.body.repair.range_begin = 1;
 	env.body.repair.range_end = 2;
 	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 1, D1_REPAIR_NOPRE, 2,
-		      one_custody, one, one_gone);
+	repair_nopre(&env.body.repair.entries[0], 1, 2, one_custody, one,
+		     one_gone, one_post);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OWNER_CONFLICT &&
 		      !res.entries[0].cohort_present,
@@ -12059,8 +12394,8 @@ static void test_a_repair_owner_is_an_owner(void)
 	env.body.repair.range_begin = 0;
 	env.body.repair.range_end = 1;
 	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_NOPRE, 40,
-		      zero_custody, zero, zero_gone);
+	repair_nopre(&env.body.repair.entries[0], 0, 40, zero_custody, zero,
+		     zero_gone, zero_post);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK &&
 		      res.entries[0].cohort_present,
@@ -15170,6 +15505,7 @@ int main(void)
 	test_a_marked_version_is_quarantined();
 	test_a_repair_member_is_a_transaction();
 	test_a_mixed_cohort_clears_and_unlocks();
+	test_a_nopre_repair_consumes_a_postcondition();
 	test_a_repair_owner_is_an_owner();
 	test_an_envelope_control_carries_its_digest();
 	test_a_fenced_handle_answers_three_ways();

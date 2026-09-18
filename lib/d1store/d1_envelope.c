@@ -209,6 +209,7 @@ static void d1_enc_repair(struct d1_cursor *c, const struct d1_repair_batch *r)
 		d1_enc_u32(c, e->mode);
 		d1_enc_owner(c, &e->owner);
 		d1_enc_opt_u64(c, e->custody_present, e->custody.raw);
+		d1_enc_opt_u64(c, e->postcond_present, e->postcond.raw);
 		d1_enc_opt_u64(c, e->successor_present, e->successor.raw);
 		d1_enc_opt_u64(c, e->predecessor_present, e->predecessor.raw);
 		d1_enc_u8(c, e->payload_present ? 1u : 0u);
@@ -243,6 +244,8 @@ static bool d1_dec_repair(struct d1_cursor *c, struct d1_repair_batch *r)
 		if (!d1_dec_u64(c, &e->index) || !d1_dec_u32(c, &e->mode) ||
 		    !d1_dec_owner(c, &e->owner) ||
 		    !d1_dec_opt_u64(c, &e->custody_present, &e->custody.raw) ||
+		    !d1_dec_opt_u64(c, &e->postcond_present,
+				    &e->postcond.raw) ||
 		    !d1_dec_opt_u64(c, &e->successor_present,
 				    &e->successor.raw) ||
 		    !d1_dec_opt_u64(c, &e->predecessor_present,
@@ -523,6 +526,16 @@ static bool d1_validate_repair(uint32_t op, const struct d1_repair_batch *r)
 		if (e->custody_present != wants_custody)
 			return false;
 		if (e->custody_present && !d1_custody_live(e->custody))
+			return false;
+		/*
+		 * The postcondition is the NOPRE member's authorization
+		 * and nothing else's: an ERROR member has an episode, and
+		 * no later call in the repair names either again.
+		 */
+		if (e->postcond_present !=
+		    (wants_mode && e->mode == D1_REPAIR_NOPRE))
+			return false;
+		if (e->postcond_present && !d1_postcond_live(e->postcond))
 			return false;
 		/*
 		 * The captured state: the successor is what the member

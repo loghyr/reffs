@@ -146,6 +146,8 @@ static void test_golden_complete_result(void)
 		0x09,
 		/* no repair cohort: this result is not a repair's */
 		0x00,
+		/* no postcondition: this result is not a refused rollback's */
+		0x00,
 		/* guard: generation 2, writer 11, written */
 		0x00,
 		0x00,
@@ -232,6 +234,33 @@ static void test_golden_complete_result(void)
 		check(at + sizeof(named) <= len,
 		      "and carries the tag and the handle, big-endian");
 	}
+	/* And the same for the postcondition a refused rollback returns. */
+	make_result(&r);
+	r.entry.postcond_present = true;
+	r.entry.postcond.raw = 0x99aabbccddeeff00ull;
+	len = d1_complete_result_encode(&r, buf, sizeof(buf));
+	check(len == sizeof(want) + 8u,
+	      "a result naming a postcondition is eight bytes longer");
+	if (len == sizeof(want) + 8u) {
+		static const uint8_t named[9] = { 0x01, 0x99, 0xaa, 0xbb, 0xcc,
+						  0xdd, 0xee, 0xff, 0x00 };
+		size_t at = 0;
+
+		/* Immediately after the cohort option. */
+		while (at + sizeof(named) <= len &&
+		       memcmp(buf + at, named, sizeof(named)) != 0)
+			at++;
+		check(at + sizeof(named) <= len,
+		      "and carries the tag and the handle, big-endian");
+	}
+	check(d1_complete_result_decode(buf, len, &back) &&
+		      d1_complete_result_equal(&r, &back),
+	      "and that round trips too");
+
+	make_result(&r);
+	r.entry.cohort_present = true;
+	r.entry.cohort.raw = 0x1122334455667788ull;
+	len = d1_complete_result_encode(&r, buf, sizeof(buf));
 	check(d1_complete_result_decode(buf, len, &back) &&
 		      d1_complete_result_equal(&r, &back),
 	      "and it round trips");
