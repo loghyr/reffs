@@ -10151,8 +10151,8 @@ static void test_a_repair_opens_only_over_what_it_may_repair(void)
 	write_entry(&env.body.write.entries[0], 1, 11, 30, first, sizeof(first),
 		    true, &guard);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
-		      res.entries[0].status == D1_GUARDED,
-	      "an ordinary write to a chunk under repair is blocked");
+		      res.entries[0].status == D1_QUARANTINED,
+	      "an ordinary write to a chunk under repair is quarantined");
 
 	/* A second repair cannot take the chunk either. */
 	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
@@ -10162,7 +10162,7 @@ static void test_a_repair_opens_only_over_what_it_may_repair(void)
 	repair_member(&env.body.repair.entries[0], 1, D1_REPAIR_NOPRE, 22,
 		      gone_custody, gone_new, gone_old);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
-		      res.entries[0].status == D1_GUARDED,
+		      res.entries[0].status == D1_QUARANTINED,
 	      "nor does a second repair take a chunk the first holds");
 
 	/* Abandoning it gives the chunk back. */
@@ -10383,7 +10383,7 @@ static void test_a_repair_publishes_its_whole_vector_or_none(void)
 	write_entry(&env.body.write.entries[0], 0, 11, 45, older, sizeof(older),
 		    true, &guard);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
-		      res.entries[0].status == D1_GUARDED,
+		      res.entries[0].status == D1_QUARANTINED,
 	      "and it is still locked, because a commit unlocks nothing");
 
 	/* G1: a vector one of whose payloads does not verify. */
@@ -10672,7 +10672,7 @@ static void test_an_error_repair_clears_and_unlocks_separately(void)
 	write_entry(&env.body.write.entries[0], 0, 11, 70, older, sizeof(older),
 		    true, &guard);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
-		      res.entries[0].status == D1_GUARDED,
+		      res.entries[0].status == D1_QUARANTINED,
 	      "which leaves the member readable and still locked");
 
 	env_init(&env, s, admission, D1_OP_UNLOCK);
@@ -11358,6 +11358,233 @@ static void test_a_repair_does_not_reach_into_an_open_view(void)
 	      "and still reads the bytes it was reading");
 
 	d1_view_close(view);
+	d1_store_free(s);
+}
+
+/*
+ * A marked version is quarantined from the moment it is marked.
+ *
+ * Section 7 binds an ERROR episode to an exact version, and a repair
+ * opens over that version.  So a mark that did not also take the chunk
+ * away from ordinary callers was worse than no mark at all: an ordinary
+ * writer replaced the version the episode named, and the episode was
+ * then bound to something the chunk no longer held -- unrepairable,
+ * because a repair opens over the marked version, and uncloseable,
+ * because a clear needs a repair to have committed.  The chunk stayed
+ * in an episode for the rest of the store's life.
+ *
+ * Quarantine is therefore the mark's own effect, not a repair lock
+ * acquired later.  What it refuses, and for how long, is the whole of
+ * this test: ordinary writes, lifecycle and rollback until the unlock
+ * that ends the episode, and ordinary reads until the clear that says
+ * the data is trustworthy again.  A clear makes the members readable
+ * and leaves them locked; that is two different moments and they are
+ * both here.
+ */
+static void test_a_marked_version_is_quarantined(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *back;
+	struct d1_envelope env, refused;
+	struct d1_result res;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
+	struct rollback_expect expect;
+	struct d1_entry_result entry;
+	static uint8_t older[32], newer[32], fixed[32];
+	static uint8_t certificate[D1_CERTIFICATE_BYTES];
+	struct d1_guard guard;
+	const uint8_t *log;
+	size_t len;
+	d1_admission_id admission;
+	d1_version_id marked, displaced, seen;
+	d1_txn_id marked_txn;
+	d1_custody_id custody;
+	d1_repair_id cohort;
+
+	memset(older, 0x71, sizeof(older));
+	memset(newer, 0x72, sizeof(newer));
+	memset(fixed, 0x73, sizeof(fixed));
+	memset(certificate, 0x74, sizeof(certificate));
+	fill_uuid(&store_uuid, 0x7b);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	displaced = commit_chunk(s, admission, 0, 1, older, sizeof(older),
+				 &(struct d1_guard){ .never_written = true },
+				 d1_version_none(), NULL);
+	d1_store_guard(s, &object, 0, &guard);
+	marked = commit_chunk(s, admission, 0, 2, newer, sizeof(newer), &guard,
+			      displaced, &marked_txn);
+	/* A second chunk, never marked, to show the quarantine is one
+	 * chunk's and not the object's. */
+	(void)commit_chunk(s, admission, 2, 5, older, sizeof(older),
+			   &(struct d1_guard){ .never_written = true },
+			   d1_version_none(), NULL);
+	check(d1_version_live(marked), "a chunk holds the version to mark");
+	custody = d1_fixture_custody(s, marked);
+
+	env_init(&env, s, admission, D1_OP_MARK_ERROR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 20, custody, marked,
+		      displaced);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the episode is marked");
+
+	/* An ordinary write is refused, and replaces nothing. */
+	d1_store_guard(s, &object, 0, &guard);
+	env_init(&refused, s, admission, D1_OP_WRITE_BATCH);
+	refused.body.write.count = 1;
+	refused.body.write.stability = D1_FILE_SYNC;
+	refused.body.write.activate = true;
+	write_entry(&refused.body.write.entries[0], 0, 11, 30, older,
+		    sizeof(older), true, &guard);
+	check(d1_store_apply(s, &refused, &res) == D1_OK &&
+		      res.entries[0].status == D1_QUARANTINED,
+	      "an ordinary write to the marked chunk is quarantined");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_raw(seen) == d1_version_raw(marked),
+	      "and the version the episode names is still the one there");
+	check(d1_store_apply(s, &refused, &res) == D1_OK &&
+		      res.entries[0].status == D1_QUARANTINED,
+	      "and the exact retry answers the same from its receipt");
+
+	/* So is a rollback of the transaction that put it there. */
+	memset(&expect, 0, sizeof(expect));
+	expect.custody_present = true;
+	expect.custody = custody;
+	expect.visible_present = true;
+	expect.visible = marked;
+	expect.predecessor_present = true;
+	expect.predecessor = displaced;
+	check(rollback_one(s, admission, 0, 2, marked_txn, &expect, &entry) ==
+		      D1_QUARANTINED,
+	      "and a rollback of it is quarantined too");
+
+	/* And an ordinary read of it. */
+	ordinary_sel(&sel);
+	check(d1_view_open(s, &object, admission, &sel, 0, sizeof(newer),
+			   &view) == D1_QUARANTINED &&
+		      view == NULL,
+	      "an ordinary read of the marked chunk is refused");
+	check(d1_view_open(s, &object, admission, &sel, 2u * CHUNK_BYTES,
+			   2u * CHUNK_BYTES + sizeof(older), &view) == D1_OK,
+	      "while a chunk the episode does not name still reads");
+	if (view)
+		d1_view_close(view);
+	view = NULL;
+
+	/* The repair the episode exists for is reachable throughout. */
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_ERROR, 20,
+		      custody, marked, displaced);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the repair the episode exists for still opens");
+	cohort = res.entries[0].cohort;
+
+	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 20, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and stages");
+	env_init(&env, s, admission, D1_OP_FINALIZE_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 20, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and finalizes");
+	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 20, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and commits");
+
+	/* Committed, and still quarantined: a commit clears no episode. */
+	check(d1_view_open(s, &object, admission, &sel, 0, sizeof(newer),
+			   &view) == D1_QUARANTINED,
+	      "the replacement is not readable while the episode stands");
+
+	d1_fixture_certificate(s, certificate);
+	env_init(&env, s, admission, D1_OP_CLEAR_ERROR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 20, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	env.body.repair.certificate_present = true;
+	memcpy(env.body.repair.certificate, certificate, sizeof(certificate));
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the certificate clears the episode");
+	check(d1_view_open(s, &object, admission, &sel, 0, sizeof(fixed),
+			   &view) == D1_OK,
+	      "which makes the member readable");
+	if (view)
+		d1_view_close(view);
+	view = NULL;
+	check(d1_store_apply(s, &refused, &res) == D1_OK &&
+		      res.entries[0].status == D1_QUARANTINED,
+	      "and leaves it locked");
+
+	env_init(&env, s, admission, D1_OP_UNLOCK);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 20, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the unlock ends the episode");
+
+	log = journal_of(s, &len);
+
+	/* The quarantine is durable: a store rebuilt mid-episode keeps it. */
+	back = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (back) {
+		check(d1_store_replay(back, log, len) == D1_OK,
+		      "the whole history rebuilds");
+		check(object_states_agree(s, back, &object),
+		      "into the same store");
+		d1_store_free(back);
+	}
 	d1_store_free(s);
 }
 
@@ -14315,6 +14542,7 @@ int main(void)
 	test_a_repair_publishes_its_whole_vector_or_none();
 	test_a_repair_does_not_reach_into_an_open_view();
 	test_an_error_repair_clears_and_unlocks_separately();
+	test_a_marked_version_is_quarantined();
 	test_an_envelope_control_carries_its_digest();
 	test_a_fenced_handle_answers_three_ways();
 	test_a_record_that_names_no_admission();

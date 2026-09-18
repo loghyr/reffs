@@ -1601,6 +1601,44 @@ static struct d1_guard d1_owner_guard(const struct d1_store *s,
 	return o->chunks[assoc->index].guard;
 }
 
+/*
+ * Whether an ordinary operation may touch this chunk at all.
+ *
+ * Section 7 quarantines a version an ERROR episode names: from the
+ * mark until the clear and unlock that end the episode, no ordinary
+ * write, finalize, commit or rollback may replace it.  A mark that did
+ * not quarantine was worse than no mark: an ordinary writer replaced
+ * the version the episode was bound to, and the episode then named a
+ * version the chunk no longer held -- unrepairable, because a repair
+ * opens over the version it was marked for, and uncloseable, because a
+ * clear needs a repair to have committed.
+ *
+ * A repair that holds a chunk blocks ordinary writers for the same
+ * reason and gives the same answer, and so does a member a repair has
+ * published and not yet unlocked.  The three are one condition to a
+ * caller -- somebody else owns this chunk until they are finished with
+ * it -- and one status says so.
+ */
+static uint32_t d1_chunk_writable(const struct d1_chunk *c)
+{
+	if (c->error_present || c->repair_present || c->repair_locked)
+		return D1_QUARANTINED;
+	return D1_OK;
+}
+
+/*
+ * Whether an ordinary read may see this chunk.
+ *
+ * A quarantined version is not readable until its episode is cleared.
+ * A clear makes the members readable and leaves them locked, which is
+ * why this asks a narrower question than d1_chunk_writable: a repair
+ * that holds a chunk without an episode has not put its data in doubt.
+ */
+static bool d1_chunk_readable(const struct d1_chunk *c)
+{
+	return !c->error_present || c->error_cleared;
+}
+
 static uint32_t
 d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 		  const struct d1_write_entry *e, struct d1_admission *a,
@@ -1717,6 +1755,10 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 	chunk = &o->chunks[e->index];
 	res->guard = chunk->guard;
 
+	/* Whose chunk this is, before anything about its contents. */
+	if (d1_chunk_writable(chunk) != D1_OK)
+		return D1_QUARANTINED;
+
 	/* The guard predicate itself is a question about the chunk. */
 	if (e->guard_check) {
 		/*
@@ -1742,15 +1784,6 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 
 	/* One uncommitted transaction per chunk in this first model. */
 	if (chunk->pending_present)
-		return D1_GUARDED;
-	/*
-	 * Section 7: an active repair lock blocks ordinary writers.  It is
-	 * the same answer as a pending transaction and for the same
-	 * reason -- somebody else is part way through this chunk -- so the
-	 * order between the two is not observable and nothing in the
-	 * precedence table turns on it.
-	 */
-	if (chunk->repair_present)
 		return D1_GUARDED;
 
 	activate = d1_activation_allowed(env->body.write.activate,
@@ -1902,6 +1935,8 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 	 */
 	chunk = &o->chunks[e->index];
 	res->guard = chunk->guard;
+	if (d1_chunk_writable(chunk) != D1_OK)
+		return D1_QUARANTINED;
 
 	txn = d1_txn_find(s, e->txn);
 	if (!txn)
@@ -2024,6 +2059,8 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 	 */
 	chunk = &o->chunks[e->index];
 	res->guard = chunk->guard;
+	if (d1_chunk_writable(chunk) != D1_OK)
+		return D1_QUARANTINED;
 
 	txn = d1_txn_find(s, e->txn);
 	if (!txn || txn->index != e->index ||
@@ -2318,8 +2355,8 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 		chunk = &o->chunks[e->index];
 		res->guard = chunk->guard;
 		/* One repair at a time, and not over private work. */
-		if (chunk->repair_present)
-			return D1_GUARDED;
+		if (chunk->repair_present || chunk->repair_locked)
+			return D1_QUARANTINED;
 		if (chunk->pending_present)
 			return D1_GUARDED;
 		if (!chunk->visible_present ||
@@ -4480,6 +4517,24 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 
 		if (i < first || i > last)
 			continue;
+		/*
+		 * Section 7 quarantines the version an uncleared episode
+		 * names, so the window a view reads may not contain one.
+		 * One inadmissible member fails the whole view, as section
+		 * 6 requires, and the pins it had taken go back.
+		 *
+		 * The extent above is deliberately still counted.  EOF is
+		 * derived from every chunk of the object and is a length,
+		 * not the data the episode put in doubt; refusing to answer
+		 * it would make a quarantine change the shape of the file
+		 * rather than the readability of one chunk.
+		 */
+		if (!d1_chunk_readable(c)) {
+			d1_view_unpin(s, v);
+			v->used = false;
+			status = D1_QUARANTINED;
+			goto out;
+		}
 		/*
 		 * A view that would hand back bytes it cannot vouch for is
 		 * not opened at all.
