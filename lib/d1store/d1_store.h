@@ -54,6 +54,13 @@ struct d1_entry_result {
 	d1_version_id version;
 	bool txn_present;
 	d1_txn_id txn;
+	/*
+	 * The repair cohort this entry opened, for begin_repair, and the
+	 * one it acted on for every later repair operation.  Absent for
+	 * everything that is not a repair.
+	 */
+	bool cohort_present;
+	d1_repair_id cohort;
 	/* The guard as it stands after the entry, or as it stood on refusal. */
 	struct d1_guard guard;
 	struct d1_owner owner;

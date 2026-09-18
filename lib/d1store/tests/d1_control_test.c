@@ -144,6 +144,8 @@ static void test_golden_complete_result(void)
 		0x00,
 		0x00,
 		0x09,
+		/* no repair cohort: this result is not a repair's */
+		0x00,
 		/* guard: generation 2, writer 11, written */
 		0x00,
 		0x00,
@@ -205,6 +207,37 @@ static void test_golden_complete_result(void)
 	check(d1_complete_result_decode(buf, len, &back),
 	      "the golden bytes decode");
 	check(d1_complete_result_equal(&r, &back), "and round trip");
+
+	/*
+	 * And the same result with a repair cohort in it.  The option is
+	 * one byte longer than its absence plus the handle, at the offset
+	 * the absent tag occupied, so the golden bytes above fix where it
+	 * goes and these fix what goes there.
+	 */
+	make_result(&r);
+	r.entry.cohort_present = true;
+	r.entry.cohort.raw = 0x1122334455667788ull;
+	len = d1_complete_result_encode(&r, buf, sizeof(buf));
+	check(len == sizeof(want) + 8u,
+	      "a result naming a repair cohort is eight bytes longer");
+	if (len == sizeof(want) + 8u) {
+		static const uint8_t named[9] = { 0x01, 0x11, 0x22, 0x33, 0x44,
+						  0x55, 0x66, 0x77, 0x88 };
+		size_t at = 0;
+
+		/* Immediately after the transaction option. */
+		while (at + sizeof(named) <= len &&
+		       memcmp(buf + at, named, sizeof(named)) != 0)
+			at++;
+		check(at + sizeof(named) <= len,
+		      "and carries the tag and the handle, big-endian");
+	}
+	check(d1_complete_result_decode(buf, len, &back) &&
+		      d1_complete_result_equal(&r, &back),
+	      "and it round trips");
+	r.entry.cohort.raw = 0x1122334455667789ull;
+	check(!d1_complete_result_equal(&r, &back),
+	      "and the comparison notices which cohort it was");
 }
 
 /*
