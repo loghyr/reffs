@@ -11958,6 +11958,208 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 }
 
 /*
+ * A repair replacement's owner is an owner like any other.
+ *
+ * Section 3's association key -- (export UUID, cohort, writer, co_id)
+ * naming one object, chunk and version -- belongs to the store, not to
+ * the ordinary write path.  A repair declares its replacement owners
+ * when the cohort opens, and that is where the binding is taken, so
+ * both collision directions are refused: a begin_repair may not name an
+ * owner an ordinary write already holds, an ordinary write may not name
+ * one a repair holds, and one vector may not name the same owner twice.
+ *
+ * A refused begin_repair takes no binding at all, which is what lets
+ * the owner a refused vector named succeed on the next call.  And the
+ * bindings are the reducer's, so a rebuilt store has them: the refusal
+ * is the log's answer and not a live store's memory of it.
+ */
+static void test_a_repair_owner_is_an_owner(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32], fixed[32];
+	struct d1_guard guard, zero_guard, one_guard;
+	const uint8_t *log;
+	size_t len;
+	d1_admission_id admission, readmit;
+	d1_version_id zero, zero_gone, one, one_gone;
+	d1_custody_id zero_custody, one_custody;
+	d1_repair_id cohort;
+
+	memset(older, 0xc1, sizeof(older));
+	memset(newer, 0xc2, sizeof(newer));
+	memset(fixed, 0xc3, sizeof(fixed));
+	fill_uuid(&store_uuid, 0x9c);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	/* Owners 1 and 2 take chunk 0; owners 5 and 6 take chunk 1. */
+	zero = make_a_repair_case(s, admission, 0, 1, older, newer,
+				  (uint32_t)sizeof(older), &zero_gone);
+	one = make_a_repair_case(s, admission, 1, 5, older, newer,
+				 (uint32_t)sizeof(older), &one_gone);
+	check(d1_version_live(zero) && d1_version_live(one),
+	      "two chunks are repair cases");
+	zero_custody = d1_fixture_custody(s, zero);
+	one_custody = d1_fixture_custody(s, one);
+	d1_store_guard(s, &object, 0, &zero_guard);
+	d1_store_guard(s, &object, 1, &one_guard);
+
+	/* One vector, one owner, two members. */
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_NOPRE, 40,
+		      zero_custody, zero, zero_gone);
+	repair_member(&env.body.repair.entries[1], 1, D1_REPAIR_NOPRE, 40,
+		      one_custody, one, one_gone);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OWNER_CONFLICT &&
+		      !res.entries[0].cohort_present,
+	      "one repair vector may not name one owner twice");
+	check(!res.entries[0].guard.never_written &&
+		      res.entries[0].guard.generation ==
+			      zero_guard.generation &&
+		      res.entries[0].guard.writer == zero_guard.writer,
+	      "and the refusal names the chunk the earlier member took it for");
+
+	/* An owner an ordinary write already holds. */
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 1;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 1, D1_REPAIR_NOPRE, 2,
+		      one_custody, one, one_gone);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OWNER_CONFLICT &&
+		      !res.entries[0].cohort_present,
+	      "a repair may not name an owner an ordinary write took");
+	check(!res.entries[0].guard.never_written &&
+		      res.entries[0].guard.generation ==
+			      zero_guard.generation &&
+		      res.entries[0].guard.writer == zero_guard.writer,
+	      "and the refusal names the chunk that owner is bound to");
+
+	/* Neither refusal took the owner it refused. */
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_NOPRE, 40,
+		      zero_custody, zero, zero_gone);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].cohort_present,
+	      "the owner a refused vector named is still free");
+	cohort = res.entries[0].cohort;
+
+	/* And now an ordinary write may not have it. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 40, older,
+		    (uint32_t)sizeof(older), true, &one_guard);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OWNER_CONFLICT,
+	      "an ordinary write may not name an owner a repair took");
+	check(!res.entries[0].guard.never_written &&
+		      res.entries[0].guard.generation ==
+			      zero_guard.generation &&
+		      res.entries[0].guard.writer == zero_guard.writer,
+	      "and it is told about the chunk the repair holds");
+
+	/* The binding follows the replacement the repair publishes. */
+	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 40, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the replacement is staged");
+
+	env_init(&env, s, admission, D1_OP_FINALIZE_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 40, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and finalized");
+
+	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 40, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and published");
+
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 40, older,
+		    (uint32_t)sizeof(older), true, &one_guard);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OWNER_CONFLICT,
+	      "and the published replacement keeps the owner for good");
+
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "a log with repair owners in it rebuilds the store");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		readmit = d1_fixture_admit(rebuilt, &object, 11,
+					   D1_RIGHT_WRITE |
+						   D1_RIGHT_SINGLE_WRITER);
+		d1_store_guard(rebuilt, &object, 1, &guard);
+		env_init(&env, rebuilt, readmit, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], 1, 11, 40, older,
+			    (uint32_t)sizeof(older), true, &guard);
+		check(d1_store_apply(rebuilt, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OWNER_CONFLICT,
+		      "and the rebuilt store holds the repair's owner too");
+		env_init(&env, rebuilt, readmit, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], 1, 11, 60, older,
+			    (uint32_t)sizeof(older), true, &guard);
+		check(d1_store_apply(rebuilt, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "while an owner nothing took is free there");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
  * A record that names an admission no CONTROL installed.
  *
  * The reducer asks two questions of every request that reaches it:
@@ -14914,6 +15116,7 @@ int main(void)
 	test_a_marked_version_is_quarantined();
 	test_a_repair_member_is_a_transaction();
 	test_a_mixed_cohort_clears_and_unlocks();
+	test_a_repair_owner_is_an_owner();
 	test_an_envelope_control_carries_its_digest();
 	test_a_fenced_handle_answers_three_ways();
 	test_a_record_that_names_no_admission();

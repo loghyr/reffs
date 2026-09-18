@@ -1196,6 +1196,12 @@ static struct d1_version *d1_version_find(struct d1_store *s, d1_version_id id)
 	return NULL;
 }
 
+static bool d1_owner_same(const struct d1_owner *a, const struct d1_owner *b)
+{
+	return a->cohort.raw == b->cohort.raw && a->writer == b->writer &&
+	       a->co_id == b->co_id;
+}
+
 static struct d1_owner_assoc *d1_owner_find(struct d1_store *s,
 					    const struct d1_uuid *export_uuid,
 					    const struct d1_owner *owner)
@@ -1210,32 +1216,38 @@ static struct d1_owner_assoc *d1_owner_find(struct d1_store *s,
 		if (memcmp(&a->export_uuid, export_uuid,
 			   sizeof(*export_uuid)) != 0)
 			continue;
-		if (a->owner.cohort.raw == owner->cohort.raw &&
-		    a->owner.writer == owner->writer &&
-		    a->owner.co_id == owner->co_id)
+		if (d1_owner_same(&a->owner, owner))
 			return a;
 	}
 	return NULL;
 }
 
-static struct d1_owner_assoc *d1_owner_add(struct d1_store *s,
-					   const struct d1_uuid *export_uuid,
-					   const struct d1_owner *owner)
+/*
+ * A free association row, and the binding taken in it.
+ *
+ * They are two calls rather than one because a caller that takes a row
+ * has to record the row's before-image for its undo before the row is
+ * written: an undo that saved an already-overwritten row would restore
+ * the binding it was meant to release.
+ */
+static struct d1_owner_assoc *d1_owner_spare(struct d1_store *s)
 {
 	uint32_t i;
 
-	for (i = 0; i < D1_MAX_OWNERS; i++) {
-		struct d1_owner_assoc *a = &s->owners[i];
-
-		if (a->used)
-			continue;
-		memset(a, 0, sizeof(*a));
-		a->used = true;
-		a->export_uuid = *export_uuid;
-		a->owner = *owner;
-		return a;
-	}
+	for (i = 0; i < D1_MAX_OWNERS; i++)
+		if (!s->owners[i].used)
+			return &s->owners[i];
 	return NULL;
+}
+
+static void d1_owner_bind(struct d1_owner_assoc *a,
+			  const struct d1_uuid *export_uuid,
+			  const struct d1_owner *owner)
+{
+	memset(a, 0, sizeof(*a));
+	a->used = true;
+	a->export_uuid = *export_uuid;
+	a->owner = *owner;
 }
 
 /*
@@ -1867,11 +1879,12 @@ d1_do_write_entry(struct d1_store *s, const struct d1_envelope *env,
 	txn->predecessor_present = ver->predecessor_present;
 	txn->predecessor = ver->predecessor;
 
-	assoc = d1_owner_add(s, &env->object.export_uuid, &e->owner);
+	assoc = d1_owner_spare(s);
 	/* Defensive and presently unreachable; see the row scan above. */
 	if (!assoc)
 		return D1_NOSPC;
 	u->fresh_assoc = assoc;
+	d1_owner_bind(assoc, &env->object.export_uuid, &e->owner);
 	assoc->object = ver->object;
 	assoc->index = e->index;
 	assoc->version = ver->id;
@@ -2247,6 +2260,15 @@ struct d1_repair_undo {
 	uint32_t fresh_count;
 	struct d1_version *fresh_version[D1_BATCH_ENTRIES_MAX];
 	struct d1_txn *fresh_txn[D1_BATCH_ENTRIES_MAX];
+	/*
+	 * Association rows a member took or moved.  These are restored
+	 * whole rather than released, because prepare_repair moves an
+	 * existing binding onto the replacement it stages and only
+	 * begin_repair takes an unused row.
+	 */
+	uint32_t owner_count;
+	struct d1_owner_assoc *owner[D1_BATCH_ENTRIES_MAX];
+	struct d1_owner_assoc owner_before[D1_BATCH_ENTRIES_MAX];
 	bool fail_index_before;
 	bool overlay_before;
 };
@@ -2288,6 +2310,21 @@ static void d1_repair_undo_fresh(struct d1_repair_undo *u,
 	u->fresh_count++;
 }
 
+static void d1_repair_undo_owner(struct d1_repair_undo *u,
+				 struct d1_owner_assoc *assoc)
+{
+	uint32_t i;
+
+	for (i = 0; i < u->owner_count; i++)
+		if (u->owner[i] == assoc)
+			return;
+	if (u->owner_count >= D1_BATCH_ENTRIES_MAX)
+		return;
+	u->owner[u->owner_count] = assoc;
+	u->owner_before[u->owner_count] = *assoc;
+	u->owner_count++;
+}
+
 static void d1_repair_undo_cohort(struct d1_repair_undo *u,
 				  struct d1_repair *cohort)
 {
@@ -2314,6 +2351,8 @@ static void d1_repair_undo_apply(struct d1_store *s, struct d1_repair_undo *u)
 		if (u->fresh_txn[i])
 			u->fresh_txn[i]->used = false;
 	}
+	for (i = 0; i < u->owner_count; i++)
+		*u->owner[i] = u->owner_before[i];
 	s->index_epoch = u->epoch_before;
 	s->next_version = u->next_version_before;
 	s->next_txn = u->next_txn_before;
@@ -2389,9 +2428,11 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 
 	for (i = 0; i < rb->count; i++) {
 		const struct d1_repair_entry *e = &rb->entries[i];
+		struct d1_owner_assoc *assoc;
 		struct d1_chunk *chunk;
 		struct d1_custody *custody;
 		struct d1_version *ver;
+		uint32_t j;
 
 		if (e->index >= D1_MAX_CHUNKS)
 			return D1_INVALID;
@@ -2439,6 +2480,29 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 			if (chunk->error_version != chunk->visible)
 				return D1_OWNER_CONFLICT;
 		}
+		/*
+		 * Section 3's association key belongs to the store, not to
+		 * the ordinary write path: a replacement owner names one
+		 * object, chunk and version for as long as the store lives.
+		 * So a repair may not declare an owner an ordinary write
+		 * already took, and -- because the binding is taken here --
+		 * an ordinary write may not later take one a repair
+		 * declared.  The vector is also checked against itself:
+		 * two members sharing an owner would take two rows under
+		 * one key, and which of them a later lookup found would be
+		 * an accident of row order.
+		 */
+		for (j = 0; j < i; j++) {
+			if (!d1_owner_same(&rb->entries[j].owner, &e->owner))
+				continue;
+			res->guard = o->chunks[rb->entries[j].index].guard;
+			return D1_OWNER_CONFLICT;
+		}
+		assoc = d1_owner_find(s, &env->object.export_uuid, &e->owner);
+		if (assoc) {
+			res->guard = d1_owner_guard(s, assoc);
+			return D1_OWNER_CONFLICT;
+		}
 	}
 
 	for (i = 0; i < D1_MAX_REPAIRS && !row; i++)
@@ -2467,6 +2531,21 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 	}
 	if (d1_next_txn_seen(s) == UINT64_MAX)
 		return D1_NOSPC;
+	for (i = 0; i < rb->count; i++) {
+		struct d1_owner_assoc *spare = NULL;
+		uint32_t j, seen = 0;
+
+		for (j = 0; j < D1_MAX_OWNERS; j++) {
+			if (s->owners[j].used)
+				continue;
+			if (seen++ == i) {
+				spare = &s->owners[j];
+				break;
+			}
+		}
+		if (!spare)
+			return D1_NOSPC;
+	}
 
 	u->fresh = row;
 	memset(row, 0, sizeof(*row));
@@ -2481,6 +2560,7 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 		struct d1_repair_member *m = &row->member[i];
 		struct d1_chunk *chunk = &o->chunks[e->index];
 
+		struct d1_owner_assoc *assoc;
 		struct d1_txn *txn = NULL;
 		uint32_t j;
 
@@ -2517,6 +2597,18 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 		txn->guard = chunk->guard;
 		d1_repair_undo_fresh(u, NULL, txn);
 		m->txn = txn->id;
+		/*
+		 * The association is bound to the member's object and
+		 * chunk now and to its replacement at prepare_repair,
+		 * which is where a replacement first exists.
+		 */
+		assoc = d1_owner_spare(s);
+		if (!assoc)
+			return D1_NOSPC;
+		d1_repair_undo_owner(u, assoc);
+		d1_owner_bind(assoc, &env->object.export_uuid, &e->owner);
+		assoc->object = row->object;
+		assoc->index = e->index;
 		d1_repair_undo_chunk(u, chunk);
 		chunk->repair_present = true;
 		chunk->repair = row->id;
@@ -2634,6 +2726,7 @@ d1_do_prepare_repair(struct d1_store *s, const struct d1_envelope *env,
 		const struct d1_repair_entry *e = &rb->entries[i];
 		struct d1_repair_member *m = &cohort->member[i];
 		struct d1_chunk *chunk = &o->chunks[m->index];
+		struct d1_owner_assoc *assoc;
 		struct d1_version *ver = NULL;
 		struct d1_txn *txn = NULL;
 		uint32_t j;
@@ -2686,6 +2779,11 @@ d1_do_prepare_repair(struct d1_store *s, const struct d1_envelope *env,
 		txn->version = ver->id;
 		txn->phase = D1_PHASE_PREPARED;
 		d1_repair_undo_fresh(u, ver, NULL);
+		assoc = d1_owner_find(s, &env->object.export_uuid, &m->owner);
+		if (assoc) {
+			d1_repair_undo_owner(u, assoc);
+			assoc->version = ver->id;
+		}
 		m->staged = true;
 		m->version = ver->id;
 	}
@@ -2878,8 +2976,8 @@ static uint32_t d1_do_mark_error(struct d1_store *s,
  * and custody and the committed cohort, plus the fixture-issued
  * cross-DS completion certificate, and then makes those members
  * readable but locked.  It does not unlock them -- that is a separate
- * call -- and NOPRE members have no episode to clear, so a cohort
- * carrying one rejects the attempt rather than clearing what it can.
+ * call -- and it clears only the ERROR members, because a NOPRE member
+ * has no episode to clear.
  */
 static uint32_t d1_do_clear_error(struct d1_store *s,
 				  const struct d1_envelope *env,
