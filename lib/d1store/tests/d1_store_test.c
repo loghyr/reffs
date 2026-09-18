@@ -10854,6 +10854,155 @@ static void test_an_envelope_control_carries_its_digest(void)
 }
 
 /*
+ * The memo's H1, end to end.
+ *
+ * A write is prepared and made durable; the store goes away before
+ * anything else happens; it comes back through a reopen.  What the
+ * trace asks for is three different answers from the same fenced
+ * handle, and they are different for three different reasons.
+ *
+ * The exact request the old handle already made is answered from its
+ * receipt.  Section 8 is explicit that an exact match returns the
+ * recorded result without mutation "even after incarnation change" --
+ * retrieving a result is not a new mutation, so the fence does not
+ * apply to it.  The request has to be the same request: rebuilding the
+ * envelope after the reopen would carry the new incarnation and be a
+ * different one.
+ *
+ * New work under that handle is refused, because that is what the fence
+ * is.  And the work the handle left behind is not lost with it: a
+ * recovery_admit moves the pending transaction to a handle of this
+ * incarnation, and the finalize that failed under the old one succeeds
+ * under the new.
+ */
+static void test_a_fenced_handle_answers_three_ways(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *back;
+	struct d1_envelope wrote, env;
+	struct d1_result res, again;
+	static uint8_t data[24];
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	const uint8_t *log;
+	size_t len, before, after;
+	d1_admission_id admission, control, fresh;
+	d1_txn_id txn;
+	d1_version_id version, seen;
+
+	memset(data, 0x41, sizeof(data));
+	fill_uuid(&store_uuid, 0x4a);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	admission = d1_fixture_admit(live, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	env_init(&wrote, live, admission, D1_OP_WRITE_BATCH);
+	wrote.body.write.count = 1;
+	wrote.body.write.stability = D1_FILE_SYNC;
+	write_entry(&wrote.body.write.entries[0], 0, 11, 1, data, sizeof(data),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(live, &wrote, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a write is prepared");
+	txn = res.entries[0].txn;
+	version = res.entries[0].version;
+	check(d1_txn_live(txn) && d1_version_live(version),
+	      "and leaves a transaction to recover");
+	log = journal_of(live, &len);
+
+	/* The store comes back. */
+	back = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!back) {
+		d1_store_free(live);
+		return;
+	}
+	check(d1_store_reopen(back, log, len) == D1_OK, "the store reopens");
+	check(d1_store_incarnation(back) == d1_store_incarnation(live) + 1u,
+	      "in a new incarnation");
+	check(!d1_store_visible(back, &object, 0, &seen),
+	      "with the write still private, as it was");
+
+	/*
+	 * One: the exact request it already made.  The canonical request
+	 * is unchanged -- same key, same incarnation, same body, so the
+	 * same digest -- and only the process-local provenance is
+	 * re-attached, because a handle of the store that went away is
+	 * not a handle of the one that came back.
+	 */
+	wrote.admission =
+		d1_fixture_admission_handle(back, d1_admission_raw(admission));
+	(void)journal_of(back, &before);
+	check(d1_store_apply(back, &wrote, &again) == D1_OK &&
+		      again.entries[0].status == D1_OK,
+	      "the exact request the fenced handle made answers from its "
+	      "receipt");
+	check(d1_version_eq(again.entries[0].version,
+			    d1_fixture_version_handle(
+				    back, d1_version_raw(version))) &&
+		      d1_txn_eq(again.entries[0].txn,
+				d1_fixture_txn_handle(back, d1_txn_raw(txn))),
+	      "with the transaction and version it was given before");
+	(void)journal_of(back, &after);
+	check(after == before, "and writes nothing");
+
+	/* Two: new work under it. */
+	d1_store_verifier(back, verifier);
+	env_init(&env, back, admission, D1_OP_FINALIZE_BATCH);
+	env.body.lifecycle.range_begin = 0;
+	env.body.lifecycle.range_end = 1;
+	env.body.lifecycle.count = 1;
+	env.body.lifecycle.entries[0].index = 0;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = 1;
+	env.body.lifecycle.entries[0].txn =
+		d1_fixture_txn_handle(back, d1_txn_raw(txn));
+	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+	check(d1_store_apply(back, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "a finalize under the fenced handle is refused");
+
+	/* Three: the work it left behind, moved to a live handle. */
+	control = d1_fixture_admit(back, &object, 11, D1_RIGHT_CONTROL);
+	fresh = d1_fixture_admit(back, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	env_init(&env, back, control, D1_OP_RECOVERY_ADMIT);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = d1_fixture_txn_handle(back, d1_txn_raw(txn));
+	env.body.control.old_admission =
+		d1_fixture_admission_handle(back, d1_admission_raw(admission));
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = fresh;
+	env.body.control.read_epoch_present = true;
+	env.body.control.read_epoch = 0;
+	check(d1_store_apply(back, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a recovery_admit moves the transaction to a live handle");
+
+	d1_store_verifier(back, verifier);
+	env_init(&env, back, fresh, D1_OP_FINALIZE_BATCH);
+	env.body.lifecycle.range_begin = 0;
+	env.body.lifecycle.range_end = 1;
+	env.body.lifecycle.count = 1;
+	env.body.lifecycle.entries[0].index = 0;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = 1;
+	env.body.lifecycle.entries[0].txn =
+		d1_fixture_txn_handle(back, d1_txn_raw(txn));
+	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+	check(d1_store_apply(back, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the finalize that failed under the old one succeeds "
+	      "under it");
+
+	d1_store_free(back);
+	d1_store_free(live);
+}
+
+/*
  * A record that names an admission no CONTROL installed.
  *
  * The reducer asks two questions of every request that reaches it:
@@ -13806,6 +13955,7 @@ int main(void)
 	test_a_repair_publishes_its_whole_vector_or_none();
 	test_an_error_repair_clears_and_unlocks_separately();
 	test_an_envelope_control_carries_its_digest();
+	test_a_fenced_handle_answers_three_ways();
 	test_a_record_that_names_no_admission();
 	test_record_tags_are_validated();
 	test_operation_key_binds_the_whole_envelope();

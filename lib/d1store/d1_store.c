@@ -1951,6 +1951,23 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 	ver = d1_version_find(s, d1_version_of(s, txn->version));
 	if (!ver)
 		return D1_INVALID;
+	/*
+	 * What this transaction displaces has to be what it recorded
+	 * displacing.  Section 7 calls a stale pointer a conflict, and a
+	 * commit that published over something else would lose it without
+	 * anything saying so.
+	 *
+	 * It is defensive today: a repair refuses to open over a chunk
+	 * that still holds an uncommitted transaction, and holds the chunk
+	 * until it is unlocked, so nothing can move the visible pointer
+	 * under a finalized one.  That is a property of how the repair
+	 * paths happen to be built, which is exactly the kind of thing
+	 * this model has learned not to rely on, so it is asked rather
+	 * than assumed.
+	 */
+	if (txn->predecessor_present != chunk->visible_present ||
+	    (txn->predecessor_present && txn->predecessor != chunk->visible))
+		return D1_OWNER_CONFLICT;
 	/* The epoch this publication advances; see d1_do_write_entry. */
 	if (d1_index_epoch_seen(s) == UINT64_MAX)
 		return D1_NOSPC;
