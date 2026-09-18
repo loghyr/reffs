@@ -145,6 +145,16 @@ struct d1_repair_member {
 	/* The private replacement prepare_repair staged, if it has. */
 	bool staged;
 	uint64_t version;
+	/*
+	 * The member's own repair transaction.  Section 4 gives
+	 * begin_repair per-member transaction handles and section 5 has
+	 * ordinary lifecycle and private rollback reject them as REPAIR
+	 * members rather than as unknown numbers; section 9's recovery
+	 * re-binds them like any other transaction, which is how an open
+	 * cohort survives a reopen.  A cohort with no transactions made
+	 * all of that unreachable.
+	 */
+	uint64_t txn;
 };
 
 /*
@@ -2070,8 +2080,6 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 	    txn->owner.writer != e->owner.writer ||
 	    txn->owner.co_id != e->owner.co_id)
 		return D1_OWNER_CONFLICT;
-	if (txn->mode != D1_MODE_ORDINARY)
-		return D1_INVALID;
 
 	res->owner = txn->owner;
 	res->txn_present = true;
@@ -2079,7 +2087,13 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 
 	if (txn->phase == D1_PHASE_PREPARED ||
 	    txn->phase == D1_PHASE_FINALIZED) {
-		/* One's own private work, cancelled with WRITE and no custody. */
+		/*
+		 * One's own private work, cancelled with WRITE and no
+		 * custody -- and only a repair's whole-cohort entry points
+		 * cancel a repair member, as section 5 requires.
+		 */
+		if (txn->mode != D1_MODE_ORDINARY)
+			return D1_INVALID;
 		if ((a->rights & D1_RIGHT_WRITE) != D1_RIGHT_WRITE)
 			return D1_STALE_AUTH;
 		if (txn->admission != a->id)
@@ -2116,6 +2130,12 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 	 * From here it is committed data.  Section 2 asks for REPAIR plus
 	 * exact custody; it does not also ask for WRITE, and normal owner
 	 * custody cannot roll back committed data at all.
+	 *
+	 * A committed repair replacement is rolled back here like any
+	 * other committed version.  Section 7 is explicit that it needs
+	 * fresh custody bound to THAT replacement's predecessor, and that
+	 * its absence produces NO_PREDECESSOR rather than an
+	 * unconditional rejection based on the mode it was written under.
 	 */
 	if (!e->custody_present)
 		return D1_STALE_AUTH;
@@ -2221,7 +2241,12 @@ struct d1_repair_undo {
 	 */
 	uint64_t epoch_before;
 	uint64_t next_version_before;
+	uint64_t next_txn_before;
 	uint64_t next_repair_before;
+	/* Rows a refused call took, which it does not get to keep. */
+	uint32_t fresh_count;
+	struct d1_version *fresh_version[D1_BATCH_ENTRIES_MAX];
+	struct d1_txn *fresh_txn[D1_BATCH_ENTRIES_MAX];
 	bool fail_index_before;
 	bool overlay_before;
 };
@@ -2232,6 +2257,7 @@ static void d1_repair_undo_begin(struct d1_repair_undo *u,
 	memset(u, 0, sizeof(*u));
 	u->epoch_before = s->index_epoch;
 	u->next_version_before = s->next_version;
+	u->next_txn_before = s->next_txn;
 	u->next_repair_before = s->next_repair;
 	u->fail_index_before = s->fail_next_index;
 	u->overlay_before = s->overlay_active;
@@ -2250,6 +2276,16 @@ static void d1_repair_undo_chunk(struct d1_repair_undo *u,
 	u->chunk[u->count] = chunk;
 	u->chunk_before[u->count] = *chunk;
 	u->count++;
+}
+
+static void d1_repair_undo_fresh(struct d1_repair_undo *u,
+				 struct d1_version *ver, struct d1_txn *txn)
+{
+	if (u->fresh_count >= D1_BATCH_ENTRIES_MAX)
+		return;
+	u->fresh_version[u->fresh_count] = ver;
+	u->fresh_txn[u->fresh_count] = txn;
+	u->fresh_count++;
 }
 
 static void d1_repair_undo_cohort(struct d1_repair_undo *u,
@@ -2272,8 +2308,15 @@ static void d1_repair_undo_apply(struct d1_store *s, struct d1_repair_undo *u)
 		*u->cohort = u->cohort_before;
 	if (u->fresh)
 		u->fresh->used = false;
+	for (i = 0; i < u->fresh_count; i++) {
+		if (u->fresh_version[i])
+			u->fresh_version[i]->used = false;
+		if (u->fresh_txn[i])
+			u->fresh_txn[i]->used = false;
+	}
 	s->index_epoch = u->epoch_before;
 	s->next_version = u->next_version_before;
+	s->next_txn = u->next_txn_before;
 	s->next_repair = u->next_repair_before;
 	s->fail_next_index = u->fail_index_before;
 	s->overlay_active = u->overlay_before;
@@ -2403,6 +2446,27 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 			row = &s->repairs[i];
 	if (!row)
 		return D1_NOSPC;
+	/*
+	 * Room for every member's transaction before any of them is
+	 * taken: a cohort half-issued is not a cohort.
+	 */
+	for (i = 0; i < rb->count; i++) {
+		struct d1_txn *spare = NULL;
+		uint32_t j, seen = 0;
+
+		for (j = 0; j < D1_MAX_TXNS; j++) {
+			if (s->txns[j].used)
+				continue;
+			if (seen++ == i) {
+				spare = &s->txns[j];
+				break;
+			}
+		}
+		if (!spare)
+			return D1_NOSPC;
+	}
+	if (d1_next_txn_seen(s) == UINT64_MAX)
+		return D1_NOSPC;
 
 	u->fresh = row;
 	memset(row, 0, sizeof(*row));
@@ -2417,6 +2481,9 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 		struct d1_repair_member *m = &row->member[i];
 		struct d1_chunk *chunk = &o->chunks[e->index];
 
+		struct d1_txn *txn = NULL;
+		uint32_t j;
+
 		m->index = e->index;
 		m->mode = e->mode;
 		m->owner = e->owner;
@@ -2424,6 +2491,32 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 		m->successor = e->successor.raw;
 		m->predecessor_present = e->predecessor_present;
 		m->predecessor = e->predecessor.raw;
+		/*
+		 * The member's own repair transaction, issued where section
+		 * 4 issues it: begin_repair answers with the cohort and the
+		 * per-member handles, and everything afterwards names them.
+		 * It carries no version until prepare_repair stages one.
+		 */
+		for (j = 0; j < D1_MAX_TXNS && !txn; j++)
+			if (!s->txns[j].used)
+				txn = &s->txns[j];
+		if (!txn)
+			return D1_NOSPC;
+		memset(txn, 0, sizeof(*txn));
+		txn->used = true;
+		txn->id = s->next_txn++;
+		txn->object = row->object;
+		txn->index = e->index;
+		txn->owner = e->owner;
+		txn->admission = env->admission.raw;
+		txn->mode = D1_MODE_REPAIR;
+		txn->phase = D1_PHASE_ADMITTED;
+		txn->stability = D1_FILE_SYNC;
+		txn->predecessor_present = true;
+		txn->predecessor = e->successor.raw;
+		txn->guard = chunk->guard;
+		d1_repair_undo_fresh(u, NULL, txn);
+		m->txn = txn->id;
 		d1_repair_undo_chunk(u, chunk);
 		chunk->repair_present = true;
 		chunk->repair = row->id;
@@ -2432,6 +2525,23 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 	res->cohort = d1_repair_of(s, row->id);
 	res->phase = row->phase;
 	return D1_OK;
+}
+
+/* Drop the private work a member staged, replacement and transaction. */
+static void d1_repair_member_drop(struct d1_store *s,
+				  struct d1_repair_member *m)
+{
+	struct d1_version *ver =
+		d1_version_find(s, d1_version_of(s, m->version));
+	struct d1_txn *txn = d1_txn_find(s, d1_txn_of(s, m->txn));
+
+	if (ver)
+		ver->used = false;
+	if (txn)
+		txn->used = false;
+	m->staged = false;
+	m->version = 0;
+	m->txn = 0;
 }
 
 /*
@@ -2458,18 +2568,11 @@ static uint32_t d1_do_abort_repair(struct d1_store *s, struct d1_repair *cohort,
 	for (i = 0; i < cohort->count; i++) {
 		struct d1_repair_member *m = &cohort->member[i];
 		struct d1_chunk *chunk = &o->chunks[m->index];
-		struct d1_version *ver;
 
 		d1_repair_undo_chunk(u, chunk);
 		chunk->repair_present = false;
 		chunk->repair = 0;
-		if (!m->staged)
-			continue;
-		ver = d1_version_find(s, d1_version_of(s, m->version));
-		if (ver)
-			ver->used = false;
-		m->staged = false;
-		m->version = 0;
+		d1_repair_member_drop(s, m);
 	}
 	cohort->phase = D1_PHASE_ABORTED;
 	res->phase = cohort->phase;
@@ -2532,6 +2635,7 @@ d1_do_prepare_repair(struct d1_store *s, const struct d1_envelope *env,
 		struct d1_repair_member *m = &cohort->member[i];
 		struct d1_chunk *chunk = &o->chunks[m->index];
 		struct d1_version *ver = NULL;
+		struct d1_txn *txn = NULL;
 		uint32_t j;
 
 		res->guard = chunk->guard;
@@ -2553,7 +2657,8 @@ d1_do_prepare_repair(struct d1_store *s, const struct d1_envelope *env,
 		for (j = 0; j < D1_MAX_VERSIONS && !ver; j++)
 			if (!s->versions[j].used)
 				ver = &s->versions[j];
-		if (!ver) {
+		txn = d1_txn_find(s, d1_txn_of(s, m->txn));
+		if (!ver || !txn) {
 			status = D1_NOSPC;
 			break;
 		}
@@ -2572,6 +2677,15 @@ d1_do_prepare_repair(struct d1_store *s, const struct d1_envelope *env,
 		 */
 		ver->predecessor_present = true;
 		ver->predecessor = m->successor;
+		/*
+		 * The transaction begin_repair issued now carries the
+		 * replacement it stages.  Its phase follows the cohort
+		 * rather than leading it: section 7 publishes the whole
+		 * local vector or none of it.
+		 */
+		txn->version = ver->id;
+		txn->phase = D1_PHASE_PREPARED;
+		d1_repair_undo_fresh(u, ver, NULL);
 		m->staged = true;
 		m->version = ver->id;
 	}
@@ -2586,18 +2700,11 @@ d1_do_prepare_repair(struct d1_store *s, const struct d1_envelope *env,
 		for (i = 0; i < cohort->count; i++) {
 			struct d1_repair_member *m = &cohort->member[i];
 			struct d1_chunk *chunk = &o->chunks[m->index];
-			struct d1_version *ver;
 
 			d1_repair_undo_chunk(u, chunk);
 			chunk->repair_present = false;
 			chunk->repair = 0;
-			if (!m->staged)
-				continue;
-			ver = d1_version_find(s, d1_version_of(s, m->version));
-			if (ver)
-				ver->used = false;
-			m->staged = false;
-			m->version = 0;
+			d1_repair_member_drop(s, m);
 		}
 		cohort->phase = D1_PHASE_ABORTED;
 		res->phase = cohort->phase;
@@ -2680,9 +2787,13 @@ static uint32_t d1_do_commit_repair(struct d1_store *s,
 		struct d1_repair_member *m = &cohort->member[i];
 		struct d1_chunk *chunk = &o->chunks[m->index];
 
+		struct d1_txn *txn = d1_txn_find(s, d1_txn_of(s, m->txn));
+
 		d1_repair_undo_chunk(u, chunk);
 		d1_publish_visible(s, chunk, m->version);
 		chunk->repair_locked = true;
+		if (txn)
+			txn->phase = D1_PHASE_COMMITTED;
 	}
 	/* One epoch for the whole vector, not one for each member. */
 	s->index_epoch++;
@@ -2952,9 +3063,31 @@ struct d1_control_undo {
 	uint64_t read_epoch[D1_BATCH_ENTRIES_MAX];
 	struct d1_chunk *chunk[D1_BATCH_ENTRIES_MAX];
 	struct d1_chunk chunk_before[D1_BATCH_ENTRIES_MAX];
+	/*
+	 * The cohorts a recovery re-bound with their members.  A repair
+	 * is bound to a handle too, and re-binding its transactions
+	 * without it would leave the cohort naming a fenced one.
+	 */
+	struct d1_repair *cohort[D1_BATCH_ENTRIES_MAX];
+	uint64_t cohort_admission[D1_BATCH_ENTRIES_MAX];
 	struct d1_admission *old;
 	bool old_revoked_before;
 };
+
+/* The cohort a repair transaction belongs to, if one still does. */
+static struct d1_repair *d1_repair_of_member(struct d1_store *s, uint64_t txn)
+{
+	uint32_t i, j;
+
+	for (i = 0; i < D1_MAX_REPAIRS; i++) {
+		if (!s->repairs[i].used)
+			continue;
+		for (j = 0; j < s->repairs[i].count; j++)
+			if (s->repairs[i].member[j].txn == txn)
+				return &s->repairs[i];
+	}
+	return NULL;
+}
 
 static void d1_control_undo_apply(struct d1_control_undo *u)
 {
@@ -2966,6 +3099,8 @@ static void d1_control_undo_apply(struct d1_control_undo *u)
 		u->txn[i]->read_epoch = u->read_epoch[i];
 		if (u->chunk[i])
 			*u->chunk[i] = u->chunk_before[i];
+		if (u->cohort[i])
+			u->cohort[i]->admission = u->cohort_admission[i];
 	}
 	if (u->old)
 		u->old->revoked = u->old_revoked_before;
@@ -3006,10 +3141,28 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 
 		if (!t || t->object != d1_object_slot(s, o))
 			return D1_INVALID;
-		if (t->mode != D1_MODE_ORDINARY)
+		/*
+		 * A lease sweep may not take a repair member: section 7
+		 * advances and cancels those only through whole-cohort
+		 * entry points, and letting a reap take one would break
+		 * that atomicity from the side.  A recovery is the other
+		 * case -- section 9 re-binds the work a fenced handle left,
+		 * and a repair's members are work like any other.
+		 */
+		if (env->op == D1_OP_LEASE_REAP && t->mode != D1_MODE_ORDINARY)
 			return D1_INVALID;
+		/*
+		 * Work a fenced handle left: pending or finalized for an
+		 * ordinary transaction, and for a repair member also the
+		 * admitted phase it sits in between begin_repair and the
+		 * prepare that stages its replacement.  A cohort opened and
+		 * not yet staged is work too, and leaving it unrecoverable
+		 * would lock its chunks for the store's life.
+		 */
 		if (t->phase != D1_PHASE_PREPARED &&
-		    t->phase != D1_PHASE_FINALIZED)
+		    t->phase != D1_PHASE_FINALIZED &&
+		    !(t->mode == D1_MODE_REPAIR &&
+		      t->phase == D1_PHASE_ADMITTED))
 			return D1_BAD_PHASE;
 		if (t->admission != old->id)
 			return D1_OWNER_CONFLICT;
@@ -3019,6 +3172,7 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 		u->admission[i] = t->admission;
 		u->read_epoch[i] = t->read_epoch;
 		u->chunk[i] = NULL;
+		u->cohort[i] = NULL;
 	}
 	u->count = cb->count;
 	u->old = old;
@@ -3069,6 +3223,14 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 		for (i = 0; i < cb->count; i++) {
 			named[i]->admission = fresh->id;
 			named[i]->read_epoch = cb->read_epoch;
+			if (named[i]->mode != D1_MODE_REPAIR)
+				continue;
+			u->cohort[i] = d1_repair_of_member(s, named[i]->id);
+			if (u->cohort[i]) {
+				u->cohort_admission[i] =
+					u->cohort[i]->admission;
+				u->cohort[i]->admission = fresh->id;
+			}
 		}
 		old->revoked = true;
 		d1_verifier_of(s->incarnation, res->verifier);
@@ -5134,6 +5296,32 @@ void d1_fixture_certificate(struct d1_store *s,
 	if (!d1_journal_fixture(s, &request, &result))
 		d1_certificate_locked(s, was_present, was);
 	pthread_mutex_unlock(&s->lock);
+}
+
+d1_repair_id d1_fixture_repair_handle(struct d1_store *s, uint64_t raw)
+{
+	return d1_repair_of(s, raw);
+}
+
+bool d1_fixture_repair_member(struct d1_store *s, d1_repair_id cohort,
+			      uint32_t index, d1_txn_id *txn,
+			      d1_version_id *version)
+{
+	const struct d1_repair *row;
+	bool found = false;
+
+	pthread_mutex_lock(&s->lock);
+	row = d1_repair_find(s, cohort);
+	if (row && index < row->count) {
+		*txn = d1_txn_of(s, row->member[index].txn);
+		*version =
+			row->member[index].staged ?
+				d1_version_of(s, row->member[index].version) :
+				d1_version_none();
+		found = true;
+	}
+	pthread_mutex_unlock(&s->lock);
+	return found;
 }
 
 d1_custody_id d1_fixture_custody(struct d1_store *s, d1_version_id version)

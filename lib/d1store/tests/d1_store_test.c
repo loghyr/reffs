@@ -11589,6 +11589,167 @@ static void test_a_marked_version_is_quarantined(void)
 }
 
 /*
+ * A repair member is a transaction, and ordinary callers know it.
+ *
+ * Section 4 answers begin_repair with the cohort and the per-member
+ * transaction handles; section 5 has ordinary finalize, commit and
+ * private rollback reject a REPAIR member with INVALID, and only
+ * whole-cohort entry points advance or cancel one; section 9's recovery
+ * re-binds the work a fenced handle left, a repair's members included.
+ *
+ * None of that was reachable when a cohort had no transactions: the
+ * rejections were dead code refusing a number nothing had issued, a
+ * lease sweep could not reach repair work because there was none to
+ * reach, and an open cohort could not survive a reopen because
+ * recovery had nothing of it to name.  The members are transactions
+ * now, and this is what that buys.
+ */
+static void test_a_repair_member_is_a_transaction(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct rollback_expect expect;
+	struct d1_entry_result entry;
+	static uint8_t older[32], newer[32], fixed[32];
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	d1_admission_id admission, control;
+	d1_version_id broken, displaced, staged;
+	d1_custody_id custody;
+	d1_repair_id cohort;
+	d1_txn_id member;
+
+	memset(older, 0x81, sizeof(older));
+	memset(newer, 0x82, sizeof(newer));
+	memset(fixed, 0x83, sizeof(fixed));
+	fill_uuid(&store_uuid, 0x8b);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	control = d1_fixture_admit(s, &object, 11, D1_RIGHT_CONTROL);
+	broken = make_a_repair_case(s, admission, 0, 1, older, newer,
+				    (uint32_t)sizeof(older), &displaced);
+	check(d1_version_live(broken), "a chunk is a repair case");
+	custody = d1_fixture_custody(s, broken);
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_NOPRE, 95,
+		      custody, broken, displaced);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a repair opens");
+	cohort = res.entries[0].cohort;
+	check(d1_fixture_repair_member(s, cohort, 0, &member, &staged) &&
+		      d1_txn_live(member),
+	      "and its member has a transaction of its own");
+	check(!d1_version_live(staged),
+	      "which carries no replacement until one is staged");
+
+	/* An ordinary finalize of it is refused for what it is. */
+	d1_store_verifier(s, verifier);
+	env_init(&env, s, admission, D1_OP_FINALIZE_BATCH);
+	env.body.lifecycle.range_begin = 0;
+	env.body.lifecycle.range_end = 1;
+	env.body.lifecycle.count = 1;
+	env.body.lifecycle.entries[0].index = 0;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = 95;
+	env.body.lifecycle.entries[0].txn = member;
+	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_QUARANTINED,
+	      "an ordinary finalize of a member is refused");
+
+	/* And a lease reap will not sweep it. */
+	d1_fixture_expire(s, admission);
+	env_init(&env, s, control, D1_OP_LEASE_REAP);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = member;
+	env.body.control.old_admission = admission;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_INVALID,
+	      "a lease reap will not take a repair member");
+
+	/* Recovery moves the whole repair to a live handle. */
+	{
+		d1_admission_id fresh = d1_fixture_admit(
+			s, &object, 11,
+			D1_RIGHT_READ | D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+				D1_RIGHT_SINGLE_WRITER);
+
+		env_init(&env, s, control, D1_OP_RECOVERY_ADMIT);
+		env.body.control.count = 1;
+		env.body.control.txns[0] = member;
+		env.body.control.old_admission = admission;
+		env.body.control.new_admission_present = true;
+		env.body.control.new_admission = fresh;
+		env.body.control.read_epoch_present = true;
+		env.body.control.read_epoch = 0;
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "a recovery_admit re-binds the member");
+
+		/* The expired handle can no longer drive the repair. */
+		env_init(&env, s, admission, D1_OP_ABORT_REPAIR);
+		env.body.repair.range_begin = 0;
+		env.body.repair.range_end = 1;
+		env.body.repair.count = 1;
+		repair_member(&env.body.repair.entries[0], 0, 0, 95,
+			      d1_custody_none(), d1_version_none(),
+			      d1_version_none());
+		env.body.repair.cohort_present = true;
+		env.body.repair.cohort = cohort;
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_STALE_AUTH,
+		      "and the handle it left cannot drive the repair");
+
+		/* The fresh one can. */
+		env_init(&env, s, fresh, D1_OP_PREPARE_REPAIR);
+		env.body.repair.range_begin = 0;
+		env.body.repair.range_end = 1;
+		env.body.repair.count = 1;
+		repair_member(&env.body.repair.entries[0], 0, 0, 95,
+			      d1_custody_none(), d1_version_none(),
+			      d1_version_none());
+		env.body.repair.entries[0].payload_present = true;
+		env.body.repair.entries[0].payload = fixed;
+		env.body.repair.entries[0].payload_len =
+			(uint32_t)sizeof(fixed);
+		d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+				    &env.body.repair.entries[0].checksum);
+		env.body.repair.cohort_present = true;
+		env.body.repair.cohort = cohort;
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "while the handle recovery gave it carries on");
+		check(d1_fixture_repair_member(s, cohort, 0, &member,
+					       &staged) &&
+			      d1_version_live(staged),
+		      "and the member now carries its replacement");
+
+		/* A private rollback of it is still refused for what it is. */
+		memset(&expect, 0, sizeof(expect));
+		expect.visible_present = true;
+		expect.visible = broken;
+		check(rollback_one(s, fresh, 0, 95, member, &expect, &entry) ==
+			      D1_QUARANTINED,
+		      "and an ordinary rollback of it is refused");
+	}
+
+	d1_store_free(s);
+}
+
+/*
  * A record that names an admission no CONTROL installed.
  *
  * The reducer asks two questions of every request that reaches it:
@@ -14543,6 +14704,7 @@ int main(void)
 	test_a_repair_does_not_reach_into_an_open_view();
 	test_an_error_repair_clears_and_unlocks_separately();
 	test_a_marked_version_is_quarantined();
+	test_a_repair_member_is_a_transaction();
 	test_an_envelope_control_carries_its_digest();
 	test_a_fenced_handle_answers_three_ways();
 	test_a_record_that_names_no_admission();

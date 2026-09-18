@@ -282,6 +282,33 @@ void d1_fixture_certificate(struct d1_store *s,
 			    const uint8_t certificate[D1_CERTIFICATE_BYTES]);
 
 /*
+ * Name a repair cohort by its canonical value.
+ *
+ * A handle a live begin_repair issued is the ordinary way to have one.
+ * A rebuild, a reopen and a malformed-handle test all need to name one
+ * without that call, so this makes the handle out of the number, for
+ * this store, exactly as the other handle constructors do.
+ */
+d1_repair_id d1_fixture_repair_handle(struct d1_store *s, uint64_t raw);
+
+/*
+ * The handles one member of a repair cohort holds: its own repair
+ * transaction, and the replacement it has staged if it has staged one.
+ *
+ * Section 4 answers begin_repair with the cohort and the per-member
+ * transaction handles.  This model's result carries one entry for the
+ * whole cohort -- a repair takes one receipt -- so the per-member
+ * handles are reached through the cohort rather than returned beside
+ * it.  Whether the canonical result should instead carry a vector of
+ * them is a shape question this slice does not settle.
+ *
+ * False when the cohort or the member does not exist.
+ */
+bool d1_fixture_repair_member(struct d1_store *s, d1_repair_id cohort,
+			      uint32_t index, d1_txn_id *txn,
+			      d1_version_id *version);
+
+/*
  * Release the retention of one predecessor version.  Allowed only for a
  * version nothing makes visible and nothing else holds: it removes the
  * durable retention root and changes what a future rollback is eligible
