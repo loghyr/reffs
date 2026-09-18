@@ -3429,6 +3429,20 @@ static uint32_t d1_do_repair(struct d1_store *s, const struct d1_envelope *env,
 		return D1_STALE_AUTH;
 	if (cohort->count != rb->count)
 		return D1_INVALID;
+	/*
+	 * Section 9's post-reboot check, which section 4 puts on the two
+	 * calls that publish: a caller whose verifier is not this
+	 * incarnation's is acting on a store it has not seen since.
+	 */
+	if (rb->verifier_present && !d1_verifier_matches(s, rb->prior_verifier))
+		return D1_STALE_AUTH;
+	/* And abort_repair's expected phase, which is the caller's claim. */
+	if (rb->phase_present && cohort->phase != rb->phase) {
+		res->phase = cohort->phase;
+		res->cohort_present = true;
+		res->cohort = d1_repair_of(s, cohort->id);
+		return D1_BAD_PHASE;
+	}
 	for (i = 0; i < rb->count; i++) {
 		const struct d1_repair_entry *e = &rb->entries[i];
 		const struct d1_repair_member *m = &cohort->member[i];
@@ -3439,6 +3453,20 @@ static uint32_t d1_do_repair(struct d1_store *s, const struct d1_envelope *env,
 		    m->owner.writer != e->owner.writer ||
 		    m->owner.co_id != e->owner.co_id)
 			return D1_OWNER_CONFLICT;
+		/*
+		 * The handles section 4 has the call name back: the
+		 * member's own transaction, the custody the repair was
+		 * opened under, and the predecessor its replacement
+		 * displaces.  Which of them a call carries is the
+		 * decoder's table; that each names this member is here.
+		 */
+		if (e->txn_present && e->txn.raw != m->txn)
+			return D1_INVALID;
+		if (e->custody_present && e->custody.raw != m->custody)
+			return D1_STALE_AUTH;
+		if (e->predecessor_present &&
+		    e->predecessor.raw != m->successor)
+			return D1_NO_PREDECESSOR;
 	}
 
 	switch (env->op) {

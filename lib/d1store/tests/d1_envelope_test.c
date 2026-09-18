@@ -714,16 +714,28 @@ static void make_repair(struct d1_envelope *env, uint32_t op)
 		e->owner.cohort.raw = 0x2200u + i;
 		e->owner.writer = 0x3300u + i;
 		e->owner.co_id = 0x4400u + i;
-		e->custody_present = state;
-		e->custody.raw = state ? 0x5500u + i : 0u;
+		/* Every repair request but the one that stages payloads. */
+		e->custody_present = op != D1_OP_PREPARE_REPAIR;
+		e->custody.raw = e->custody_present ? 0x5500u + i : 0u;
+		/* And the member transaction those three name back. */
+		e->txn_present = op == D1_OP_PREPARE_REPAIR ||
+				 op == D1_OP_FINALIZE_REPAIR ||
+				 op == D1_OP_COMMIT_REPAIR;
+		e->txn.raw = e->txn_present ? 0x5e00u + i : 0u;
 		/* A NOPRE member, and only one, consumes a postcondition. */
 		e->postcond_present = e->mode == D1_REPAIR_NOPRE;
 		e->postcond.raw = e->postcond_present ? 0x5a00u + i : 0u;
 		e->successor_present = state;
 		e->successor.raw = state ? 0x6600u + i : 0u;
-		/* The one genuinely optional field: NOPRE has none. */
-		e->predecessor_present = state && i == 0;
-		e->predecessor.raw = e->predecessor_present ? 0x7700u : 0u;
+		/*
+		 * Required by the two calls that publish, and the one
+		 * genuinely optional field for the two that capture
+		 * state: NOPRE has none.
+		 */
+		e->predecessor_present = op == D1_OP_FINALIZE_REPAIR ||
+					 op == D1_OP_COMMIT_REPAIR ||
+					 (state && i == 0);
+		e->predecessor.raw = e->predecessor_present ? 0x7700u + i : 0u;
 		e->payload_present = op == D1_OP_PREPARE_REPAIR;
 		if (e->payload_present) {
 			e->payload = payload;
@@ -745,6 +757,14 @@ static void make_repair(struct d1_envelope *env, uint32_t op)
 					   op == D1_OP_CLEAR_ERROR;
 	env->body.repair.episode.raw =
 		env->body.repair.episode_present ? 0x8e00u : 0u;
+	env->body.repair.phase_present = op == D1_OP_ABORT_REPAIR;
+	env->body.repair.phase =
+		env->body.repair.phase_present ? D1_PHASE_PREPARED : 0u;
+	env->body.repair.verifier_present = op == D1_OP_FINALIZE_REPAIR ||
+					    op == D1_OP_COMMIT_REPAIR;
+	if (env->body.repair.verifier_present)
+		memset(env->body.repair.prior_verifier, 0xab,
+		       D1_VERIFIER_BYTES);
 	env->body.repair.certificate_present = op == D1_OP_CLEAR_ERROR;
 	if (env->body.repair.certificate_present)
 		memset(env->body.repair.certificate, 0x9a,
@@ -759,6 +779,8 @@ static bool repair_entry_same(const struct d1_repair_entry *a,
 		return false;
 	if (a->custody_present != b->custody_present ||
 	    a->custody.raw != b->custody.raw)
+		return false;
+	if (a->txn_present != b->txn_present || a->txn.raw != b->txn.raw)
 		return false;
 	if (a->postcond_present != b->postcond_present ||
 	    a->postcond.raw != b->postcond.raw)
@@ -819,6 +841,14 @@ static void test_every_repair_operation_round_trips(void)
 		check(a->episode_present == b->episode_present &&
 			      a->episode.raw == b->episode.raw,
 		      "and the episode it names, or does not");
+		check(a->phase_present == b->phase_present &&
+			      a->phase == b->phase,
+		      "and the phase it expects, or does not");
+		check(a->verifier_present == b->verifier_present &&
+			      (!a->verifier_present ||
+			       memcmp(a->prior_verifier, b->prior_verifier,
+				      D1_VERIFIER_BYTES) == 0),
+		      "and the verifier it last saw, or does not");
 		check(a->certificate_present == b->certificate_present &&
 			      (!a->certificate_present ||
 			       memcmp(a->certificate, b->certificate,
@@ -883,10 +913,9 @@ static void test_a_repair_option_belongs_to_its_operation(void)
 
 	/* The captured state, and the replacement. */
 	make_repair(&env, D1_OP_UNLOCK);
-	env.body.repair.entries[1].custody_present = true;
-	env.body.repair.entries[1].custody.raw = 4;
+	env.body.repair.entries[1].custody_present = false;
 	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
-	      "an unlock carries no custody");
+	      "an unlock carries custody for every member");
 	make_repair(&env, D1_OP_ABORT_REPAIR);
 	env.body.repair.entries[0].successor_present = true;
 	env.body.repair.entries[0].successor.raw = 4;
@@ -904,6 +933,52 @@ static void test_a_repair_option_belongs_to_its_operation(void)
 	env.body.repair.entries[1].payload_present = false;
 	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
 	      "and a prepare stages its whole vector");
+
+	/* The handles and assertions each call names back, and no other. */
+	make_repair(&env, D1_OP_COMMIT_REPAIR);
+	env.body.repair.entries[0].txn_present = false;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "a commit names every member's transaction");
+	make_repair(&env, D1_OP_UNLOCK);
+	env.body.repair.entries[0].txn_present = true;
+	env.body.repair.entries[0].txn.raw = 5;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "and an unlock names none");
+	make_repair(&env, D1_OP_PREPARE_REPAIR);
+	env.body.repair.entries[0].custody_present = true;
+	env.body.repair.entries[0].custody.raw = 5;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "a prepare names transactions and not custody");
+	make_repair(&env, D1_OP_ABORT_REPAIR);
+	env.body.repair.entries[0].custody_present = false;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "and an abort names the custody it is abandoning");
+	make_repair(&env, D1_OP_COMMIT_REPAIR);
+	env.body.repair.entries[1].predecessor_present = false;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "a commit names every member's predecessor");
+	make_repair(&env, D1_OP_ABORT_REPAIR);
+	env.body.repair.phase_present = false;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "an abort says which phase it expects");
+	make_repair(&env, D1_OP_ABORT_REPAIR);
+	env.body.repair.phase = 99;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "and it is a phase this model has");
+	make_repair(&env, D1_OP_COMMIT_REPAIR);
+	env.body.repair.phase_present = true;
+	env.body.repair.phase = D1_PHASE_FINALIZED;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "only an abort expects a phase");
+	make_repair(&env, D1_OP_FINALIZE_REPAIR);
+	env.body.repair.verifier_present = false;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "a finalize carries the verifier it last saw");
+	make_repair(&env, D1_OP_CLEAR_ERROR);
+	env.body.repair.verifier_present = true;
+	memset(env.body.repair.prior_verifier, 0xcd, D1_VERIFIER_BYTES);
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "and only the two calls that publish carry one");
 
 	/* The episode, which the ERROR members and clear_error name. */
 	make_repair(&env, D1_OP_BEGIN_REPAIR);

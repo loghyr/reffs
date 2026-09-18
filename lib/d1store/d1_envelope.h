@@ -104,6 +104,14 @@ struct d1_repair_entry {
 	/* begin_repair only; one of enum d1_repair_mode. */
 	uint32_t mode;
 	struct d1_owner owner;
+	/*
+	 * The member's repair transaction: named by prepare_repair, which
+	 * stages a replacement under it, and by finalize_repair and
+	 * commit_repair, which move it.  begin_repair issues it, so it
+	 * does not name one.
+	 */
+	bool txn_present;
+	d1_txn_id txn;
 	/* The repair custody over the successor this member repairs. */
 	bool custody_present;
 	d1_custody_id custody;
@@ -144,6 +152,16 @@ struct d1_repair_batch {
 	 */
 	bool episode_present;
 	d1_episode_id episode;
+	/* abort_repair only: the phase the caller believes it is in. */
+	bool phase_present;
+	uint32_t phase;
+	/*
+	 * finalize_repair and commit_repair only: the verifier the caller
+	 * last saw.  Section 9's post-reboot check, which the ordinary
+	 * lifecycle path has and the repair path did not.
+	 */
+	bool verifier_present;
+	uint8_t prior_verifier[D1_VERIFIER_BYTES];
 	/* clear_error only. */
 	bool certificate_present;
 	uint8_t certificate[D1_CERTIFICATE_BYTES];

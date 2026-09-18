@@ -208,6 +208,7 @@ static void d1_enc_repair(struct d1_cursor *c, const struct d1_repair_batch *r)
 		d1_enc_u64(c, e->index);
 		d1_enc_u32(c, e->mode);
 		d1_enc_owner(c, &e->owner);
+		d1_enc_opt_u64(c, e->txn_present, e->txn.raw);
 		d1_enc_opt_u64(c, e->custody_present, e->custody.raw);
 		d1_enc_opt_u64(c, e->postcond_present, e->postcond.raw);
 		d1_enc_opt_u64(c, e->successor_present, e->successor.raw);
@@ -220,6 +221,12 @@ static void d1_enc_repair(struct d1_cursor *c, const struct d1_repair_batch *r)
 	}
 	d1_enc_opt_u64(c, r->cohort_present, r->cohort.raw);
 	d1_enc_opt_u64(c, r->episode_present, r->episode.raw);
+	d1_enc_u8(c, r->phase_present ? 1u : 0u);
+	if (r->phase_present)
+		d1_enc_u32(c, r->phase);
+	d1_enc_u8(c, r->verifier_present ? 1u : 0u);
+	if (r->verifier_present)
+		d1_enc_raw(c, r->prior_verifier, D1_VERIFIER_BYTES);
 	d1_enc_u8(c, r->certificate_present ? 1u : 0u);
 	if (r->certificate_present)
 		d1_enc_raw(c, r->certificate, D1_CERTIFICATE_BYTES);
@@ -244,6 +251,7 @@ static bool d1_dec_repair(struct d1_cursor *c, struct d1_repair_batch *r)
 
 		if (!d1_dec_u64(c, &e->index) || !d1_dec_u32(c, &e->mode) ||
 		    !d1_dec_owner(c, &e->owner) ||
+		    !d1_dec_opt_u64(c, &e->txn_present, &e->txn.raw) ||
 		    !d1_dec_opt_u64(c, &e->custody_present, &e->custody.raw) ||
 		    !d1_dec_opt_u64(c, &e->postcond_present,
 				    &e->postcond.raw) ||
@@ -274,6 +282,25 @@ static bool d1_dec_repair(struct d1_cursor *c, struct d1_repair_batch *r)
 	if (!d1_dec_opt_u64(c, &r->cohort_present, &r->cohort.raw) ||
 	    !d1_dec_opt_u64(c, &r->episode_present, &r->episode.raw) ||
 	    !d1_dec_u8(c, &tag))
+		return false;
+	if (tag > 1u) {
+		c->bad = true;
+		return false;
+	}
+	r->phase_present = tag == 1u;
+	if (r->phase_present && !d1_dec_u32(c, &r->phase))
+		return false;
+	if (!d1_dec_u8(c, &tag))
+		return false;
+	if (tag > 1u) {
+		c->bad = true;
+		return false;
+	}
+	r->verifier_present = tag == 1u;
+	if (r->verifier_present &&
+	    !d1_dec_raw(c, r->prior_verifier, D1_VERIFIER_BYTES))
+		return false;
+	if (!d1_dec_u8(c, &tag))
 		return false;
 	if (tag > 1u) {
 		c->bad = true;
@@ -486,6 +513,29 @@ static bool d1_validate_control(uint32_t op, const struct d1_control_batch *k)
 }
 
 /*
+ * Whether @phase is a phase this model has.
+ *
+ * abort_repair's expected phase is a caller's assertion about the
+ * cohort, so a value no cohort can be in is a malformed request rather
+ * than a conflict: the store would refuse it either way, but only one
+ * of those two answers is about the request.
+ */
+static bool d1_phase_ok(uint32_t phase)
+{
+	switch (phase) {
+	case D1_PHASE_ADMITTED:
+	case D1_PHASE_PREPARED:
+	case D1_PHASE_FINALIZED:
+	case D1_PHASE_COMMITTED:
+	case D1_PHASE_ABORTED:
+	case D1_PHASE_ROLLED_BACK:
+		return true;
+	default:
+		return false;
+	}
+}
+
+/*
  * Which options each repair operation requires, and which it refuses.
  *
  * The whole vector is one shape, so what separates the operations is
@@ -497,8 +547,27 @@ static bool d1_validate_repair(uint32_t op, const struct d1_repair_batch *r)
 {
 	bool wants_cohort = op != D1_OP_MARK_ERROR && op != D1_OP_BEGIN_REPAIR;
 	bool wants_mode = op == D1_OP_BEGIN_REPAIR;
-	bool wants_custody = op == D1_OP_MARK_ERROR || op == D1_OP_BEGIN_REPAIR;
+	/*
+	 * Section 4 puts custody in every repair request but the one that
+	 * stages payloads, which names the transactions instead.
+	 */
+	bool wants_custody = op != D1_OP_PREPARE_REPAIR;
+	bool wants_txn = op == D1_OP_PREPARE_REPAIR ||
+			 op == D1_OP_FINALIZE_REPAIR ||
+			 op == D1_OP_COMMIT_REPAIR;
 	bool wants_state = op == D1_OP_MARK_ERROR || op == D1_OP_BEGIN_REPAIR;
+	/*
+	 * finalize_repair and commit_repair name the predecessor each
+	 * replacement displaces -- section 7's "unchanged predecessors",
+	 * which is the successor the member was opened over.  For the two
+	 * calls that capture state it is the genuinely optional field
+	 * NOPRE is about, and no other call carries one.
+	 */
+	bool wants_predecessor = op == D1_OP_FINALIZE_REPAIR ||
+				 op == D1_OP_COMMIT_REPAIR;
+	bool wants_phase = op == D1_OP_ABORT_REPAIR;
+	bool wants_verifier = op == D1_OP_FINALIZE_REPAIR ||
+			      op == D1_OP_COMMIT_REPAIR;
 	bool wants_payload = op == D1_OP_PREPARE_REPAIR;
 	bool wants_certificate = op == D1_OP_CLEAR_ERROR;
 	bool wants_episode = op == D1_OP_CLEAR_ERROR;
@@ -536,6 +605,12 @@ static bool d1_validate_repair(uint32_t op, const struct d1_repair_batch *r)
 		return false;
 	if (r->certificate_present != wants_certificate)
 		return false;
+	if (r->phase_present != wants_phase)
+		return false;
+	if (r->phase_present && !d1_phase_ok(r->phase))
+		return false;
+	if (r->verifier_present != wants_verifier)
+		return false;
 	for (i = 0; i < r->count; i++) {
 		const struct d1_repair_entry *e = &r->entries[i];
 
@@ -553,6 +628,10 @@ static bool d1_validate_repair(uint32_t op, const struct d1_repair_batch *r)
 		if (e->custody_present != wants_custody)
 			return false;
 		if (e->custody_present && !d1_custody_live(e->custody))
+			return false;
+		if (e->txn_present != wants_txn)
+			return false;
+		if (e->txn_present && !d1_txn_live(e->txn))
 			return false;
 		/*
 		 * The postcondition is the NOPRE member's authorization
@@ -574,8 +653,12 @@ static bool d1_validate_repair(uint32_t op, const struct d1_repair_batch *r)
 			return false;
 		if (e->successor_present && !d1_version_live(e->successor))
 			return false;
-		if (!wants_state && e->predecessor_present)
+		if (wants_predecessor) {
+			if (!e->predecessor_present)
+				return false;
+		} else if (!wants_state && e->predecessor_present) {
 			return false;
+		}
 		if (e->predecessor_present && !d1_version_live(e->predecessor))
 			return false;
 		if (e->payload_present != wants_payload)

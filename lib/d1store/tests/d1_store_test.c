@@ -9999,6 +9999,81 @@ static void repair_member(struct d1_repair_entry *e, uint64_t index,
 	e->predecessor = predecessor;
 }
 
+/* One member of a cohort, as the calls that follow name it. */
+struct repair_ref {
+	uint64_t index;
+	uint32_t co_id;
+	d1_custody_id custody;
+	/* What the member was opened over, and its replacement displaces. */
+	d1_version_id successor;
+};
+
+/*
+ * Build a repair call that names a cohort it did not open.
+ *
+ * Every call after begin_repair names the same members in the same
+ * order, with the handles section 4 gives that call: the member's own
+ * transaction for the three that move it, the custody for everything
+ * but the one that stages payloads, the displaced predecessor for the
+ * two that publish, and for those two the verifier the caller last
+ * saw.  An abort also says which phase it believes the cohort is in,
+ * which defaults to ADMITTED here and is the caller's to overwrite.
+ *
+ * The member transactions are the store's, so they are asked for
+ * rather than guessed; a cohort that has no such member answers false.
+ */
+static bool repair_call(struct d1_store *s, struct d1_envelope *env,
+			d1_admission_id admission, uint32_t op,
+			d1_repair_id cohort, uint32_t count,
+			const struct repair_ref *ref)
+{
+	bool moves = op == D1_OP_PREPARE_REPAIR ||
+		     op == D1_OP_FINALIZE_REPAIR || op == D1_OP_COMMIT_REPAIR;
+	bool publishes = op == D1_OP_FINALIZE_REPAIR ||
+			 op == D1_OP_COMMIT_REPAIR;
+	uint32_t i;
+
+	env_init(env, s, admission, op);
+	env->body.repair.range_begin = ref[0].index;
+	env->body.repair.range_end = ref[count - 1u].index + 1u;
+	env->body.repair.count = count;
+	for (i = 0; i < count; i++) {
+		struct d1_repair_entry *e = &env->body.repair.entries[i];
+		d1_txn_id txn;
+		d1_version_id staged;
+
+		repair_member(e, ref[i].index, 0, ref[i].co_id,
+			      d1_custody_none(), d1_version_none(),
+			      d1_version_none());
+		if (op != D1_OP_PREPARE_REPAIR) {
+			e->custody_present = true;
+			e->custody = ref[i].custody;
+		}
+		if (moves) {
+			if (!d1_fixture_repair_member(s, cohort, i, &txn,
+						      &staged))
+				return false;
+			e->txn_present = true;
+			e->txn = txn;
+		}
+		if (publishes) {
+			e->predecessor_present = true;
+			e->predecessor = ref[i].successor;
+		}
+	}
+	env->body.repair.cohort_present = true;
+	env->body.repair.cohort = cohort;
+	if (op == D1_OP_ABORT_REPAIR) {
+		env->body.repair.phase_present = true;
+		env->body.repair.phase = D1_PHASE_ADMITTED;
+	}
+	if (publishes) {
+		env->body.repair.verifier_present = true;
+		d1_store_verifier(s, env->body.repair.prior_verifier);
+	}
+	return true;
+}
+
 /*
  * One NOPRE member of a begin_repair vector.
  *
@@ -10051,6 +10126,7 @@ static void test_a_repair_opens_only_over_what_it_may_repair(void)
 	d1_custody_id kept_custody, gone_custody, restored_custody;
 	d1_postcond_id gone_post;
 	d1_repair_id cohort;
+	struct repair_ref ref[1];
 
 	memset(first, 0xe1, sizeof(first));
 	memset(second, 0xe2, sizeof(second));
@@ -10169,6 +10245,10 @@ static void test_a_repair_opens_only_over_what_it_may_repair(void)
 	check(res.entries[0].phase == D1_PHASE_ADMITTED,
 	      "which is admitted and nothing more");
 	cohort = res.entries[0].cohort;
+	ref[0].index = 1;
+	ref[0].co_id = 21;
+	ref[0].custody = gone_custody;
+	ref[0].successor = gone_new;
 
 	/* While it holds the chunk, an ordinary writer is blocked. */
 	d1_store_guard(s, &object, 1, &guard);
@@ -10193,14 +10273,9 @@ static void test_a_repair_opens_only_over_what_it_may_repair(void)
 	      "nor does a second repair take a chunk the first holds");
 
 	/* Abandoning it gives the chunk back. */
-	env_init(&env, s, admission, D1_OP_ABORT_REPAIR);
-	env.body.repair.range_begin = 1;
-	env.body.repair.range_end = 2;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 1, 0, 21, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_ABORT_REPAIR, cohort, 1,
+			  ref),
+	      "the cohort's member is named back to it");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK &&
 		      res.entries[0].phase == D1_PHASE_ABORTED,
@@ -10218,14 +10293,9 @@ static void test_a_repair_opens_only_over_what_it_may_repair(void)
 	      "and an ordinary writer has it back");
 
 	/* An abandoned repair cannot be abandoned again. */
-	env_init(&env, s, admission, D1_OP_ABORT_REPAIR);
-	env.body.repair.range_begin = 1;
-	env.body.repair.range_end = 2;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 1, 0, 21, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_ABORT_REPAIR, cohort, 1,
+			  ref),
+	      "the cohort's member is named back to it again");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_BAD_PHASE,
 	      "and an abandoned repair stays abandoned");
@@ -10358,6 +10428,7 @@ static void test_a_repair_publishes_its_whole_vector_or_none(void)
 	d1_postcond_id one_post, two_post;
 	d1_txn_id one_txn, two_txn;
 	d1_repair_id cohort;
+	struct repair_ref ref[1];
 
 	memset(older, 0xf1, sizeof(older));
 	memset(newer, 0xf2, sizeof(newer));
@@ -10391,20 +10462,19 @@ static void test_a_repair_publishes_its_whole_vector_or_none(void)
 	check(res.entries[0].status == D1_OK && res.entries[0].cohort_present,
 	      "over the member that lost its predecessor");
 	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 40;
+	ref[0].custody = one_custody;
+	ref[0].successor = one;
 
-	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 40, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "the member it opened names its transaction back");
 	env.body.repair.entries[0].payload_present = true;
 	env.body.repair.entries[0].payload = fixed;
 	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
 	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
 			    &env.body.repair.entries[0].checksum);
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK &&
 		      res.entries[0].phase == D1_PHASE_PREPARED,
@@ -10414,14 +10484,9 @@ static void test_a_repair_publishes_its_whole_vector_or_none(void)
 	      "and nothing is published yet");
 
 	/* G2: a commit before the finalize changes nothing. */
-	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 40, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "a commit names the vector it would publish");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_BAD_PHASE,
 	      "a commit before the finalize is refused");
@@ -10429,27 +10494,17 @@ static void test_a_repair_publishes_its_whole_vector_or_none(void)
 		      d1_version_raw(seen) == d1_version_raw(one),
 	      "and publishes nothing");
 
-	env_init(&env, s, admission, D1_OP_FINALIZE_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 40, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 1,
+			  ref),
+	      "a finalize names it too");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK &&
 		      res.entries[0].phase == D1_PHASE_FINALIZED,
 	      "the cohort finalizes, which is what it needed");
 
-	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 40, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "and the commit after it names the same");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK &&
 		      res.entries[0].phase == D1_PHASE_COMMITTED,
@@ -10478,21 +10533,20 @@ static void test_a_repair_publishes_its_whole_vector_or_none(void)
 		      res.entries[0].status == D1_OK,
 	      "a second repair opens");
 	cohort = res.entries[0].cohort;
+	ref[0].index = 1;
+	ref[0].co_id = 50;
+	ref[0].custody = two_custody;
+	ref[0].successor = two;
 
-	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
-	env.body.repair.range_begin = 1;
-	env.body.repair.range_end = 2;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 1, 0, 50, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "the second cohort's member names its transaction back");
 	env.body.repair.entries[0].payload_present = true;
 	env.body.repair.entries[0].payload = fixed;
 	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
 	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
 			    &env.body.repair.entries[0].checksum);
 	env.body.repair.entries[0].checksum.digest[0] ^= 0xffu;
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_CHECKSUM,
 	      "a payload that does not verify is refused");
@@ -10566,6 +10620,7 @@ static void test_an_error_repair_clears_and_unlocks_separately(void)
 	d1_custody_id custody;
 	d1_episode_id episode;
 	d1_repair_id cohort;
+	struct repair_ref ref[1];
 
 	memset(older, 0x21, sizeof(older));
 	memset(newer, 0x22, sizeof(newer));
@@ -10633,46 +10688,35 @@ static void test_an_error_repair_clears_and_unlocks_separately(void)
 		      res.entries[0].status == D1_OK,
 	      "and now the repair opens over it");
 	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 60;
+	ref[0].custody = custody;
+	ref[0].successor = broken;
 
-	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "a prepare names the cohort's vector");
 	env.body.repair.entries[0].payload_present = true;
 	env.body.repair.entries[0].payload = fixed;
 	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
 	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
 			    &env.body.repair.entries[0].checksum);
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "the replacement stages");
 
-	env_init(&env, s, admission, D1_OP_FINALIZE_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 1,
+			  ref),
+	      "a finalize names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "and the cohort finalizes");
 
 	/* The commit whose durable event never lands. */
 	d1_fixture_fail_next_append(s);
-	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "a commit names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_IO &&
 		      res.entries[0].disposition == D1_UNRECORDED,
@@ -10681,14 +10725,9 @@ static void test_an_error_repair_clears_and_unlocks_separately(void)
 		      d1_version_raw(seen) == d1_version_raw(broken),
 	      "and publishes nothing");
 
-	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "a commit names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK &&
 		      res.entries[0].phase == D1_PHASE_COMMITTED,
@@ -10699,27 +10738,16 @@ static void test_an_error_repair_clears_and_unlocks_separately(void)
 	      "the replacement is published");
 
 	/* An unlock before the clear is refused. */
-	env_init(&env, s, admission, D1_OP_UNLOCK);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_UNLOCK, cohort, 1, ref),
+	      "an unlock names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_BAD_PHASE,
 	      "an ERROR member is not unlocked before it is cleared");
 
 	/* And the clear needs the certificate, and the right one. */
-	env_init(&env, s, admission, D1_OP_CLEAR_ERROR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_CLEAR_ERROR, cohort, 1,
+			  ref),
+	      "a clear names the cohort's vector");
 	env.body.repair.episode_present = true;
 	env.body.repair.episode = episode;
 	env.body.repair.certificate_present = true;
@@ -10729,14 +10757,9 @@ static void test_an_error_repair_clears_and_unlocks_separately(void)
 	      "a clear with no certificate issued is refused");
 
 	d1_fixture_certificate(s, certificate);
-	env_init(&env, s, admission, D1_OP_CLEAR_ERROR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_CLEAR_ERROR, cohort, 1,
+			  ref),
+	      "a clear names the cohort's vector");
 	env.body.repair.episode_present = true;
 	env.body.repair.episode = episode;
 	env.body.repair.certificate_present = true;
@@ -10745,14 +10768,9 @@ static void test_an_error_repair_clears_and_unlocks_separately(void)
 		      res.entries[0].status == D1_STALE_AUTH,
 	      "and a clear carrying another certificate is refused");
 
-	env_init(&env, s, admission, D1_OP_CLEAR_ERROR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_CLEAR_ERROR, cohort, 1,
+			  ref),
+	      "a clear names the cohort's vector");
 	env.body.repair.episode_present = true;
 	env.body.repair.episode = episode;
 	env.body.repair.certificate_present = true;
@@ -10772,12 +10790,9 @@ static void test_an_error_repair_clears_and_unlocks_separately(void)
 	      "which leaves the member readable and still locked");
 
 	/* Naming the episode rather than the cohort, which section 4 allows. */
-	env_init(&env, s, admission, D1_OP_UNLOCK);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
+	check(repair_call(s, &env, admission, D1_OP_UNLOCK, cohort, 1, ref),
+	      "an unlock names the cohort's vector");
+	env.body.repair.cohort_present = false;
 	env.body.repair.episode_present = true;
 	env.body.repair.episode = episode;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
@@ -11333,6 +11348,7 @@ static void test_a_repair_does_not_reach_into_an_open_view(void)
 	d1_postcond_id postcond;
 	d1_txn_id txn;
 	d1_repair_id cohort;
+	struct repair_ref ref[1];
 
 	memset(older, 0x61, sizeof(older));
 	memset(newer, 0x62, sizeof(newer));
@@ -11366,33 +11382,28 @@ static void test_a_repair_does_not_reach_into_an_open_view(void)
 		      res.entries[0].status == D1_OK,
 	      "a repair opens while it reads");
 	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 90;
+	ref[0].custody = custody;
+	ref[0].successor = broken;
 
-	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 90, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "a prepare names the cohort's vector");
 	env.body.repair.entries[0].payload_present = true;
 	env.body.repair.entries[0].payload = fixed;
 	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
 	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
 			    &env.body.repair.entries[0].checksum);
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "and stages a replacement");
 
 	/* Abandoning it drops what it staged, and the reader is untouched. */
-	env_init(&env, s, admission, D1_OP_ABORT_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 90, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_ABORT_REPAIR, cohort, 1,
+			  ref),
+	      "an abort names the cohort's vector");
+	env.body.repair.phase = D1_PHASE_PREPARED;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "the repair is abandoned");
@@ -11422,39 +11433,29 @@ static void test_a_repair_does_not_reach_into_an_open_view(void)
 		     displaced, postcond);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
-	      "a second repair opens");
+	      "a second repair opens over the same chunk");
 	cohort = res.entries[0].cohort;
-	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 91, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
+	ref[0].index = 0;
+	ref[0].co_id = 91;
+	ref[0].custody = custody;
+	ref[0].successor = broken;
+
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "a prepare names the cohort's vector");
 	env.body.repair.entries[0].payload_present = true;
 	env.body.repair.entries[0].payload = fixed;
 	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
 	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
 			    &env.body.repair.entries[0].checksum);
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
 	check(d1_store_apply(s, &env, &res) == D1_OK, "and stages");
-	env_init(&env, s, admission, D1_OP_FINALIZE_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 91, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 1,
+			  ref),
+	      "a finalize names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK, "and finalizes");
-	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 91, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "a commit names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "and publishes its replacement");
@@ -11515,6 +11516,7 @@ static void test_a_marked_version_is_quarantined(void)
 	d1_custody_id custody;
 	d1_episode_id episode;
 	d1_repair_id cohort;
+	struct repair_ref ref[1];
 
 	memset(older, 0x71, sizeof(older));
 	memset(newer, 0x72, sizeof(newer));
@@ -11611,42 +11613,31 @@ static void test_a_marked_version_is_quarantined(void)
 		      res.entries[0].status == D1_OK,
 	      "the repair the episode exists for still opens");
 	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 20;
+	ref[0].custody = custody;
+	ref[0].successor = marked;
 
-	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 20, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "a prepare names the cohort's vector");
 	env.body.repair.entries[0].payload_present = true;
 	env.body.repair.entries[0].payload = fixed;
 	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
 	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
 			    &env.body.repair.entries[0].checksum);
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "and stages");
-	env_init(&env, s, admission, D1_OP_FINALIZE_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 20, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 1,
+			  ref),
+	      "a finalize names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "and finalizes");
-	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 20, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "a commit names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "and commits");
@@ -11657,14 +11648,9 @@ static void test_a_marked_version_is_quarantined(void)
 	      "the replacement is not readable while the episode stands");
 
 	d1_fixture_certificate(s, certificate);
-	env_init(&env, s, admission, D1_OP_CLEAR_ERROR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 20, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_CLEAR_ERROR, cohort, 1,
+			  ref),
+	      "a clear names the cohort's vector");
 	env.body.repair.episode_present = true;
 	env.body.repair.episode = episode;
 	env.body.repair.certificate_present = true;
@@ -11682,14 +11668,8 @@ static void test_a_marked_version_is_quarantined(void)
 		      res.entries[0].status == D1_QUARANTINED,
 	      "and leaves it locked");
 
-	env_init(&env, s, admission, D1_OP_UNLOCK);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 20, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_UNLOCK, cohort, 1, ref),
+	      "an unlock names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "and the unlock ends the episode");
@@ -11740,6 +11720,7 @@ static void test_a_repair_member_is_a_transaction(void)
 	d1_postcond_id postcond;
 	d1_repair_id cohort;
 	d1_txn_id member, txn;
+	struct repair_ref ref[1];
 
 	memset(older, 0x81, sizeof(older));
 	memset(newer, 0x82, sizeof(newer));
@@ -11769,6 +11750,11 @@ static void test_a_repair_member_is_a_transaction(void)
 		      res.entries[0].status == D1_OK,
 	      "a repair opens");
 	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 95;
+	ref[0].custody = custody;
+	ref[0].successor = broken;
+
 	check(d1_fixture_repair_member(s, cohort, 0, &member, &staged) &&
 		      d1_txn_live(member),
 	      "and its member has a transaction of its own");
@@ -11821,35 +11807,23 @@ static void test_a_repair_member_is_a_transaction(void)
 		      "a recovery_admit re-binds the member");
 
 		/* The expired handle can no longer drive the repair. */
-		env_init(&env, s, admission, D1_OP_ABORT_REPAIR);
-		env.body.repair.range_begin = 0;
-		env.body.repair.range_end = 1;
-		env.body.repair.count = 1;
-		repair_member(&env.body.repair.entries[0], 0, 0, 95,
-			      d1_custody_none(), d1_version_none(),
-			      d1_version_none());
-		env.body.repair.cohort_present = true;
-		env.body.repair.cohort = cohort;
+		check(repair_call(s, &env, admission, D1_OP_ABORT_REPAIR,
+				  cohort, 1, ref),
+		      "an abort names the cohort's vector");
 		check(d1_store_apply(s, &env, &res) == D1_OK &&
 			      res.entries[0].status == D1_STALE_AUTH,
 		      "and the handle it left cannot drive the repair");
 
 		/* The fresh one can. */
-		env_init(&env, s, fresh, D1_OP_PREPARE_REPAIR);
-		env.body.repair.range_begin = 0;
-		env.body.repair.range_end = 1;
-		env.body.repair.count = 1;
-		repair_member(&env.body.repair.entries[0], 0, 0, 95,
-			      d1_custody_none(), d1_version_none(),
-			      d1_version_none());
+		check(repair_call(s, &env, fresh, D1_OP_PREPARE_REPAIR, cohort,
+				  1, ref),
+		      "a prepare names the cohort's vector");
 		env.body.repair.entries[0].payload_present = true;
 		env.body.repair.entries[0].payload = fixed;
 		env.body.repair.entries[0].payload_len =
 			(uint32_t)sizeof(fixed);
 		d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
 				    &env.body.repair.entries[0].checksum);
-		env.body.repair.cohort_present = true;
-		env.body.repair.cohort = cohort;
 		check(d1_store_apply(s, &env, &res) == D1_OK &&
 			      res.entries[0].status == D1_OK,
 		      "while the handle recovery gave it carries on");
@@ -11905,6 +11879,7 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 	d1_custody_id marked_custody, nopre_custody;
 	d1_postcond_id marked_post, nopre_post;
 	d1_episode_id episode;
+	struct repair_ref ref[2];
 	d1_txn_id marked_txn, nopre_txn;
 	d1_repair_id cohort;
 
@@ -11958,15 +11933,19 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 		      res.entries[0].status == D1_OK,
 	      "a cohort opens over both of them");
 	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 40;
+	ref[0].custody = marked_custody;
+	ref[0].successor = marked;
+	ref[1].index = 1;
+	ref[1].co_id = 41;
+	ref[1].custody = nopre_custody;
+	ref[1].successor = nopre;
 
-	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 2;
-	env.body.repair.count = 2;
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 2,
+			  ref),
+	      "a prepare names the cohort's vector");
 	for (i = 0; i < 2u; i++) {
-		repair_member(&env.body.repair.entries[i], i, 0, 40 + i,
-			      d1_custody_none(), d1_version_none(),
-			      d1_version_none());
 		env.body.repair.entries[i].payload_present = true;
 		env.body.repair.entries[i].payload = fixed;
 		env.body.repair.entries[i].payload_len =
@@ -11974,36 +11953,20 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 		d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
 				    &env.body.repair.entries[i].checksum);
 	}
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "both replacements stage");
 
-	env_init(&env, s, admission, D1_OP_FINALIZE_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 2;
-	env.body.repair.count = 2;
-	for (i = 0; i < 2u; i++)
-		repair_member(&env.body.repair.entries[i], i, 0, 40 + i,
-			      d1_custody_none(), d1_version_none(),
-			      d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 2,
+			  ref),
+	      "a finalize names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "the cohort finalizes");
 
-	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 2;
-	env.body.repair.count = 2;
-	for (i = 0; i < 2u; i++)
-		repair_member(&env.body.repair.entries[i], i, 0, 40 + i,
-			      d1_custody_none(), d1_version_none(),
-			      d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 2,
+			  ref),
+	      "a commit names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "and publishes both members at one epoch");
@@ -12015,31 +11978,16 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 	      "and so does the other");
 
 	/* An unlock before the clear is refused, for the ERROR member. */
-	env_init(&env, s, admission, D1_OP_UNLOCK);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 2;
-	env.body.repair.count = 2;
-	for (i = 0; i < 2u; i++)
-		repair_member(&env.body.repair.entries[i], i, 0, 40 + i,
-			      d1_custody_none(), d1_version_none(),
-			      d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_UNLOCK, cohort, 2, ref),
+	      "an unlock names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_BAD_PHASE,
 	      "an unlock before the clear is refused");
 
 	d1_fixture_certificate(s, certificate);
-	env_init(&env, s, admission, D1_OP_CLEAR_ERROR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 2;
-	env.body.repair.count = 2;
-	for (i = 0; i < 2u; i++)
-		repair_member(&env.body.repair.entries[i], i, 0, 40 + i,
-			      d1_custody_none(), d1_version_none(),
-			      d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_CLEAR_ERROR, cohort, 2,
+			  ref),
+	      "a clear names the cohort's vector");
 	env.body.repair.episode_present = true;
 	env.body.repair.episode = episode;
 	env.body.repair.certificate_present = true;
@@ -12048,16 +11996,8 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 		      res.entries[0].status == D1_OK,
 	      "a clear naming the whole cohort clears the error member");
 
-	env_init(&env, s, admission, D1_OP_UNLOCK);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 2;
-	env.body.repair.count = 2;
-	for (i = 0; i < 2u; i++)
-		repair_member(&env.body.repair.entries[i], i, 0, 40 + i,
-			      d1_custody_none(), d1_version_none(),
-			      d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_UNLOCK, cohort, 2, ref),
+	      "an unlock names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "and the whole vector then unlocks");
@@ -12084,6 +12024,164 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 		      "into the same store");
 		d1_store_free(rebuilt);
 	}
+	d1_store_free(s);
+}
+
+/*
+ * A repair call names what it is acting on, and is checked against it.
+ *
+ * Section 4 has every call after begin_repair carry the cohort's
+ * vector back with the handles that call needs: the member's own
+ * transaction for the three that move it, the custody the repair was
+ * opened under, the predecessor each replacement displaces, the phase
+ * an abort believes the cohort is in, and for the two that publish the
+ * verifier the caller last saw.  The candidate re-derived all of them
+ * from the cohort row, so a request that named the wrong one was
+ * accepted -- and the digest binds what the request carries, so it was
+ * a different request reaching the same answer.
+ *
+ * The prior verifier is section 9's post-reboot check, which the
+ * ordinary lifecycle path has always had and the repair path did not.
+ */
+static void test_a_repair_call_names_what_it_acts_on(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32], fixed[32];
+	uint8_t stale[D1_VERIFIER_BYTES];
+	d1_admission_id admission;
+	d1_version_id broken, displaced;
+	d1_custody_id custody, other;
+	d1_postcond_id postcond;
+	d1_txn_id txn, member;
+	d1_version_id staged;
+	d1_repair_id cohort;
+	struct repair_ref ref[1];
+
+	memset(older, 0xb1, sizeof(older));
+	memset(newer, 0xb2, sizeof(newer));
+	memset(fixed, 0xb3, sizeof(fixed));
+	memset(stale, 0xb4, sizeof(stale));
+	fill_uuid(&store_uuid, 0x9f);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	broken = make_a_repair_case(s, admission, 0, 1, older, newer,
+				    (uint32_t)sizeof(older), &displaced,
+				    &custody, &postcond, &txn);
+	check(d1_version_live(broken), "a chunk is a repair case");
+	other = d1_fixture_custody(s, broken);
+	check(d1_custody_live(other), "and a second custody exists over it");
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 0, 70, custody, broken,
+		     displaced, postcond);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a repair opens over it");
+	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 70;
+	ref[0].custody = custody;
+	ref[0].successor = broken;
+	check(d1_fixture_repair_member(s, cohort, 0, &member, &staged),
+	      "and its member has a transaction");
+
+	/* A prepare that names a transaction that is not the member's. */
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "a prepare names the cohort's vector");
+	env.body.repair.entries[0].txn =
+		d1_fixture_txn_handle(s, d1_txn_raw(member) + 1000u);
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_INVALID,
+	      "a prepare naming another transaction stages nothing");
+
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "a prepare names the cohort's vector again");
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_PREPARED,
+	      "and named for its own, it stages");
+
+	/* An abort that expects a phase the cohort is not in. */
+	check(repair_call(s, &env, admission, D1_OP_ABORT_REPAIR, cohort, 1,
+			  ref),
+	      "an abort names the cohort's vector");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_BAD_PHASE &&
+		      res.entries[0].phase == D1_PHASE_PREPARED,
+	      "an abort expecting another phase abandons nothing");
+
+	/* A finalize under custody the repair was not opened under. */
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 1,
+			  ref),
+	      "a finalize names the cohort's vector");
+	env.body.repair.entries[0].custody = other;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "a finalize under other custody finalizes nothing");
+
+	/* And one whose verifier is not the one the store is at. */
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 1,
+			  ref),
+	      "a finalize names the cohort's vector again");
+	memcpy(env.body.repair.prior_verifier, stale, sizeof(stale));
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "a finalize under another verifier finalizes nothing");
+
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 1,
+			  ref),
+	      "a finalize names it once more");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_FINALIZED,
+	      "and named correctly, it finalizes");
+
+	/* A commit that names a predecessor its replacement does not have. */
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "a commit names the cohort's vector");
+	env.body.repair.entries[0].predecessor = displaced;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_NO_PREDECESSOR,
+	      "a commit naming another predecessor publishes nothing");
+
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "a commit names it again");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_COMMITTED,
+	      "and named correctly, it publishes");
+
+	check(repair_call(s, &env, admission, D1_OP_UNLOCK, cohort, 1, ref),
+	      "an unlock names the cohort's vector");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the release ends the repair");
 	d1_store_free(s);
 }
 
@@ -12119,6 +12217,7 @@ static void test_an_episode_is_named_not_assumed(void)
 	d1_custody_id custody[2];
 	d1_episode_id episode[2];
 	d1_repair_id cohort;
+	struct repair_ref ref[1];
 
 	memset(older, 0xe6, sizeof(older));
 	memset(newer, 0xe7, sizeof(newer));
@@ -12189,58 +12288,42 @@ static void test_an_episode_is_named_not_assumed(void)
 		      res.entries[0].status == D1_OK,
 	      "and named for its own, it opens one");
 	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 31;
+	ref[0].custody = custody[0];
+	ref[0].successor = marked[0];
 
-	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 31, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "a prepare names the cohort's vector");
 	env.body.repair.entries[0].payload_present = true;
 	env.body.repair.entries[0].payload = fixed;
 	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
 	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
 			    &env.body.repair.entries[0].checksum);
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "the replacement stages");
 
-	env_init(&env, s, admission, D1_OP_FINALIZE_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 31, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 1,
+			  ref),
+	      "a finalize names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "and finalizes");
 
-	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 31, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "a commit names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "and publishes");
 
 	/* The clear is about one episode too. */
 	d1_fixture_certificate(s, certificate);
-	env_init(&env, s, admission, D1_OP_CLEAR_ERROR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 31, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_CLEAR_ERROR, cohort, 1,
+			  ref),
+	      "a clear names the cohort's vector");
 	env.body.repair.episode_present = true;
 	env.body.repair.episode = episode[1];
 	env.body.repair.certificate_present = true;
@@ -12249,14 +12332,9 @@ static void test_an_episode_is_named_not_assumed(void)
 		      res.entries[0].status == D1_BAD_PHASE,
 	      "a clear named for another episode clears nothing");
 
-	env_init(&env, s, admission, D1_OP_CLEAR_ERROR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 31, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_CLEAR_ERROR, cohort, 1,
+			  ref),
+	      "a clear names the cohort's vector");
 	env.body.repair.episode_present = true;
 	env.body.repair.episode = episode[0];
 	env.body.repair.certificate_present = true;
@@ -12266,24 +12344,18 @@ static void test_an_episode_is_named_not_assumed(void)
 	      "and named for its own, it clears");
 
 	/* And so is the release, from whichever name it is asked for. */
-	env_init(&env, s, admission, D1_OP_UNLOCK);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 31, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
+	check(repair_call(s, &env, admission, D1_OP_UNLOCK, cohort, 1, ref),
+	      "an unlock names the cohort's vector");
+	env.body.repair.cohort_present = false;
 	env.body.repair.episode_present = true;
 	env.body.repair.episode = episode[1];
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_INVALID,
 	      "an unlock named for an episode with no cohort releases nothing");
 
-	env_init(&env, s, admission, D1_OP_UNLOCK);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 31, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
+	check(repair_call(s, &env, admission, D1_OP_UNLOCK, cohort, 1, ref),
+	      "an unlock names the cohort's vector");
+	env.body.repair.cohort_present = false;
 	env.body.repair.episode_present = true;
 	env.body.repair.episode = episode[0];
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
@@ -12348,6 +12420,7 @@ static void test_a_nopre_repair_consumes_a_postcondition(void)
 	d1_admission_id admission;
 	d1_version_id broken, displaced, replaced, seen, kept, gone;
 	d1_custody_id custody, replaced_custody, kept_custody, other_custody;
+	struct repair_ref ref[1];
 	d1_postcond_id post, again, back;
 	d1_txn_id txn;
 	d1_repair_id cohort;
@@ -12480,17 +12553,17 @@ static void test_a_nopre_repair_consumes_a_postcondition(void)
 		      res.entries[0].cohort_present,
 	      "the postcondition of this chunk's own rollback opens a repair");
 	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 20;
+	ref[0].custody = custody;
+	ref[0].successor = broken;
+
 	check(d1_fixture_postcond(s, post, &at, &seen, &consumed) && consumed,
 	      "and is consumed by it");
 
-	env_init(&env, s, admission, D1_OP_ABORT_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 20, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_ABORT_REPAIR, cohort, 1,
+			  ref),
+	      "an abort names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "abandoning the repair gives the chunk back");
@@ -12584,6 +12657,7 @@ static void test_a_repair_owner_is_an_owner(void)
 	d1_version_id zero, zero_gone, one, one_gone;
 	d1_custody_id zero_custody, one_custody;
 	d1_postcond_id zero_post, one_post;
+	struct repair_ref ref[1];
 	d1_txn_id zero_txn, one_txn;
 	d1_repair_id cohort;
 
@@ -12659,6 +12733,10 @@ static void test_a_repair_owner_is_an_owner(void)
 		      res.entries[0].cohort_present,
 	      "the owner a refused vector named is still free");
 	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 40;
+	ref[0].custody = zero_custody;
+	ref[0].successor = zero;
 
 	/* And now an ordinary write may not have it. */
 	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
@@ -12676,43 +12754,28 @@ static void test_a_repair_owner_is_an_owner(void)
 	      "and it is told about the chunk the repair holds");
 
 	/* The binding follows the replacement the repair publishes. */
-	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 40, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "a prepare names the cohort's vector");
 	env.body.repair.entries[0].payload_present = true;
 	env.body.repair.entries[0].payload = fixed;
 	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
 	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
 			    &env.body.repair.entries[0].checksum);
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "the replacement is staged");
 
-	env_init(&env, s, admission, D1_OP_FINALIZE_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 40, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 1,
+			  ref),
+	      "a finalize names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "and finalized");
 
-	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
-	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 40, d1_custody_none(),
-		      d1_version_none(), d1_version_none());
-	env.body.repair.cohort_present = true;
-	env.body.repair.cohort = cohort;
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "a commit names the cohort's vector");
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "and published");
@@ -15765,6 +15828,7 @@ int main(void)
 	test_a_mixed_cohort_clears_and_unlocks();
 	test_a_nopre_repair_consumes_a_postcondition();
 	test_an_episode_is_named_not_assumed();
+	test_a_repair_call_names_what_it_acts_on();
 	test_a_repair_owner_is_an_owner();
 	test_an_envelope_control_carries_its_digest();
 	test_a_fenced_handle_answers_three_ways();
