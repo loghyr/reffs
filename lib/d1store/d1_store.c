@@ -5755,11 +5755,19 @@ static uint32_t d1_replay_entry(struct d1_store *s, const uint8_t *body,
 		return D1_INVALID;
 	/*
 	 * The record category has to agree with what it carries.  An ENTRY
-	 * is one member of an ordinary batch, so a control operation in
-	 * one is a record the live encoder cannot emit, and an ordinal
-	 * past the body's own count names a member that does not exist.
+	 * is one member of an ordinary batch, so a control operation or a
+	 * repair in one is a record the live encoder cannot emit -- both
+	 * answer once for a whole call and are appended as CONTROL -- and
+	 * an ordinal past the body's own count names a member that does
+	 * not exist.
+	 *
+	 * The repair half is asked here rather than left to the reducer
+	 * because the repair and lifecycle bodies share a union: an ENTRY
+	 * carrying a repair had its lifecycle arm read out of the
+	 * repair's bytes, was reduced, and took a receipt at ordinal zero
+	 * that the live store never took.
 	 */
-	if (d1_op_rights(env.op) == D1_RIGHT_CONTROL)
+	if (d1_op_rights(env.op) == D1_RIGHT_CONTROL || d1_op_is_repair(env.op))
 		return D1_INVALID;
 	if (ordinal >= d1_envelope_member_count(&env))
 		return D1_INVALID;

@@ -13785,11 +13785,19 @@ static void refusal_result(struct d1_complete_result *r,
  * A record's category has to agree with what it carries.
  *
  * An ENTRY is one member of an ordinary batch: a control operation in
- * one, or an ordinal past the body's own member count, names something
- * the live encoder cannot produce.  So does a CONTROL record carrying
- * an ordinary operation.  Each of these is built with the logged result
- * the reducer would actually compute for it, so that what refuses the
- * record is the category check and not a later disagreement.
+ * one, a repair in one, or an ordinal past the body's own member count
+ * names something the live encoder cannot produce.  So does a CONTROL
+ * record carrying an ordinary operation.  Each of these is built with
+ * the logged result the reducer would actually compute for it, so that
+ * what refuses the record is the category check and not a later
+ * disagreement.
+ *
+ * The repair cell matters for the same reason the control cell does,
+ * and for one more: a repair body and a lifecycle body share a union,
+ * so an ENTRY that carried a repair had its lifecycle arm read out of
+ * the repair's bytes.  The record was then reduced, a receipt taken at
+ * ordinal zero, and the rebuilt store held a binding the live store
+ * never made.
  */
 static void test_records_must_name_what_they_carry(void)
 {
@@ -13797,10 +13805,11 @@ static void test_records_must_name_what_they_carry(void)
 		"an ENTRY carrying a control operation is refused",
 		"an ENTRY ordinal past its body's members is refused",
 		"a CONTROL record carrying an ordinary operation is refused",
+		"an ENTRY carrying a repair operation is refused",
 	};
 	unsigned int pass;
 
-	for (pass = 0; pass < 3; pass++) {
+	for (pass = 0; pass < 4; pass++) {
 		struct d1_uuid store_uuid;
 		struct d1_store *live, *target;
 		struct d1_envelope env, crafted;
@@ -13872,7 +13881,7 @@ static void test_records_must_name_what_they_carry(void)
 			 * a zero-length payload is malformed.
 			 */
 			refusal_result(&made, &base, &crafted.key, D1_INVALID);
-		} else {
+		} else if (pass == 2) {
 			/* An ordinary operation inside a CONTROL record. */
 			env_init(&crafted, live, admission, D1_OP_WRITE_BATCH);
 			crafted.body.write.count = 1;
@@ -13881,6 +13890,30 @@ static void test_records_must_name_what_they_carry(void)
 				    data, sizeof(data), true,
 				    &(struct d1_guard){ .never_written =
 								true });
+			refusal_result(&made, &base, &crafted.key,
+				       D1_STALE_AUTH);
+		} else {
+			/*
+			 * A repair operation inside an ENTRY.  Its custody
+			 * and successor are well-formed handles of this
+			 * store rather than live rows: the decoder asks
+			 * that they are the store's and the reducer refuses
+			 * the record for its rights before anything looks
+			 * either of them up.
+			 */
+			env_init(&crafted, live, admission, D1_OP_MARK_ERROR);
+			crafted.body.repair.range_begin = 0;
+			crafted.body.repair.range_end = 1;
+			crafted.body.repair.count = 1;
+			repair_member(&crafted.body.repair.entries[0], 0, 0, 2,
+				      d1_fixture_custody_handle(live, 1),
+				      d1_fixture_version_handle(live, 1),
+				      d1_version_none());
+			/*
+			 * The reducer would run it as an ordinary member:
+			 * a mark needs REPAIR rights this handle has not
+			 * got, which is a recorded refusal.
+			 */
 			refusal_result(&made, &base, &crafted.key,
 				       D1_STALE_AUTH);
 		}
