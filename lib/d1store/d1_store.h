@@ -42,6 +42,12 @@
 #define D1_MAX_ADMISSIONS 32u
 #define D1_MAX_OWNERS 256u
 #define D1_MAX_CUSTODY 32u
+/*
+ * Repair cohorts a store may have open at once.  A cohort is one local
+ * repair over one object, and section 7 keeps its whole vector, so this
+ * is a table of vectors rather than of members.
+ */
+#define D1_MAX_REPAIRS 8u
 #define D1_MAX_INTERVALS 64u
 #define D1_MAX_VIEWS 32u
 

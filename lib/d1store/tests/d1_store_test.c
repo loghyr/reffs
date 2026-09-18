@@ -632,22 +632,25 @@ static void test_unsupported(void)
 	admission = d1_fixture_admit(s, &object, 11, D1_RIGHT_WRITE);
 
 	{
+		/*
+		 * The repair operations that have a canonical request but
+		 * no transition yet, and one tag no operation has at all.
+		 * The first six will lose their place here as each is
+		 * implemented; the last never will.
+		 */
 		static const uint32_t unimplemented[] = {
-			D1_OP_MARK_ERROR,     D1_OP_BEGIN_REPAIR,
-			D1_OP_PREPARE_REPAIR, D1_OP_FINALIZE_REPAIR,
-			D1_OP_COMMIT_REPAIR,  D1_OP_ABORT_REPAIR,
-			D1_OP_CLEAR_ERROR,    D1_OP_UNLOCK,
+			D1_OP_MARK_ERROR,      D1_OP_PREPARE_REPAIR,
+			D1_OP_FINALIZE_REPAIR, D1_OP_COMMIT_REPAIR,
+			D1_OP_CLEAR_ERROR,     D1_OP_UNLOCK,
+			0xd1d1d1d1u,
 		};
-		uint8_t buf[512];
 		unsigned int i;
 
 		for (i = 0; i < sizeof(unimplemented) / sizeof(*unimplemented);
 		     i++) {
 			env_init(&env, s, admission, unimplemented[i]);
-			check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
-			      "the canonical form cannot express it");
 			check(d1_store_apply(s, &env, &res) == D1_UNSUPPORTED,
-			      "and the reducer says it does not implement it");
+			      "an operation with no transition says so");
 			check(res.count == 0, "and answers no entries");
 			check(d1_store_eof(s, &object) == 0 &&
 				      !d1_store_visible(s, &object, 0,
@@ -4883,10 +4886,15 @@ struct boundary_case {
  * on the request alone -- geometry, payload length, writer, an absent
  * guard, activation, checksum and owner -- and two on the chunk: a
  * guard predicate that does not match, and a chunk that already holds
- * an uncommitted transaction.  Of those fourteen combinations two
- * cannot be built: a chunk outside the object's declared geometry can
- * never have been written, so it can hold no pending transaction, and a
- * request that omits its guard predicate has none to be stale.  The
+ * an uncommitted transaction.  A chunk an active repair holds is a
+ * third, and it is not a pair of its own: it answers GUARDED, as a
+ * pending transaction does, so no order between them is observable and
+ * every request-side row above covers it unchanged.
+ *
+ * Of the fourteen combinations the first two make, two cannot be built:
+ * a chunk outside the object's declared geometry can never have been
+ * written, so it can hold no pending transaction, and a request that
+ * omits its guard predicate has none to be stale.  The
  * other twelve are here, and each is one write carrying exactly two
  * faults.
  *
@@ -5945,18 +5953,18 @@ static void test_what_the_door_cannot_change(void)
 	memset(&d, 0, sizeof(d));
 	d.env = &env;
 	d.take_op = true;
-	d.op = D1_OP_BEGIN_REPAIR;
+	d.op = 0xd1d1d1d1u;
 	check(d1_fixture_before_admission(b, rewrite_at_the_door, &d) == D1_OK,
 	      "the door is armed again");
 	check(d1_store_apply(b, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "the write the store read is the write that ran");
-	check(d.fired == 1 && env.op == D1_OP_BEGIN_REPAIR,
+	check(d.fired == 1 && env.op == 0xd1d1d1d1u,
 	      "though the door really did replace the operation");
 	check(d1_store_visible(b, &object, 8, &seen), "and chunk 8 is there");
 
 	/* C: and the other way round -- a refused operation made valid. */
-	env_init(&env, b, adm_b, D1_OP_BEGIN_REPAIR);
+	env_init(&env, b, adm_b, 0xd1d1d1d1u);
 	env.body.write.count = 1;
 	env.body.write.stability = D1_FILE_SYNC;
 	env.body.write.activate = true;
@@ -6298,7 +6306,7 @@ static void test_an_operation_that_ran_nothing_says_so(void)
 
 	/* An operation this slice does not implement. */
 	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
-	env.op = D1_OP_BEGIN_REPAIR;
+	env.op = 0xd1d1d1d1u;
 	memset(&res, 0xee, sizeof(res));
 	check(d1_store_apply(s, &env, &res) == D1_UNSUPPORTED,
 	      "an operation this slice cannot express is unsupported");
@@ -9978,6 +9986,241 @@ static void test_a_mixed_rollback_answers_each_member_for_itself(void)
 	d1_store_free(s);
 }
 
+/* Fill one member of a repair vector. */
+static void repair_member(struct d1_repair_entry *e, uint64_t index,
+			  uint32_t mode, uint32_t co_id, d1_custody_id custody,
+			  d1_version_id successor, d1_version_id predecessor)
+{
+	memset(e, 0, sizeof(*e));
+	e->index = index;
+	e->mode = mode;
+	e->owner.cohort.raw = 1;
+	e->owner.writer = 11;
+	e->owner.co_id = co_id;
+	e->custody_present = d1_custody_live(custody);
+	e->custody = custody;
+	e->successor_present = d1_version_live(successor);
+	e->successor = successor;
+	e->predecessor_present = d1_version_live(predecessor);
+	e->predecessor = predecessor;
+}
+
+/*
+ * A repair opens over the members that are repair cases, or over none.
+ *
+ * The memo's F2: with one chunk whose rollback restored its predecessor
+ * and one whose rollback found nothing to restore, a NOPRE repair over
+ * the pair is refused and no cohort is admitted.  Section 7 puts it as
+ * "only NO_PREDECESSOR entries authorize NOPRE repair, never their
+ * neighbours", and the way that is kept is that the whole vector is
+ * validated before a cohort row is taken -- so a request naming one
+ * member it may not repair leaves nothing behind, and the next repair
+ * gets the cohort the refused one did not.
+ *
+ * What NOPRE eligibility means here is a choice worth attacking.  The
+ * memo has NOPRE consume a retained postcondition; this model asks the
+ * same question of the same state instead -- would a rollback of this
+ * exact version find nothing to put back? -- because a semantic refusal
+ * changes nothing in this model, so the rollback that produced
+ * NO_PREDECESSOR could not have left a postcondition behind.  The
+ * observable difference is that no prior rollback attempt is required.
+ */
+static void test_a_repair_opens_only_over_what_it_may_repair(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t first[32], second[32];
+	struct d1_guard guard;
+	const uint8_t *log;
+	size_t len, before, after;
+	d1_admission_id admission;
+	d1_version_id kept_old, kept_new, gone_old, gone_new, seen;
+	d1_txn_id kept_txn, gone_txn;
+	d1_custody_id kept_custody, gone_custody, restored_custody;
+	d1_repair_id cohort;
+
+	memset(first, 0xe1, sizeof(first));
+	memset(second, 0xe2, sizeof(second));
+	fill_uuid(&store_uuid, 0xe1);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+
+	kept_old = commit_chunk(s, admission, 0, 1, first, sizeof(first),
+				&(struct d1_guard){ .never_written = true },
+				d1_version_none(), NULL);
+	d1_store_guard(s, &object, 0, &guard);
+	kept_new = commit_chunk(s, admission, 0, 2, second, sizeof(second),
+				&guard, kept_old, &kept_txn);
+	gone_old = commit_chunk(s, admission, 1, 3, first, sizeof(first),
+				&(struct d1_guard){ .never_written = true },
+				d1_version_none(), NULL);
+	d1_store_guard(s, &object, 1, &guard);
+	gone_new = commit_chunk(s, admission, 1, 4, second, sizeof(second),
+				&guard, gone_old, &gone_txn);
+	check(d1_version_live(kept_new) && d1_version_live(gone_new),
+	      "two chunks each carry a replacement");
+	check(d1_fixture_release_predecessor(s, gone_old),
+	      "and one predecessor is released");
+
+	kept_custody = d1_fixture_custody(s, kept_new);
+	gone_custody = d1_fixture_custody(s, gone_new);
+	env_init(&env, s, admission, D1_OP_ROLLBACK_BATCH);
+	env.body.rollback.range_begin = 0;
+	env.body.rollback.range_end = 2;
+	env.body.rollback.count = 2;
+	env.body.rollback.entries[0].index = 0;
+	env.body.rollback.entries[0].owner.cohort.raw = 1;
+	env.body.rollback.entries[0].owner.writer = 11;
+	env.body.rollback.entries[0].owner.co_id = 2;
+	env.body.rollback.entries[0].txn = kept_txn;
+	env.body.rollback.entries[0].visible_present = true;
+	env.body.rollback.entries[0].visible = kept_new;
+	env.body.rollback.entries[0].predecessor_present = true;
+	env.body.rollback.entries[0].predecessor = kept_old;
+	env.body.rollback.entries[0].custody_present = true;
+	env.body.rollback.entries[0].custody = kept_custody;
+	env.body.rollback.entries[1].index = 1;
+	env.body.rollback.entries[1].owner.cohort.raw = 1;
+	env.body.rollback.entries[1].owner.writer = 11;
+	env.body.rollback.entries[1].owner.co_id = 4;
+	env.body.rollback.entries[1].txn = gone_txn;
+	env.body.rollback.entries[1].visible_present = true;
+	env.body.rollback.entries[1].visible = gone_new;
+	env.body.rollback.entries[1].predecessor_present = true;
+	env.body.rollback.entries[1].predecessor = gone_old;
+	env.body.rollback.entries[1].custody_present = true;
+	env.body.rollback.entries[1].custody = gone_custody;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[1].status == D1_NO_PREDECESSOR,
+	      "one rollback restores and the other finds nothing to restore");
+
+	/* Custody over what each chunk now holds. */
+	restored_custody = d1_fixture_custody(s, kept_old);
+	check(d1_custody_live(restored_custody) &&
+		      d1_custody_live(gone_custody),
+	      "custody is issued over what is visible now");
+
+	/* F2: a NOPRE repair over the pair admits no cohort. */
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_NOPRE, 20,
+		      restored_custody, kept_old, d1_version_none());
+	repair_member(&env.body.repair.entries[1], 1, D1_REPAIR_NOPRE, 21,
+		      gone_custody, gone_new, gone_old);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_BAD_PHASE,
+	      "a NOPRE repair will not widen to a member that lost nothing");
+	check(!res.entries[0].cohort_present,
+	      "and it opens no cohort to carry it");
+	check(res.entries[0].disposition == D1_COMPLETED,
+	      "the refusal is recorded");
+	(void)journal_of(s, &before);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_BAD_PHASE,
+	      "and the exact retry answers from the receipt");
+	(void)journal_of(s, &after);
+	check(after == before, "writing nothing further");
+
+	/* The member that is a repair case opens one on its own. */
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 1;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 1, D1_REPAIR_NOPRE, 21,
+		      gone_custody, gone_new, gone_old);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the member that lost its predecessor opens a repair");
+	check(res.entries[0].cohort_present &&
+		      d1_repair_raw(res.entries[0].cohort) == 1u,
+	      "and takes the first cohort, so the refused one took none");
+	check(res.entries[0].phase == D1_PHASE_ADMITTED,
+	      "which is admitted and nothing more");
+	cohort = res.entries[0].cohort;
+
+	/* While it holds the chunk, an ordinary writer is blocked. */
+	d1_store_guard(s, &object, 1, &guard);
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 30, first, sizeof(first),
+		    true, &guard);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_GUARDED,
+	      "an ordinary write to a chunk under repair is blocked");
+
+	/* A second repair cannot take the chunk either. */
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 1;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 1, D1_REPAIR_NOPRE, 22,
+		      gone_custody, gone_new, gone_old);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_GUARDED,
+	      "nor does a second repair take a chunk the first holds");
+
+	/* Abandoning it gives the chunk back. */
+	env_init(&env, s, admission, D1_OP_ABORT_REPAIR);
+	env.body.repair.range_begin = 1;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 1, 0, 21, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_ABORTED,
+	      "the repair is abandoned");
+	check(d1_store_visible(s, &object, 1, &seen) &&
+		      d1_version_raw(seen) == d1_version_raw(gone_new),
+	      "the chunk keeps the data it had");
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 31, first, sizeof(first),
+		    true, &guard);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and an ordinary writer has it back");
+
+	/* An abandoned repair cannot be abandoned again. */
+	env_init(&env, s, admission, D1_OP_ABORT_REPAIR);
+	env.body.repair.range_begin = 1;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 1, 0, 21, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_BAD_PHASE,
+	      "and an abandoned repair stays abandoned");
+
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "a log with repairs in it rebuilds the store");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
 /*
  * A record that names an admission no CONTROL installed.
  *
@@ -12927,6 +13170,7 @@ int main(void)
 	test_a_reopen_start_that_never_becomes_durable();
 	test_the_order_of_two_lifecycle_refusals_is_fixed();
 	test_a_mixed_rollback_answers_each_member_for_itself();
+	test_a_repair_opens_only_over_what_it_may_repair();
 	test_a_record_that_names_no_admission();
 	test_record_tags_are_validated();
 	test_operation_key_binds_the_whole_envelope();
