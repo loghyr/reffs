@@ -162,6 +162,23 @@ enum d1_right {
 #define D1_WRITER_RESERVED_LOW 0x00000000u
 #define D1_WRITER_RESERVED_HIGH 0xffffffffu
 
+/*
+ * Which repair a cohort member is.  Section 7 lets one local cohort
+ * carry both, explicitly tagged per member, so the tag is part of the
+ * request and not derived from the state the member names.
+ */
+enum d1_repair_mode {
+	D1_REPAIR_ERROR = 1,
+	D1_REPAIR_NOPRE = 2,
+};
+
+/*
+ * The cross-DS completion certificate clear_error requires.  It is an
+ * opaque fixed-width blob this model only ever compares: what issues it
+ * is outside D1, and a fixture stands in for that issuer.
+ */
+#define D1_CERTIFICATE_BYTES 32u
+
 /* An uninterpreted identity. */
 struct d1_uuid {
 	uint8_t bytes[D1_UUID_BYTES];
@@ -222,10 +239,12 @@ struct d1_uuid {
  */
 
 /*
- * The handle domains the store issues.  The cohort is not among them:
- * it names the caller's own cohort, the store never issues one and
- * nothing resolves one against a table, so its C type is the whole of
- * its domain.
+ * The handle domains the store issues.  The owner's cohort is not among
+ * them: it names the caller's own cohort, the store never issues one
+ * and nothing resolves one against a table, so its C type is the whole
+ * of its domain.  A repair cohort is a different thing wearing a
+ * similar word -- the store opens it, keeps its staged vector and
+ * resolves it against a table -- so it is a handle like the rest.
  */
 enum d1_handle_kind {
 	D1_HANDLE_NONE = 0,
@@ -233,6 +252,7 @@ enum d1_handle_kind {
 	D1_HANDLE_TXN = 2,
 	D1_HANDLE_VERSION = 3,
 	D1_HANDLE_CUSTODY = 4,
+	D1_HANDLE_REPAIR = 5,
 };
 
 typedef struct d1_admission_id {
@@ -317,6 +337,18 @@ typedef struct d1_cohort_id {
 } d1_cohort_id;
 
 /*
+ * A repair cohort, opened by begin_repair and named by every later
+ * member of the same repair.  The store issues it, keeps the exact
+ * vector it captured, and resolves it against its own table, so it
+ * carries a domain and an issuer like every other handle it issues.
+ */
+typedef struct d1_repair_id {
+	uint64_t raw;
+	uint32_t _kind;
+	uint64_t _instance;
+} d1_repair_id;
+
+/*
  * The canonical value of a handle: the one part of it the wire and the
  * journal carry, and the only part two stores that ran the same history
  * agree about.
@@ -337,6 +369,11 @@ static inline uint64_t d1_version_raw(d1_version_id id)
 }
 
 static inline uint64_t d1_custody_raw(d1_custody_id id)
+{
+	return id.raw;
+}
+
+static inline uint64_t d1_repair_raw(d1_repair_id id)
 {
 	return id.raw;
 }
@@ -375,6 +412,13 @@ static inline d1_custody_id d1_custody_none(void)
 	return id;
 }
 
+static inline d1_repair_id d1_repair_none(void)
+{
+	d1_repair_id id = { 0, D1_HANDLE_NONE, 0 };
+
+	return id;
+}
+
 /*
  * Whether a handle names anything: zero is absent, everywhere.
  *
@@ -405,6 +449,11 @@ static inline bool d1_custody_live(d1_custody_id id)
 }
 
 static inline bool d1_cohort_live(d1_cohort_id id)
+{
+	return id.raw != 0;
+}
+
+static inline bool d1_repair_live(d1_repair_id id)
 {
 	return id.raw != 0;
 }
@@ -440,6 +489,12 @@ static inline bool d1_version_eq(d1_version_id a, d1_version_id b)
 }
 
 static inline bool d1_custody_eq(d1_custody_id a, d1_custody_id b)
+{
+	return a.raw == b.raw && a._kind == b._kind &&
+	       a._instance == b._instance;
+}
+
+static inline bool d1_repair_eq(d1_repair_id a, d1_repair_id b)
 {
 	return a.raw == b.raw && a._kind == b._kind &&
 	       a._instance == b._instance;

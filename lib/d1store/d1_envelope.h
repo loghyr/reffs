@@ -86,6 +86,52 @@ struct d1_rollback_batch {
 	struct d1_rollback_entry entries[D1_BATCH_ENTRIES_MAX];
 };
 
+/*
+ * One member of a repair, in every operation a repair passes through.
+ *
+ * Section 7 gives the repair one local cohort that may carry both
+ * modes, tagged per member, and a vector captured at begin_repair that
+ * every later call names again in the same order.  So one member shape
+ * serves all of them and each operation says which of its options it
+ * requires: begin_repair names the mode, the custody and the exact
+ * state it captured; prepare_repair names the replacement it stages;
+ * finalize, commit, abort, clear_error and unlock name the vector and
+ * nothing else.  An option a call has no use for is a different
+ * request, and the decoder refuses it.
+ */
+struct d1_repair_entry {
+	uint64_t index;
+	/* begin_repair only; one of enum d1_repair_mode. */
+	uint32_t mode;
+	struct d1_owner owner;
+	/* The repair custody over the successor this member repairs. */
+	bool custody_present;
+	d1_custody_id custody;
+	/* The state the member captured and expects to find unchanged. */
+	bool successor_present;
+	d1_version_id successor;
+	bool predecessor_present;
+	d1_version_id predecessor;
+	/* prepare_repair only: the replacement this member stages. */
+	bool payload_present;
+	const uint8_t *payload;
+	uint32_t payload_len;
+	struct d1_checksum checksum;
+};
+
+struct d1_repair_batch {
+	uint64_t range_begin;
+	uint64_t range_end;
+	uint32_t count;
+	struct d1_repair_entry entries[D1_BATCH_ENTRIES_MAX];
+	/* Absent exactly for the two operations that open a repair. */
+	bool cohort_present;
+	d1_repair_id cohort;
+	/* clear_error only. */
+	bool certificate_present;
+	uint8_t certificate[D1_CERTIFICATE_BYTES];
+};
+
 /* A control operation naming transactions of one admission. */
 struct d1_control_batch {
 	uint32_t count;
@@ -110,6 +156,7 @@ struct d1_envelope {
 		struct d1_lifecycle_batch lifecycle;
 		struct d1_rollback_batch rollback;
 		struct d1_control_batch control;
+		struct d1_repair_batch repair;
 	} body;
 };
 

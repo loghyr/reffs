@@ -195,6 +195,91 @@ static bool d1_dec_rollback(struct d1_cursor *c, struct d1_rollback_batch *r)
 	return true;
 }
 
+static void d1_enc_repair(struct d1_cursor *c, const struct d1_repair_batch *r)
+{
+	uint32_t i;
+
+	d1_enc_u64(c, r->range_begin);
+	d1_enc_u64(c, r->range_end);
+	d1_enc_u32(c, r->count);
+	for (i = 0; i < r->count; i++) {
+		const struct d1_repair_entry *e = &r->entries[i];
+
+		d1_enc_u64(c, e->index);
+		d1_enc_u32(c, e->mode);
+		d1_enc_owner(c, &e->owner);
+		d1_enc_opt_u64(c, e->custody_present, e->custody.raw);
+		d1_enc_opt_u64(c, e->successor_present, e->successor.raw);
+		d1_enc_opt_u64(c, e->predecessor_present, e->predecessor.raw);
+		d1_enc_u8(c, e->payload_present ? 1u : 0u);
+		if (e->payload_present) {
+			d1_enc_bytes(c, e->payload, e->payload_len);
+			d1_enc_checksum(c, &e->checksum);
+		}
+	}
+	d1_enc_opt_u64(c, r->cohort_present, r->cohort.raw);
+	d1_enc_u8(c, r->certificate_present ? 1u : 0u);
+	if (r->certificate_present)
+		d1_enc_raw(c, r->certificate, D1_CERTIFICATE_BYTES);
+}
+
+static bool d1_dec_repair(struct d1_cursor *c, struct d1_repair_batch *r)
+{
+	uint64_t aggregate = 0;
+	uint8_t tag;
+	uint32_t i;
+
+	if (!d1_dec_u64(c, &r->range_begin) || !d1_dec_u64(c, &r->range_end) ||
+	    !d1_dec_u32(c, &r->count))
+		return false;
+	if (r->count < D1_BATCH_ENTRIES_MIN ||
+	    r->count > D1_BATCH_ENTRIES_MAX) {
+		c->bad = true;
+		return false;
+	}
+	for (i = 0; i < r->count; i++) {
+		struct d1_repair_entry *e = &r->entries[i];
+
+		if (!d1_dec_u64(c, &e->index) || !d1_dec_u32(c, &e->mode) ||
+		    !d1_dec_owner(c, &e->owner) ||
+		    !d1_dec_opt_u64(c, &e->custody_present, &e->custody.raw) ||
+		    !d1_dec_opt_u64(c, &e->successor_present,
+				    &e->successor.raw) ||
+		    !d1_dec_opt_u64(c, &e->predecessor_present,
+				    &e->predecessor.raw) ||
+		    !d1_dec_u8(c, &tag))
+			return false;
+		if (tag > 1u) {
+			c->bad = true;
+			return false;
+		}
+		e->payload_present = tag == 1u;
+		if (!e->payload_present)
+			continue;
+		if (!d1_dec_bytes_ref(c, &e->payload, &e->payload_len,
+				      D1_CHUNK_BYTES_MAX) ||
+		    !d1_dec_checksum(c, &e->checksum))
+			return false;
+		/* Summed while it is read; see d1_dec_write. */
+		if (!d1_add_u64(aggregate, e->payload_len, &aggregate) ||
+		    aggregate > D1_BATCH_PAYLOAD_MAX) {
+			c->bad = true;
+			return false;
+		}
+	}
+	if (!d1_dec_opt_u64(c, &r->cohort_present, &r->cohort.raw) ||
+	    !d1_dec_u8(c, &tag))
+		return false;
+	if (tag > 1u) {
+		c->bad = true;
+		return false;
+	}
+	r->certificate_present = tag == 1u;
+	if (!r->certificate_present)
+		return true;
+	return d1_dec_raw(c, r->certificate, D1_CERTIFICATE_BYTES);
+}
+
 static void d1_enc_control(struct d1_cursor *c,
 			   const struct d1_control_batch *k)
 {
@@ -395,6 +480,79 @@ static bool d1_validate_control(uint32_t op, const struct d1_control_batch *k)
 	return !k->new_admission_present && !k->read_epoch_present;
 }
 
+/*
+ * Which options each repair operation requires, and which it refuses.
+ *
+ * The whole vector is one shape, so what separates the operations is
+ * exactly this table.  An option a call has no use for is not ignored:
+ * carrying it is a different request, it would be bound by the digest,
+ * and two requests that mean one thing must not both exist.
+ */
+static bool d1_validate_repair(uint32_t op, const struct d1_repair_batch *r)
+{
+	bool wants_cohort = op != D1_OP_MARK_ERROR && op != D1_OP_BEGIN_REPAIR;
+	bool wants_mode = op == D1_OP_BEGIN_REPAIR;
+	bool wants_custody = op == D1_OP_MARK_ERROR || op == D1_OP_BEGIN_REPAIR;
+	bool wants_state = op == D1_OP_MARK_ERROR || op == D1_OP_BEGIN_REPAIR;
+	bool wants_payload = op == D1_OP_PREPARE_REPAIR;
+	bool wants_certificate = op == D1_OP_CLEAR_ERROR;
+	uint32_t i, j;
+
+	if (!d1_count_ok(r->count) || r->range_begin >= r->range_end)
+		return false;
+	if (r->cohort_present != wants_cohort)
+		return false;
+	if (r->cohort_present && !d1_repair_live(r->cohort))
+		return false;
+	if (r->certificate_present != wants_certificate)
+		return false;
+	for (i = 0; i < r->count; i++) {
+		const struct d1_repair_entry *e = &r->entries[i];
+
+		if (e->index < r->range_begin || e->index >= r->range_end)
+			return false;
+		if (!d1_owner_ok(&e->owner))
+			return false;
+		if (wants_mode) {
+			if (e->mode != D1_REPAIR_ERROR &&
+			    e->mode != D1_REPAIR_NOPRE)
+				return false;
+		} else if (e->mode != 0u) {
+			return false;
+		}
+		if (e->custody_present != wants_custody)
+			return false;
+		if (e->custody_present && !d1_custody_live(e->custody))
+			return false;
+		/*
+		 * The captured state: the successor is what the member
+		 * repairs and is required wherever the state is, and the
+		 * predecessor is the option section 7 leaves genuinely
+		 * optional -- its absence is what NOPRE is about.
+		 */
+		if (e->successor_present != wants_state)
+			return false;
+		if (e->successor_present && !d1_version_live(e->successor))
+			return false;
+		if (!wants_state && e->predecessor_present)
+			return false;
+		if (e->predecessor_present && !d1_version_live(e->predecessor))
+			return false;
+		if (e->payload_present != wants_payload)
+			return false;
+		if (e->payload_present && (!e->payload || e->payload_len < 1u ||
+					   e->payload_len > D1_CHUNK_BYTES_MAX))
+			return false;
+		if (e->payload_present && !d1_checksum_shape_ok(&e->checksum))
+			return false;
+		/* One repair never names one chunk twice. */
+		for (j = 0; j < i; j++)
+			if (r->entries[j].index == e->index)
+				return false;
+	}
+	return true;
+}
+
 /* Whether this slice can express a body for @op at all. */
 static bool d1_op_known(uint32_t op)
 {
@@ -405,6 +563,32 @@ static bool d1_op_known(uint32_t op)
 	case D1_OP_ROLLBACK_BATCH:
 	case D1_OP_RECOVERY_ADMIT:
 	case D1_OP_LEASE_REAP:
+	case D1_OP_MARK_ERROR:
+	case D1_OP_BEGIN_REPAIR:
+	case D1_OP_PREPARE_REPAIR:
+	case D1_OP_FINALIZE_REPAIR:
+	case D1_OP_COMMIT_REPAIR:
+	case D1_OP_ABORT_REPAIR:
+	case D1_OP_CLEAR_ERROR:
+	case D1_OP_UNLOCK:
+		return true;
+	default:
+		return false;
+	}
+}
+
+/* Whether @op carries a repair vector rather than one of the others. */
+static bool d1_op_repairs(uint32_t op)
+{
+	switch (op) {
+	case D1_OP_MARK_ERROR:
+	case D1_OP_BEGIN_REPAIR:
+	case D1_OP_PREPARE_REPAIR:
+	case D1_OP_FINALIZE_REPAIR:
+	case D1_OP_COMMIT_REPAIR:
+	case D1_OP_ABORT_REPAIR:
+	case D1_OP_CLEAR_ERROR:
+	case D1_OP_UNLOCK:
 		return true;
 	default:
 		return false;
@@ -423,8 +607,11 @@ bool d1_envelope_validate(const struct d1_envelope *env)
 		return d1_validate_lifecycle(&env->body.lifecycle);
 	case D1_OP_ROLLBACK_BATCH:
 		return d1_validate_rollback(&env->body.rollback);
-	default:
+	case D1_OP_RECOVERY_ADMIT:
+	case D1_OP_LEASE_REAP:
 		return d1_validate_control(env->op, &env->body.control);
+	default:
+		return d1_validate_repair(env->op, &env->body.repair);
 	}
 }
 
@@ -443,7 +630,12 @@ uint32_t d1_envelope_member_count(const struct d1_envelope *env)
 		/* A control answers once, for the whole operation. */
 		return 1u;
 	default:
-		return 0u;
+		/*
+		 * A repair answers once for the whole cohort too: section 8
+		 * gives it one cohort receipt rather than independently
+		 * replayable member commits.
+		 */
+		return d1_op_repairs(env->op) ? 1u : 0u;
 	}
 }
 
@@ -475,8 +667,12 @@ size_t d1_envelope_encode(const struct d1_envelope *env, void *buf, size_t cap)
 	case D1_OP_ROLLBACK_BATCH:
 		d1_enc_rollback(&c, &env->body.rollback);
 		break;
-	default:
+	case D1_OP_RECOVERY_ADMIT:
+	case D1_OP_LEASE_REAP:
 		d1_enc_control(&c, &env->body.control);
+		break;
+	default:
+		d1_enc_repair(&c, &env->body.repair);
 		break;
 	}
 	if (!d1_cursor_ok(&c))
@@ -509,8 +705,12 @@ bool d1_envelope_decode(const void *buf, size_t len, struct d1_envelope *env)
 	case D1_OP_ROLLBACK_BATCH:
 		ok = d1_dec_rollback(&c, &env->body.rollback);
 		break;
-	default:
+	case D1_OP_RECOVERY_ADMIT:
+	case D1_OP_LEASE_REAP:
 		ok = d1_dec_control(&c, &env->body.control);
+		break;
+	default:
+		ok = d1_dec_repair(&c, &env->body.repair);
 		break;
 	}
 	if (!ok)

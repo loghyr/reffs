@@ -673,10 +673,243 @@ static void test_decoder_refusals(void)
 		      "an envelope that does not fit encodes to nothing");
 	}
 
-	/* An operation this model cannot express never encodes. */
-	env.op = D1_OP_BEGIN_REPAIR;
+	/*
+	 * An operation this model cannot express never encodes.  The tag
+	 * is one no enum value uses, because every operation the enum
+	 * names now has a body.
+	 */
+	env.op = 0xd1d1d1d1u;
 	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
 	      "an unrepresentable operation never encodes");
+}
+
+/*
+ * A repair envelope for @op, with every field the operation uses set to
+ * a value nothing else uses.
+ */
+static void make_repair(struct d1_envelope *env, uint32_t op)
+{
+	struct d1_repair_entry *e;
+	bool state = op == D1_OP_MARK_ERROR || op == D1_OP_BEGIN_REPAIR;
+	unsigned int i;
+
+	memset(env, 0, sizeof(*env));
+	fill_uuid(&env->object.export_uuid, 0x60);
+	fill_uuid(&env->object.object_uuid, 0x70);
+	fill_uuid(&env->key.origin, 0x80);
+	env->admission.raw = 0x1122334455667788ull;
+	env->incarnation = 0x0102030405060708ull;
+	env->key.sequence = 0x99aabbccddeeff00ull;
+	env->key.ordinal = 5;
+	env->op = op;
+	env->body.repair.range_begin = 4;
+	env->body.repair.range_end = 6;
+	env->body.repair.count = 2;
+	for (i = 0; i < 2u; i++) {
+		e = &env->body.repair.entries[i];
+		e->index = 4u + i;
+		e->mode = op != D1_OP_BEGIN_REPAIR ? 0u :
+			  i == 0		   ? D1_REPAIR_ERROR :
+						     D1_REPAIR_NOPRE;
+		e->owner.cohort.raw = 0x2200u + i;
+		e->owner.writer = 0x3300u + i;
+		e->owner.co_id = 0x4400u + i;
+		e->custody_present = state;
+		e->custody.raw = state ? 0x5500u + i : 0u;
+		e->successor_present = state;
+		e->successor.raw = state ? 0x6600u + i : 0u;
+		/* The one genuinely optional field: NOPRE has none. */
+		e->predecessor_present = state && i == 0;
+		e->predecessor.raw = e->predecessor_present ? 0x7700u : 0u;
+		e->payload_present = op == D1_OP_PREPARE_REPAIR;
+		if (e->payload_present) {
+			e->payload = payload;
+			e->payload_len = (uint32_t)sizeof(payload);
+			d1_checksum_compute(D1_CKSUM_CRC32C, payload,
+					    sizeof(payload), &e->checksum);
+		}
+	}
+	env->body.repair.cohort_present = op != D1_OP_MARK_ERROR &&
+					  op != D1_OP_BEGIN_REPAIR;
+	env->body.repair.cohort.raw =
+		env->body.repair.cohort_present ? 0x8800u : 0u;
+	env->body.repair.certificate_present = op == D1_OP_CLEAR_ERROR;
+	if (env->body.repair.certificate_present)
+		memset(env->body.repair.certificate, 0x9a,
+		       D1_CERTIFICATE_BYTES);
+}
+
+static bool repair_entry_same(const struct d1_repair_entry *a,
+			      const struct d1_repair_entry *b)
+{
+	if (a->index != b->index || a->mode != b->mode ||
+	    !owner_same(&a->owner, &b->owner))
+		return false;
+	if (a->custody_present != b->custody_present ||
+	    a->custody.raw != b->custody.raw)
+		return false;
+	if (a->successor_present != b->successor_present ||
+	    a->successor.raw != b->successor.raw)
+		return false;
+	if (a->predecessor_present != b->predecessor_present ||
+	    a->predecessor.raw != b->predecessor.raw)
+		return false;
+	if (a->payload_present != b->payload_present)
+		return false;
+	if (!a->payload_present)
+		return true;
+	return a->payload_len == b->payload_len &&
+	       memcmp(a->payload, b->payload, a->payload_len) == 0 &&
+	       a->checksum.alg == b->checksum.alg &&
+	       a->checksum.len == b->checksum.len &&
+	       memcmp(a->checksum.digest, b->checksum.digest,
+		      a->checksum.len) == 0;
+}
+
+/*
+ * Every repair operation round-trips, field for field and byte for
+ * byte.
+ *
+ * The eight of them share one vector shape and differ only in which of
+ * its options they require, so the round trip is the place that shows
+ * each one carries what it claims and nothing else survives that it
+ * should not.
+ */
+static void test_every_repair_operation_round_trips(void)
+{
+	static const uint32_t ops[] = {
+		D1_OP_MARK_ERROR,     D1_OP_BEGIN_REPAIR,
+		D1_OP_PREPARE_REPAIR, D1_OP_FINALIZE_REPAIR,
+		D1_OP_COMMIT_REPAIR,  D1_OP_ABORT_REPAIR,
+		D1_OP_CLEAR_ERROR,    D1_OP_UNLOCK,
+	};
+	struct d1_envelope env, back;
+	unsigned int i, j;
+
+	for (i = 0; i < sizeof(ops) / sizeof(ops[0]); i++) {
+		const struct d1_repair_batch *a, *b;
+
+		make_repair(&env, ops[i]);
+		check(round_trip(&env, &back), "a repair envelope round-trips");
+		check(header_same(&env, &back), "its header survives");
+		a = &env.body.repair;
+		b = &back.body.repair;
+		check(a->range_begin == b->range_begin &&
+			      a->range_end == b->range_end &&
+			      a->count == b->count,
+		      "and its range and count");
+		check(a->cohort_present == b->cohort_present &&
+			      a->cohort.raw == b->cohort.raw,
+		      "and the cohort it names, or does not");
+		check(a->certificate_present == b->certificate_present &&
+			      (!a->certificate_present ||
+			       memcmp(a->certificate, b->certificate,
+				      D1_CERTIFICATE_BYTES) == 0),
+		      "and the certificate it carries, or does not");
+		for (j = 0; j < a->count; j++)
+			check(repair_entry_same(&a->entries[j], &b->entries[j]),
+			      "and every field of every member");
+		/* The decoded handles carry no domain and no issuer. */
+		check(b->cohort._kind == D1_HANDLE_NONE &&
+			      b->cohort._instance == 0,
+		      "and the cohort it decodes to names nothing yet");
+	}
+}
+
+/* One row: an option carried by an operation that has no use for it. */
+struct repair_misfit {
+	const char *what;
+	uint32_t op;
+	/* Which option to add to, or remove from, a correct request. */
+	unsigned int field;
+};
+
+/*
+ * An option an operation does not use is a different request.
+ *
+ * The eight operations share one vector, so the only thing separating
+ * them is which options each requires.  If an unused one were ignored
+ * rather than refused, two requests that mean the same thing would both
+ * exist -- and the digest binds them differently, so a store would have
+ * two identities for one intent.
+ */
+static void test_a_repair_option_belongs_to_its_operation(void)
+{
+	struct d1_envelope env;
+	uint8_t buf[512];
+
+	/* A cohort where one is opened, and none where one is named. */
+	make_repair(&env, D1_OP_BEGIN_REPAIR);
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort.raw = 9;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "begin_repair names no cohort");
+	make_repair(&env, D1_OP_COMMIT_REPAIR);
+	env.body.repair.cohort_present = false;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "and commit_repair names one");
+
+	/* A mode where the cohort already has one. */
+	make_repair(&env, D1_OP_FINALIZE_REPAIR);
+	env.body.repair.entries[0].mode = D1_REPAIR_NOPRE;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "only begin_repair tags a member's mode");
+	make_repair(&env, D1_OP_BEGIN_REPAIR);
+	env.body.repair.entries[0].mode = 0;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "and it must tag every member");
+	make_repair(&env, D1_OP_BEGIN_REPAIR);
+	env.body.repair.entries[0].mode = 3;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "with a mode this model has");
+
+	/* The captured state, and the replacement. */
+	make_repair(&env, D1_OP_UNLOCK);
+	env.body.repair.entries[1].custody_present = true;
+	env.body.repair.entries[1].custody.raw = 4;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "an unlock carries no custody");
+	make_repair(&env, D1_OP_ABORT_REPAIR);
+	env.body.repair.entries[0].successor_present = true;
+	env.body.repair.entries[0].successor.raw = 4;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "nor does an abort carry the state it captured");
+	make_repair(&env, D1_OP_COMMIT_REPAIR);
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = payload;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(payload);
+	d1_checksum_compute(D1_CKSUM_CRC32C, payload, sizeof(payload),
+			    &env.body.repair.entries[0].checksum);
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "a commit stages nothing; prepare_repair already did");
+	make_repair(&env, D1_OP_PREPARE_REPAIR);
+	env.body.repair.entries[1].payload_present = false;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "and a prepare stages its whole vector");
+
+	/* The certificate, which is clear_error's alone. */
+	make_repair(&env, D1_OP_UNLOCK);
+	env.body.repair.certificate_present = true;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "only clear_error carries a certificate");
+	make_repair(&env, D1_OP_CLEAR_ERROR);
+	env.body.repair.certificate_present = false;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "and it always carries one");
+
+	/* And the shape rules the whole vector keeps. */
+	make_repair(&env, D1_OP_BEGIN_REPAIR);
+	env.body.repair.entries[1].index = env.body.repair.entries[0].index;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "one repair never names one chunk twice");
+	make_repair(&env, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_end = env.body.repair.range_begin;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "and its range is a range");
+	make_repair(&env, D1_OP_BEGIN_REPAIR);
+	env.body.repair.entries[0].index = env.body.repair.range_end;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "and every member is inside it");
 }
 
 static void test_lifecycle_and_control(void)
@@ -754,6 +987,8 @@ int main(void)
 	test_digest_binds_every_field();
 	test_decoder_refusals();
 	test_lifecycle_and_control();
+	test_every_repair_operation_round_trips();
+	test_a_repair_option_belongs_to_its_operation();
 
 	if (failures) {
 		fprintf(stderr, "%u check(s) failed\n", failures);
