@@ -10828,11 +10828,12 @@ static void test_an_error_repair_clears_and_unlocks_separately(void)
 }
 
 /*
- * An Envelope control record's bytes are the ones its digest covers.
+ * A cohort record's bytes are the ones its digest covers.
  *
  * An ENTRY record has carried its request digest since the first slice,
- * so replay recomputes one from the record's own bytes and compares.  A
- * CONTROL record carrying an Envelope did not, and that was an
+ * so replay recomputes one from the record's own bytes and compares.
+ * The record that carries a whole Envelope answered once -- a control
+ * operation or, in its own family, a repair -- did not, and that was an
  * asymmetry rather than a decision: replay hashed whatever the record
  * held, so a record whose bytes had been changed simply had a different
  * identity and was believed.
@@ -10844,7 +10845,7 @@ static void test_an_error_repair_clears_and_unlocks_separately(void)
  * executes identically and still produces the logged result.  Only its
  * digest is different, which is exactly what the logged digest is for.
  */
-static void test_an_envelope_control_carries_its_digest(void)
+static void test_a_cohort_record_carries_its_digest(void)
 {
 	struct d1_uuid store_uuid;
 	struct d1_store *live, *target;
@@ -10904,26 +10905,24 @@ static void test_an_envelope_control_carries_its_digest(void)
 	}
 	memcpy(copy, log, len);
 
-	/* The last Envelope control record in the log. */
+	/* The last cohort record in the log. */
 	d1_journal_cursor_init(&cursor, log, len, &store_uuid);
 	while (d1_journal_next(&cursor, &type, &lsn, &incarnation, &body,
 			       &blen) == D1_JOURNAL_RECORD) {
 		struct d1_cursor rec;
 		const uint8_t *request;
-		uint32_t kind, n;
+		uint32_t n;
 
-		if (type != D1_REC_CONTROL)
+		if (type != D1_REC_COHORT)
 			continue;
 		d1_dec_init(&rec, body, blen);
-		if (!d1_dec_u32(&rec, &kind) || kind != D1_CTL_ENVELOPE)
-			continue;
 		if (!d1_dec_bytes_ref(&rec, &request, &n, D1_ENVELOPE_MAX))
 			break;
 		at = (size_t)(body - log) - D1_JOURNAL_HEADER_BYTES;
 		env_at = (size_t)(request - log);
 		env_len = n;
 	}
-	check(env_len != 0, "the log has an Envelope control to work from");
+	check(env_len != 0, "the log has a cohort record to work from");
 	if (!env_len) {
 		d1_store_free(live);
 		return;
@@ -10951,7 +10950,7 @@ static void test_an_envelope_control_carries_its_digest(void)
 	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (target) {
 		check(d1_store_replay(target, copy, len) == D1_INVALID,
-		      "a control record whose bytes changed is refused");
+		      "a cohort record whose bytes changed is refused");
 		d1_store_free(target);
 	}
 
@@ -14757,6 +14756,35 @@ static uint32_t entry_body(uint8_t *out, const uint8_t *env_bytes,
 	return at + res_len;
 }
 
+/* Which record family each cell of the category table is framed as. */
+static uint16_t record_type(unsigned int pass)
+{
+	if (pass == 2u || pass == 4u)
+		return D1_REC_CONTROL;
+	if (pass == 5u)
+		return D1_REC_COHORT;
+	return D1_REC_ENTRY;
+}
+
+/* body := bytes(request) raw(digest) bytes(result) */
+static uint32_t cohort_body(uint8_t *out, const uint8_t *req, uint32_t req_len,
+			    const uint8_t *digest, const uint8_t *res_bytes,
+			    uint32_t res_len)
+{
+	uint32_t at = 0;
+
+	put_be32(out + at, req_len);
+	at += 4;
+	memcpy(out + at, req, req_len);
+	at += req_len;
+	memcpy(out + at, digest, D1_DIGEST_BYTES);
+	at += D1_DIGEST_BYTES;
+	put_be32(out + at, res_len);
+	at += 4;
+	memcpy(out + at, res_bytes, res_len);
+	return at + res_len;
+}
+
 /*
  * body := u32(kind) bytes(request) [raw(digest) if ENVELOPE]
  *         bytes(result)
@@ -14813,6 +14841,104 @@ static void refusal_result(struct d1_complete_result *r,
 }
 
 /*
+ * A log written to another record format is refused, not decoded.
+ *
+ * Section 9 puts a format number in every record, and this slice moved
+ * it: the entry result grew a cohort, a postcondition, an episode and
+ * a member, the Envelope control record grew a request digest, the
+ * repair request grew five canonical fields, and a repair now has a
+ * record family a format-1 reader has no arm for.  None of that is
+ * readable as format 1, so a reader that met one would decode the
+ * wrong fields out of the right bytes.
+ *
+ * Nothing is deployed, so there is no migration to write.  What there
+ * is to do is refuse, and a reader that compares the number does --
+ * for the START record that opens the log and for a record inside it,
+ * because a check that only covered the first would let the rest of a
+ * spliced log through.
+ */
+static void test_a_log_of_another_format_is_refused(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *target;
+	static uint8_t copy[65536];
+	static uint8_t data[16];
+	const uint8_t *log;
+	size_t len, offsets[8], where;
+	unsigned int records, pass;
+	uint32_t total, crc, i;
+	d1_admission_id admission;
+
+	memset(data, 0x9c, sizeof(data));
+	fill_uuid(&store_uuid, 0xa4);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	admission = d1_fixture_admit(live, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	check(d1_version_live(
+		      commit_chunk(live, admission, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
+	      "a history to rebuild");
+	log = journal_of(live, &len);
+	check(len <= sizeof(copy), "the log fits the fixture buffer");
+	if (len > sizeof(copy)) {
+		d1_store_free(live);
+		return;
+	}
+	check(log[4] == 0u && log[5] == (uint8_t)D1_JOURNAL_FORMAT,
+	      "every record the writer appends carries this format");
+	records = index_log(log, len, offsets, 8);
+	check(records >= 2u, "the log has records after its START");
+	if (records < 2u) {
+		d1_store_free(live);
+		return;
+	}
+
+	/* The START record, and then one inside the log. */
+	for (pass = 0; pass < 2u; pass++) {
+		where = pass == 0 ? offsets[0] : offsets[records - 1u];
+		memcpy(copy, log, len);
+		copy[where + 4u] = 0u;
+		copy[where + 5u] = 1u;
+		total = ((uint32_t)copy[where + 12] << 24) |
+			((uint32_t)copy[where + 13] << 16) |
+			((uint32_t)copy[where + 14] << 8) |
+			(uint32_t)copy[where + 15];
+		crc = d1_crc32c(copy + where, total - D1_JOURNAL_TRAILER_BYTES);
+		for (i = 0; i < 4u; i++)
+			copy[where + total - 4u + i] =
+				(uint8_t)(crc >> (24u - 8u * i));
+
+		target =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (target) {
+			check(d1_store_replay(target, copy, len) != D1_OK,
+			      "a record of another format rebuilds nothing");
+			d1_store_free(target);
+		}
+		target =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (target) {
+			check(d1_store_reopen(target, copy, len) != D1_OK,
+			      "and a reopen over it fails too");
+			d1_store_free(target);
+		}
+	}
+
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, log, len) == D1_OK,
+		      "while the log as written still rebuilds");
+		check(states_agree(live, target), "into the same store");
+		d1_store_free(target);
+	}
+	d1_store_free(live);
+}
+
+/*
  * A record's category has to agree with what it carries.
  *
  * An ENTRY is one member of an ordinary batch: a control operation in
@@ -14837,10 +14963,12 @@ static void test_records_must_name_what_they_carry(void)
 		"an ENTRY ordinal past its body's members is refused",
 		"a CONTROL record carrying an ordinary operation is refused",
 		"an ENTRY carrying a repair operation is refused",
+		"a CONTROL record carrying a repair is refused",
+		"a COHORT record carrying a control operation is refused",
 	};
 	unsigned int pass;
 
-	for (pass = 0; pass < 4; pass++) {
+	for (pass = 0; pass < 6; pass++) {
 		struct d1_uuid store_uuid;
 		struct d1_store *live, *target;
 		struct d1_envelope env, crafted;
@@ -14923,14 +15051,23 @@ static void test_records_must_name_what_they_carry(void)
 								true });
 			refusal_result(&made, &base, &crafted.key,
 				       D1_STALE_AUTH);
+		} else if (pass == 5) {
+			/* A control operation inside a COHORT record. */
+			env_init(&crafted, live, admission, D1_OP_LEASE_REAP);
+			crafted.body.control.count = 1;
+			crafted.body.control.txns[0] = res.entries[0].txn;
+			crafted.body.control.old_admission = admission;
+			refusal_result(&made, &base, &crafted.key,
+				       D1_STALE_AUTH);
 		} else {
 			/*
-			 * A repair operation inside an ENTRY.  Its custody
-			 * and successor are well-formed handles of this
-			 * store rather than live rows: the decoder asks
-			 * that they are the store's and the reducer refuses
-			 * the record for its rights before anything looks
-			 * either of them up.
+			 * A repair operation, in an ENTRY and then in a
+			 * CONTROL record.  Its custody and successor are
+			 * well-formed handles of this store rather than
+			 * live rows: the decoder asks that they are the
+			 * store's and the reducer refuses the record for
+			 * its rights before anything looks either of them
+			 * up.
 			 */
 			env_init(&crafted, live, admission, D1_OP_MARK_ERROR);
 			crafted.body.repair.range_begin = 0;
@@ -14960,10 +15097,13 @@ static void test_records_must_name_what_they_carry(void)
 			d1_store_free(live);
 			return;
 		}
-		if (pass == 2)
+		if (pass == 2 || pass == 4)
 			blen = control_body(body, D1_CTL_ENVELOPE, bytes,
 					    (uint32_t)env_len, digest, result,
 					    (uint32_t)res_len);
+		else if (pass == 5)
+			blen = cohort_body(body, bytes, (uint32_t)env_len,
+					   digest, result, (uint32_t)res_len);
 		else
 			blen = entry_body(body, bytes, (uint32_t)env_len,
 					  pass == 1 ? 1u : 0u, digest, result,
@@ -14971,8 +15111,7 @@ static void test_records_must_name_what_they_carry(void)
 
 		memcpy(copy, log, len);
 		used = len;
-		used += frame_record(copy + used,
-				     pass == 2 ? D1_REC_CONTROL : D1_REC_ENTRY,
+		used += frame_record(copy + used, record_type(pass),
 				     &store_uuid, 4, 1, body, blen);
 
 		target =
@@ -16186,7 +16325,7 @@ int main(void)
 	test_a_vector_refusal_names_its_member();
 	test_the_cohort_table_is_a_lifetime_cap();
 	test_a_repair_owner_is_an_owner();
-	test_an_envelope_control_carries_its_digest();
+	test_a_cohort_record_carries_its_digest();
 	test_a_fenced_handle_answers_three_ways();
 	test_a_record_that_names_no_admission();
 	test_record_tags_are_validated();
@@ -16195,6 +16334,7 @@ int main(void)
 	test_recovery_clears_fault_arms();
 	test_concurrent_callers_cannot_splice_a_key();
 	test_replay_refuses_a_spliced_key();
+	test_a_log_of_another_format_is_refused();
 	test_records_must_name_what_they_carry();
 	test_replay_requires_the_record_to_have_happened();
 	test_replay_refuses_a_record_that_found_no_room();

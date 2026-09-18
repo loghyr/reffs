@@ -26,7 +26,20 @@
 #include "d1_types.h"
 
 #define D1_JOURNAL_MAGIC 0x44314a31u /* "D1J1" */
-#define D1_JOURNAL_FORMAT 1u
+/*
+ * The record format this build writes and the only one it reads.
+ *
+ * Two, not one: the D1b slice added a repair cohort and a postcondition
+ * to the entry result, a request digest to the Envelope control record,
+ * five canonical fields to the repair request, and a COHORT record
+ * family that a format-1 reader has no arm for.  None of that is
+ * readable as format 1 and none of format 1 is readable as this, so the
+ * number says so rather than leaving a reader to decode one as the
+ * other.  Nothing is deployed, so there is no migration to write; what
+ * there is to do is refuse the other version, which is what a reader
+ * that checks this does.
+ */
+#define D1_JOURNAL_FORMAT 2u
 #define D1_JOURNAL_HEADER_BYTES 56u
 #define D1_JOURNAL_TRAILER_BYTES 4u
 

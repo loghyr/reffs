@@ -3814,6 +3814,33 @@ static bool d1_journal_control_event(struct d1_store *s, uint32_t kind,
 }
 
 /*
+ * The record a repair operation appends.
+ *
+ * Section 9 gives the repair a record family of its own, and section 8
+ * gives it one cohort receipt rather than independently replayable
+ * member commits -- so one record carries the whole call, the way a
+ * CONTROL record carries a whole control operation.  It needs no kind
+ * field: a COHORT record carries exactly one thing.
+ *
+ * body := bytes(request) raw(digest) bytes(result)
+ */
+static bool d1_journal_cohort_event(struct d1_store *s, const uint8_t *request,
+				    size_t request_len,
+				    const uint8_t digest[D1_DIGEST_BYTES],
+				    const uint8_t *result, size_t result_len)
+{
+	struct d1_cursor cur;
+
+	d1_enc_init(&cur, s->record, s->record_cap);
+	d1_enc_bytes(&cur, request, request_len);
+	d1_enc_raw(&cur, digest, D1_DIGEST_BYTES);
+	d1_enc_bytes(&cur, result, result_len);
+	if (cur.bad)
+		return false;
+	return d1_journal_event(s, D1_REC_COHORT, s->record, (uint32_t)cur.len);
+}
+
+/*
  * Whether this caller is bound to this object at all.
  *
  * Replay asks the same question of the same rebuilt table.  The special
@@ -4477,8 +4504,8 @@ static void d1_apply_repair(struct d1_store *s, const struct d1_envelope *env,
 		res_len = d1_complete_result_encode(complete, result_bytes,
 						    sizeof(result_bytes));
 		if (!len || !res_len ||
-		    !d1_journal_control_event(s, D1_CTL_ENVELOPE, bytes, len,
-					      digest, result_bytes, res_len)) {
+		    !d1_journal_cohort_event(s, bytes, len, digest,
+					     result_bytes, res_len)) {
 			d1_repair_undo_apply(s, &undo);
 			slot->used = false;
 			memset(complete, 0, sizeof(*complete));
@@ -6257,6 +6284,60 @@ static bool d1_control_canonical(struct d1_store *s,
 	}
 }
 
+/*
+ * One repair operation, read back.
+ *
+ * The same reduction the CONTROL path makes for a control operation,
+ * on the record family section 9 gives a cohort: the request, the
+ * digest the store recomputes rather than trusts, and the result its
+ * one receipt was recorded with.  What differs is the operation it
+ * will accept, which is the whole reason the family exists.
+ */
+static uint32_t d1_replay_cohort(struct d1_store *s, const uint8_t *body,
+				 uint32_t len)
+{
+	struct d1_complete_result logged, computed;
+	struct d1_envelope env;
+	struct d1_cursor cur;
+	const uint8_t *request_bytes, *result_bytes;
+	uint8_t digest[D1_DIGEST_BYTES];
+	uint8_t logged_digest[D1_DIGEST_BYTES];
+	uint32_t request_len, result_len;
+
+	d1_dec_init(&cur, body, len);
+	if (!d1_dec_bytes_ref(&cur, &request_bytes, &request_len,
+			      D1_ENVELOPE_MAX) ||
+	    !d1_dec_raw(&cur, logged_digest, sizeof(logged_digest)) ||
+	    !d1_dec_bytes_ref(&cur, &result_bytes, &result_len, 4096u) ||
+	    !d1_dec_finished(&cur))
+		return D1_INVALID;
+	if (!d1_envelope_decode(request_bytes, request_len, &env))
+		return D1_INVALID;
+	d1_envelope_adopt(s, &env);
+	if (!d1_op_is_repair(env.op))
+		return D1_INVALID;
+	if (!d1_complete_result_decode(result_bytes, result_len, &logged))
+		return D1_INVALID;
+	if (!d1_envelope_digest(&env, s->scratch, s->scratch_cap, digest))
+		return D1_INVALID;
+	/* The store computes it; the record only claims it. */
+	if (memcmp(digest, logged_digest, sizeof(digest)) != 0)
+		return D1_INVALID;
+	/*
+	 * One cohort receipt, at ordinal zero, and the record is accepted
+	 * only if reducing it created the one it names.  See
+	 * d1_record_receipt.
+	 */
+	if (d1_record_receipt(s, &env, 0))
+		return D1_INVALID;
+	d1_apply_repair(s, &env, request_bytes, request_len, digest, &computed);
+	if (!d1_record_receipt(s, &env, 0))
+		return D1_INVALID;
+	if (!d1_complete_result_equal(&computed, &logged))
+		return D1_INVALID;
+	return D1_OK;
+}
+
 static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 				  uint32_t len)
 {
@@ -6298,12 +6379,13 @@ static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 			return D1_INVALID;
 		d1_envelope_adopt(s, &env);
 		/*
-		 * A CONTROL record carries a control operation or a repair.
-		 * Both answer once for the whole call, which is why they
-		 * share a record kind and a receipt at ordinal zero.
+		 * A CONTROL record carries a control operation.  A repair
+		 * answers once for a whole call too, but section 9 gives
+		 * it a record family of its own, so one in here is a
+		 * record the live writer cannot emit -- the third cell of
+		 * the same table as a control in an ENTRY.
 		 */
-		if (d1_op_rights(env.op) != D1_RIGHT_CONTROL &&
-		    !d1_op_is_repair(env.op))
+		if (d1_op_rights(env.op) != D1_RIGHT_CONTROL)
 			return D1_INVALID;
 		if (!d1_complete_result_decode(result_bytes, result_len,
 					       &logged))
@@ -6323,12 +6405,8 @@ static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 		 */
 		if (d1_record_receipt(s, &env, 0))
 			return D1_INVALID;
-		if (d1_op_is_repair(env.op))
-			d1_apply_repair(s, &env, request_bytes, request_len,
-					digest, &computed);
-		else
-			d1_apply_control(s, &env, request_bytes, request_len,
-					 digest, &computed);
+		d1_apply_control(s, &env, request_bytes, request_len, digest,
+				 &computed);
 		if (!d1_record_receipt(s, &env, 0))
 			return D1_INVALID;
 		if (!d1_complete_result_equal(&computed, &logged))
@@ -6505,6 +6583,9 @@ static uint32_t d1_replay_locked(struct d1_store *s, const uint8_t *log,
 			break;
 		case D1_REC_CONTROL:
 			status = d1_replay_control(s, body, blen);
+			break;
+		case D1_REC_COHORT:
+			status = d1_replay_cohort(s, body, blen);
 			break;
 		default:
 			status = D1_INVALID;

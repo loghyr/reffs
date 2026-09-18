@@ -79,9 +79,9 @@ static void test_golden_record(void)
 		0x31,
 		0x4a,
 		0x31,
-		/* format 1 */
+		/* format 2 */
 		0x00,
-		0x01,
+		0x02,
 		/* record type START */
 		0x00,
 		0x01,
@@ -145,10 +145,10 @@ static void test_golden_record(void)
 		0x62,
 		0x63,
 		/* CRC32C of everything above */
-		0x4c,
-		0x44,
-		0xe5,
-		0x3c,
+		0x53,
+		0x72,
+		0x3e,
+		0xc7,
 	};
 	struct d1_journal j;
 
