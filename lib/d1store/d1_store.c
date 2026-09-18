@@ -1814,21 +1814,30 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 	res->version_present = true;
 	res->version = d1_version_of(s, txn->version);
 
+	/*
+	 * Phase before predecessor.  A transition asked for out of turn is
+	 * refused for being out of turn, whatever it expected to find: a
+	 * premature COMMIT of a PREPARED transaction is BAD_PHASE, not a
+	 * verdict on a predecessor that the FINALIZE it skipped had not
+	 * yet had the chance to be judged against.  The two answers are
+	 * both recorded and replay compares them, so which one wins is
+	 * part of the format; mana chose this order and it is written here
+	 * rather than left to the order the checks happen to be in.
+	 */
+	if (txn->phase != (commit ? D1_PHASE_FINALIZED : D1_PHASE_PREPARED))
+		return D1_BAD_PHASE;
+
 	if (txn->predecessor_present != e->predecessor_present ||
 	    (e->predecessor_present && txn->predecessor != e->predecessor.raw))
 		return D1_NO_PREDECESSOR;
 
 	if (!commit) {
-		if (txn->phase != D1_PHASE_PREPARED)
-			return D1_BAD_PHASE;
 		d1_undo_txn(u, txn);
 		txn->phase = D1_PHASE_FINALIZED;
 		res->phase = txn->phase;
 		return D1_OK;
 	}
 
-	if (txn->phase != D1_PHASE_FINALIZED)
-		return D1_BAD_PHASE;
 	ver = d1_version_find(s, d1_version_of(s, txn->version));
 	if (!ver)
 		return D1_INVALID;

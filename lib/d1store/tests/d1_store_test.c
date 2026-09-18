@@ -9705,6 +9705,144 @@ static void test_a_reopen_start_that_never_becomes_durable(void)
 	d1_store_free(live);
 }
 
+/* One row of the lifecycle precedence matrix. */
+struct lifecycle_case {
+	const char *what;
+	/* Which faults to build into the member. */
+	bool bad_owner;
+	bool other_admission;
+	/* Commit a transaction that has not been finalized. */
+	bool wrong_phase;
+	bool bad_predecessor;
+	uint32_t expect;
+};
+
+/*
+ * A lifecycle member wrong in more than one way gets one answer.
+ *
+ * The ordinary write reducer's order was pinned two slices ago; this
+ * one was not, and it mattered in a way that had already been decided
+ * elsewhere.  The memo's G2 has a premature COMMIT answered BAD_PHASE,
+ * and this reducer asked about the predecessor first -- so a caller who
+ * skipped FINALIZE and also named the wrong predecessor was told about
+ * the predecessor, by a transition that was never going to look at it.
+ * A transition asked for out of turn is refused for being out of turn.
+ *
+ * Every row is a COMMIT of a transaction this store issued.  The
+ * transaction is finalized first unless the row wants the phase fault,
+ * so "wrong phase" means exactly one thing: committing what is still
+ * prepared.  The four refusals below are the ones with distinct
+ * statuses that a caller can set independently on one member, and the
+ * table is every pair of them plus their corners.
+ */
+static void test_the_order_of_two_lifecycle_refusals_is_fixed(void)
+{
+	static const struct lifecycle_case cases[] = {
+		/* One fault at a time. */
+		{ "an owner that is not the transaction's", true, false, false,
+		  false, D1_OWNER_CONFLICT },
+		{ "a handle that is not the transaction's", false, true, false,
+		  false, D1_STALE_AUTH },
+		{ "a commit of what is still prepared", false, false, true,
+		  false, D1_BAD_PHASE },
+		{ "a predecessor the transaction did not record", false, false,
+		  false, true, D1_NO_PREDECESSOR },
+		/* Every pair of them. */
+		{ "the owner outranks the handle", true, true, false, false,
+		  D1_OWNER_CONFLICT },
+		{ "the owner outranks the phase", true, false, true, false,
+		  D1_OWNER_CONFLICT },
+		{ "the owner outranks the predecessor", true, false, false,
+		  true, D1_OWNER_CONFLICT },
+		{ "the handle outranks the phase", false, true, true, false,
+		  D1_STALE_AUTH },
+		{ "the handle outranks the predecessor", false, true, false,
+		  true, D1_STALE_AUTH },
+		{ "the phase outranks the predecessor", false, false, true,
+		  true, D1_BAD_PHASE },
+	};
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t data[16];
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	uint32_t i;
+	d1_admission_id mine, other;
+	d1_version_id elsewhere;
+	d1_txn_id txn;
+
+	memset(data, 0xc7, sizeof(data));
+	fill_uuid(&store_uuid, 0xc7);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	mine = d1_fixture_admit(s, &object, 11,
+				D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+	other = d1_fixture_admit(s, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	/* A committed version elsewhere, to name as the wrong predecessor. */
+	elsewhere = commit_chunk(s, mine, 0, 1, data, sizeof(data),
+				 &(struct d1_guard){ .never_written = true },
+				 d1_version_none(), NULL);
+	check(d1_version_live(elsewhere),
+	      "there is a version to name as a predecessor");
+
+	for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		const struct lifecycle_case *c = &cases[i];
+		uint64_t index = 4 + i;
+		uint32_t co_id = 30 + i;
+
+		/*
+		 * Each row gets a chunk of its own, written and left
+		 * prepared; a row without the phase fault finalizes it, so
+		 * its COMMIT is the one the transaction is ready for.
+		 */
+		env_init(&env, s, mine, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], index, 11, co_id, data,
+			    sizeof(data), true,
+			    &(struct d1_guard){ .never_written = true });
+		if (d1_store_apply(s, &env, &res) != D1_OK ||
+		    res.entries[0].status != D1_OK) {
+			check(false, "the row's chunk is written");
+			continue;
+		}
+		txn = res.entries[0].txn;
+		if (!c->wrong_phase &&
+		    finalize_txn(s, mine, index, 11, co_id, txn) != D1_OK) {
+			check(false, "and finalized when the row needs it");
+			continue;
+		}
+
+		d1_store_verifier(s, verifier);
+		env_init(&env, s, c->other_admission ? other : mine,
+			 D1_OP_COMMIT_BATCH);
+		env.body.lifecycle.range_begin = index;
+		env.body.lifecycle.range_end = index + 1u;
+		env.body.lifecycle.count = 1;
+		env.body.lifecycle.entries[0].index = index;
+		env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+		env.body.lifecycle.entries[0].owner.writer = 11;
+		env.body.lifecycle.entries[0].owner.co_id =
+			c->bad_owner ? co_id + 100u : co_id;
+		env.body.lifecycle.entries[0].txn = txn;
+		env.body.lifecycle.entries[0].predecessor_present =
+			c->bad_predecessor;
+		env.body.lifecycle.entries[0].predecessor = elsewhere;
+		memcpy(env.body.lifecycle.prior_verifier, verifier,
+		       sizeof(verifier));
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == c->expect &&
+			      res.entries[0].disposition == D1_COMPLETED,
+		      c->what);
+	}
+
+	d1_store_free(s);
+}
+
 /*
  * A record that names an admission no CONTROL installed.
  *
@@ -12652,6 +12790,7 @@ int main(void)
 	test_an_admitted_call_spans_another();
 	test_a_control_runs_between_two_members();
 	test_a_reopen_start_that_never_becomes_durable();
+	test_the_order_of_two_lifecycle_refusals_is_fixed();
 	test_a_record_that_names_no_admission();
 	test_record_tags_are_validated();
 	test_operation_key_binds_the_whole_envelope();
