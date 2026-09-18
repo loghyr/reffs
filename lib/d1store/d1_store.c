@@ -231,6 +231,11 @@ struct d1_store {
 	struct d1_custody custody[D1_MAX_CUSTODY];
 	struct d1_view views[D1_MAX_VIEWS];
 	uint64_t next_custody;
+	/*
+	 * Whether this store's next reopen should fail to make its new
+	 * START durable, and how.  See d1_store_reopen.
+	 */
+	uint32_t fail_reopen_start;
 
 	/*
 	 * Encoding scratch owned by this store and used only under its own
@@ -794,6 +799,28 @@ static void d1_run_member_hook(struct d1_store *s, uint32_t ordinal)
 	pthread_mutex_unlock(&s->lock);
 	if (fn)
 		fn(arg);
+}
+
+/*
+ * Arm the next reopen's START to fail.
+ *
+ * The other arms describe operations and are cleared by reduction; this
+ * one describes the reopen transition, which is why it is not.  It is
+ * one-shot and the transition consumes it, so it cannot reach anything
+ * the store does afterwards -- and a read-only rebuild drops it, since
+ * that handle will never reach a START at all.
+ */
+void d1_fixture_fail_reopen_start(struct d1_store *s, uint32_t which)
+{
+	pthread_mutex_lock(&s->lock);
+	if (!d1_store_serving(s) || s->replaying) {
+		pthread_mutex_unlock(&s->lock);
+		return;
+	}
+	if (which == D1_REOPEN_START_APPEND || which == D1_REOPEN_START_FLUSH ||
+	    which == D1_REOPEN_START_OK)
+		s->fail_reopen_start = which;
+	pthread_mutex_unlock(&s->lock);
 }
 
 void d1_fixture_fail_next_flush(struct d1_store *s)
@@ -4469,7 +4496,19 @@ static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
  * This is read-only reconstruction.  It does not open a new incarnation;
  * d1_store_reopen does that, on top of this.
  */
-uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
+/*
+ * Reduction, with the store's lock already held.
+ *
+ * A reopen is one transition, not two: it rebuilds, adopts the durable
+ * prefix and makes a new START durable, and a caller that entered
+ * between any two of those would be mutating a store that is live and
+ * journalling nothing.  Its own journal could then not rebuild it, for
+ * the rest of its life.  So the fence is the caller's lock interval and
+ * the body of the reduction lives here, where either entry point can
+ * hold it for as long as it needs.
+ */
+static uint32_t d1_replay_locked(struct d1_store *s, const uint8_t *log,
+				 size_t durable)
 {
 	struct d1_journal_cursor c;
 	const uint8_t *body;
@@ -4478,20 +4517,15 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
 	uint64_t lsn, incarnation;
 	unsigned int starts = 0;
 
-	pthread_mutex_lock(&s->lock);
-	if (s->replaying || s->poisoned || s->closed) {
-		pthread_mutex_unlock(&s->lock);
+	if (s->replaying || s->poisoned || s->closed)
 		return D1_INVALID;
-	}
 	/*
 	 * The target must be exactly as it was opened.  Refusing here
 	 * changes nothing, which is the point: a store that was rejected
 	 * is still the store it was, and is not poisoned.
 	 */
-	if (!d1_store_pristine(s) || s->active_calls) {
-		pthread_mutex_unlock(&s->lock);
+	if (!d1_store_pristine(s) || s->active_calls)
 		return D1_INVALID;
-	}
 	/*
 	 * Section 9: clear every fault arm before replay, and admit no new
 	 * one until it ends.  Suppressing a fault during reduction is not
@@ -4568,6 +4602,21 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
 	 */
 	if (status != D1_OK)
 		s->poisoned = true;
+	return status;
+}
+
+uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
+{
+	uint32_t status;
+
+	pthread_mutex_lock(&s->lock);
+	/*
+	 * A read-only rebuild reaches no START of its own, so an arm aimed
+	 * at one would sit on the store waiting for a reopen that this
+	 * handle can no longer have.  It goes here, with every other arm.
+	 */
+	s->fail_reopen_start = D1_REOPEN_START_OK;
+	status = d1_replay_locked(s, log, durable);
 	pthread_mutex_unlock(&s->lock);
 	return status;
 }
@@ -4583,12 +4632,36 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
 uint32_t d1_store_reopen(struct d1_store *s, const uint8_t *log, size_t durable)
 {
 	uint32_t status;
+	uint32_t arm;
 
-	status = d1_store_replay(s, log, durable);
-	if (status != D1_OK)
-		return status;
-
+	/*
+	 * One lock interval covers the whole transition: the reduction,
+	 * the adoption of the durable prefix and the new START becoming
+	 * durable.  It used to cover the reduction and then be taken again
+	 * for the rest, and a call admitted in that gap found a store that
+	 * was rebuilt, live and journalling nothing -- so its mutation was
+	 * real and unrecorded, and the log could no longer rebuild the
+	 * store it belonged to.  Nothing in the gap was wrong on its own;
+	 * the gap was.
+	 */
 	pthread_mutex_lock(&s->lock);
+	/*
+	 * The arm for this transition's own START.  It is deliberately not
+	 * one of the arms reduction clears: those describe operations, and
+	 * an arm that survived reconstruction would be an unjournalled
+	 * control changing what the store did afterwards.  This one names
+	 * the transition itself, which is the one pre-frontier failure a
+	 * reopen has, and it cannot outlive it -- the transition consumes
+	 * it, and a read-only rebuild drops it.
+	 */
+	arm = s->fail_reopen_start;
+	s->fail_reopen_start = D1_REOPEN_START_OK;
+	status = d1_replay_locked(s, log, durable);
+	if (status != D1_OK) {
+		pthread_mutex_unlock(&s->lock);
+		return status;
+	}
+
 	/*
 	 * Everything from here runs on a store that has already been
 	 * rebuilt, so a failure cannot be answered by leaving the handle
@@ -4617,6 +4690,10 @@ uint32_t d1_store_reopen(struct d1_store *s, const uint8_t *log, size_t durable)
 		return D1_NOSPC;
 	}
 	s->incarnation++;
+	if (arm == D1_REOPEN_START_APPEND)
+		s->journal.fail_append_in = 1u;
+	else if (arm == D1_REOPEN_START_FLUSH)
+		s->journal.fail_next_flush = true;
 	status = d1_start_append(s);
 	if (status != D1_OK) {
 		s->incarnation--;

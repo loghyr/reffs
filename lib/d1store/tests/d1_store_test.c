@@ -9572,6 +9572,140 @@ static void test_a_control_runs_between_two_members(void)
 }
 
 /*
+ * A reopen whose new START never becomes durable.
+ *
+ * Section 9's reopen is one transition: rebuild, adopt the durable
+ * prefix, make a new START durable.  The one failure it can have before
+ * its own frontier is that START, and it was not reachable.  Reduction
+ * clears every fault arm -- rightly, because an arm that survived
+ * reconstruction would be an unjournalled control changing what the
+ * store did afterwards -- and re-initialising the journal cleared the
+ * rest, so nothing a caller could arm ever reached the step.  An
+ * unreachable failure path is an untested one.
+ *
+ * The arm is now taken before reduction clears it and put back at the
+ * step it names.  What it must leave is not a store that carried on: a
+ * reduction that happened cannot be undone by returning an error, so
+ * the handle is finished, exactly as a partial rebuild leaves it.  The
+ * incarnation goes back, the journal is released, and every public
+ * entry point refuses.
+ */
+static void test_a_reopen_start_that_never_becomes_durable(void)
+{
+	static const char *const what[] = { "append", "flush" };
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *target;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t data[16];
+	uint8_t *snap = NULL;
+	const uint8_t *log;
+	size_t len, snap_len = 0;
+	unsigned int leg;
+	d1_admission_id admission;
+	d1_version_id seen;
+
+	memset(data, 0xb4, sizeof(data));
+	fill_uuid(&store_uuid, 0xb4);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	admission = d1_fixture_admit(live, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_SINGLE_WRITER);
+	check(d1_version_live(
+		      commit_chunk(live, admission, 0, 1, data, sizeof(data),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
+	      "a history to reopen");
+	log = journal_of(live, &len);
+
+	for (leg = 0; leg < 2; leg++) {
+		target =
+			d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (!target)
+			break;
+		d1_fixture_fail_reopen_start(target,
+					     leg == 0 ? D1_REOPEN_START_APPEND :
+							D1_REOPEN_START_FLUSH);
+		check(d1_store_reopen(target, log, len) == D1_IO,
+		      leg == 0 ? "a reopen whose START cannot be appended "
+				 "fails" :
+				 "a reopen whose START cannot be flushed "
+				 "fails");
+
+		/*
+		 * The reduction happened, so what is left is not the store
+		 * that was opened.  Nothing may be served from it.
+		 */
+		env_init(&env, target, admission, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		env.body.write.activate = true;
+		write_entry(&env.body.write.entries[0], 3, 11, 9, data,
+			    sizeof(data), true,
+			    &(struct d1_guard){ .never_written = true });
+		check(d1_store_apply(target, &env, &res) == D1_INVALID,
+		      "and the store it leaves accepts no call");
+		ordinary_sel(&sel);
+		check(d1_view_open(target, &object, admission, &sel, 0,
+				   CHUNK_BYTES, &view) == D1_INVALID &&
+			      view == NULL,
+		      "nor opens a view");
+		check(!d1_store_visible(target, &object, 0, &seen),
+		      "nor answers an observer");
+		check(d1_store_journal_snapshot(target, &snap, &snap_len) ==
+			      D1_INVALID,
+		      "nor hands out a log");
+		free(snap);
+		snap = NULL;
+		check(d1_store_close(target) == D1_OK &&
+			      d1_store_destroy(target) == D1_OK,
+		      "and only teardown is left");
+		(void)what[leg];
+	}
+
+	/*
+	 * And with nothing armed the same reopen succeeds, serves, and
+	 * logs what it serves -- so the arm did not leak into the run it
+	 * was not aimed at.
+	 */
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		d1_admission_id fresh;
+		struct d1_store *again;
+
+		check(d1_store_reopen(target, log, len) == D1_OK,
+		      "an unarmed reopen succeeds");
+		check(d1_store_visible(target, &object, 0, &seen),
+		      "and serves what it rebuilt");
+		fresh = d1_fixture_admit(target, &object, 11,
+					 D1_RIGHT_WRITE |
+						 D1_RIGHT_SINGLE_WRITER);
+		check(d1_version_live(commit_chunk(
+			      target, fresh, 4, 5, data, sizeof(data),
+			      &(struct d1_guard){ .never_written = true },
+			      d1_version_none(), NULL)),
+		      "and takes new work");
+		log = journal_of(target, &len);
+		again = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+		if (again) {
+			check(d1_store_replay(again, log, len) == D1_OK,
+			      "whose log rebuilds it");
+			check(object_states_agree(target, again, &object),
+			      "into the same store");
+			d1_store_free(again);
+		}
+		d1_store_free(target);
+	}
+
+	d1_store_free(live);
+}
+
+/*
  * A record that names an admission no CONTROL installed.
  *
  * The reducer asks two questions of every request that reaches it:
@@ -12517,6 +12651,7 @@ int main(void)
 	test_a_request_read_at_the_door_is_the_one_that_runs();
 	test_an_admitted_call_spans_another();
 	test_a_control_runs_between_two_members();
+	test_a_reopen_start_that_never_becomes_durable();
 	test_a_record_that_names_no_admission();
 	test_record_tags_are_validated();
 	test_operation_key_binds_the_whole_envelope();

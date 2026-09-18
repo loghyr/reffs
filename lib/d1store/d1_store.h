@@ -527,6 +527,25 @@ void d1_fixture_fail_append_in(struct d1_store *s, uint32_t n);
  */
 void d1_fixture_fail_next_flush(struct d1_store *s);
 
+/* Which step of a reopen's new START a fixture may fail. */
+enum d1_reopen_start_fault {
+	D1_REOPEN_START_OK = 0,
+	D1_REOPEN_START_APPEND = 1,
+	D1_REOPEN_START_FLUSH = 2,
+};
+
+/*
+ * Arm the next reopen's START to fail at @which.
+ *
+ * A reopen is one transition -- rebuild, adopt, make a new START
+ * durable -- and that START is the one failure it can have before its
+ * own frontier.  Reduction clears the arms that describe operations, so
+ * none of them ever reached this step; this arm describes the
+ * transition, is consumed by it, and is dropped by a read-only rebuild.
+ * A reopen that fails here leaves a handle only teardown may touch.
+ */
+void d1_fixture_fail_reopen_start(struct d1_store *s, uint32_t which);
+
 /*
  * Fixture fault control: force the next publication to leave the
  * materialized index behind.  The event is already durable, so the
