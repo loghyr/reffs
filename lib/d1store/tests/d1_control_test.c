@@ -301,6 +301,106 @@ static void test_golden_complete_result(void)
  * must make the two results differ; a comparison that agreed with
  * everything would make recovery's check worthless.
  */
+/*
+ * Golden bytes for the certificate control record.
+ *
+ * The cross-DS completion certificate clear_error requires is issued
+ * outside D1 entirely, so a fixture stands in for its issuer and this
+ * record is what that issuance looks like on the wire.  It names no
+ * object -- the zero key is part of what a reader checks -- and its
+ * width is frozen with the rest.
+ */
+static void test_golden_certificate_request(void)
+{
+	static const uint8_t want[] = {
+		/* control kind: certificate */
+		0x00,
+		0x00,
+		0x00,
+		0x07,
+		/* object key: the zero key, because a certificate names none */
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		/* the certificate is present */
+		0x01,
+		/* and is its thirty-two bytes */
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+		0x5a,
+	};
+	struct d1_control_request r;
+	uint8_t buf[256];
+	size_t len;
+
+	memset(&r, 0, sizeof(r));
+	r.kind = D1_CTL_CERTIFICATE;
+	r.certificate_present = true;
+	memset(r.certificate, 0x5a, sizeof(r.certificate));
+	len = d1_control_request_encode(&r, buf, sizeof(buf));
+	check(len == sizeof(want), "the certificate record is that long");
+	check(len == sizeof(want) && memcmp(buf, want, sizeof(want)) == 0,
+	      "and is byte for byte the golden record");
+}
+
 static void test_comparison_notices_every_field(void)
 {
 	struct d1_complete_result base, v;
@@ -465,6 +565,7 @@ static void test_control_refusals(void)
 int main(void)
 {
 	test_golden_complete_result();
+	test_golden_certificate_request();
 	test_comparison_notices_every_field();
 	test_control_round_trip();
 	test_control_refusals();

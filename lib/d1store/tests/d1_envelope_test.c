@@ -265,6 +265,245 @@ static void test_golden_write_envelope(void)
 	}
 }
 
+/*
+ * Golden bytes for a canonical repair request.
+ *
+ * The repair vector is the shape D1b added and the one this slice
+ * moved most: a member carries a mode, an owner, an optional
+ * transaction, custody, a postcondition and the state it captured,
+ * and the batch carries a cohort, an episode, an expected phase, a
+ * prior verifier and a certificate, each of them an option some calls
+ * have and others may not.  Which of them a begin_repair carries is
+ * frozen here as bytes, so a reordering or a widening is a failing
+ * test rather than a silently different request digest.
+ */
+static void test_golden_repair_envelope(void)
+{
+	static const uint8_t want[] = {
+		/* object key: export UUID then object UUID */
+		0x00,
+		0x01,
+		0x02,
+		0x03,
+		0x04,
+		0x05,
+		0x06,
+		0x07,
+		0x08,
+		0x09,
+		0x0a,
+		0x0b,
+		0x0c,
+		0x0d,
+		0x0e,
+		0x0f,
+		0x10,
+		0x11,
+		0x12,
+		0x13,
+		0x14,
+		0x15,
+		0x16,
+		0x17,
+		0x18,
+		0x19,
+		0x1a,
+		0x1b,
+		0x1c,
+		0x1d,
+		0x1e,
+		0x1f,
+		/* admission handle 7 */
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x07,
+		/* incarnation 1 */
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x01,
+		/* operation key: origin UUID, sequence 5, ordinal 0 */
+		0x20,
+		0x21,
+		0x22,
+		0x23,
+		0x24,
+		0x25,
+		0x26,
+		0x27,
+		0x28,
+		0x29,
+		0x2a,
+		0x2b,
+		0x2c,
+		0x2d,
+		0x2e,
+		0x2f,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x05,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		/* operation tag: begin_repair */
+		0x00,
+		0x00,
+		0x00,
+		0x06,
+		/* chunk range 4 to 5 */
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x04,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x05,
+		/* member count 1 */
+		0x00,
+		0x00,
+		0x00,
+		0x01,
+		/* chunk index 4 */
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x04,
+		/* repair mode NOPRE */
+		0x00,
+		0x00,
+		0x00,
+		0x02,
+		/* owner: cohort 42, writer 11, co_id 1 */
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x2a,
+		0x00,
+		0x00,
+		0x00,
+		0x0b,
+		0x00,
+		0x00,
+		0x00,
+		0x01,
+		/* no member transaction: begin_repair issues them */
+		0x00,
+		/* repair custody 0x5500 */
+		0x01,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x55,
+		0x00,
+		/* the postcondition this NOPRE member consumes, 0x5a00 */
+		0x01,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x5a,
+		0x00,
+		/* the successor it repairs, 0x6600 */
+		0x01,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x66,
+		0x00,
+		/* no predecessor: that absence is what NOPRE is about */
+		0x00,
+		/* no payload: prepare_repair stages those */
+		0x00,
+		/* no cohort: this is the call that opens one */
+		0x00,
+		/* no episode: no member of this vector is an ERROR member */
+		0x00,
+		/* no expected phase, no prior verifier, no certificate */
+		0x00,
+		0x00,
+		0x00,
+	};
+	struct d1_envelope env;
+	uint8_t buf[512];
+	size_t len;
+
+	memset(&env, 0, sizeof(env));
+	fill_uuid(&env.object.export_uuid, 0x00);
+	fill_uuid(&env.object.object_uuid, 0x10);
+	fill_uuid(&env.key.origin, 0x20);
+	env.admission.raw = 7;
+	env.incarnation = 1;
+	env.key.sequence = 5;
+	env.key.ordinal = 0;
+	env.op = D1_OP_BEGIN_REPAIR;
+	env.body.repair.range_begin = 4;
+	env.body.repair.range_end = 5;
+	env.body.repair.count = 1;
+	env.body.repair.entries[0].index = 4;
+	env.body.repair.entries[0].mode = D1_REPAIR_NOPRE;
+	env.body.repair.entries[0].owner.cohort.raw = 42;
+	env.body.repair.entries[0].owner.writer = 11;
+	env.body.repair.entries[0].owner.co_id = 1;
+	env.body.repair.entries[0].custody_present = true;
+	env.body.repair.entries[0].custody.raw = 0x5500u;
+	env.body.repair.entries[0].postcond_present = true;
+	env.body.repair.entries[0].postcond.raw = 0x5a00u;
+	env.body.repair.entries[0].successor_present = true;
+	env.body.repair.entries[0].successor.raw = 0x6600u;
+
+	len = d1_envelope_encode(&env, buf, sizeof(buf));
+	check(len == sizeof(want), "golden repair envelope length");
+	if (len == sizeof(want) && memcmp(buf, want, len) != 0) {
+		size_t i;
+
+		failures++;
+		fprintf(stderr, "FAIL: golden repair envelope bytes\n  got ");
+		for (i = 0; i < len; i++)
+			fprintf(stderr, "%02x", buf[i]);
+		fprintf(stderr, "\n");
+	}
+}
+
 static void test_round_trip(void)
 {
 	struct d1_envelope env, back;
@@ -1123,6 +1362,7 @@ int main(void)
 		return 1;
 	}
 	test_golden_write_envelope();
+	test_golden_repair_envelope();
 	test_round_trip();
 	test_the_round_trip_keeps_every_field();
 	test_digest_binds_every_field();

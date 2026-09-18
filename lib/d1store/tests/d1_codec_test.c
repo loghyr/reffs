@@ -20,7 +20,9 @@
 #include <string.h>
 
 #include "d1_codec.h"
+#include "d1_control.h"
 #include "d1_digest.h"
+#include "d1_journal.h"
 
 static unsigned int failures;
 
@@ -86,6 +88,33 @@ static void test_tag_table(void)
 		      D1_RIGHT_REPAIR == 0x4u && D1_RIGHT_CONTROL == 0x8u &&
 		      D1_RIGHT_SINGLE_WRITER == 0x10u,
 	      "rights flags");
+	check(D1_CTL_ENVELOPE == 1 && D1_CTL_ADMIT == 2 &&
+		      D1_CTL_REVOKE == 3 && D1_CTL_EXPIRE == 4 &&
+		      D1_CTL_CUSTODY == 5 && D1_CTL_RELEASE == 6 &&
+		      D1_CTL_CERTIFICATE == 7,
+	      "control record kinds");
+	check(D1_REPAIR_ERROR == 1 && D1_REPAIR_NOPRE == 2, "repair modes");
+	/*
+	 * The handle domains are not on the wire -- a handle encodes as
+	 * its canonical value alone -- but they are frozen all the same:
+	 * two domains that shared a number would let a value decoded for
+	 * one be adopted as the other, which is the one mistake the
+	 * runtime kind exists to refuse.
+	 */
+	check(D1_HANDLE_NONE == 0 && D1_HANDLE_ADMISSION == 1 &&
+		      D1_HANDLE_TXN == 2 && D1_HANDLE_VERSION == 3 &&
+		      D1_HANDLE_CUSTODY == 4 && D1_HANDLE_REPAIR == 5 &&
+		      D1_HANDLE_POSTCOND == 6 && D1_HANDLE_EPISODE == 7,
+	      "handle domains");
+	/* Widths a record's shape depends on, and the format it is in. */
+	check(D1_VERIFIER_BYTES == 8u && D1_DIGEST_BYTES == 32u &&
+		      D1_CERTIFICATE_BYTES == 32u,
+	      "frozen widths");
+	check(D1_JOURNAL_FORMAT == 2u, "the record format this build writes");
+	check(D1_JOURNAL_MAGIC == 0x44314a31u &&
+		      D1_JOURNAL_HEADER_BYTES == 56u &&
+		      D1_JOURNAL_TRAILER_BYTES == 4u,
+	      "and the frame it writes it in");
 }
 
 /* Golden bytes for each primitive, written out by hand. */
