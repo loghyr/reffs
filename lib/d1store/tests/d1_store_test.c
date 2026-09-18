@@ -10842,6 +10842,38 @@ static void test_an_envelope_control_carries_its_digest(void)
 		      "a control record whose bytes changed is refused");
 		d1_store_free(target);
 	}
+
+	/*
+	 * And the forgery that gets the digest right.  A control record
+	 * naming an admission no ADMIT installed, with its digest
+	 * recomputed over the forged bytes, is structurally perfect: the
+	 * digest agrees, the CRC agrees, nothing about the record is
+	 * malformed.  What refuses it is that reducing it creates no
+	 * receipt -- the reducer answers the forged authority
+	 * STALE_AUTH and records nothing, and a durable record claims an
+	 * event that did not happen.  The ENTRY path has had that check
+	 * since the first slice; this is the CONTROL path's.
+	 */
+	memcpy(copy, log, len);
+	check(d1_envelope_decode(log + env_at, env_len, &forged),
+	      "the record decodes again");
+	forged.admission = d1_fixture_admission_handle(
+		live, d1_admission_raw(admission) + 1000u);
+	check(d1_envelope_encode(&forged, rebuilt_bytes,
+				 sizeof(rebuilt_bytes)) == env_len,
+	      "and the forged authority encodes to the same length");
+	memcpy(copy + env_at, rebuilt_bytes, env_len);
+	/* The digest sits immediately after the request it covers. */
+	d1_request_digest(copy + env_at, env_len, copy + env_at + env_len);
+	crc = d1_crc32c(copy + at, total - D1_JOURNAL_TRAILER_BYTES);
+	for (i = 0; i < 4u; i++)
+		copy[at + total - 4u + i] = (uint8_t)(crc >> (24u - 8u * i));
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, copy, len) == D1_INVALID,
+		      "a control record that creates no receipt is refused");
+		d1_store_free(target);
+	}
 	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (target) {
 		check(d1_store_replay(target, log, len) == D1_OK,
