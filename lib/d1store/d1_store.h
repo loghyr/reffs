@@ -55,6 +55,12 @@
  * count of outstanding ones.
  */
 #define D1_MAX_POSTCONDS 32u
+/*
+ * ERROR episodes the store retains.  One mark_error opens one over the
+ * vector it named, and an unlock ends it; the row stays under section
+ * 6's retain-everything policy, so this is a lifetime cap.
+ */
+#define D1_MAX_EPISODES 16u
 #define D1_MAX_INTERVALS 64u
 #define D1_MAX_VIEWS 32u
 
@@ -82,6 +88,13 @@ struct d1_entry_result {
 	 */
 	bool postcond_present;
 	d1_postcond_id postcond;
+	/*
+	 * The ERROR episode a mark_error opened over its vector, which
+	 * section 4 answers with.  Every later call about those members
+	 * names it again.
+	 */
+	bool episode_present;
+	d1_episode_id episode;
 	/* The guard as it stands after the entry, or as it stood on refusal. */
 	struct d1_guard guard;
 	struct d1_owner owner;
@@ -312,6 +325,9 @@ d1_repair_id d1_fixture_repair_handle(struct d1_store *s, uint64_t raw);
  * without the refused rollback that would issue it.
  */
 d1_postcond_id d1_fixture_postcond_handle(struct d1_store *s, uint64_t raw);
+
+/* And an ERROR episode, for the same reasons. */
+d1_episode_id d1_fixture_episode_handle(struct d1_store *s, uint64_t raw);
 
 /*
  * What a postcondition the store holds was bound to, for the tests

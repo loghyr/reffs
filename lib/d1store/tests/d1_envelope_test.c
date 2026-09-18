@@ -736,6 +736,15 @@ static void make_repair(struct d1_envelope *env, uint32_t op)
 					  op != D1_OP_BEGIN_REPAIR;
 	env->body.repair.cohort.raw =
 		env->body.repair.cohort_present ? 0x8800u : 0u;
+	/*
+	 * The episode: named by a begin_repair whose vector has an ERROR
+	 * member -- member 0 is one -- and by clear_error.  An unlock
+	 * names one or the cohort, and this shape names the cohort.
+	 */
+	env->body.repair.episode_present = op == D1_OP_BEGIN_REPAIR ||
+					   op == D1_OP_CLEAR_ERROR;
+	env->body.repair.episode.raw =
+		env->body.repair.episode_present ? 0x8e00u : 0u;
 	env->body.repair.certificate_present = op == D1_OP_CLEAR_ERROR;
 	if (env->body.repair.certificate_present)
 		memset(env->body.repair.certificate, 0x9a,
@@ -807,6 +816,9 @@ static void test_every_repair_operation_round_trips(void)
 		check(a->cohort_present == b->cohort_present &&
 			      a->cohort.raw == b->cohort.raw,
 		      "and the cohort it names, or does not");
+		check(a->episode_present == b->episode_present &&
+			      a->episode.raw == b->episode.raw,
+		      "and the episode it names, or does not");
 		check(a->certificate_present == b->certificate_present &&
 			      (!a->certificate_present ||
 			       memcmp(a->certificate, b->certificate,
@@ -892,6 +904,38 @@ static void test_a_repair_option_belongs_to_its_operation(void)
 	env.body.repair.entries[1].payload_present = false;
 	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
 	      "and a prepare stages its whole vector");
+
+	/* The episode, which the ERROR members and clear_error name. */
+	make_repair(&env, D1_OP_BEGIN_REPAIR);
+	env.body.repair.episode_present = false;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "a vector with an ERROR member names its episode");
+	make_repair(&env, D1_OP_BEGIN_REPAIR);
+	env.body.repair.entries[0].mode = D1_REPAIR_NOPRE;
+	env.body.repair.entries[0].postcond_present = true;
+	env.body.repair.entries[0].postcond.raw = 7;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "and a vector with none names no episode");
+	make_repair(&env, D1_OP_COMMIT_REPAIR);
+	env.body.repair.episode_present = true;
+	env.body.repair.episode.raw = 8;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "a commit is about the cohort and not the episode");
+	make_repair(&env, D1_OP_UNLOCK);
+	env.body.repair.episode_present = true;
+	env.body.repair.episode.raw = 8;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "an unlock names the cohort or the episode, not both");
+	make_repair(&env, D1_OP_UNLOCK);
+	env.body.repair.cohort_present = false;
+	env.body.repair.episode_present = true;
+	env.body.repair.episode.raw = 8;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) != 0,
+	      "and naming the episode alone is an unlock");
+	make_repair(&env, D1_OP_UNLOCK);
+	env.body.repair.cohort_present = false;
+	check(d1_envelope_encode(&env, buf, sizeof(buf)) == 0,
+	      "while naming neither is not");
 
 	/* The postcondition, which is a NOPRE begin member's alone. */
 	make_repair(&env, D1_OP_BEGIN_REPAIR);

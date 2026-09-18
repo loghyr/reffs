@@ -110,6 +110,7 @@ struct d1_chunk {
 	 * locked after commit until clear_error has seen the certificate.
 	 */
 	bool error_present;
+	uint64_t error_episode;
 	uint64_t error_custody;
 	uint64_t error_version;
 	bool error_cleared;
@@ -196,6 +197,29 @@ struct d1_admission {
 	uint32_t rights;
 	bool revoked;
 	bool expired;
+};
+
+/*
+ * One ERROR episode, as mark_error opened it.
+ *
+ * Section 4 answers mark_error with "episode, quarantined vector" and
+ * has begin_repair's ERROR members, clear_error and unlock name that
+ * episode again.  The chunk keeps the version and the custody the
+ * episode bound it to, because those are per member; this row is the
+ * episode's identity and the vector it covers, which is what a caller
+ * names and what every later call is checked against.
+ *
+ * Without it the episode was implicit -- a chunk was in "the" episode
+ * because it carried a mark -- which is only unambiguous while one
+ * chunk can be in one episode.  The memo does not say the identity is
+ * dispensable there; it says the request carries it.
+ */
+struct d1_episode {
+	bool used;
+	uint64_t id;
+	uint32_t object;
+	uint32_t count;
+	uint64_t index[D1_BATCH_ENTRIES_MAX];
 };
 
 /*
@@ -335,10 +359,12 @@ struct d1_store {
 	struct d1_custody custody[D1_MAX_CUSTODY];
 	struct d1_repair repairs[D1_MAX_REPAIRS];
 	struct d1_postcond postconds[D1_MAX_POSTCONDS];
+	struct d1_episode episodes[D1_MAX_EPISODES];
 	struct d1_view views[D1_MAX_VIEWS];
 	uint64_t next_custody;
 	uint64_t next_repair;
 	uint64_t next_postcond;
+	uint64_t next_episode;
 	/*
 	 * The cross-DS completion certificate clear_error requires.  What
 	 * issues one is outside D1 entirely, so a fixture stands in for
@@ -570,6 +596,7 @@ struct d1_store *d1_store_open(const struct d1_uuid *store_uuid,
 	s->next_custody = 1;
 	s->next_repair = 1;
 	s->next_postcond = 1;
+	s->next_episode = 1;
 	return s;
 }
 
@@ -592,7 +619,8 @@ static bool d1_store_pristine(const struct d1_store *s)
 		return false;
 	if (s->next_txn != 1u || s->next_version != 1u ||
 	    s->next_admission != 1u || s->next_custody != 1u ||
-	    s->next_repair != 1u || s->next_postcond != 1u)
+	    s->next_repair != 1u || s->next_postcond != 1u ||
+	    s->next_episode != 1u)
 		return false;
 	if (s->journaling || s->replayed_lsn)
 		return false;
@@ -619,6 +647,9 @@ static bool d1_store_pristine(const struct d1_store *s)
 			return false;
 	for (i = 0; i < D1_MAX_POSTCONDS; i++)
 		if (s->postconds[i].used)
+			return false;
+	for (i = 0; i < D1_MAX_EPISODES; i++)
+		if (s->episodes[i].used)
 			return false;
 	for (i = 0; i < D1_MAX_OWNERS; i++)
 		if (s->owners[i].used)
@@ -1246,6 +1277,41 @@ static struct d1_postcond *d1_postcond_spare(struct d1_store *s)
 	return NULL;
 }
 
+static d1_episode_id d1_episode_of(const struct d1_store *s, uint64_t raw)
+{
+	d1_episode_id id = d1_episode_none();
+
+	if (raw) {
+		id.raw = raw;
+		id._kind = D1_HANDLE_EPISODE;
+		id._instance = s->instance;
+	}
+	return id;
+}
+
+static struct d1_episode *d1_episode_find(struct d1_store *s, d1_episode_id id)
+{
+	uint32_t i;
+
+	if (!d1_handle_ours(s, id.raw, id._kind, id._instance,
+			    D1_HANDLE_EPISODE))
+		return NULL;
+	for (i = 0; i < D1_MAX_EPISODES; i++)
+		if (s->episodes[i].used && s->episodes[i].id == id.raw)
+			return &s->episodes[i];
+	return NULL;
+}
+
+static struct d1_episode *d1_episode_spare(struct d1_store *s)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_EPISODES; i++)
+		if (!s->episodes[i].used)
+			return &s->episodes[i];
+	return NULL;
+}
+
 static struct d1_txn *d1_txn_find(struct d1_store *s, d1_txn_id id)
 {
 	uint32_t i;
@@ -1677,6 +1743,11 @@ static uint64_t d1_next_version_seen(const struct d1_store *s)
 static uint64_t d1_next_postcond_seen(const struct d1_store *s)
 {
 	return s->exhaust_ids ? UINT64_MAX : s->next_postcond;
+}
+
+static uint64_t d1_next_episode_seen(const struct d1_store *s)
+{
+	return s->exhaust_ids ? UINT64_MAX : s->next_episode;
 }
 
 static uint64_t d1_index_epoch_seen(const struct d1_store *s)
@@ -2379,6 +2450,8 @@ struct d1_repair_undo {
 	uint64_t next_version_before;
 	uint64_t next_txn_before;
 	uint64_t next_repair_before;
+	uint64_t next_episode_before;
+	struct d1_episode *fresh_episode;
 	/* Rows a refused call took, which it does not get to keep. */
 	uint32_t fresh_count;
 	struct d1_version *fresh_version[D1_BATCH_ENTRIES_MAX];
@@ -2408,6 +2481,7 @@ static void d1_repair_undo_begin(struct d1_repair_undo *u,
 	u->next_version_before = s->next_version;
 	u->next_txn_before = s->next_txn;
 	u->next_repair_before = s->next_repair;
+	u->next_episode_before = s->next_episode;
 	u->fail_index_before = s->fail_next_index;
 	u->overlay_before = s->overlay_active;
 }
@@ -2487,6 +2561,8 @@ static void d1_repair_undo_apply(struct d1_store *s, struct d1_repair_undo *u)
 		*u->cohort = u->cohort_before;
 	if (u->fresh)
 		u->fresh->used = false;
+	if (u->fresh_episode)
+		u->fresh_episode->used = false;
 	for (i = 0; i < u->fresh_count; i++) {
 		if (u->fresh_version[i])
 			u->fresh_version[i]->used = false;
@@ -2501,6 +2577,7 @@ static void d1_repair_undo_apply(struct d1_store *s, struct d1_repair_undo *u)
 	s->next_version = u->next_version_before;
 	s->next_txn = u->next_txn_before;
 	s->next_repair = u->next_repair_before;
+	s->next_episode = u->next_episode_before;
 	s->fail_next_index = u->fail_index_before;
 	s->overlay_active = u->overlay_before;
 }
@@ -2528,8 +2605,22 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 				   struct d1_repair_undo *u)
 {
 	const struct d1_repair_batch *rb = &env->body.repair;
+	struct d1_episode *episode = NULL;
 	struct d1_repair *row = NULL;
 	uint32_t i;
+
+	/*
+	 * The episode the ERROR members are in, named once for the
+	 * vector.  The decoder requires it exactly when the vector has an
+	 * ERROR member, so its absence here is a vector that has none.
+	 */
+	if (rb->episode_present) {
+		episode = d1_episode_find(s, rb->episode);
+		if (!episode)
+			return D1_STALE_AUTH;
+		if (episode->object != d1_object_slot(s, o))
+			return D1_INVALID;
+	}
 
 	for (i = 0; i < rb->count; i++) {
 		const struct d1_repair_entry *e = &rb->entries[i];
@@ -2618,6 +2709,9 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 				return D1_STALE_AUTH;
 		} else {
 			if (!chunk->error_present)
+				return D1_BAD_PHASE;
+			/* And in the episode this call is about. */
+			if (!episode || chunk->error_episode != episode->id)
 				return D1_BAD_PHASE;
 			if (chunk->error_custody != e->custody.raw)
 				return D1_STALE_AUTH;
@@ -3075,6 +3169,7 @@ static uint32_t d1_do_mark_error(struct d1_store *s,
 				 struct d1_repair_undo *u)
 {
 	const struct d1_repair_batch *rb = &env->body.repair;
+	struct d1_episode *episode;
 	uint32_t i;
 
 	for (i = 0; i < rb->count; i++) {
@@ -3109,17 +3204,30 @@ static uint32_t d1_do_mark_error(struct d1_store *s,
 			return D1_NO_PREDECESSOR;
 	}
 
+	episode = d1_episode_spare(s);
+	if (!episode || d1_next_episode_seen(s) == UINT64_MAX)
+		return D1_NOSPC;
+	u->fresh_episode = episode;
+	memset(episode, 0, sizeof(*episode));
+	episode->used = true;
+	episode->id = s->next_episode++;
+	episode->object = d1_object_slot(s, o);
+	episode->count = rb->count;
 	for (i = 0; i < rb->count; i++) {
 		const struct d1_repair_entry *e = &rb->entries[i];
 		struct d1_chunk *chunk = &o->chunks[e->index];
 
+		episode->index[i] = e->index;
 		d1_repair_undo_chunk(u, chunk);
 		chunk->error_present = true;
 		chunk->error_cleared = false;
+		chunk->error_episode = episode->id;
 		chunk->error_custody = e->custody.raw;
 		chunk->error_version = chunk->visible;
 	}
 	res->phase = D1_PHASE_ADMITTED;
+	res->episode_present = true;
+	res->episode = d1_episode_of(s, episode->id);
 	return D1_OK;
 }
 
@@ -3140,11 +3248,15 @@ static uint32_t d1_do_clear_error(struct d1_store *s,
 				  struct d1_repair_undo *u)
 {
 	const struct d1_repair_batch *rb = &env->body.repair;
+	struct d1_episode *episode;
 	uint32_t errors = 0;
 	uint32_t i;
 
 	if (cohort->phase != D1_PHASE_COMMITTED)
 		return D1_BAD_PHASE;
+	episode = d1_episode_find(s, rb->episode);
+	if (!episode)
+		return D1_STALE_AUTH;
 	if (!s->certificate_present ||
 	    memcmp(s->certificate, rb->certificate, D1_CERTIFICATE_BYTES) != 0)
 		return D1_STALE_AUTH;
@@ -3167,6 +3279,8 @@ static uint32_t d1_do_clear_error(struct d1_store *s,
 			continue;
 		errors++;
 		if (!chunk->error_present || chunk->error_cleared)
+			return D1_BAD_PHASE;
+		if (chunk->error_episode != episode->id)
 			return D1_BAD_PHASE;
 		if (chunk->error_custody != m->custody)
 			return D1_STALE_AUTH;
@@ -3229,6 +3343,7 @@ static uint32_t d1_do_unlock(struct d1_store *s, struct d1_repair *cohort,
 		chunk->repair = 0;
 		chunk->error_present = false;
 		chunk->error_cleared = false;
+		chunk->error_episode = 0;
 		chunk->error_custody = 0;
 		chunk->error_version = 0;
 	}
@@ -3246,6 +3361,36 @@ static uint32_t d1_do_unlock(struct d1_store *s, struct d1_repair *cohort,
  * same members, same order, same owners.  Section 7 wants "exact
  * vector/order" and this is where that is asked, once, for all of them.
  */
+/*
+ * The cohort whose ERROR members are in this episode.
+ *
+ * Section 4 lets unlock name the episode instead of the cohort, and
+ * the members it releases are the cohort's either way, so the one has
+ * to resolve to the other.  A cohort's ERROR members are all in one
+ * episode, so the first member that matches settles it.
+ */
+static struct d1_repair *
+d1_repair_of_episode(struct d1_store *s, struct d1_object *o, uint64_t episode)
+{
+	uint32_t i, j;
+
+	for (i = 0; i < D1_MAX_REPAIRS; i++) {
+		struct d1_repair *row = &s->repairs[i];
+
+		if (!row->used || row->object != d1_object_slot(s, o))
+			continue;
+		for (j = 0; j < row->count; j++) {
+			const struct d1_chunk *c =
+				&o->chunks[row->member[j].index];
+
+			if (row->member[j].mode == D1_REPAIR_ERROR &&
+			    c->error_episode == episode)
+				return row;
+		}
+	}
+	return NULL;
+}
+
 static uint32_t d1_do_repair(struct d1_store *s, const struct d1_envelope *env,
 			     struct d1_admission *a,
 			     struct d1_entry_result *res,
@@ -3258,12 +3403,24 @@ static uint32_t d1_do_repair(struct d1_store *s, const struct d1_envelope *env,
 
 	if (!o)
 		return D1_INVALID;
-	if (!rb->cohort_present)
-		return env->op == D1_OP_MARK_ERROR ?
-			       d1_do_mark_error(s, env, o, res, u) :
-			       d1_do_begin_repair(s, env, o, res, u);
+	if (env->op == D1_OP_MARK_ERROR)
+		return d1_do_mark_error(s, env, o, res, u);
+	if (env->op == D1_OP_BEGIN_REPAIR)
+		return d1_do_begin_repair(s, env, o, res, u);
 
-	cohort = d1_repair_find(s, rb->cohort);
+	if (rb->cohort_present) {
+		cohort = d1_repair_find(s, rb->cohort);
+	} else {
+		/*
+		 * An unlock that named the episode rather than the cohort.
+		 * The decoder allows that for unlock and for nothing else.
+		 */
+		struct d1_episode *episode = d1_episode_find(s, rb->episode);
+
+		if (!episode)
+			return D1_STALE_AUTH;
+		cohort = d1_repair_of_episode(s, o, episode->id);
+	}
 	if (!cohort)
 		return D1_INVALID;
 	if (cohort->object != d1_object_slot(s, o))
@@ -5575,6 +5732,11 @@ d1_postcond_id d1_fixture_postcond_handle(struct d1_store *s, uint64_t raw)
 	return d1_postcond_of(s, raw);
 }
 
+d1_episode_id d1_fixture_episode_handle(struct d1_store *s, uint64_t raw)
+{
+	return d1_episode_of(s, raw);
+}
+
 bool d1_fixture_postcond(struct d1_store *s, d1_postcond_id id, uint64_t *index,
 			 d1_version_id *successor, bool *consumed)
 {
@@ -5878,6 +6040,8 @@ static void d1_envelope_adopt(const struct d1_store *s, struct d1_envelope *env)
 		}
 		env->body.repair.cohort =
 			d1_repair_of(s, env->body.repair.cohort.raw);
+		env->body.repair.episode =
+			d1_episode_of(s, env->body.repair.episode.raw);
 		break;
 	default:
 		/* A write batch carries an owner, which no store issues. */

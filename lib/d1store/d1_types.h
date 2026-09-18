@@ -254,6 +254,7 @@ enum d1_handle_kind {
 	D1_HANDLE_CUSTODY = 4,
 	D1_HANDLE_REPAIR = 5,
 	D1_HANDLE_POSTCOND = 6,
+	D1_HANDLE_EPISODE = 7,
 };
 
 typedef struct d1_admission_id {
@@ -365,6 +366,20 @@ typedef struct d1_postcond_id {
 } d1_postcond_id;
 
 /*
+ * An ERROR episode, opened by mark_error over the vector it named.
+ *
+ * Section 4 answers mark_error with "episode, quarantined vector", and
+ * begin_repair's ERROR members, clear_error and unlock all name that
+ * episode again.  The store opens it, keeps the vector it covers and
+ * resolves it against its own table, so it is a handle like the rest.
+ */
+typedef struct d1_episode_id {
+	uint64_t raw;
+	uint32_t _kind;
+	uint64_t _instance;
+} d1_episode_id;
+
+/*
  * The canonical value of a handle: the one part of it the wire and the
  * journal carry, and the only part two stores that ran the same history
  * agree about.
@@ -395,6 +410,11 @@ static inline uint64_t d1_repair_raw(d1_repair_id id)
 }
 
 static inline uint64_t d1_postcond_raw(d1_postcond_id id)
+{
+	return id.raw;
+}
+
+static inline uint64_t d1_episode_raw(d1_episode_id id)
 {
 	return id.raw;
 }
@@ -447,6 +467,13 @@ static inline d1_postcond_id d1_postcond_none(void)
 	return id;
 }
 
+static inline d1_episode_id d1_episode_none(void)
+{
+	d1_episode_id id = { 0, D1_HANDLE_NONE, 0 };
+
+	return id;
+}
+
 /*
  * Whether a handle names anything: zero is absent, everywhere.
  *
@@ -487,6 +514,11 @@ static inline bool d1_repair_live(d1_repair_id id)
 }
 
 static inline bool d1_postcond_live(d1_postcond_id id)
+{
+	return id.raw != 0;
+}
+
+static inline bool d1_episode_live(d1_episode_id id)
 {
 	return id.raw != 0;
 }
@@ -534,6 +566,12 @@ static inline bool d1_repair_eq(d1_repair_id a, d1_repair_id b)
 }
 
 static inline bool d1_postcond_eq(d1_postcond_id a, d1_postcond_id b)
+{
+	return a.raw == b.raw && a._kind == b._kind &&
+	       a._instance == b._instance;
+}
+
+static inline bool d1_episode_eq(d1_episode_id a, d1_episode_id b)
 {
 	return a.raw == b.raw && a._kind == b._kind &&
 	       a._instance == b._instance;

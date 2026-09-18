@@ -148,6 +148,8 @@ static void test_golden_complete_result(void)
 		0x00,
 		/* no postcondition: this result is not a refused rollback's */
 		0x00,
+		/* no episode: this result is not a mark_error's */
+		0x00,
 		/* guard: generation 2, writer 11, written */
 		0x00,
 		0x00,

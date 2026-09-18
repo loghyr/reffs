@@ -135,6 +135,15 @@ struct d1_repair_batch {
 	/* Absent exactly for the two operations that open a repair. */
 	bool cohort_present;
 	d1_repair_id cohort;
+	/*
+	 * The ERROR episode this call is about: named by a begin_repair
+	 * that carries an ERROR member, by clear_error, and by an unlock
+	 * that names the episode instead of the cohort.  A cohort's ERROR
+	 * members all belong to one episode, so one name serves the
+	 * vector.
+	 */
+	bool episode_present;
+	d1_episode_id episode;
 	/* clear_error only. */
 	bool certificate_present;
 	uint8_t certificate[D1_CERTIFICATE_BYTES];

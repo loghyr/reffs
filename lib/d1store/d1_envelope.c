@@ -219,6 +219,7 @@ static void d1_enc_repair(struct d1_cursor *c, const struct d1_repair_batch *r)
 		}
 	}
 	d1_enc_opt_u64(c, r->cohort_present, r->cohort.raw);
+	d1_enc_opt_u64(c, r->episode_present, r->episode.raw);
 	d1_enc_u8(c, r->certificate_present ? 1u : 0u);
 	if (r->certificate_present)
 		d1_enc_raw(c, r->certificate, D1_CERTIFICATE_BYTES);
@@ -271,6 +272,7 @@ static bool d1_dec_repair(struct d1_cursor *c, struct d1_repair_batch *r)
 		}
 	}
 	if (!d1_dec_opt_u64(c, &r->cohort_present, &r->cohort.raw) ||
+	    !d1_dec_opt_u64(c, &r->episode_present, &r->episode.raw) ||
 	    !d1_dec_u8(c, &tag))
 		return false;
 	if (tag > 1u) {
@@ -499,13 +501,38 @@ static bool d1_validate_repair(uint32_t op, const struct d1_repair_batch *r)
 	bool wants_state = op == D1_OP_MARK_ERROR || op == D1_OP_BEGIN_REPAIR;
 	bool wants_payload = op == D1_OP_PREPARE_REPAIR;
 	bool wants_certificate = op == D1_OP_CLEAR_ERROR;
+	bool wants_episode = op == D1_OP_CLEAR_ERROR;
 	uint32_t i, j;
 
 	if (!d1_count_ok(r->count) || r->range_begin >= r->range_end)
 		return false;
-	if (r->cohort_present != wants_cohort)
-		return false;
+	/*
+	 * A begin_repair that carries an ERROR member names the episode
+	 * those members belong to -- one episode for the vector, because
+	 * section 4 has clear_error name a single one for the cohort.
+	 */
+	if (op == D1_OP_BEGIN_REPAIR)
+		for (i = 0; i < r->count; i++)
+			if (r->entries[i].mode == D1_REPAIR_ERROR)
+				wants_episode = true;
+	if (op == D1_OP_UNLOCK) {
+		/*
+		 * Section 4 lets unlock name the cohort it is releasing
+		 * or the episode whose members those are, and exactly one
+		 * of them: two names for one release in one request are
+		 * two requests, and the digest would bind both.
+		 */
+		if (r->cohort_present == r->episode_present)
+			return false;
+	} else {
+		if (r->cohort_present != wants_cohort)
+			return false;
+		if (r->episode_present != wants_episode)
+			return false;
+	}
 	if (r->cohort_present && !d1_repair_live(r->cohort))
+		return false;
+	if (r->episode_present && !d1_episode_live(r->episode))
 		return false;
 	if (r->certificate_present != wants_certificate)
 		return false;
