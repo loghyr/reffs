@@ -43,9 +43,17 @@
 #define D1_MAX_OWNERS 256u
 #define D1_MAX_CUSTODY 32u
 /*
- * Repair cohorts a store may have open at once.  A cohort is one local
+ * Repair cohorts a store may open in its life.  A cohort is one local
  * repair over one object, and section 7 keeps its whole vector, so this
  * is a table of vectors rather than of members.
+ *
+ * Not a count of cohorts open at once: section 6's retain-everything
+ * policy keeps a committed or aborted cohort's row for the life of the
+ * store, so nothing gives a row back and the ninth repair of one chunk
+ * is refused for want of room however few are outstanding.  That is
+ * this model's choice and not a limit of the interface; what makes it
+ * defensible is that no receipt or handle it issued ever becomes
+ * unresolvable.
  */
 #define D1_MAX_REPAIRS 8u
 /*

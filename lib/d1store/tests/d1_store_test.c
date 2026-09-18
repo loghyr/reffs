@@ -12028,6 +12028,118 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 }
 
 /*
+ * The cohort table is a lifetime cap, not a count of open repairs.
+ *
+ * Section 6 retains everything, so an aborted cohort keeps its row:
+ * the handle it issued still resolves, and the receipts that name it
+ * still mean what they meant.  What that costs is that nothing gives a
+ * row back, so a store that has opened D1_MAX_REPAIRS repairs has no
+ * room for another even with none outstanding.
+ *
+ * That is worth pinning rather than leaving to a comment, because the
+ * two readings differ in exactly one observable way and this is it:
+ * the refusal is NOSPC and UNRECORDED, so the caller learns it is a
+ * want of room and may retry, and the chunk is untouched.
+ */
+static void test_the_cohort_table_is_a_lifetime_cap(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32];
+	struct d1_guard guard;
+	uint32_t i;
+	d1_admission_id admission;
+	d1_version_id broken, displaced, seen;
+	d1_custody_id custody;
+	d1_postcond_id postcond;
+	d1_txn_id txn;
+	d1_repair_id cohort;
+	struct repair_ref ref[1];
+
+	memset(older, 0xc6, sizeof(older));
+	memset(newer, 0xc7, sizeof(newer));
+	fill_uuid(&store_uuid, 0xa2);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	broken = make_a_repair_case(s, admission, 0, 1, older, newer,
+				    (uint32_t)sizeof(older), &displaced,
+				    &custody, &postcond, &txn);
+	check(d1_version_live(broken), "a chunk is a repair case");
+
+	/*
+	 * Every repair of it is opened and abandoned before the next, so
+	 * one is ever outstanding.  Each needs a rollback of its own to
+	 * be refused first, because a NOPRE repair consumes one, and an
+	 * owner of its own, because section 3 gives an owner one version.
+	 */
+	for (i = 0; i < D1_MAX_REPAIRS; i++) {
+		postcond = refuse_a_rollback(s, admission, 0, 2, txn, broken,
+					     displaced, custody);
+		check(d1_postcond_live(postcond),
+		      "a refused rollback authorizes a repair");
+		env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+		env.body.repair.range_begin = 0;
+		env.body.repair.range_end = 1;
+		env.body.repair.count = 1;
+		repair_nopre(&env.body.repair.entries[0], 0, 100u + i, custody,
+			     broken, displaced, postcond);
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "which opens");
+		cohort = res.entries[0].cohort;
+		ref[0].index = 0;
+		ref[0].co_id = 100u + i;
+		ref[0].custody = custody;
+		ref[0].successor = broken;
+		check(repair_call(s, &env, admission, D1_OP_ABORT_REPAIR,
+				  cohort, 1, ref),
+		      "an abort names the cohort's vector");
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and is abandoned before the next is opened");
+	}
+
+	/* The ninth finds no room, though none is outstanding. */
+	postcond = refuse_a_rollback(s, admission, 0, 2, txn, broken, displaced,
+				     custody);
+	check(d1_postcond_live(postcond),
+	      "a ninth rollback is refused like the rest");
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 0, 200, custody, broken,
+		     displaced, postcond);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_NOSPC &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "the ninth repair finds no row, and records nothing");
+	check(!res.entries[0].cohort_present, "so it names no cohort");
+
+	/* And the chunk the refusal named is untouched. */
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_raw(seen) == d1_version_raw(broken),
+	      "the chunk still holds what it held");
+	d1_store_guard(s, &object, 0, &guard);
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 201, older,
+		    (uint32_t)sizeof(older), true, &guard);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and is an ordinary writer's, because no repair holds it");
+	d1_store_free(s);
+}
+
+/*
  * A repair call names what it is acting on, and is checked against it.
  *
  * Section 4 has every call after begin_repair carry the cohort's
@@ -15829,6 +15941,7 @@ int main(void)
 	test_a_nopre_repair_consumes_a_postcondition();
 	test_an_episode_is_named_not_assumed();
 	test_a_repair_call_names_what_it_acts_on();
+	test_the_cohort_table_is_a_lifetime_cap();
 	test_a_repair_owner_is_an_owner();
 	test_an_envelope_control_carries_its_digest();
 	test_a_fenced_handle_answers_three_ways();
