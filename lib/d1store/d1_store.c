@@ -3099,9 +3099,22 @@ static bool d1_journal_entry_event(struct d1_store *s, const uint8_t *env_bytes,
 	return d1_journal_event(s, D1_REC_ENTRY, s->record, (uint32_t)cur.len);
 }
 
-/* The durable event for a control, whether an Envelope's or a fixture's. */
+/*
+ * The durable event for a control, whether an Envelope's or a fixture's.
+ *
+ * An Envelope control carries its request digest, for the reason an
+ * ENTRY carries one: replay recomputes the digest from the record's own
+ * bytes, so without a logged one to compare against, a record whose
+ * bytes were altered would simply hash to a different value and be
+ * believed.  The ENTRY path has had that cross-check since the first
+ * slice and the CONTROL path had not, which was an asymmetry and not a
+ * decision.  A fixture control carries no digest: its request is not an
+ * Envelope, nothing binds an operation key to it, and there is nothing
+ * for a digest to be the identity of.
+ */
 static bool d1_journal_control_event(struct d1_store *s, uint32_t kind,
 				     const uint8_t *request, size_t request_len,
+				     const uint8_t digest[D1_DIGEST_BYTES],
 				     const uint8_t *result, size_t result_len)
 {
 	struct d1_cursor cur;
@@ -3109,6 +3122,8 @@ static bool d1_journal_control_event(struct d1_store *s, uint32_t kind,
 	d1_enc_init(&cur, s->record, s->record_cap);
 	d1_enc_u32(&cur, kind);
 	d1_enc_bytes(&cur, request, request_len);
+	if (kind == D1_CTL_ENVELOPE)
+		d1_enc_raw(&cur, digest, D1_DIGEST_BYTES);
 	d1_enc_bytes(&cur, result, result_len);
 	if (cur.bad)
 		return false;
@@ -3672,7 +3687,7 @@ static void d1_apply_control(struct d1_store *s, const struct d1_envelope *env,
 						    sizeof(result_bytes));
 		if (!len || !res_len ||
 		    !d1_journal_control_event(s, D1_CTL_ENVELOPE, bytes, len,
-					      result_bytes, res_len)) {
+					      digest, result_bytes, res_len)) {
 			d1_control_undo_apply(&undo);
 			slot->used = false;
 			memset(complete, 0, sizeof(*complete));
@@ -3772,7 +3787,7 @@ static void d1_apply_repair(struct d1_store *s, const struct d1_envelope *env,
 						    sizeof(result_bytes));
 		if (!len || !res_len ||
 		    !d1_journal_control_event(s, D1_CTL_ENVELOPE, bytes, len,
-					      result_bytes, res_len)) {
+					      digest, result_bytes, res_len)) {
 			d1_repair_undo_apply(s, &undo);
 			slot->used = false;
 			memset(complete, 0, sizeof(*complete));
@@ -4848,7 +4863,8 @@ static bool d1_journal_fixture(struct d1_store *s,
 	if (!request_len || !result_len)
 		return false;
 	return d1_journal_control_event(s, request->kind, request_bytes,
-					request_len, result_bytes, result_len);
+					request_len, NULL, result_bytes,
+					result_len);
 }
 
 d1_admission_id d1_fixture_admission_handle(struct d1_store *s, uint64_t raw)
@@ -5477,24 +5493,30 @@ static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 	struct d1_cursor cur;
 	const uint8_t *request_bytes, *result_bytes;
 	uint8_t digest[D1_DIGEST_BYTES];
+	uint8_t logged_digest[D1_DIGEST_BYTES];
 	uint32_t kind, request_len, result_len;
 
 	d1_dec_init(&cur, body, len);
 	if (!d1_dec_u32(&cur, &kind) ||
 	    !d1_dec_bytes_ref(&cur, &request_bytes, &request_len,
-			      D1_ENVELOPE_MAX) ||
-	    !d1_dec_bytes_ref(&cur, &result_bytes, &result_len, 4096u) ||
-	    !d1_dec_finished(&cur))
+			      D1_ENVELOPE_MAX))
 		return D1_INVALID;
-
 	/*
 	 * The outer tag is checked before anything is dispatched on it.
 	 * It used to be compared against D1_CTL_ENVELOPE and otherwise
 	 * ignored, so a record carrying any other value -- including one
 	 * no encoder can produce -- was reduced on the strength of its
-	 * inner tag alone.
+	 * inner tag alone.  It is read first here for a second reason
+	 * too: the digest an Envelope control carries is part of the
+	 * record's shape, so what to read next depends on it.
 	 */
 	if (kind < D1_CTL_ENVELOPE || kind > D1_CTL_CERTIFICATE)
+		return D1_INVALID;
+	if (kind == D1_CTL_ENVELOPE &&
+	    !d1_dec_raw(&cur, logged_digest, sizeof(logged_digest)))
+		return D1_INVALID;
+	if (!d1_dec_bytes_ref(&cur, &result_bytes, &result_len, 4096u) ||
+	    !d1_dec_finished(&cur))
 		return D1_INVALID;
 
 	if (kind == D1_CTL_ENVELOPE) {
@@ -5514,6 +5536,9 @@ static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 			return D1_INVALID;
 		if (!d1_envelope_digest(&env, s->scratch, s->scratch_cap,
 					digest))
+			return D1_INVALID;
+		/* The store computes it; the record only claims it. */
+		if (memcmp(digest, logged_digest, sizeof(digest)) != 0)
 			return D1_INVALID;
 		/*
 		 * The same emission invariant, and the only one a control

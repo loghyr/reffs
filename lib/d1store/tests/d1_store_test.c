@@ -10716,6 +10716,144 @@ static void test_an_error_repair_clears_and_unlocks_separately(void)
 }
 
 /*
+ * An Envelope control record's bytes are the ones its digest covers.
+ *
+ * An ENTRY record has carried its request digest since the first slice,
+ * so replay recomputes one from the record's own bytes and compares.  A
+ * CONTROL record carrying an Envelope did not, and that was an
+ * asymmetry rather than a decision: replay hashed whatever the record
+ * held, so a record whose bytes had been changed simply had a different
+ * identity and was believed.
+ *
+ * The change this forges is one the reducer never looks at.  A repair
+ * vector declares a chunk range, every member is checked against it
+ * when the request is decoded, and nothing afterwards reads it -- so
+ * widening the range leaves a request that is still canonical, still
+ * executes identically and still produces the logged result.  Only its
+ * digest is different, which is exactly what the logged digest is for.
+ */
+static void test_an_envelope_control_carries_its_digest(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *target;
+	struct d1_journal_cursor cursor;
+	struct d1_envelope env, forged;
+	struct d1_result res;
+	static uint8_t copy[65536];
+	static uint8_t rebuilt_bytes[D1_ENVELOPE_MAX];
+	static uint8_t older[32], newer[32];
+	const uint8_t *log, *body;
+	size_t len, at = 0, env_at = 0;
+	uint32_t type, blen, env_len = 0, total, crc, i;
+	uint64_t lsn, incarnation;
+	d1_admission_id admission;
+	d1_version_id broken, displaced;
+	d1_custody_id custody;
+
+	memset(older, 0x31, sizeof(older));
+	memset(newer, 0x32, sizeof(newer));
+	fill_uuid(&store_uuid, 0x31);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	admission = d1_fixture_admit(live, &object, 11,
+				     D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	displaced = commit_chunk(live, admission, 0, 1, older, sizeof(older),
+				 &(struct d1_guard){ .never_written = true },
+				 d1_version_none(), NULL);
+	{
+		struct d1_guard guard;
+
+		d1_store_guard(live, &object, 0, &guard);
+		broken = commit_chunk(live, admission, 0, 2, newer,
+				      sizeof(newer), &guard, displaced, NULL);
+	}
+	custody = d1_fixture_custody(live, broken);
+	check(d1_version_live(broken) && d1_custody_live(custody),
+	      "a chunk and custody over what it holds");
+
+	env_init(&env, live, admission, D1_OP_MARK_ERROR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 80, custody, broken,
+		      displaced);
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "an episode is marked, and is an Envelope control record");
+
+	log = journal_of(live, &len);
+	check(len <= sizeof(copy), "the log fits the fixture buffer");
+	if (len > sizeof(copy)) {
+		d1_store_free(live);
+		return;
+	}
+	memcpy(copy, log, len);
+
+	/* The last Envelope control record in the log. */
+	d1_journal_cursor_init(&cursor, log, len, &store_uuid);
+	while (d1_journal_next(&cursor, &type, &lsn, &incarnation, &body,
+			       &blen) == D1_JOURNAL_RECORD) {
+		struct d1_cursor rec;
+		const uint8_t *request;
+		uint32_t kind, n;
+
+		if (type != D1_REC_CONTROL)
+			continue;
+		d1_dec_init(&rec, body, blen);
+		if (!d1_dec_u32(&rec, &kind) || kind != D1_CTL_ENVELOPE)
+			continue;
+		if (!d1_dec_bytes_ref(&rec, &request, &n, D1_ENVELOPE_MAX))
+			break;
+		at = (size_t)(body - log) - D1_JOURNAL_HEADER_BYTES;
+		env_at = (size_t)(request - log);
+		env_len = n;
+	}
+	check(env_len != 0, "the log has an Envelope control to work from");
+	if (!env_len) {
+		d1_store_free(live);
+		return;
+	}
+	check(d1_envelope_decode(log + env_at, env_len, &forged) &&
+		      forged.op == D1_OP_MARK_ERROR,
+	      "and it is the one that marked the episode");
+
+	/*
+	 * Widen the range.  It is a u64 on the wire, so the record does
+	 * not move, and every member is still inside it.
+	 */
+	forged.body.repair.range_end = 8;
+	check(d1_envelope_encode(&forged, rebuilt_bytes,
+				 sizeof(rebuilt_bytes)) == env_len,
+	      "the forged request encodes to the same length");
+	memcpy(copy + env_at, rebuilt_bytes, env_len);
+	total = ((uint32_t)copy[at + 12] << 24) |
+		((uint32_t)copy[at + 13] << 16) |
+		((uint32_t)copy[at + 14] << 8) | (uint32_t)copy[at + 15];
+	crc = d1_crc32c(copy + at, total - D1_JOURNAL_TRAILER_BYTES);
+	for (i = 0; i < 4u; i++)
+		copy[at + total - 4u + i] = (uint8_t)(crc >> (24u - 8u * i));
+
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, copy, len) == D1_INVALID,
+		      "a control record whose bytes changed is refused");
+		d1_store_free(target);
+	}
+	target = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (target) {
+		check(d1_store_replay(target, log, len) == D1_OK,
+		      "and the unmodified log still rebuilds");
+		check(object_states_agree(live, target, &object),
+		      "into the same store");
+		d1_store_free(target);
+	}
+	d1_store_free(live);
+}
+
+/*
  * A record that names an admission no CONTROL installed.
  *
  * The reducer asks two questions of every request that reaches it:
@@ -13667,6 +13805,7 @@ int main(void)
 	test_a_repair_opens_only_over_what_it_may_repair();
 	test_a_repair_publishes_its_whole_vector_or_none();
 	test_an_error_repair_clears_and_unlocks_separately();
+	test_an_envelope_control_carries_its_digest();
 	test_a_record_that_names_no_admission();
 	test_record_tags_are_validated();
 	test_operation_key_binds_the_whole_envelope();
