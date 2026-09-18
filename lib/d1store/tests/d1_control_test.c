@@ -150,6 +150,8 @@ static void test_golden_complete_result(void)
 		0x00,
 		/* no episode: this result is not a mark_error's */
 		0x00,
+		/* no member: this answer is not one member's */
+		0x00,
 		/* guard: generation 2, writer 11, written */
 		0x00,
 		0x00,
@@ -254,6 +256,29 @@ static void test_golden_complete_result(void)
 			at++;
 		check(at + sizeof(named) <= len,
 		      "and carries the tag and the handle, big-endian");
+	}
+	check(d1_complete_result_decode(buf, len, &back) &&
+		      d1_complete_result_equal(&r, &back),
+	      "and that round trips too");
+
+	/* And the member a whole-vector refusal names, which is a u32. */
+	make_result(&r);
+	r.entry.member_present = true;
+	r.entry.member = 0x01020304u;
+	len = d1_complete_result_encode(&r, buf, sizeof(buf));
+	check(len == sizeof(want) + 4u,
+	      "a result naming a member is four bytes longer");
+	if (len == sizeof(want) + 4u) {
+		static const uint8_t named[5] = { 0x01, 0x01, 0x02, 0x03,
+						  0x04 };
+		size_t at = 0;
+
+		/* Immediately after the episode option. */
+		while (at + sizeof(named) <= len &&
+		       memcmp(buf + at, named, sizeof(named)) != 0)
+			at++;
+		check(at + sizeof(named) <= len,
+		      "and carries the tag and the ordinal, big-endian");
 	}
 	check(d1_complete_result_decode(buf, len, &back) &&
 		      d1_complete_result_equal(&r, &back),

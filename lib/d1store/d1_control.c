@@ -147,6 +147,9 @@ size_t d1_complete_result_encode(const struct d1_complete_result *r, void *buf,
 	d1_enc_opt_u64(&c, e->cohort_present, e->cohort.raw);
 	d1_enc_opt_u64(&c, e->postcond_present, e->postcond.raw);
 	d1_enc_opt_u64(&c, e->episode_present, e->episode.raw);
+	d1_enc_u8(&c, e->member_present ? 1u : 0u);
+	if (e->member_present)
+		d1_enc_u32(&c, e->member);
 	d1_enc_guard(&c, &e->guard);
 	d1_enc_owner(&c, &e->owner);
 	d1_enc_u32(&c, e->stability);
@@ -174,6 +177,7 @@ bool d1_complete_result_decode(const void *buf, size_t len,
 	    !d1_dec_opt_u64(&c, &e->cohort_present, &e->cohort.raw) ||
 	    !d1_dec_opt_u64(&c, &e->postcond_present, &e->postcond.raw) ||
 	    !d1_dec_opt_u64(&c, &e->episode_present, &e->episode.raw) ||
+	    !d1_dec_opt_u32(&c, &e->member_present, &e->member) ||
 	    !d1_dec_guard(&c, &e->guard) || !d1_dec_owner(&c, &e->owner) ||
 	    !d1_dec_u32(&c, &e->stability) || !d1_dec_bool(&c, &e->activated) ||
 	    !d1_dec_u32(&c, &e->phase) ||
@@ -226,6 +230,9 @@ bool d1_complete_result_equal(const struct d1_complete_result *a,
 	if (a->entry.episode_present != b->entry.episode_present ||
 	    (a->entry.episode_present &&
 	     a->entry.episode.raw != b->entry.episode.raw))
+		return false;
+	if (a->entry.member_present != b->entry.member_present ||
+	    (a->entry.member_present && a->entry.member != b->entry.member))
 		return false;
 	if (a->entry.guard.generation != b->entry.guard.generation ||
 	    a->entry.guard.writer != b->entry.guard.writer ||

@@ -277,6 +277,24 @@ bool d1_dec_uuid(struct d1_cursor *c, struct d1_uuid *u)
 	return d1_dec_raw(c, u->bytes, sizeof(u->bytes));
 }
 
+bool d1_dec_opt_u32(struct d1_cursor *c, bool *present, uint32_t *v)
+{
+	uint8_t tag;
+
+	if (!d1_dec_u8(c, &tag))
+		return false;
+	if (tag > 1u) {
+		c->bad = true;
+		return false;
+	}
+	*present = tag == 1u;
+	if (!*present) {
+		*v = 0;
+		return true;
+	}
+	return d1_dec_u32(c, v);
+}
+
 bool d1_dec_opt_u64(struct d1_cursor *c, bool *present, uint64_t *v)
 {
 	uint8_t tag;

@@ -12028,6 +12028,248 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 }
 
 /*
+ * A whole-vector refusal says which member caused it.
+ *
+ * A repair answers once for its cohort, so a refusal one member caused
+ * -- its guard, its checksum, its owner -- has to name that member, or
+ * the guard beside it describes a chunk the caller has to guess at.
+ * The candidate carried whichever guard the walk had reached and said
+ * nothing else, which for a one-member vector is indistinguishable and
+ * for any other vector is not an answer.
+ *
+ * The same two-member cohort shows section 7's G1 and F3 on a vector
+ * rather than on a single member: a failed payload checksum abandons
+ * every still-private member in one durable event, the exact retry
+ * reproduces it from the receipt, and a cohort that does publish
+ * publishes both members at one index epoch while a view opened before
+ * it still reads both old versions.
+ */
+static void test_a_vector_refusal_names_its_member(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
+	static uint8_t older[32], newer[32], fixed[32];
+	uint8_t got[64];
+	uint32_t got_len, i;
+	const uint8_t *log;
+	size_t len, before, after;
+	uint64_t epoch_before, epoch_after;
+	d1_admission_id admission;
+	d1_version_id was[2], gone[2], staged, seen;
+	d1_custody_id custody[2];
+	d1_postcond_id post[2];
+	d1_txn_id txn[2], member;
+	d1_repair_id cohort;
+	struct repair_ref ref[2];
+
+	memset(older, 0xd6, sizeof(older));
+	memset(newer, 0xd7, sizeof(newer));
+	memset(fixed, 0xd8, sizeof(fixed));
+	fill_uuid(&store_uuid, 0xa3);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	for (i = 0; i < 2u; i++) {
+		was[i] = make_a_repair_case(s, admission, i, 1 + 10 * i, older,
+					    newer, (uint32_t)sizeof(older),
+					    &gone[i], &custody[i], &post[i],
+					    &txn[i]);
+		check(d1_version_live(was[i]), "a chunk is a repair case");
+	}
+
+	/* A vector whose second member is not one, and says so. */
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	repair_nopre(&env.body.repair.entries[0], 0, 60, custody[0], was[0],
+		     gone[0], post[0]);
+	repair_nopre(&env.body.repair.entries[1], 1, 61, custody[1], was[1],
+		     gone[1], post[0]);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_INVALID &&
+		      !res.entries[0].cohort_present,
+	      "a vector one of whose members may not be repaired opens none");
+	check(res.entries[0].member_present && res.entries[0].member == 1u,
+	      "and the refusal names the member that may not be");
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	repair_nopre(&env.body.repair.entries[0], 0, 62, custody[0], was[0],
+		     gone[0], post[0]);
+	repair_nopre(&env.body.repair.entries[1], 1, 63, custody[1], was[1],
+		     gone[1], post[1]);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a vector of two repair cases opens a cohort");
+	check(!res.entries[0].member_present,
+	      "and an answer the whole cohort's names no member");
+	cohort = res.entries[0].cohort;
+	for (i = 0; i < 2u; i++) {
+		ref[i].index = i;
+		ref[i].co_id = 62 + i;
+		ref[i].custody = custody[i];
+		ref[i].successor = was[i];
+	}
+
+	/* G1: the second member's payload does not verify. */
+	epoch_before = res.index_epoch;
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 2,
+			  ref),
+	      "a prepare names the cohort's vector");
+	for (i = 0; i < 2u; i++) {
+		env.body.repair.entries[i].payload_present = true;
+		env.body.repair.entries[i].payload = fixed;
+		env.body.repair.entries[i].payload_len =
+			(uint32_t)sizeof(fixed);
+		d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+				    &env.body.repair.entries[i].checksum);
+	}
+	env.body.repair.entries[1].checksum.digest[0] ^= 0xffu;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_CHECKSUM &&
+		      res.entries[0].phase == D1_PHASE_ABORTED,
+	      "a payload that does not verify abandons the whole cohort");
+	check(res.entries[0].member_present && res.entries[0].member == 1u,
+	      "and the refusal names the member whose payload it was");
+	for (i = 0; i < 2u; i++)
+		check(d1_fixture_repair_member(s, cohort, i, &member,
+					       &staged) &&
+			      !d1_version_live(staged),
+		      "every member's private work is gone, not just that one");
+	check(res.index_epoch == epoch_before, "and nothing was published");
+
+	/* And the exact retry answers all of that from the receipt. */
+	(void)journal_of(s, &before);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_CHECKSUM &&
+		      res.entries[0].phase == D1_PHASE_ABORTED &&
+		      res.entries[0].member_present &&
+		      res.entries[0].member == 1u,
+	      "the exact retry reproduces the answer, member and all");
+	(void)journal_of(s, &after);
+	check(after == before, "and records nothing further");
+
+	/* A second cohort, which publishes. */
+	for (i = 0; i < 2u; i++) {
+		post[i] = refuse_a_rollback(s, admission, i, 2 + 10 * i, txn[i],
+					    was[i], gone[i], custody[i]);
+		check(d1_postcond_live(post[i]),
+		      "a fresh rollback authorizes a fresh repair");
+	}
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	repair_nopre(&env.body.repair.entries[0], 0, 70, custody[0], was[0],
+		     gone[0], post[0]);
+	repair_nopre(&env.body.repair.entries[1], 1, 71, custody[1], was[1],
+		     gone[1], post[1]);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a second cohort opens over both");
+	cohort = res.entries[0].cohort;
+	for (i = 0; i < 2u; i++)
+		ref[i].co_id = 70 + i;
+
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 2,
+			  ref),
+	      "a prepare names the second cohort's vector");
+	for (i = 0; i < 2u; i++) {
+		env.body.repair.entries[i].payload_present = true;
+		env.body.repair.entries[i].payload = fixed;
+		env.body.repair.entries[i].payload_len =
+			(uint32_t)sizeof(fixed);
+		d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+				    &env.body.repair.entries[i].checksum);
+	}
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "both replacements stage");
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 2,
+			  ref),
+	      "a finalize names it");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the cohort finalizes");
+
+	/* A reader that opened before the publication sees all old. */
+	ordinary_sel(&sel);
+	check(d1_view_open(s, &object, admission, &sel, 0,
+			   CHUNK_BYTES + sizeof(newer), &view) == D1_OK,
+	      "a view is open over both members");
+
+	/* A commit whose second member names another owner. */
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 2,
+			  ref),
+	      "a commit names it");
+	env.body.repair.entries[1].owner.co_id = 99;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OWNER_CONFLICT,
+	      "a commit naming another owner publishes nothing");
+	check(res.entries[0].member_present && res.entries[0].member == 1u,
+	      "and names the member whose owner it was not");
+
+	epoch_before = res.index_epoch;
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 2,
+			  ref),
+	      "a commit names it again");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_COMMITTED,
+	      "and named correctly, the cohort publishes");
+	epoch_after = res.index_epoch;
+	check(epoch_after == epoch_before + 1u,
+	      "both members at one index epoch, not one each");
+	for (i = 0; i < 2u; i++)
+		check(d1_store_visible(s, &object, i, &seen) &&
+			      d1_version_raw(seen) != d1_version_raw(was[i]),
+		      "and both chunks hold their replacements");
+
+	for (i = 0; i < 2u; i++) {
+		check(d1_view_version(view, i, &seen) &&
+			      d1_version_raw(seen) == d1_version_raw(was[i]),
+		      "the view still names the versions it selected");
+		check(d1_view_read(view, (uint64_t)i * CHUNK_BYTES, got,
+				   (uint32_t)sizeof(newer),
+				   &got_len) == D1_OK &&
+			      got_len == sizeof(newer) &&
+			      memcmp(got, newer, sizeof(newer)) == 0,
+		      "and still reads their bytes");
+	}
+	d1_view_close(view);
+	view = NULL;
+
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "a log with a two-member cohort in it rebuilds");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		/*
+		 * At the same epoch too, though not checked here: replay
+		 * compares every recorded result, and the epoch is one of
+		 * the fields it compares, so a rebuild that reached a
+		 * different one would not have returned OK.
+		 */
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
  * The cohort table is a lifetime cap, not a count of open repairs.
  *
  * Section 6 retains everything, so an aborted cohort keeps its row:
@@ -15941,6 +16183,7 @@ int main(void)
 	test_a_nopre_repair_consumes_a_postcondition();
 	test_an_episode_is_named_not_assumed();
 	test_a_repair_call_names_what_it_acts_on();
+	test_a_vector_refusal_names_its_member();
 	test_the_cohort_table_is_a_lifetime_cap();
 	test_a_repair_owner_is_an_owner();
 	test_an_envelope_control_carries_its_digest();

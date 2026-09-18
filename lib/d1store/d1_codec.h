@@ -70,6 +70,7 @@ bool d1_dec_bytes_ref(struct d1_cursor *c, const uint8_t **out, uint32_t *len,
 		      uint32_t max);
 bool d1_dec_uuid(struct d1_cursor *c, struct d1_uuid *u);
 bool d1_dec_opt_u64(struct d1_cursor *c, bool *present, uint64_t *v);
+bool d1_dec_opt_u32(struct d1_cursor *c, bool *present, uint32_t *v);
 bool d1_dec_guard(struct d1_cursor *c, struct d1_guard *g);
 bool d1_dec_owner(struct d1_cursor *c, struct d1_owner *o);
 bool d1_dec_opkey(struct d1_cursor *c, struct d1_opkey *k);

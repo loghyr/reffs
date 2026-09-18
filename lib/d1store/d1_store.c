@@ -2634,6 +2634,8 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 			return D1_INVALID;
 		chunk = &o->chunks[e->index];
 		res->guard = chunk->guard;
+		res->member_present = true;
+		res->member = i;
 		/* One repair at a time, and not over private work. */
 		if (chunk->repair_present || chunk->repair_locked)
 			return D1_QUARANTINED;
@@ -2980,6 +2982,8 @@ d1_do_prepare_repair(struct d1_store *s, const struct d1_envelope *env,
 		uint32_t j;
 
 		res->guard = chunk->guard;
+		res->member_present = true;
+		res->member = i;
 		/*
 		 * The state the cohort captured has to still be there.  A
 		 * successor that moved underneath the repair is section 7's
@@ -3117,6 +3121,8 @@ static uint32_t d1_do_commit_repair(struct d1_store *s,
 		struct d1_custody *custody;
 
 		res->guard = chunk->guard;
+		res->member_present = true;
+		res->member = i;
 		if (!m->staged)
 			return D1_INVALID;
 		if (!chunk->visible_present || chunk->visible != m->successor)
@@ -3182,6 +3188,8 @@ static uint32_t d1_do_mark_error(struct d1_store *s,
 			return D1_INVALID;
 		chunk = &o->chunks[e->index];
 		res->guard = chunk->guard;
+		res->member_present = true;
+		res->member = i;
 		/* One episode at a time, and not over private work. */
 		if (chunk->error_present)
 			return D1_BAD_PHASE;
@@ -3275,6 +3283,8 @@ static uint32_t d1_do_clear_error(struct d1_store *s,
 		struct d1_chunk *chunk = &o->chunks[m->index];
 
 		res->guard = chunk->guard;
+		res->member_present = true;
+		res->member = i;
 		if (m->mode != D1_REPAIR_ERROR)
 			continue;
 		errors++;
@@ -3327,6 +3337,8 @@ static uint32_t d1_do_unlock(struct d1_store *s, struct d1_repair *cohort,
 		struct d1_chunk *chunk = &o->chunks[m->index];
 
 		res->guard = chunk->guard;
+		res->member_present = true;
+		res->member = i;
 		if (!chunk->repair_locked)
 			return D1_BAD_PHASE;
 		if (m->mode == D1_REPAIR_ERROR && !chunk->error_cleared)
@@ -3447,6 +3459,8 @@ static uint32_t d1_do_repair(struct d1_store *s, const struct d1_envelope *env,
 		const struct d1_repair_entry *e = &rb->entries[i];
 		const struct d1_repair_member *m = &cohort->member[i];
 
+		res->member_present = true;
+		res->member = i;
 		if (m->index != e->index)
 			return D1_INVALID;
 		if (m->owner.cohort.raw != e->owner.cohort.raw ||
@@ -4446,6 +4460,15 @@ static void d1_apply_repair(struct d1_store *s, const struct d1_envelope *env,
 	 */
 	if (status != D1_OK && !undo.keep)
 		d1_repair_undo_apply(s, &undo);
+	/*
+	 * A member is named only when the answer is that member's.  The
+	 * handlers walk the vector and leave the one they were looking at
+	 * behind them, so an answer that is the whole cohort's drops it
+	 * here rather than in each of them -- and the cohort abort keeps
+	 * it, because that answer does name the member that caused it.
+	 */
+	if (status == D1_OK)
+		res->member_present = false;
 	res->status = status;
 	complete->index_epoch = s->index_epoch;
 	complete->eof = d1_eof_locked(s, &env->object);

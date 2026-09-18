@@ -103,6 +103,17 @@ struct d1_entry_result {
 	 */
 	bool episode_present;
 	d1_episode_id episode;
+	/*
+	 * Which member of a whole-vector call this answer is about.
+	 *
+	 * A repair answers once for its cohort, so a refusal that one
+	 * member caused -- its guard, its checksum, its phase -- has to
+	 * say which, or the guard beside it names a chunk the caller has
+	 * to guess.  Absent for an answer that is the whole vector's, and
+	 * for everything that is not a repair.
+	 */
+	bool member_present;
+	uint32_t member;
 	/* The guard as it stands after the entry, or as it stood on refusal. */
 	struct d1_guard guard;
 	struct d1_owner owner;
