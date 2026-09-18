@@ -11162,6 +11162,174 @@ static void test_the_order_of_two_rollback_refusals_is_fixed(void)
 }
 
 /*
+ * What a repair does to a view that is already reading.
+ *
+ * Section 6 keeps a view's bytes whatever else happens to the pointers
+ * that named them, and D1a proved that for ordinary commits and
+ * rollbacks.  A repair publishes the same way, so it must not be
+ * different -- and it has one thing an ordinary write does not: it
+ * frees the private replacements it staged when it is abandoned.
+ *
+ * What that scope is, and what it is not, is worth stating.  A staged
+ * replacement is never visible, so no view can have pinned it and
+ * dropping it frees nothing a reader could hold.  A published one is
+ * reachable, and this model never frees those: the predecessor a
+ * rollback might restore and the bytes an open view is reading are
+ * both roots, and D1a already declined to claim that unpinning alone
+ * makes anything collectable.  A repair does not change that claim and
+ * does not extend it.  Safe orphan collection remains owed to the full
+ * D1 gate, with pinned views, rollback predecessor roots and durable
+ * receipts all to be accounted for.
+ */
+static void test_a_repair_does_not_reach_into_an_open_view(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
+	static uint8_t older[32], newer[32], fixed[32];
+	uint8_t got[64];
+	uint32_t got_len;
+	d1_admission_id admission;
+	d1_version_id broken, displaced, seen;
+	d1_custody_id custody;
+	d1_repair_id cohort;
+
+	memset(older, 0x61, sizeof(older));
+	memset(newer, 0x62, sizeof(newer));
+	memset(fixed, 0x63, sizeof(fixed));
+	fill_uuid(&store_uuid, 0x6a);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	broken = make_a_repair_case(s, admission, 0, 1, older, newer,
+				    (uint32_t)sizeof(older), &displaced);
+	check(d1_version_live(broken), "a chunk is a repair case");
+	custody = d1_fixture_custody(s, broken);
+
+	/* A reader is already looking at it. */
+	ordinary_sel(&sel);
+	check(d1_view_open(s, &object, admission, &sel, 0, sizeof(newer),
+			   &view) == D1_OK,
+	      "a view is open over what the chunk holds");
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_NOPRE, 90,
+		      custody, broken, displaced);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a repair opens while it reads");
+	cohort = res.entries[0].cohort;
+
+	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 90, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and stages a replacement");
+
+	/* Abandoning it drops what it staged, and the reader is untouched. */
+	env_init(&env, s, admission, D1_OP_ABORT_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 90, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the repair is abandoned");
+	check(d1_view_version(view, 0, &seen) &&
+		      d1_version_raw(seen) == d1_version_raw(broken),
+	      "the view still names the version it selected");
+	check(d1_view_read(view, 0, got, (uint32_t)sizeof(newer), &got_len) ==
+			      D1_OK &&
+		      got_len == sizeof(newer) &&
+		      memcmp(got, newer, sizeof(newer)) == 0,
+	      "and still reads its bytes");
+
+	/* And the same through a repair that publishes. */
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_NOPRE, 91,
+		      custody, broken, displaced);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a second repair opens");
+	cohort = res.entries[0].cohort;
+	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 91, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK, "and stages");
+	env_init(&env, s, admission, D1_OP_FINALIZE_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 91, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK, "and finalizes");
+	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 91, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and publishes its replacement");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_raw(seen) != d1_version_raw(broken),
+	      "so the chunk holds the replacement");
+	check(d1_view_version(view, 0, &seen) &&
+		      d1_version_raw(seen) == d1_version_raw(broken),
+	      "while the view still names what it selected");
+	check(d1_view_read(view, 0, got, (uint32_t)sizeof(newer), &got_len) ==
+			      D1_OK &&
+		      got_len == sizeof(newer) &&
+		      memcmp(got, newer, sizeof(newer)) == 0,
+	      "and still reads the bytes it was reading");
+
+	d1_view_close(view);
+	d1_store_free(s);
+}
+
+/*
  * A record that names an admission no CONTROL installed.
  *
  * The reducer asks two questions of every request that reaches it:
@@ -14113,6 +14281,7 @@ int main(void)
 	test_a_mixed_rollback_answers_each_member_for_itself();
 	test_a_repair_opens_only_over_what_it_may_repair();
 	test_a_repair_publishes_its_whole_vector_or_none();
+	test_a_repair_does_not_reach_into_an_open_view();
 	test_an_error_repair_clears_and_unlocks_separately();
 	test_an_envelope_control_carries_its_digest();
 	test_a_fenced_handle_answers_three_ways();
