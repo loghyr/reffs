@@ -633,17 +633,11 @@ static void test_unsupported(void)
 
 	{
 		/*
-		 * The repair operations that have a canonical request but
-		 * no transition yet, and one tag no operation has at all.
-		 * The first six will lose their place here as each is
-		 * implemented; the last never will.
+		 * A tag no operation has.  Every operation this model names
+		 * now has a transition, so the only thing left to refuse
+		 * for not being one is something that never was.
 		 */
-		static const uint32_t unimplemented[] = {
-			D1_OP_MARK_ERROR,
-			D1_OP_CLEAR_ERROR,
-			D1_OP_UNLOCK,
-			0xd1d1d1d1u,
-		};
+		static const uint32_t unimplemented[] = { 0xd1d1d1d1u };
 		unsigned int i;
 
 		for (i = 0; i < sizeof(unimplemented) / sizeof(*unimplemented);
@@ -10458,6 +10452,270 @@ static void test_a_repair_publishes_its_whole_vector_or_none(void)
 }
 
 /*
+ * An ERROR repair clears and unlocks as two separate calls.
+ *
+ * The memo's G3.  An ERROR-mode cohort needs a durable episode before
+ * it can open, publishes its whole vector like any other, and then
+ * needs two more things that a commit deliberately does not do: a
+ * clear_error carrying the cross-DS completion certificate, which makes
+ * the members readable but still locked, and an unlock after it.  Ask
+ * them the other way round and the unlock is refused, because an ERROR
+ * member is not unlockable until it has been cleared.
+ *
+ * The crash boundary is here too.  A commit whose durable event never
+ * lands leaves the cohort finalized and publishes nothing, and the same
+ * commit afterwards works -- the failure was before the frontier, so
+ * there is no receipt to conflict with and the retry is a first
+ * attempt, not a replay.
+ */
+static void test_an_error_repair_clears_and_unlocks_separately(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32], fixed[32];
+	static uint8_t certificate[D1_CERTIFICATE_BYTES];
+	static uint8_t forged[D1_CERTIFICATE_BYTES];
+	struct d1_guard guard;
+	const uint8_t *log;
+	size_t len;
+	d1_admission_id admission;
+	d1_version_id broken, displaced, seen;
+	d1_custody_id custody;
+	d1_repair_id cohort;
+
+	memset(older, 0x21, sizeof(older));
+	memset(newer, 0x22, sizeof(newer));
+	memset(fixed, 0x23, sizeof(fixed));
+	memset(certificate, 0x24, sizeof(certificate));
+	memset(forged, 0x25, sizeof(forged));
+	fill_uuid(&store_uuid, 0x21);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	displaced = commit_chunk(s, admission, 0, 1, older, sizeof(older),
+				 &(struct d1_guard){ .never_written = true },
+				 d1_version_none(), NULL);
+	d1_store_guard(s, &object, 0, &guard);
+	broken = commit_chunk(s, admission, 0, 2, newer, sizeof(newer), &guard,
+			      displaced, NULL);
+	check(d1_version_live(broken), "a chunk holds the version in error");
+	custody = d1_fixture_custody(s, broken);
+	check(d1_custody_live(custody), "and custody is issued over it");
+
+	/* Without an episode, an ERROR repair has nothing to repair. */
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_ERROR, 60,
+		      custody, broken, displaced);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_BAD_PHASE,
+	      "an ERROR repair without an episode is refused");
+
+	env_init(&env, s, admission, D1_OP_MARK_ERROR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 60, custody, broken,
+		      displaced);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the episode is marked");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the exact retry answers from its receipt");
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_ERROR, 60,
+		      custody, broken, displaced);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and now the repair opens over it");
+	cohort = res.entries[0].cohort;
+
+	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the replacement stages");
+
+	env_init(&env, s, admission, D1_OP_FINALIZE_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the cohort finalizes");
+
+	/* The commit whose durable event never lands. */
+	d1_fixture_fail_next_append(s);
+	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_IO &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "a commit whose event does not become durable records nothing");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_raw(seen) == d1_version_raw(broken),
+	      "and publishes nothing");
+
+	env_init(&env, s, admission, D1_OP_COMMIT_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_COMMITTED,
+	      "and the same commit afterwards is a first attempt, not a "
+	      "replay");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_raw(seen) != d1_version_raw(broken),
+	      "the replacement is published");
+
+	/* An unlock before the clear is refused. */
+	env_init(&env, s, admission, D1_OP_UNLOCK);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_BAD_PHASE,
+	      "an ERROR member is not unlocked before it is cleared");
+
+	/* And the clear needs the certificate, and the right one. */
+	env_init(&env, s, admission, D1_OP_CLEAR_ERROR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	env.body.repair.certificate_present = true;
+	memcpy(env.body.repair.certificate, certificate, sizeof(certificate));
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "a clear with no certificate issued is refused");
+
+	d1_fixture_certificate(s, certificate);
+	env_init(&env, s, admission, D1_OP_CLEAR_ERROR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	env.body.repair.certificate_present = true;
+	memcpy(env.body.repair.certificate, forged, sizeof(forged));
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "and a clear carrying another certificate is refused");
+
+	env_init(&env, s, admission, D1_OP_CLEAR_ERROR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	env.body.repair.certificate_present = true;
+	memcpy(env.body.repair.certificate, certificate, sizeof(certificate));
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the certificate the fixture issued clears the episode");
+
+	d1_store_guard(s, &object, 0, &guard);
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 70, older, sizeof(older),
+		    true, &guard);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_GUARDED,
+	      "which leaves the member readable and still locked");
+
+	env_init(&env, s, admission, D1_OP_UNLOCK);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 60, d1_custody_none(),
+		      d1_version_none(), d1_version_none());
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the unlock after it releases the member");
+
+	d1_store_guard(s, &object, 0, &guard);
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 0, 11, 71, older, sizeof(older),
+		    true, &guard);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "so an ordinary writer has the chunk back");
+
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		/*
+		 * Nothing is issued here.  The certificate is fixture
+		 * authority and is in the log, so the rebuild reinstates it
+		 * where the writer issued it -- which is the only way the
+		 * refusals recorded before that point can be reproduced.
+		 */
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "a log with a whole ERROR repair in it rebuilds");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
  * A record that names an admission no CONTROL installed.
  *
  * The reducer asks two questions of every request that reaches it:
@@ -13408,6 +13666,7 @@ int main(void)
 	test_a_mixed_rollback_answers_each_member_for_itself();
 	test_a_repair_opens_only_over_what_it_may_repair();
 	test_a_repair_publishes_its_whole_vector_or_none();
+	test_an_error_repair_clears_and_unlocks_separately();
 	test_a_record_that_names_no_admission();
 	test_record_tags_are_validated();
 	test_operation_key_binds_the_whole_envelope();

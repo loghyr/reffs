@@ -36,6 +36,13 @@ enum d1_control_kind {
 	D1_CTL_EXPIRE = 4,
 	D1_CTL_CUSTODY = 5,
 	D1_CTL_RELEASE = 6,
+	/*
+	 * The cross-DS completion certificate clear_error compares
+	 * against.  It is fixture authority like the rest: what issues
+	 * one is outside D1, the reducer's outcome depends on it, and a
+	 * refusal decided on it has to be an answer replay can reach.
+	 */
+	D1_CTL_CERTIFICATE = 7,
 };
 
 /* One fixture control request.  The Envelope kind carries its own body. */
@@ -48,6 +55,9 @@ struct d1_control_request {
 	d1_admission_id admission;
 	/* D1_CTL_CUSTODY, D1_CTL_RELEASE */
 	d1_version_id version;
+	/* D1_CTL_CERTIFICATE */
+	bool certificate_present;
+	uint8_t certificate[D1_CERTIFICATE_BYTES];
 };
 
 /*

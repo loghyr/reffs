@@ -271,6 +271,17 @@ void d1_fixture_expire(struct d1_store *s, d1_admission_id admission);
 d1_custody_id d1_fixture_custody(struct d1_store *s, d1_version_id version);
 
 /*
+ * Issue the cross-DS completion certificate clear_error requires.
+ *
+ * What issues one is outside D1 entirely: it is the other data server's
+ * statement that its half of the repair is done.  The fixture stands in
+ * for that issuer, and the model only ever compares what it issued
+ * against what a clear_error carries.  Passing null withdraws it.
+ */
+void d1_fixture_certificate(struct d1_store *s,
+			    const uint8_t certificate[D1_CERTIFICATE_BYTES]);
+
+/*
  * Release the retention of one predecessor version.  Allowed only for a
  * version nothing makes visible and nothing else holds: it removes the
  * durable retention root and changes what a future rollback is eligible

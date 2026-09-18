@@ -295,6 +295,14 @@ struct d1_store {
 	uint64_t next_custody;
 	uint64_t next_repair;
 	/*
+	 * The cross-DS completion certificate clear_error requires.  What
+	 * issues one is outside D1 entirely, so a fixture stands in for
+	 * that issuer and this is what it issued; the model only ever
+	 * compares it.
+	 */
+	bool certificate_present;
+	uint8_t certificate[D1_CERTIFICATE_BYTES];
+	/*
 	 * Whether this store's next reopen should fail to make its new
 	 * START durable, and how.  See d1_store_reopen.
 	 */
@@ -2148,11 +2156,31 @@ struct d1_repair_undo {
 	uint32_t count;
 	struct d1_chunk *chunk[D1_BATCH_ENTRIES_MAX];
 	struct d1_chunk chunk_before[D1_BATCH_ENTRIES_MAX];
+	/*
+	 * The store's own counters, restored with everything else.  "The
+	 * before-state restored exactly" includes the durable IDs a
+	 * refused call took and the epoch it advanced: an epoch left
+	 * behind by a call that published nothing is a number the log
+	 * cannot account for, and the next rebuild disagrees with the
+	 * store it rebuilt.  See d1_undo_apply, which says the same for
+	 * an ordinary entry.
+	 */
+	uint64_t epoch_before;
+	uint64_t next_version_before;
+	uint64_t next_repair_before;
+	bool fail_index_before;
+	bool overlay_before;
 };
 
-static void d1_repair_undo_begin(struct d1_repair_undo *u)
+static void d1_repair_undo_begin(struct d1_repair_undo *u,
+				 const struct d1_store *s)
 {
 	memset(u, 0, sizeof(*u));
+	u->epoch_before = s->index_epoch;
+	u->next_version_before = s->next_version;
+	u->next_repair_before = s->next_repair;
+	u->fail_index_before = s->fail_next_index;
+	u->overlay_before = s->overlay_active;
 }
 
 static void d1_repair_undo_chunk(struct d1_repair_undo *u,
@@ -2180,7 +2208,7 @@ static void d1_repair_undo_cohort(struct d1_repair_undo *u,
 	u->cohort_changed = true;
 }
 
-static void d1_repair_undo_apply(struct d1_repair_undo *u)
+static void d1_repair_undo_apply(struct d1_store *s, struct d1_repair_undo *u)
 {
 	uint32_t i;
 
@@ -2190,6 +2218,11 @@ static void d1_repair_undo_apply(struct d1_repair_undo *u)
 		*u->cohort = u->cohort_before;
 	if (u->fresh)
 		u->fresh->used = false;
+	s->index_epoch = u->epoch_before;
+	s->next_version = u->next_version_before;
+	s->next_repair = u->next_repair_before;
+	s->fail_next_index = u->fail_index_before;
+	s->overlay_active = u->overlay_before;
 }
 
 /*
@@ -2607,6 +2640,173 @@ static uint32_t d1_do_commit_repair(struct d1_store *s,
 }
 
 /*
+ * Open an ERROR episode over a vector of chunks.
+ *
+ * Section 7 requires "a durable mark_error episode with continuous
+ * custody" before an ERROR-mode repair, so this is what makes one: it
+ * binds the episode to the exact version in error and to the custody
+ * issued over that version, and an ERROR repair later checks both are
+ * still what they were.
+ *
+ * It is not a repair itself, so it opens no cohort and takes no chunk
+ * away from ordinary writers.  What it does is make one possible.
+ */
+static uint32_t d1_do_mark_error(struct d1_store *s,
+				 const struct d1_envelope *env,
+				 struct d1_object *o,
+				 struct d1_entry_result *res,
+				 struct d1_repair_undo *u)
+{
+	const struct d1_repair_batch *rb = &env->body.repair;
+	uint32_t i;
+
+	for (i = 0; i < rb->count; i++) {
+		const struct d1_repair_entry *e = &rb->entries[i];
+		struct d1_chunk *chunk;
+		struct d1_custody *custody;
+		struct d1_version *ver;
+
+		if (e->index >= D1_MAX_CHUNKS)
+			return D1_INVALID;
+		chunk = &o->chunks[e->index];
+		res->guard = chunk->guard;
+		/* One episode at a time, and not over private work. */
+		if (chunk->error_present)
+			return D1_BAD_PHASE;
+		if (chunk->pending_present || chunk->repair_present)
+			return D1_GUARDED;
+		if (!chunk->visible_present ||
+		    chunk->visible != e->successor.raw)
+			return D1_OWNER_CONFLICT;
+		custody = d1_custody_find(s, e->custody);
+		if (!custody)
+			return D1_STALE_AUTH;
+		if (custody->version != chunk->visible)
+			return D1_OWNER_CONFLICT;
+		ver = d1_version_find(s, d1_version_of(s, chunk->visible));
+		if (!ver)
+			return D1_INVALID;
+		if (ver->predecessor_present != e->predecessor_present ||
+		    (e->predecessor_present &&
+		     ver->predecessor != e->predecessor.raw))
+			return D1_NO_PREDECESSOR;
+	}
+
+	for (i = 0; i < rb->count; i++) {
+		const struct d1_repair_entry *e = &rb->entries[i];
+		struct d1_chunk *chunk = &o->chunks[e->index];
+
+		d1_repair_undo_chunk(u, chunk);
+		chunk->error_present = true;
+		chunk->error_cleared = false;
+		chunk->error_custody = e->custody.raw;
+		chunk->error_version = chunk->visible;
+	}
+	res->phase = D1_PHASE_ADMITTED;
+	return D1_OK;
+}
+
+/*
+ * Clear the ERROR episodes a committed repair replaced.
+ *
+ * Section 7: clear_error checks all ERROR members, the exact episode
+ * and custody and the committed cohort, plus the fixture-issued
+ * cross-DS completion certificate, and then makes those members
+ * readable but locked.  It does not unlock them -- that is a separate
+ * call -- and NOPRE members have no episode to clear, so a cohort
+ * carrying one rejects the attempt rather than clearing what it can.
+ */
+static uint32_t d1_do_clear_error(struct d1_store *s,
+				  const struct d1_envelope *env,
+				  struct d1_repair *cohort, struct d1_object *o,
+				  struct d1_entry_result *res,
+				  struct d1_repair_undo *u)
+{
+	const struct d1_repair_batch *rb = &env->body.repair;
+	uint32_t i;
+
+	if (cohort->phase != D1_PHASE_COMMITTED)
+		return D1_BAD_PHASE;
+	if (!s->certificate_present ||
+	    memcmp(s->certificate, rb->certificate, D1_CERTIFICATE_BYTES) != 0)
+		return D1_STALE_AUTH;
+	for (i = 0; i < cohort->count; i++) {
+		struct d1_repair_member *m = &cohort->member[i];
+		struct d1_chunk *chunk = &o->chunks[m->index];
+
+		res->guard = chunk->guard;
+		/* A NOPRE member has nothing to clear and says so. */
+		if (m->mode != D1_REPAIR_ERROR)
+			return D1_INVALID;
+		if (!chunk->error_present || chunk->error_cleared)
+			return D1_BAD_PHASE;
+		if (chunk->error_custody != m->custody)
+			return D1_STALE_AUTH;
+		if (chunk->error_version != m->successor)
+			return D1_OWNER_CONFLICT;
+	}
+
+	for (i = 0; i < cohort->count; i++) {
+		struct d1_repair_member *m = &cohort->member[i];
+		struct d1_chunk *chunk = &o->chunks[m->index];
+
+		d1_repair_undo_chunk(u, chunk);
+		chunk->error_cleared = true;
+	}
+	res->phase = cohort->phase;
+	res->cohort_present = true;
+	res->cohort = d1_repair_of(s, cohort->id);
+	return D1_OK;
+}
+
+/*
+ * Release the members a committed repair still holds.
+ *
+ * Section 7: unlock releases NOPRE members only after COMMIT and ERROR
+ * members only after clear, and for mixed modes every member's
+ * predicate must pass before a whole-vector unlock.  So the vector is
+ * judged first and released afterwards, which is what stops a cohort
+ * half-unlocking.
+ */
+static uint32_t d1_do_unlock(struct d1_store *s, struct d1_repair *cohort,
+			     struct d1_object *o, struct d1_entry_result *res,
+			     struct d1_repair_undo *u)
+{
+	uint32_t i;
+
+	if (cohort->phase != D1_PHASE_COMMITTED)
+		return D1_BAD_PHASE;
+	for (i = 0; i < cohort->count; i++) {
+		struct d1_repair_member *m = &cohort->member[i];
+		struct d1_chunk *chunk = &o->chunks[m->index];
+
+		res->guard = chunk->guard;
+		if (!chunk->repair_locked)
+			return D1_BAD_PHASE;
+		if (m->mode == D1_REPAIR_ERROR && !chunk->error_cleared)
+			return D1_BAD_PHASE;
+	}
+
+	for (i = 0; i < cohort->count; i++) {
+		struct d1_repair_member *m = &cohort->member[i];
+		struct d1_chunk *chunk = &o->chunks[m->index];
+
+		d1_repair_undo_chunk(u, chunk);
+		chunk->repair_locked = false;
+		chunk->repair_present = false;
+		chunk->repair = 0;
+		chunk->error_present = false;
+		chunk->error_cleared = false;
+		chunk->error_custody = 0;
+		chunk->error_version = 0;
+	}
+	res->phase = cohort->phase;
+	res->cohort_present = true;
+	res->cohort = d1_repair_of(s, cohort->id);
+	return D1_OK;
+}
+
+/*
  * The whole of a repair operation, whichever one it is.
  *
  * Every one of them names a vector, and every one but begin_repair
@@ -2627,7 +2827,9 @@ static uint32_t d1_do_repair(struct d1_store *s, const struct d1_envelope *env,
 	if (!o)
 		return D1_INVALID;
 	if (!rb->cohort_present)
-		return d1_do_begin_repair(s, env, o, res, u);
+		return env->op == D1_OP_MARK_ERROR ?
+			       d1_do_mark_error(s, env, o, res, u) :
+			       d1_do_begin_repair(s, env, o, res, u);
 
 	cohort = d1_repair_find(s, rb->cohort);
 	if (!cohort)
@@ -2659,6 +2861,10 @@ static uint32_t d1_do_repair(struct d1_store *s, const struct d1_envelope *env,
 		return d1_do_commit_repair(s, cohort, o, res, u);
 	case D1_OP_ABORT_REPAIR:
 		return d1_do_abort_repair(s, cohort, o, res, u);
+	case D1_OP_CLEAR_ERROR:
+		return d1_do_clear_error(s, env, cohort, o, res, u);
+	case D1_OP_UNLOCK:
+		return d1_do_unlock(s, cohort, o, res, u);
 	default:
 		return D1_UNSUPPORTED;
 	}
@@ -3508,7 +3714,7 @@ static void d1_apply_repair(struct d1_store *s, const struct d1_envelope *env,
 	size_t res_len;
 	uint32_t status;
 
-	d1_repair_undo_begin(&undo);
+	d1_repair_undo_begin(&undo, s);
 	memset(complete, 0, sizeof(*complete));
 	complete->key = env->key;
 	complete->disposition = D1_COMPLETED;
@@ -3544,7 +3750,7 @@ static void d1_apply_repair(struct d1_store *s, const struct d1_envelope *env,
 	if (status == D1_OK)
 		status = d1_do_repair(s, env, a, res, &undo);
 	if (status == D1_NOSPC || status == D1_IO) {
-		d1_repair_undo_apply(&undo);
+		d1_repair_undo_apply(s, &undo);
 		slot->used = false;
 		res->status = status;
 		res->disposition = D1_UNRECORDED;
@@ -3556,7 +3762,7 @@ static void d1_apply_repair(struct d1_store *s, const struct d1_envelope *env,
 	 * a transition in its own right; see d1_repair_undo.
 	 */
 	if (status != D1_OK && !undo.keep)
-		d1_repair_undo_apply(&undo);
+		d1_repair_undo_apply(s, &undo);
 	res->status = status;
 	complete->index_epoch = s->index_epoch;
 	complete->eof = d1_eof_locked(s, &env->object);
@@ -3567,7 +3773,7 @@ static void d1_apply_repair(struct d1_store *s, const struct d1_envelope *env,
 		if (!len || !res_len ||
 		    !d1_journal_control_event(s, D1_CTL_ENVELOPE, bytes, len,
 					      result_bytes, res_len)) {
-			d1_repair_undo_apply(&undo);
+			d1_repair_undo_apply(s, &undo);
 			slot->used = false;
 			memset(complete, 0, sizeof(*complete));
 			complete->key = env->key;
@@ -3755,11 +3961,14 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	case D1_OP_ROLLBACK_BATCH:
 	case D1_OP_RECOVERY_ADMIT:
 	case D1_OP_LEASE_REAP:
+	case D1_OP_MARK_ERROR:
 	case D1_OP_BEGIN_REPAIR:
 	case D1_OP_PREPARE_REPAIR:
 	case D1_OP_FINALIZE_REPAIR:
 	case D1_OP_COMMIT_REPAIR:
 	case D1_OP_ABORT_REPAIR:
+	case D1_OP_CLEAR_ERROR:
+	case D1_OP_UNLOCK:
 		/* One table, shared with replay; see d1_op_rights. */
 		need = d1_op_rights(env->op);
 		break;
@@ -3797,11 +4006,14 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 		break;
 	case D1_OP_RECOVERY_ADMIT:
 	case D1_OP_LEASE_REAP:
+	case D1_OP_MARK_ERROR:
 	case D1_OP_BEGIN_REPAIR:
 	case D1_OP_PREPARE_REPAIR:
 	case D1_OP_FINALIZE_REPAIR:
 	case D1_OP_COMMIT_REPAIR:
 	case D1_OP_ABORT_REPAIR:
+	case D1_OP_CLEAR_ERROR:
+	case D1_OP_UNLOCK:
 		/*
 		 * A control operation answers once for the whole of it, and
 		 * so does a repair; see section 8's cohort receipt.
@@ -4788,6 +5000,54 @@ void d1_fixture_expire(struct d1_store *s, d1_admission_id admission)
 	pthread_mutex_unlock(&s->lock);
 }
 
+static void
+d1_certificate_locked(struct d1_store *s, bool present,
+		      const uint8_t certificate[D1_CERTIFICATE_BYTES])
+{
+	s->certificate_present = present;
+	if (present)
+		memcpy(s->certificate, certificate, D1_CERTIFICATE_BYTES);
+	else
+		memset(s->certificate, 0, D1_CERTIFICATE_BYTES);
+}
+
+void d1_fixture_certificate(struct d1_store *s,
+			    const uint8_t certificate[D1_CERTIFICATE_BYTES])
+{
+	struct d1_control_request request;
+	struct d1_control_result result;
+	uint8_t was[D1_CERTIFICATE_BYTES];
+	bool was_present;
+
+	memset(&request, 0, sizeof(request));
+	request.kind = D1_CTL_CERTIFICATE;
+	request.certificate_present = certificate != NULL;
+	if (certificate)
+		memcpy(request.certificate, certificate, D1_CERTIFICATE_BYTES);
+
+	pthread_mutex_lock(&s->lock);
+	if (!d1_store_serving(s) || s->replaying) {
+		pthread_mutex_unlock(&s->lock);
+		return;
+	}
+	was_present = s->certificate_present;
+	memcpy(was, s->certificate, sizeof(was));
+	d1_certificate_locked(s, request.certificate_present,
+			      request.certificate);
+	memset(&result, 0, sizeof(result));
+	result.status = D1_OK;
+	/*
+	 * Journalled like every other piece of fixture authority, and for
+	 * the same reason: clear_error's answer depends on it, so a
+	 * recorded refusal that turned on which certificate had been
+	 * issued must be an answer a rebuild can reach.  An event that
+	 * cannot be made durable puts the store back.
+	 */
+	if (!d1_journal_fixture(s, &request, &result))
+		d1_certificate_locked(s, was_present, was);
+	pthread_mutex_unlock(&s->lock);
+}
+
 d1_custody_id d1_fixture_custody(struct d1_store *s, d1_version_id version)
 {
 	struct d1_control_request request;
@@ -5199,6 +5459,9 @@ static bool d1_control_canonical(struct d1_store *s,
 		a = d1_admission_find(s, r->admission);
 		return memcmp(&r->object, a ? &a->object : &no_object,
 			      sizeof(r->object)) == 0;
+	case D1_CTL_CERTIFICATE:
+		/* It names no object and no handle; only its own bytes. */
+		return memcmp(&r->object, &no_object, sizeof(no_object)) == 0;
 	default:
 		return memcmp(&r->object, &no_object, sizeof(no_object)) == 0;
 	}
@@ -5231,7 +5494,7 @@ static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 	 * no encoder can produce -- was reduced on the strength of its
 	 * inner tag alone.
 	 */
-	if (kind < D1_CTL_ENVELOPE || kind > D1_CTL_RELEASE)
+	if (kind < D1_CTL_ENVELOPE || kind > D1_CTL_CERTIFICATE)
 		return D1_INVALID;
 
 	if (kind == D1_CTL_ENVELOPE) {
@@ -5325,6 +5588,12 @@ static uint32_t d1_replay_control(struct d1_store *s, const uint8_t *body,
 	case D1_CTL_CUSTODY:
 		computed_ctl.id = d1_custody_locked(s, request.version).raw;
 		computed_ctl.status = computed_ctl.id ? D1_OK : D1_NOSPC;
+		break;
+	case D1_CTL_CERTIFICATE:
+		d1_certificate_locked(s, request.certificate_present,
+				      request.certificate);
+		computed_ctl.id = 0;
+		computed_ctl.status = D1_OK;
 		break;
 	default:
 		computed_ctl.id = request.version.raw;

@@ -12,7 +12,7 @@
 
 static bool d1_kind_known(uint32_t kind)
 {
-	return kind >= D1_CTL_ENVELOPE && kind <= D1_CTL_RELEASE;
+	return kind >= D1_CTL_ENVELOPE && kind <= D1_CTL_CERTIFICATE;
 }
 
 size_t d1_control_request_encode(const struct d1_control_request *r, void *buf,
@@ -40,6 +40,11 @@ size_t d1_control_request_encode(const struct d1_control_request *r, void *buf,
 	case D1_CTL_REVOKE:
 	case D1_CTL_EXPIRE:
 		d1_enc_u64(&c, r->admission.raw);
+		break;
+	case D1_CTL_CERTIFICATE:
+		d1_enc_u8(&c, r->certificate_present ? 1u : 0u);
+		if (r->certificate_present)
+			d1_enc_raw(&c, r->certificate, D1_CERTIFICATE_BYTES);
 		break;
 	default:
 		d1_enc_u64(&c, r->version.raw);
@@ -80,6 +85,19 @@ bool d1_control_request_decode(const void *buf, size_t len,
 		if (!d1_dec_u64(&c, &r->admission.raw))
 			return false;
 		break;
+	case D1_CTL_CERTIFICATE: {
+		uint8_t tag;
+
+		if (!d1_dec_u8(&c, &tag) || tag > 1u) {
+			c.bad = true;
+			return false;
+		}
+		r->certificate_present = tag == 1u;
+		if (r->certificate_present &&
+		    !d1_dec_raw(&c, r->certificate, D1_CERTIFICATE_BYTES))
+			return false;
+		break;
+	}
 	default:
 		if (!d1_dec_u64(&c, &r->version.raw))
 			return false;
