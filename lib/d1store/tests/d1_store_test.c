@@ -9844,6 +9844,141 @@ static void test_the_order_of_two_lifecycle_refusals_is_fixed(void)
 }
 
 /*
+ * A rollback array whose members do not all have the same answer.
+ *
+ * The memo's F1: two committed chunks rolled back in one call, where
+ * one predecessor is still retained and the other has been released.
+ * The first is restored; the second keeps the data it has and is told
+ * NO_PREDECESSOR.  Neither answer is an error episode, and neither
+ * member is affected by its neighbour -- the array executes in input
+ * order with one receipt each, so the exact retry reproduces both.
+ *
+ * The point of the pair is that the second member's answer is about
+ * the second member.  A reducer that let a sibling's success stand in
+ * for its own eligibility, or that refused the whole array because one
+ * predecessor was gone, would pass a test that only ever rolled back
+ * one chunk.
+ */
+static void test_a_mixed_rollback_answers_each_member_for_itself(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t first[32], second[32];
+	struct d1_guard guard;
+	const uint8_t *log;
+	size_t len, before, after;
+	d1_admission_id admission;
+	d1_version_id kept_old, kept_new, gone_old, gone_new, seen;
+	d1_txn_id kept_txn, gone_txn;
+	d1_custody_id kept_custody, gone_custody;
+
+	memset(first, 0xd1, sizeof(first));
+	memset(second, 0xd2, sizeof(second));
+	fill_uuid(&store_uuid, 0xd1);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+
+	/* Chunk 0: two committed versions, the older one still retained. */
+	kept_old = commit_chunk(s, admission, 0, 1, first, sizeof(first),
+				&(struct d1_guard){ .never_written = true },
+				d1_version_none(), NULL);
+	d1_store_guard(s, &object, 0, &guard);
+	kept_new = commit_chunk(s, admission, 0, 2, second, sizeof(second),
+				&guard, kept_old, &kept_txn);
+
+	/* Chunk 1: the same, and then the older one is released. */
+	gone_old = commit_chunk(s, admission, 1, 3, first, sizeof(first),
+				&(struct d1_guard){ .never_written = true },
+				d1_version_none(), NULL);
+	d1_store_guard(s, &object, 1, &guard);
+	gone_new = commit_chunk(s, admission, 1, 4, second, sizeof(second),
+				&guard, gone_old, &gone_txn);
+	check(d1_version_live(kept_new) && d1_version_live(gone_new),
+	      "two chunks each carry a replacement over a predecessor");
+	check(d1_fixture_release_predecessor(s, gone_old),
+	      "and one predecessor is released");
+
+	kept_custody = d1_fixture_custody(s, kept_new);
+	gone_custody = d1_fixture_custody(s, gone_new);
+	check(d1_custody_live(kept_custody) && d1_custody_live(gone_custody),
+	      "repair custody is issued over both replacements");
+
+	/* One call, two members, two different answers. */
+	env_init(&env, s, admission, D1_OP_ROLLBACK_BATCH);
+	env.body.rollback.range_begin = 0;
+	env.body.rollback.range_end = 2;
+	env.body.rollback.count = 2;
+	env.body.rollback.entries[0].index = 0;
+	env.body.rollback.entries[0].owner.cohort.raw = 1;
+	env.body.rollback.entries[0].owner.writer = 11;
+	env.body.rollback.entries[0].owner.co_id = 2;
+	env.body.rollback.entries[0].txn = kept_txn;
+	env.body.rollback.entries[0].visible_present = true;
+	env.body.rollback.entries[0].visible = kept_new;
+	env.body.rollback.entries[0].predecessor_present = true;
+	env.body.rollback.entries[0].predecessor = kept_old;
+	env.body.rollback.entries[0].custody_present = true;
+	env.body.rollback.entries[0].custody = kept_custody;
+	env.body.rollback.entries[1].index = 1;
+	env.body.rollback.entries[1].owner.cohort.raw = 1;
+	env.body.rollback.entries[1].owner.writer = 11;
+	env.body.rollback.entries[1].owner.co_id = 4;
+	env.body.rollback.entries[1].txn = gone_txn;
+	env.body.rollback.entries[1].visible_present = true;
+	env.body.rollback.entries[1].visible = gone_new;
+	env.body.rollback.entries[1].predecessor_present = true;
+	env.body.rollback.entries[1].predecessor = gone_old;
+	env.body.rollback.entries[1].custody_present = true;
+	env.body.rollback.entries[1].custody = gone_custody;
+
+	check(d1_store_apply(s, &env, &res) == D1_OK && res.count == 2,
+	      "the mixed rollback answers for both members");
+	check(res.entries[0].status == D1_OK &&
+		      res.entries[0].disposition == D1_COMPLETED,
+	      "the member whose predecessor was retained is rolled back");
+	check(res.entries[1].status == D1_NO_PREDECESSOR &&
+		      res.entries[1].disposition == D1_COMPLETED,
+	      "and the member whose predecessor was released is told so");
+	check(res.disposition == D1_COMPLETED,
+	      "the operation as a whole recorded");
+
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_raw(seen) == d1_version_raw(kept_old),
+	      "the first chunk holds its predecessor again");
+	check(d1_store_visible(s, &object, 1, &seen) &&
+		      d1_version_raw(seen) == d1_version_raw(gone_new),
+	      "and the second keeps the data it still has");
+
+	/* Neither member's answer moved the other's. */
+	(void)journal_of(s, &before);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[1].status == D1_NO_PREDECESSOR,
+	      "the exact retry reproduces both answers");
+	(void)journal_of(s, &after);
+	check(after == before, "and writes nothing further");
+
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "the log rebuilds the store");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
  * A record that names an admission no CONTROL installed.
  *
  * The reducer asks two questions of every request that reaches it:
@@ -12791,6 +12926,7 @@ int main(void)
 	test_a_control_runs_between_two_members();
 	test_a_reopen_start_that_never_becomes_durable();
 	test_the_order_of_two_lifecycle_refusals_is_fixed();
+	test_a_mixed_rollback_answers_each_member_for_itself();
 	test_a_record_that_names_no_admission();
 	test_record_tags_are_validated();
 	test_operation_key_binds_the_whole_envelope();
