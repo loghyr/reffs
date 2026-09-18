@@ -11002,6 +11002,165 @@ static void test_a_fenced_handle_answers_three_ways(void)
 	d1_store_free(live);
 }
 
+/* One row of the committed-rollback precedence matrix. */
+struct rollback_case {
+	const char *what;
+	/* An admission without REPAIR: the request is not this caller's. */
+	bool no_repair_right;
+	/* A visible version that is not the one the chunk holds. */
+	bool bad_visible;
+	/* A pending transaction left on the chunk. */
+	bool pending;
+	/* A predecessor the version did not record. */
+	bool bad_predecessor;
+	uint32_t expect;
+};
+
+/*
+ * A committed rollback wrong in more than one way gets one answer.
+ *
+ * The ordinary write reducer's order was pinned two slices ago and the
+ * lifecycle reducer's in this one.  Rolling back committed data has an
+ * order of its own, and repair rests on it: section 7's repair opens
+ * over exactly the state a committed rollback found, so which refusal
+ * wins decides what a repair is told about a chunk it may not have.
+ *
+ * Four refusals here are decided independently on one member and have
+ * distinct statuses: the caller's authority, the current version the
+ * request claims to see, a transaction still pending on the chunk, and
+ * the predecessor the version recorded.  The table is every pair of
+ * them plus their corners.
+ *
+ * The phase predicate is not in it.  Rolling back a transaction that
+ * has already been rolled back necessarily also misstates the version
+ * the chunk holds, so no two-fault row isolates it; it is pinned
+ * instead by the private and committed branch tests, which show the
+ * phase choosing the branch.  Saying so is better than a row that
+ * carries three faults and calls itself a pair.
+ */
+static void test_the_order_of_two_rollback_refusals_is_fixed(void)
+{
+	static const struct rollback_case cases[] = {
+		/* One fault at a time. */
+		{ "a handle without repair authority", true, false, false,
+		  false, D1_STALE_AUTH },
+		{ "a version the chunk does not hold", false, true, false,
+		  false, D1_OWNER_CONFLICT },
+		{ "a transaction still pending on the chunk", false, false,
+		  true, false, D1_GUARDED },
+		{ "a predecessor the version did not record", false, false,
+		  false, true, D1_NO_PREDECESSOR },
+		/* Every pair of them. */
+		{ "authority outranks the visible version", true, true, false,
+		  false, D1_STALE_AUTH },
+		{ "authority outranks a pending transaction", true, false, true,
+		  false, D1_STALE_AUTH },
+		{ "authority outranks the predecessor", true, false, false,
+		  true, D1_STALE_AUTH },
+		{ "the visible version outranks a pending transaction", false,
+		  true, true, false, D1_OWNER_CONFLICT },
+		{ "the visible version outranks the predecessor", false, true,
+		  false, true, D1_OWNER_CONFLICT },
+		{ "a pending transaction outranks the predecessor", false,
+		  false, true, true, D1_GUARDED },
+	};
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[16], newer[16];
+	struct d1_guard guard;
+	uint32_t i;
+	d1_admission_id repairer, plain;
+	d1_version_id elsewhere;
+
+	memset(older, 0x51, sizeof(older));
+	memset(newer, 0x52, sizeof(newer));
+	fill_uuid(&store_uuid, 0x5a);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	repairer = d1_fixture_admit(s, &object, 11,
+				    D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+					    D1_RIGHT_SINGLE_WRITER);
+	plain = d1_fixture_admit(s, &object, 11,
+				 D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+
+	/* A version elsewhere, to name as the one that is not there. */
+	elsewhere = commit_chunk(s, repairer, 0, 1, older, sizeof(older),
+				 &(struct d1_guard){ .never_written = true },
+				 d1_version_none(), NULL);
+	check(d1_version_live(elsewhere),
+	      "there is a version somewhere else to name");
+
+	for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		const struct rollback_case *c = &cases[i];
+		uint64_t index = 4 + i;
+		uint32_t co_id = 60 + 3u * i;
+		d1_version_id first, second;
+		d1_txn_id txn;
+		d1_custody_id custody;
+
+		/* A committed replacement over a retained predecessor. */
+		first = commit_chunk(
+			s, repairer, index, co_id, older, sizeof(older),
+			&(struct d1_guard){ .never_written = true },
+			d1_version_none(), NULL);
+		d1_store_guard(s, &object, index, &guard);
+		second = commit_chunk(s, repairer, index, co_id + 1u, newer,
+				      sizeof(newer), &guard, first, &txn);
+		if (!d1_version_live(first) || !d1_version_live(second)) {
+			check(false, "the row's chunk is committed twice");
+			continue;
+		}
+		custody = d1_fixture_custody(s, second);
+		if (!d1_custody_live(custody)) {
+			check(false, "and custody is issued over it");
+			continue;
+		}
+		if (c->pending) {
+			/* A later write, left prepared on the same chunk. */
+			d1_store_guard(s, &object, index, &guard);
+			env_init(&env, s, repairer, D1_OP_WRITE_BATCH);
+			env.body.write.count = 1;
+			env.body.write.stability = D1_FILE_SYNC;
+			write_entry(&env.body.write.entries[0], index, 11,
+				    co_id + 2u, older, sizeof(older), true,
+				    &guard);
+			if (d1_store_apply(s, &env, &res) != D1_OK ||
+			    res.entries[0].status != D1_OK) {
+				check(false, "and a pending write is left");
+				continue;
+			}
+		}
+
+		env_init(&env, s, c->no_repair_right ? plain : repairer,
+			 D1_OP_ROLLBACK_BATCH);
+		env.body.rollback.range_begin = index;
+		env.body.rollback.range_end = index + 1u;
+		env.body.rollback.count = 1;
+		env.body.rollback.entries[0].index = index;
+		env.body.rollback.entries[0].owner.cohort.raw = 1;
+		env.body.rollback.entries[0].owner.writer = 11;
+		env.body.rollback.entries[0].owner.co_id = co_id + 1u;
+		env.body.rollback.entries[0].txn = txn;
+		env.body.rollback.entries[0].visible_present = true;
+		env.body.rollback.entries[0].visible =
+			c->bad_visible ? elsewhere : second;
+		env.body.rollback.entries[0].predecessor_present = true;
+		env.body.rollback.entries[0].predecessor =
+			c->bad_predecessor ? elsewhere : first;
+		env.body.rollback.entries[0].custody_present = true;
+		env.body.rollback.entries[0].custody = custody;
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == c->expect &&
+			      res.entries[0].disposition == D1_COMPLETED,
+		      c->what);
+	}
+
+	d1_store_free(s);
+}
+
 /*
  * A record that names an admission no CONTROL installed.
  *
@@ -13950,6 +14109,7 @@ int main(void)
 	test_a_control_runs_between_two_members();
 	test_a_reopen_start_that_never_becomes_durable();
 	test_the_order_of_two_lifecycle_refusals_is_fixed();
+	test_the_order_of_two_rollback_refusals_is_fixed();
 	test_a_mixed_rollback_answers_each_member_for_itself();
 	test_a_repair_opens_only_over_what_it_may_repair();
 	test_a_repair_publishes_its_whole_vector_or_none();
