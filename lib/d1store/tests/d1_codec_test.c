@@ -88,10 +88,9 @@ static void test_tag_table(void)
 		      D1_RIGHT_REPAIR == 0x4u && D1_RIGHT_CONTROL == 0x8u &&
 		      D1_RIGHT_SINGLE_WRITER == 0x10u,
 	      "rights flags");
-	check(D1_CTL_ENVELOPE == 1 && D1_CTL_ADMIT == 2 &&
-		      D1_CTL_REVOKE == 3 && D1_CTL_EXPIRE == 4 &&
-		      D1_CTL_CUSTODY == 5 && D1_CTL_RELEASE == 6 &&
-		      D1_CTL_CERTIFICATE == 7,
+	check(D1_CTL_ENVELOPE == 1 && D1_CTL_ADMIT == 2 && D1_CTL_REVOKE == 3 &&
+		      D1_CTL_EXPIRE == 4 && D1_CTL_CUSTODY == 5 &&
+		      D1_CTL_RELEASE == 6 && D1_CTL_CERTIFICATE == 7,
 	      "control record kinds");
 	check(D1_REPAIR_ERROR == 1 && D1_REPAIR_NOPRE == 2, "repair modes");
 	/*
