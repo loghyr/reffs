@@ -135,6 +135,7 @@ size_t d1_complete_result_encode(const struct d1_complete_result *r, void *buf,
 {
 	const struct d1_entry_result *e = &r->entry;
 	struct d1_cursor c;
+	uint32_t i;
 
 	d1_enc_init(&c, buf, cap);
 	d1_enc_opkey(&c, &r->key);
@@ -145,6 +146,15 @@ size_t d1_complete_result_encode(const struct d1_complete_result *r, void *buf,
 	d1_enc_opt_u64(&c, e->version_present, e->version.raw);
 	d1_enc_opt_u64(&c, e->txn_present, e->txn.raw);
 	d1_enc_opt_u64(&c, e->cohort_present, e->cohort.raw);
+	/*
+	 * The member transactions, beside the cohort they belong to: a
+	 * counted vector, section 8's u32 count then that many handles.
+	 * An operation that issues none writes the count and nothing
+	 * after it, which is what an empty vector is.
+	 */
+	d1_enc_u32(&c, e->member_txn_count);
+	for (i = 0; i < e->member_txn_count && i < D1_BATCH_ENTRIES_MAX; i++)
+		d1_enc_u64(&c, e->member_txn[i].raw);
 	d1_enc_opt_u64(&c, e->postcond_present, e->postcond.raw);
 	d1_enc_opt_u64(&c, e->episode_present, e->episode.raw);
 	d1_enc_u8(&c, e->member_present ? 1u : 0u);
@@ -166,6 +176,7 @@ bool d1_complete_result_decode(const void *buf, size_t len,
 {
 	struct d1_entry_result *e = &r->entry;
 	struct d1_cursor c;
+	uint32_t i;
 
 	memset(r, 0, sizeof(*r));
 	d1_dec_init(&c, buf, len);
@@ -174,8 +185,16 @@ bool d1_complete_result_decode(const void *buf, size_t len,
 	    !d1_dec_u32(&c, &e->status) ||
 	    !d1_dec_opt_u64(&c, &e->version_present, &e->version.raw) ||
 	    !d1_dec_opt_u64(&c, &e->txn_present, &e->txn.raw) ||
-	    !d1_dec_opt_u64(&c, &e->cohort_present, &e->cohort.raw) ||
-	    !d1_dec_opt_u64(&c, &e->postcond_present, &e->postcond.raw) ||
+	    !d1_dec_opt_u64(&c, &e->cohort_present, &e->cohort.raw))
+		return false;
+	/* An over-limit count is a record this store could not have made. */
+	if (!d1_dec_u32(&c, &e->member_txn_count) ||
+	    e->member_txn_count > D1_BATCH_ENTRIES_MAX)
+		return false;
+	for (i = 0; i < e->member_txn_count; i++)
+		if (!d1_dec_u64(&c, &e->member_txn[i].raw))
+			return false;
+	if (!d1_dec_opt_u64(&c, &e->postcond_present, &e->postcond.raw) ||
 	    !d1_dec_opt_u64(&c, &e->episode_present, &e->episode.raw) ||
 	    !d1_dec_opt_u32(&c, &e->member_present, &e->member) ||
 	    !d1_dec_guard(&c, &e->guard) || !d1_dec_owner(&c, &e->owner) ||
@@ -189,6 +208,8 @@ bool d1_complete_result_decode(const void *buf, size_t len,
 bool d1_complete_result_equal(const struct d1_complete_result *a,
 			      const struct d1_complete_result *b)
 {
+	uint32_t i;
+
 	/*
 	 * Compared field by field rather than with memcmp: both structs
 	 * carry padding the canonical form never encodes, and comparing
@@ -223,6 +244,11 @@ bool d1_complete_result_equal(const struct d1_complete_result *a,
 	    (a->entry.cohort_present &&
 	     a->entry.cohort.raw != b->entry.cohort.raw))
 		return false;
+	if (a->entry.member_txn_count != b->entry.member_txn_count)
+		return false;
+	for (i = 0; i < a->entry.member_txn_count; i++)
+		if (a->entry.member_txn[i].raw != b->entry.member_txn[i].raw)
+			return false;
 	if (a->entry.postcond_present != b->entry.postcond_present ||
 	    (a->entry.postcond_present &&
 	     a->entry.postcond.raw != b->entry.postcond.raw))

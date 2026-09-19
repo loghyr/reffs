@@ -61,6 +61,15 @@ static void make_result(struct d1_complete_result *r)
 	r->entry.verifier[7] = 1;
 }
 
+/*
+ * Where the member-transaction count sits in the golden result above:
+ * operation key 28, index epoch 8, EOF 8, disposition 4, status 4, the
+ * version and transaction options 9 each, and the absent cohort option
+ * 1.  Written out rather than searched for, because a byte pattern as
+ * short as a small count occurs in the fields before it.
+ */
+#define COUNT_AT 71u
+
 /* The complete result, field by field. */
 static void test_golden_complete_result(void)
 {
@@ -146,6 +155,11 @@ static void test_golden_complete_result(void)
 		0x09,
 		/* no repair cohort: this result is not a repair's */
 		0x00,
+		/* no member transactions: this result is not a begin's */
+		0x00,
+		0x00,
+		0x00,
+		0x00,
 		/* no postcondition: this result is not a refused rollback's */
 		0x00,
 		/* no episode: this result is not a mark_error's */
@@ -202,8 +216,9 @@ static void test_golden_complete_result(void)
 		0x01,
 	};
 	struct d1_complete_result r, back;
-	uint8_t buf[256];
+	uint8_t buf[512];
 	size_t len;
+	uint32_t i;
 
 	make_result(&r);
 	len = d1_complete_result_encode(&r, buf, sizeof(buf));
@@ -220,6 +235,83 @@ static void test_golden_complete_result(void)
 	 * the absent tag occupied, so the golden bytes above fix where it
 	 * goes and these fix what goes there.
 	 */
+	make_result(&r);
+	r.entry.member_txn_count = 2;
+	r.entry.member_txn[0].raw = 0x0102030405060708ull;
+	r.entry.member_txn[1].raw = 0x1112131415161718ull;
+	len = d1_complete_result_encode(&r, buf, sizeof(buf));
+	check(len == sizeof(want) + 16u,
+	      "a result naming two member transactions is sixteen bytes "
+	      "longer");
+	if (len == sizeof(want) + 16u) {
+		static const uint8_t named[20] = {
+			0x00, 0x00, 0x00, 0x02, 0x01, 0x02, 0x03,
+			0x04, 0x05, 0x06, 0x07, 0x08, 0x11, 0x12,
+			0x13, 0x14, 0x15, 0x16, 0x17, 0x18
+		};
+		size_t at = 0;
+
+		/* Immediately after the cohort option. */
+		while (at + sizeof(named) <= len &&
+		       memcmp(buf + at, named, sizeof(named)) != 0)
+			at++;
+		check(at + sizeof(named) <= len,
+		      "and carries the count and the handles, big-endian");
+	}
+	check(d1_complete_result_decode(buf, len, &back) &&
+		      d1_complete_result_equal(&r, &back),
+	      "and that round trips too");
+	r.entry.member_txn[1].raw = 0x1112131415161719ull;
+	check(!d1_complete_result_equal(&r, &back),
+	      "and the comparison notices which transactions they were");
+
+	/*
+	 * Section 8 has the decoder reject over-limit counts.  A count no
+	 * cohort can have is a record this store could not have written,
+	 * and believing it would read past the vector it declares.
+	 */
+	make_result(&r);
+	r.entry.member_txn_count = 1;
+	r.entry.member_txn[0].raw = 1;
+	len = d1_complete_result_encode(&r, buf, sizeof(buf));
+	check(len != 0 && d1_complete_result_decode(buf, len, &back),
+	      "a result with one member transaction decodes");
+	check(len > COUNT_AT + 4u && buf[COUNT_AT] == 0 &&
+		      buf[COUNT_AT + 1u] == 0 && buf[COUNT_AT + 2u] == 0 &&
+		      buf[COUNT_AT + 3u] == 1,
+	      "and its count is the u32 after the cohort option");
+	if (len > COUNT_AT + 4u) {
+		buf[COUNT_AT + 3u] = (uint8_t)(D1_BATCH_ENTRIES_MAX + 1u);
+		check(!d1_complete_result_decode(buf, len, &back),
+		      "and a count past the batch limit is refused");
+	}
+
+	/*
+	 * And the same at the limit, where the bytes are actually there.
+	 * A full vector followed by a count one larger is the shape that
+	 * reads past the array rather than running out of buffer first,
+	 * so it is the one that says the count is checked against the
+	 * limit and not merely against what is left to decode.
+	 */
+	make_result(&r);
+	r.entry.member_txn_count = D1_BATCH_ENTRIES_MAX;
+	for (i = 0; i < D1_BATCH_ENTRIES_MAX; i++)
+		r.entry.member_txn[i].raw = 0x2000u + i;
+	len = d1_complete_result_encode(&r, buf, sizeof(buf));
+	check(len == sizeof(want) + 8u * D1_BATCH_ENTRIES_MAX,
+	      "a full vector is eight bytes a member longer");
+	check(len != 0 && d1_complete_result_decode(buf, len, &back) &&
+		      d1_complete_result_equal(&r, &back),
+	      "and round trips");
+	check(len > COUNT_AT + 4u &&
+		      buf[COUNT_AT + 3u] == (uint8_t)D1_BATCH_ENTRIES_MAX,
+	      "with the count in the same place");
+	if (len > COUNT_AT + 4u) {
+		buf[COUNT_AT + 3u] = (uint8_t)(D1_BATCH_ENTRIES_MAX + 1u);
+		check(!d1_complete_result_decode(buf, len, &back),
+		      "and one more member than there can be is refused");
+	}
+
 	make_result(&r);
 	r.entry.cohort_present = true;
 	r.entry.cohort.raw = 0x1122334455667788ull;

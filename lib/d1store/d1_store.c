@@ -2882,6 +2882,15 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 		d1_repair_undo_fresh(u, NULL, txn);
 		m->txn = txn->id;
 		/*
+		 * Answered, not just recorded in the cohort row.  Section
+		 * 4 has begin_repair return the per-member transaction
+		 * handles and section 9 has the receipt carry every ID it
+		 * returned, so this is the handle a caller names in the
+		 * prepare that follows.
+		 */
+		res->member_txn[i] = d1_txn_of(s, txn->id);
+		res->member_txn_count = i + 1u;
+		/*
 		 * The association is bound to the member's object and
 		 * chunk now and to its replacement at prepare_repair,
 		 * which is where a replacement first exists.
@@ -3888,7 +3897,7 @@ static bool d1_journal_entry_event(struct d1_store *s, const uint8_t *env_bytes,
 				   const uint8_t digest[D1_DIGEST_BYTES],
 				   const struct d1_complete_result *complete)
 {
-	uint8_t result_bytes[256];
+	uint8_t result_bytes[512];
 	struct d1_cursor cur;
 	size_t res_len;
 
@@ -4462,7 +4471,7 @@ static void d1_apply_control(struct d1_store *s, const struct d1_envelope *env,
 	struct d1_control_undo undo;
 	struct d1_admission *a = NULL;
 	struct d1_receipt *slot;
-	uint8_t result_bytes[256];
+	uint8_t result_bytes[512];
 	size_t res_len;
 	uint32_t status;
 
@@ -4560,7 +4569,7 @@ static void d1_apply_repair(struct d1_store *s, const struct d1_envelope *env,
 	struct d1_repair_undo undo;
 	struct d1_admission *a = NULL;
 	struct d1_receipt *slot;
-	uint8_t result_bytes[256];
+	uint8_t result_bytes[512];
 	size_t res_len;
 	uint32_t status;
 
@@ -4599,6 +4608,16 @@ static void d1_apply_repair(struct d1_store *s, const struct d1_envelope *env,
 	status = d1_admission_check(s, env, d1_op_rights(env->op), &a);
 	if (status == D1_OK)
 		status = d1_do_repair(s, env, a, res, &undo);
+	/*
+	 * A refused call issued no transactions, so it answers with none.
+	 * begin_repair fills the vector as it walks its members, and the
+	 * rows behind those handles are released by the undo below; every
+	 * refusal reachable today is settled before the first member is
+	 * taken, so this clears nothing, and it is here so that a refusal
+	 * added later cannot answer with handles that no longer exist.
+	 */
+	if (status != D1_OK)
+		res->member_txn_count = 0;
 	if (status == D1_NOSPC || status == D1_IO) {
 		d1_repair_undo_apply(s, &undo);
 		slot->used = false;

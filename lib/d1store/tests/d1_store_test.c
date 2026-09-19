@@ -11759,6 +11759,185 @@ static void test_a_committed_cohort_can_be_finished_after_a_reopen(void)
 }
 
 /*
+ * begin_repair answers with the handles its cohort is driven by.
+ *
+ * Section 4's result for begin_repair is "cohort and per-member
+ * transaction handles", and section 9 requires the logged result to
+ * contain every returned ID.  The answer carried the cohort alone, and
+ * every later call in the repair names each member's own transaction --
+ * so the contract was not callable from outside this file.  The suite
+ * reached the handles through d1_fixture_repair_member, which is a
+ * test's privilege: a wire caller has no fixture, and a receipt that
+ * omits an issued ID is a receipt an exact retry cannot reconstruct.
+ *
+ * So the result carries the vector, in member order, and this drives a
+ * two-member cohort using nothing but what begin_repair answered with:
+ * the prepare below is built by hand rather than through the helper,
+ * because the helper asks the store and the point is not having to.
+ */
+static void test_a_begin_answers_with_its_member_handles(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res, again;
+	static uint8_t older[32], newer[32], fixed[32];
+	const uint8_t *log;
+	size_t len, before, after;
+	d1_admission_id admission;
+	d1_version_id one, two, one_gone, two_gone;
+	d1_custody_id one_custody, two_custody;
+	d1_postcond_id one_post, two_post;
+	d1_txn_id one_txn, two_txn, answered[2], asked;
+	d1_version_id staged;
+	d1_repair_id cohort;
+	struct repair_ref ref[2];
+	uint32_t i;
+
+	memset(older, 0xe1, sizeof(older));
+	memset(newer, 0xe2, sizeof(newer));
+	memset(fixed, 0xe3, sizeof(fixed));
+	fill_uuid(&store_uuid, 0xe3);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	one = make_a_repair_case(s, admission, 0, 1, older, newer,
+				 (uint32_t)sizeof(older), &one_gone,
+				 &one_custody, &one_post, &one_txn);
+	two = make_a_repair_case(s, admission, 1, 5, older, newer,
+				 (uint32_t)sizeof(older), &two_gone,
+				 &two_custody, &two_post, &two_txn);
+	check(d1_version_live(one) && d1_version_live(two),
+	      "two chunks are repair cases");
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	repair_nopre(&env.body.repair.entries[0], 0, 91, one_custody, one,
+		     one_gone, one_post);
+	repair_nopre(&env.body.repair.entries[1], 1, 92, two_custody, two,
+		     two_gone, two_post);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a repair opens over both");
+	cohort = res.entries[0].cohort;
+	check(res.entries[0].member_txn_count == 2,
+	      "and answers with one transaction for each member");
+	answered[0] = res.entries[0].member_txn[0];
+	answered[1] = res.entries[0].member_txn[1];
+	check(d1_txn_live(answered[0]) && d1_txn_live(answered[1]) &&
+		      !d1_txn_eq(answered[0], answered[1]),
+	      "which are live and are two different transactions");
+	for (i = 0; i < 2; i++) {
+		check(d1_fixture_repair_member(s, cohort, i, &asked, &staged) &&
+			      d1_txn_eq(asked, answered[i]),
+		      "and are in member order, the order the request was in");
+	}
+
+	/* An exact retry answers from the receipt, with the same handles. */
+	(void)journal_of(s, &before);
+	check(d1_store_apply(s, &env, &again) == D1_OK &&
+		      again.entries[0].status == D1_OK,
+	      "the exact retry answers from its receipt");
+	(void)journal_of(s, &after);
+	check(after == before, "writing nothing");
+	check(again.entries[0].member_txn_count == 2 &&
+		      d1_txn_eq(again.entries[0].member_txn[0], answered[0]) &&
+		      d1_txn_eq(again.entries[0].member_txn[1], answered[1]),
+	      "with the transactions it was given before");
+	check(d1_repair_eq(again.entries[0].cohort, cohort),
+	      "and the same cohort");
+
+	/*
+	 * Now drive the cohort from the answer alone.  Section 4 has
+	 * prepare_repair name the cohort and the ordered (txn, payload,
+	 * checksum) vector, and nothing here asks the store what its
+	 * members are.
+	 */
+	env_init(&env, s, admission, D1_OP_PREPARE_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = cohort;
+	for (i = 0; i < 2; i++) {
+		struct d1_repair_entry *e = &env.body.repair.entries[i];
+
+		e->index = i;
+		e->owner.cohort.raw = 1;
+		e->owner.writer = 11;
+		e->owner.co_id = 91u + i;
+		e->txn_present = true;
+		e->txn = answered[i];
+		e->payload_present = true;
+		e->payload = fixed;
+		e->payload_len = (uint32_t)sizeof(fixed);
+		d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+				    &e->checksum);
+	}
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_PREPARED,
+	      "a prepare built from the begin's answer alone stages both");
+	check(res.entries[0].member_txn_count == 0,
+	      "and answers with no transactions, because it issued none");
+
+	/* And the rest of the repair, which the helper may name. */
+	ref[0].index = 0;
+	ref[0].co_id = 91;
+	ref[0].custody = one_custody;
+	ref[0].successor = one;
+	ref[1].index = 1;
+	ref[1].co_id = 92;
+	ref[1].custody = two_custody;
+	ref[1].successor = two;
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 2,
+			  ref),
+	      "a finalize names the vector");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the cohort finalizes");
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 2,
+			  ref),
+	      "a commit names it too");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and publishes");
+
+	/*
+	 * The handles are in the COHORT record's result, so replay
+	 * recomputes them and compares: a rebuild that issued different
+	 * ones would fail closed rather than quietly disagree.
+	 */
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "the history rebuilds");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		for (i = 0; i < 2; i++)
+			check(d1_fixture_repair_member(
+				      rebuilt,
+				      d1_fixture_repair_handle(
+					      rebuilt, d1_repair_raw(cohort)),
+				      i, &asked, &staged) &&
+				      d1_txn_raw(asked) ==
+					      d1_txn_raw(answered[i]),
+			      "whose members carry the transactions the "
+			      "record named");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
  * A cohort record's bytes are the ones its digest covers.
  *
  * An ENTRY record has carried its request digest since the first slice,
@@ -17381,6 +17560,7 @@ int main(void)
 	test_a_repair_does_not_reach_into_an_open_view();
 	test_an_error_repair_clears_and_unlocks_separately();
 	test_a_committed_cohort_can_be_finished_after_a_reopen();
+	test_a_begin_answers_with_its_member_handles();
 	test_a_marked_version_is_quarantined();
 	test_a_repair_member_is_a_transaction();
 	test_a_mixed_cohort_clears_and_unlocks();

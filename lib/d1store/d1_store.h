@@ -89,6 +89,25 @@ struct d1_entry_result {
 	bool cohort_present;
 	d1_repair_id cohort;
 	/*
+	 * The transactions the cohort's members were issued, in member
+	 * order.
+	 *
+	 * Section 4's result for begin_repair is "cohort and per-member
+	 * transaction handles", and section 9 requires the logged result
+	 * to contain every returned ID.  The cohort alone was not
+	 * callable: every later repair call names each member's own
+	 * transaction, and a caller outside this file had no way to learn
+	 * them -- the suite reached them through a fixture, which is a
+	 * test's privilege and not a contract.
+	 *
+	 * Empty for every operation that issues none, which is all of
+	 * them but begin_repair.  It is a counted vector rather than an
+	 * option per member because the count is the cohort's and the
+	 * order is the request's.
+	 */
+	uint32_t member_txn_count;
+	d1_txn_id member_txn[D1_BATCH_ENTRIES_MAX];
+	/*
 	 * The postcondition a rollback that answered NO_PREDECESSOR left
 	 * behind, bound to the successor it did not replace.  Section 4
 	 * makes it part of the rollback result; it is what a later NOPRE
