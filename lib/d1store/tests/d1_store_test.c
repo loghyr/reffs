@@ -13558,6 +13558,8 @@ static void test_a_repair_member_is_a_transaction(void)
 	struct d1_result res;
 	struct rollback_expect expect;
 	struct d1_entry_result entry;
+	struct d1_selection_spec sel;
+	struct d1_view *view = NULL;
 	static uint8_t older[32], newer[32], fixed[32];
 	uint8_t verifier[D1_VERIFIER_BYTES];
 	d1_admission_id admission, control;
@@ -13687,6 +13689,22 @@ static void test_a_repair_member_is_a_transaction(void)
 			      D1_INVALID,
 		      "and an ordinary rollback of it is refused the same "
 		      "way");
+
+		/*
+		 * And an OWNER view will not select it.  Section 6's
+		 * OWNER selection is one owner's own finalized versions;
+		 * a repair member's replacement belongs to a cohort that
+		 * publishes all of it or none.  The refusal is for the
+		 * mode, not for a phase that happens to lag: the member
+		 * is staged here, which is the state where a rule and an
+		 * accident would give different answers.
+		 */
+		owner_sel(&sel, member, 11, 95, 0);
+		check(d1_view_open(s, &object, fresh, &sel, 0, CHUNK_BYTES,
+				   &view) == D1_INVALID &&
+			      view == NULL,
+		      "and an OWNER view naming it is refused for being a "
+		      "repair member");
 	}
 
 	d1_store_free(s);

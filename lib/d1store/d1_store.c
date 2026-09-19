@@ -5233,6 +5233,19 @@ static uint32_t d1_owner_resolve(struct d1_store *s,
 			return D1_STALE_AUTH;
 		if (t->read_epoch != sel->read_epoch)
 			return D1_STALE_AUTH;
+		/*
+		 * A repair member is not an owner's private work to read.
+		 * Its replacement belongs to a cohort that publishes all
+		 * of it or none, and section 6's OWNER selection is about
+		 * one owner's own finalized versions.  The exclusion held
+		 * already, but by accident: a member's transaction stays
+		 * PREPARED while its cohort is FINALIZED, so the phase
+		 * test below happened to refuse it.  A phase lag is not a
+		 * rule, and the two would part company the moment member
+		 * phases followed the cohort's.
+		 */
+		if (t->mode != D1_MODE_ORDINARY)
+			return D1_INVALID;
 		if (t->phase != D1_PHASE_FINALIZED)
 			return D1_BAD_PHASE;
 		/* Two members resolving to one chunk is not a selection. */
@@ -6406,9 +6419,9 @@ static uint32_t d1_replay_entry(struct d1_store *s, const uint8_t *body,
 	 * The record category has to agree with what it carries.  An ENTRY
 	 * is one member of an ordinary batch, so a control operation or a
 	 * repair in one is a record the live encoder cannot emit -- both
-	 * answer once for a whole call and are appended as CONTROL -- and
-	 * an ordinal past the body's own count names a member that does
-	 * not exist.
+	 * answer once for a whole call, a control as CONTROL and a repair
+	 * as COHORT -- and an ordinal past the body's own count names a
+	 * member that does not exist.
 	 *
 	 * The repair half is asked here rather than left to the reducer
 	 * because the repair and lifecycle bodies share a union: an ENTRY

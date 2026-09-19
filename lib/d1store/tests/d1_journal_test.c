@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "d1_digest.h"
 #include "d1_journal.h"
 
 static unsigned int failures;
@@ -358,6 +359,83 @@ static void test_faults_leave_no_residue(void)
 }
 
 /*
+ * The format is a field of the frame, and the frame is this suite's.
+ *
+ * Section 9 puts the format in the header of every record, and the
+ * reader checks it there rather than inferring it from anything the
+ * body says.  A log written by another build is not a log this one may
+ * read part of: it fails closed at the first record, including when
+ * that record is the START.
+ *
+ * The store suite has always killed a reader that stopped checking,
+ * because a whole history in an unreadable format stops rebuilding.
+ * The check belongs to the framing, though, so the framing suite asks
+ * it directly: this is the one that owns d1_journal.c.
+ */
+static void test_a_record_of_another_format(void)
+{
+	struct d1_journal j;
+	struct d1_journal_cursor c;
+	const uint8_t *body;
+	uint32_t type, len, total, crc, i;
+	uint64_t lsn, incarnation;
+	unsigned int count;
+
+	if (!d1_journal_init(&j, &the_uuid))
+		return;
+	d1_journal_set_incarnation(&j, 1);
+	check(d1_journal_append(&j, D1_REC_START, body_abc, sizeof(body_abc)) &&
+		      d1_journal_append(&j, D1_REC_ENTRY, body_abc,
+					sizeof(body_abc)) &&
+		      d1_journal_flush(&j),
+	      "two records are written and flushed");
+	check(drain(&j, j.durable, &count) == D1_JOURNAL_CLEAN_END &&
+		      count == 2u,
+	      "and both are read back");
+	check(j.buf[4] == 0u && j.buf[5] == (uint8_t)D1_JOURNAL_FORMAT,
+	      "the first record carries the format this build writes");
+
+	/*
+	 * The second record is restamped with the first format and its
+	 * trailer recomputed, so nothing but the format is wrong: a
+	 * reader that had stopped looking would consume it.
+	 */
+	total = (uint32_t)j.buf[12] << 24 | (uint32_t)j.buf[13] << 16 |
+		(uint32_t)j.buf[14] << 8 | (uint32_t)j.buf[15];
+	check(total > 0u && (size_t)total < j.durable,
+	      "the first record's length is inside the log");
+	if (total == 0u || (size_t)total >= j.durable) {
+		d1_journal_fini(&j);
+		return;
+	}
+	j.buf[total + 4u] = 0u;
+	j.buf[total + 5u] = 1u;
+	crc = d1_crc32c(j.buf + total,
+			(size_t)(j.durable - total) - D1_JOURNAL_TRAILER_BYTES);
+	for (i = 0; i < 4u; i++)
+		j.buf[j.durable - 4u + i] = (uint8_t)(crc >> (24u - 8u * i));
+	d1_journal_cursor_init(&c, j.buf, j.durable, &the_uuid);
+	check(d1_journal_next(&c, &type, &lsn, &incarnation, &body, &len) ==
+		      D1_JOURNAL_RECORD,
+	      "the record before it still reads");
+	check(d1_journal_next(&c, &type, &lsn, &incarnation, &body, &len) ==
+		      D1_JOURNAL_CORRUPT,
+	      "and a record of another format is refused, not skipped");
+
+	/* And the same when it is the first record in the log. */
+	j.buf[4] = 0u;
+	j.buf[5] = 1u;
+	crc = d1_crc32c(j.buf, (size_t)total - D1_JOURNAL_TRAILER_BYTES);
+	for (i = 0; i < 4u; i++)
+		j.buf[total - 4u + i] = (uint8_t)(crc >> (24u - 8u * i));
+	d1_journal_cursor_init(&c, j.buf, j.durable, &the_uuid);
+	check(d1_journal_next(&c, &type, &lsn, &incarnation, &body, &len) ==
+		      D1_JOURNAL_CORRUPT,
+	      "a log whose first record is another format reads nothing");
+	d1_journal_fini(&j);
+}
+
+/*
  * Rolling an event back discards what it appended and gives its LSNs
  * back, without ever touching what was already claimed.
  */
@@ -426,6 +504,7 @@ int main(void)
 	test_identity_and_order();
 	test_faults_leave_no_residue();
 	test_rollback_discards_only_the_unclaimed();
+	test_a_record_of_another_format();
 	test_oversized_record();
 
 	if (failures) {
