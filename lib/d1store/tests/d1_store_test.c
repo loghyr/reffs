@@ -11310,9 +11310,9 @@ static void test_an_error_repair_clears_and_unlocks_separately(void)
 	episode = res.entries[0].episode;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK &&
-		      d1_episode_raw(res.entries[0].episode) ==
-			      d1_episode_raw(episode),
-	      "and the exact retry answers from its receipt");
+		      d1_episode_eq(res.entries[0].episode, episode),
+	      "and the exact retry answers from its receipt, the same "
+	      "handle in the same domain");
 
 	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
 	env.body.repair.range_begin = 0;
@@ -12404,6 +12404,237 @@ static void test_a_replacement_owner_is_its_writers(void)
 }
 
 /*
+ * A repair member is refused for being one, before the chunk is
+ * refused for being held.
+ *
+ * Section 5 gives two rules that always overlap.  An ordinary
+ * finalize, commit or private rollback naming a REPAIR member is
+ * INVALID; an ordinary finalize, commit or write on a locked or
+ * quarantined chunk is QUARANTINED.  A member's chunk is held by its
+ * own repair for as long as it is a member, so every request that
+ * meets the first rule meets the second, and the order decides which
+ * receipt the log carries.
+ *
+ * The memo's trace J1 settles it: an ordinary commit_batch on one
+ * member of a finalized repair is "INVALID receipt only".  So the
+ * member is answered for what it is before the chunk is answered for
+ * what is on it.  Both refuse without a transition; the difference is
+ * what a caller is told and what replay reproduces.
+ *
+ * The contrast is here too, on the same quarantined chunk: a request
+ * that names a transaction which is not a member of it is still
+ * QUARANTINED, because then the chunk's state is all there is to say.
+ *
+ * And the rule has a limit.  Section 7 allows a rollback of a
+ * committed replacement under fresh repair custody, so the INVALID is
+ * for the two private phases only; once the repair is committed and
+ * unlocked, its replacement is rolled back like any other committed
+ * version.
+ */
+static void test_a_member_is_refused_before_its_chunk_is(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	struct rollback_expect expect;
+	struct d1_entry_result entry;
+	static uint8_t older[32], newer[32], fixed[32];
+	uint8_t verifier[D1_VERIFIER_BYTES];
+	const uint8_t *log;
+	size_t len;
+	d1_admission_id admission;
+	d1_version_id broken, displaced, staged, seen, other, other_gone;
+	d1_custody_id custody, fresh_custody, other_custody;
+	d1_postcond_id postcond, other_post;
+	d1_txn_id txn, member, elsewhere_txn, other_member;
+	d1_repair_id cohort;
+	struct repair_ref ref[1];
+
+	memset(older, 0x51, sizeof(older));
+	memset(newer, 0x52, sizeof(newer));
+	memset(fixed, 0x53, sizeof(fixed));
+	fill_uuid(&store_uuid, 0x55);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	broken = make_a_repair_case(s, admission, 0, 1, older, newer,
+				    (uint32_t)sizeof(older), &displaced,
+				    &custody, &postcond, &txn);
+	check(d1_version_live(broken), "a chunk is a repair case");
+
+	/* An ordinary transaction elsewhere, to name as the contrast. */
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 6, 11, 21, older, sizeof(older),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "an ordinary write elsewhere leaves a transaction");
+	elsewhere_txn = res.entries[0].txn;
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 0, 22, custody, broken,
+		     displaced, postcond);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a repair opens over the chunk");
+	cohort = res.entries[0].cohort;
+	member = res.entries[0].member_txn[0];
+	ref[0].index = 0;
+	ref[0].co_id = 22;
+	ref[0].custody = custody;
+	ref[0].successor = broken;
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "a prepare names its vector");
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the replacement stages");
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 1,
+			  ref) &&
+		      d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the cohort finalizes, which is J1's state");
+
+	/* J1: the ordinary commit of a member is INVALID, not QUARANTINED. */
+	d1_store_verifier(s, verifier);
+	env_init(&env, s, admission, D1_OP_COMMIT_BATCH);
+	env.body.lifecycle.range_begin = 0;
+	env.body.lifecycle.range_end = 1;
+	env.body.lifecycle.count = 1;
+	env.body.lifecycle.entries[0].index = 0;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = 22;
+	env.body.lifecycle.entries[0].txn = member;
+	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_INVALID,
+	      "an ordinary commit of a member is INVALID, as J1 says");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_eq(seen, broken),
+	      "and publishes nothing");
+
+	/*
+	 * The same call on the same held chunk, naming a transaction that
+	 * is not a member of it.  Now the chunk is all there is to say.
+	 */
+	env_init(&env, s, admission, D1_OP_COMMIT_BATCH);
+	env.body.lifecycle.range_begin = 0;
+	env.body.lifecycle.range_end = 1;
+	env.body.lifecycle.count = 1;
+	env.body.lifecycle.entries[0].index = 0;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = 21;
+	env.body.lifecycle.entries[0].txn = elsewhere_txn;
+	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_QUARANTINED,
+	      "one naming another chunk's transaction is QUARANTINED, "
+	      "because the member rule has nothing to say about it");
+
+	/*
+	 * And one naming a member of a different chunk's repair.  The
+	 * member rule is about the member of the chunk the request names,
+	 * so this chunk answers for its own state, not for a transaction
+	 * that has nothing to do with it.
+	 */
+	other = make_a_repair_case(s, admission, 1, 31, older, newer,
+				   (uint32_t)sizeof(older), &other_gone,
+				   &other_custody, &other_post, &txn);
+	check(d1_version_live(other), "another chunk is a repair case");
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 1;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 1, 33, other_custody, other,
+		     other_gone, other_post);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and a repair opens over it");
+	other_member = res.entries[0].member_txn[0];
+	env_init(&env, s, admission, D1_OP_COMMIT_BATCH);
+	env.body.lifecycle.range_begin = 0;
+	env.body.lifecycle.range_end = 1;
+	env.body.lifecycle.count = 1;
+	env.body.lifecycle.entries[0].index = 0;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = 33;
+	env.body.lifecycle.entries[0].txn = other_member;
+	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_QUARANTINED,
+	      "one naming another chunk's member is QUARANTINED too");
+
+	/* And a private rollback of the member is INVALID for the same. */
+	memset(&expect, 0, sizeof(expect));
+	expect.visible_present = true;
+	expect.visible = broken;
+	check(rollback_one(s, admission, 0, 22, member, &expect, &entry) ==
+		      D1_INVALID,
+	      "a private rollback of a member is INVALID too");
+
+	/* Committed and unlocked, the replacement is rolled back normally. */
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref) &&
+		      d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the cohort commits");
+	check(repair_call(s, &env, admission, D1_OP_UNLOCK, cohort, 1, ref) &&
+		      d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and unlocks");
+	check(d1_store_visible(s, &object, 0, &staged) &&
+		      !d1_version_eq(staged, broken),
+	      "so the replacement is what the chunk holds");
+	fresh_custody = d1_fixture_custody(s, staged);
+	check(d1_custody_live(fresh_custody),
+	      "fresh repair custody is issued over the replacement");
+	memset(&expect, 0, sizeof(expect));
+	expect.custody_present = true;
+	expect.custody = fresh_custody;
+	expect.visible_present = true;
+	expect.visible = staged;
+	expect.predecessor_present = true;
+	expect.predecessor = broken;
+	check(rollback_one(s, admission, 0, 22, member, &expect, &entry) ==
+		      D1_OK,
+	      "and a rollback of the committed replacement under it is "
+	      "judged as a rollback, not refused for being a member");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_eq(seen, broken),
+	      "which restores the version it displaced");
+
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "the history rebuilds, refusals and all");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
  * A cohort record's bytes are the ones its digest covers.
  *
  * An ENTRY record has carried its request digest since the first slice,
@@ -13084,7 +13315,7 @@ static void test_a_marked_version_is_quarantined(void)
 	static uint8_t certificate[D1_CERTIFICATE_BYTES];
 	struct d1_guard guard;
 	const uint8_t *log;
-	size_t len;
+	size_t len, mid;
 	d1_admission_id admission;
 	d1_version_id marked, displaced, seen;
 	d1_txn_id marked_txn;
@@ -13174,6 +13405,8 @@ static void test_a_marked_version_is_quarantined(void)
 	if (view)
 		d1_view_close(view);
 	view = NULL;
+	/* A log that stops here is a log that stops mid-episode. */
+	(void)journal_of(s, &mid);
 
 	/* The repair the episode exists for is reachable throughout. */
 	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
@@ -13251,13 +13484,51 @@ static void test_a_marked_version_is_quarantined(void)
 
 	log = journal_of(s, &len);
 
-	/* The quarantine is durable: a store rebuilt mid-episode keeps it. */
+	/*
+	 * The whole history, release and all.  What this pins about the
+	 * quarantine is indirect but real: the QUARANTINED receipts
+	 * recorded during the episode are recomputed and compared as the
+	 * log is replayed, so a rebuild that did not quarantine would not
+	 * reproduce them and would fail closed.
+	 */
 	back = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
 	if (back) {
 		check(d1_store_replay(back, log, len) == D1_OK,
 		      "the whole history rebuilds");
 		check(object_states_agree(s, back, &object),
 		      "into the same store");
+		d1_store_free(back);
+	}
+
+	/*
+	 * And the direct check: a log that ends mid-episode rebuilds into
+	 * a store that is still quarantined.  The prefix stops before the
+	 * clear and the unlock, so what is being asked is whether the
+	 * state itself came back, not whether its receipts did.
+	 */
+	back = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (back) {
+		d1_admission_id there;
+
+		check(d1_store_replay(back, log, mid) == D1_OK,
+		      "a log that ends mid-episode rebuilds");
+		there = d1_fixture_admission_handle(
+			back, d1_admission_raw(admission));
+		check(d1_store_guard(back, &object, 0, &guard),
+		      "and the chunk is there");
+		env_init(&refused, back, there, D1_OP_WRITE_BATCH);
+		refused.body.write.count = 1;
+		refused.body.write.stability = D1_FILE_SYNC;
+		write_entry(&refused.body.write.entries[0], 0, 11, 90, older,
+			    sizeof(older), true, &guard);
+		check(d1_store_apply(back, &refused, &res) == D1_OK &&
+			      res.entries[0].status == D1_QUARANTINED,
+		      "an ordinary write of it is still quarantined");
+		ordinary_sel(&sel);
+		check(d1_view_open(back, &object, there, &sel, 0, sizeof(newer),
+				   &view) == D1_QUARANTINED &&
+			      view == NULL,
+		      "and an ordinary read of it is still refused");
 		d1_store_free(back);
 	}
 	d1_store_free(s);
@@ -13349,8 +13620,9 @@ static void test_a_repair_member_is_a_transaction(void)
 	env.body.lifecycle.entries[0].txn = member;
 	memcpy(env.body.lifecycle.prior_verifier, verifier, sizeof(verifier));
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
-		      res.entries[0].status == D1_QUARANTINED,
-	      "an ordinary finalize of a member is refused");
+		      res.entries[0].status == D1_INVALID,
+	      "an ordinary finalize of a member is refused for being a "
+	      "member, which is the memo's J1");
 
 	/* And a lease reap will not sweep it. */
 	d1_fixture_expire(s, admission);
@@ -13412,8 +13684,9 @@ static void test_a_repair_member_is_a_transaction(void)
 		expect.visible_present = true;
 		expect.visible = broken;
 		check(rollback_one(s, fresh, 0, 95, member, &expect, &entry) ==
-			      D1_QUARANTINED,
-		      "and an ordinary rollback of it is refused");
+			      D1_INVALID,
+		      "and an ordinary rollback of it is refused the same "
+		      "way");
 	}
 
 	d1_store_free(s);
@@ -14406,9 +14679,9 @@ static void test_a_nopre_repair_consumes_a_postcondition(void)
 	(void)journal_of(s, &before);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_NO_PREDECESSOR &&
-		      d1_postcond_raw(res.entries[0].postcond) ==
-			      d1_postcond_raw(again),
-	      "and the exact retry answers the one it already recorded");
+		      d1_postcond_eq(res.entries[0].postcond, again),
+	      "and the exact retry answers the one it already recorded, "
+	      "the same handle in the same domain");
 	(void)journal_of(s, &after);
 	check(after == before, "having recorded nothing further");
 
@@ -18029,6 +18302,7 @@ int main(void)
 	test_a_begin_answers_with_its_member_handles();
 	test_an_episode_names_the_repair_that_holds_it();
 	test_a_replacement_owner_is_its_writers();
+	test_a_member_is_refused_before_its_chunk_is();
 	test_a_marked_version_is_quarantined();
 	test_a_repair_member_is_a_transaction();
 	test_a_mixed_cohort_clears_and_unlocks();

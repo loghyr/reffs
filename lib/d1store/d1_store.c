@@ -2124,10 +2124,25 @@ static uint32_t d1_do_lifecycle_entry(struct d1_store *s,
 	 */
 	chunk = &o->chunks[e->index];
 	res->guard = chunk->guard;
+	txn = d1_txn_find(s, e->txn);
+	/*
+	 * Section 5 gives two rules that overlap here: an ordinary
+	 * finalize or commit naming a REPAIR member is INVALID, and an
+	 * ordinary finalize or commit on a locked or quarantined chunk is
+	 * QUARANTINED.  A member's chunk is always held by its repair, so
+	 * the two always overlap and the order decides the receipt.  The
+	 * memo's trace J1 resolves it -- an ordinary commit_batch on a
+	 * member of a finalized repair is "INVALID receipt only" -- so the
+	 * member is answered for what it is before the chunk is answered
+	 * for what is on it.  Both refuse without a transition; which one
+	 * is recorded is part of the format, and replay compares it.
+	 */
+	if (txn && txn->object == d1_object_slot(s, o) &&
+	    txn->index == e->index && txn->mode != D1_MODE_ORDINARY)
+		return D1_INVALID;
 	if (d1_chunk_writable(chunk) != D1_OK)
 		return D1_QUARANTINED;
 
-	txn = d1_txn_find(s, e->txn);
 	if (!txn)
 		return D1_INVALID;
 	if (txn->index != e->index || txn->object != d1_object_slot(s, o))
@@ -2248,10 +2263,24 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 	 */
 	chunk = &o->chunks[e->index];
 	res->guard = chunk->guard;
+	txn = d1_txn_find(s, e->txn);
+	/*
+	 * The same precedence as the lifecycle path, for the same reason
+	 * and with the same limit: trace J1's INVALID is about a private
+	 * rollback of a repair member, which section 5 refuses for what
+	 * the member is.  A COMMITTED replacement is not that -- section 7
+	 * allows its rollback under fresh repair custody -- so only the
+	 * two private phases are answered here, and the committed case
+	 * goes on to be judged as a rollback.
+	 */
+	if (txn && txn->object == d1_object_slot(s, o) &&
+	    txn->index == e->index && txn->mode != D1_MODE_ORDINARY &&
+	    (txn->phase == D1_PHASE_PREPARED ||
+	     txn->phase == D1_PHASE_FINALIZED))
+		return D1_INVALID;
 	if (d1_chunk_writable(chunk) != D1_OK)
 		return D1_QUARANTINED;
 
-	txn = d1_txn_find(s, e->txn);
 	if (!txn || txn->index != e->index ||
 	    txn->object != d1_object_slot(s, o))
 		return D1_INVALID;
