@@ -2525,11 +2525,14 @@ struct d1_repair_undo {
 	 * answered from: the answer is recorded, and the rebuilt store
 	 * computes a different one from the phase the log does say.
 	 *
-	 * Kept per transaction and deduplicated, because one call walks
-	 * the whole vector and a member can be written more than once --
-	 * staged by prepare and then abandoned by the same call's cohort
-	 * abort.  The first image is the pre-call one, which is the one
-	 * that has to come back.
+	 * Kept per transaction and deduplicated so that the first image
+	 * is the one restored, because the first image is the pre-call
+	 * one.  No call reaches the second today: prepare_repair and
+	 * commit_repair each walk a vector of distinct members, and the
+	 * cohort abort that follows a failed payload changes a member's
+	 * used flag rather than these two fields.  The deduplication is
+	 * defence against a later writer, not something a path needs now;
+	 * operator z08 is the control that says so.
 	 */
 	uint32_t txn_count;
 	struct d1_txn *txn[D1_BATCH_ENTRIES_MAX];
@@ -2692,9 +2695,11 @@ static void d1_repair_undo_apply(struct d1_store *s, struct d1_repair_undo *u)
 			u->fresh_txn[i]->used = false;
 	}
 	/*
-	 * After the rows exist again, because a member this call both
-	 * wrote and dropped is put back in use above and wants the
-	 * fields it had before the call, not the ones the drop left.
+	 * After the rows exist again, for reading rather than for
+	 * correctness: a member this call both wrote and dropped is put
+	 * back in use above, and its fields belong beside that.  The drop
+	 * clears a used flag and leaves phase and version alone, so
+	 * nothing here depends on the order.
 	 */
 	for (i = 0; i < u->txn_count; i++) {
 		u->txn[i]->phase = u->txn_phase_before[i];

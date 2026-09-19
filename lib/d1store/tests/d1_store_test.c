@@ -10450,10 +10450,15 @@ static bool member_states_agree(struct d1_store *a, struct d1_store *b,
  * the receipt it records is what a rebuilt store has to agree with.
  *
  * It names nothing but the member: no custody, no expected visible
- * version, no predecessor.  Those are checked after the phase, so while
- * the member is in a private phase the answer here is the phase's
- * alone -- and once it is COMMITTED the call falls through to the
- * section 7 judgement, where the absent custody is what answers.
+ * version, no predecessor.  The phase is read before any of those, so
+ * while the member is in a private phase the answer here is the
+ * phase's alone.
+ *
+ * Once the member is COMMITTED the phase no longer answers, and what
+ * answers next is the chunk rather than the custody: COMMIT neither
+ * clears an episode nor releases custody, so the member is still
+ * repair-locked and the call is QUARANTINED before any custody is
+ * looked at.  The absent custody answers only after an unlock.
  */
 static bool rollback_naming(struct d1_store *s, d1_admission_id admission,
 			    uint64_t index, uint32_t co_id, d1_txn_id txn,
@@ -11777,19 +11782,24 @@ static void test_an_unrecorded_commit_leaves_recovery_its_answer(void)
  * transaction rollback reject REPAIR members with INVALID".  One
  * sentence, three operations, and what it turns on is what the member
  * is rather than how far its cohort has carried it -- so every phase a
- * member can reach before its cohort publishes answers INVALID, and
+ * member is in before its cohort publishes answers INVALID, and
  * refuses without a transition.
  *
- * The phases a member can reach are ADMITTED, PREPARED and COMMITTED.
- * FINALIZE is a cohort transition: finalize_repair moves the cohort and
- * leaves every member PREPARED, which is checked here rather than
- * assumed, because the guard names a phase no repair member is ever in.
+ * The memo's ADMITTED, PREPARED and FINALIZED member states are all
+ * walked here.  FINALIZED is a whole-cohort state: section 7 has
+ * finalize_repair transition the cohort PREPARED -> FINALIZED, and
+ * commit_repair then "requires every member FINALIZED", so a member of
+ * a FINALIZED cohort is a FINALIZED member and trace J1's "both remain
+ * FINALIZED" is about exactly that.  This model carries it on the
+ * cohort row and leaves the member's own txn->phase at PREPARED, which
+ * is an internal representation and not a missing case -- the case is
+ * asked here, and the representation is checked beside it so that a
+ * later reader does not mistake one for the other.
  *
- * COMMITTED is the phase section 7 takes back out: a committed
+ * COMMITTED is the state section 7 takes back out: a committed
  * replacement can be rolled back under fresh repair custody, and this
- * pins that the new rule does not close that door.  A rollback naming
- * only the member gets as far as asking for the custody it did not
- * bring, which is where a committed version's rollback is judged.
+ * pins that the new rule does not close that door.  Getting to that
+ * door takes an unlock first, because COMMIT leaves the member locked.
  */
 static void test_a_private_rollback_refuses_a_member_in_every_phase(void)
 {
@@ -11799,8 +11809,8 @@ static void test_a_private_rollback_refuses_a_member_in_every_phase(void)
 	struct d1_result res;
 	static uint8_t older[32], newer[32], fixed[32];
 	d1_admission_id admission;
-	d1_version_id one, one_gone, staged, carried;
-	d1_custody_id one_custody;
+	d1_version_id one, one_gone, staged, carried, replacement, seen;
+	d1_custody_id one_custody, fresh_custody;
 	d1_postcond_id one_post;
 	d1_txn_id one_txn, member;
 	d1_repair_id cohort;
@@ -11882,10 +11892,11 @@ static void test_a_private_rollback_refuses_a_member_in_every_phase(void)
 	      "and the cohort finalizes");
 	check(d1_fixture_txn_state(s, member, &phase, &carried) &&
 		      phase == D1_PHASE_PREPARED,
-	      "the cohort's FINALIZE leaves its member PREPARED");
+	      "the cohort carries FINALIZED, the member's own field stays "
+	      "PREPARED");
 	check(rollback_naming(s, admission, 0, 65, member, &status) &&
 		      status == D1_INVALID,
-	      "and it still answers INVALID");
+	      "and a FINALIZED member answers INVALID");
 
 	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
 			  ref),
@@ -11894,13 +11905,49 @@ static void test_a_private_rollback_refuses_a_member_in_every_phase(void)
 		      res.entries[0].status == D1_OK,
 	      "and publishes");
 	/*
-	 * COMMITTED: section 7's door.  The refusal is no longer the
-	 * member refusal -- the call is judged as a rollback of committed
-	 * data, and answers for the custody it did not bring.
+	 * COMMITTED: section 7's door, and what stands in front of it.
+	 * The member refusal no longer applies, but COMMIT clears no
+	 * episode and releases no custody, so the chunk is still
+	 * repair-locked and the chunk is what answers -- before any
+	 * custody is examined.
 	 */
 	check(rollback_naming(s, admission, 0, 65, member, &status) &&
-		      status != D1_INVALID,
-	      "a COMMITTED replacement is judged as a rollback instead");
+		      status == D1_QUARANTINED,
+	      "a COMMITTED member's rollback is refused for the lock");
+
+	check(repair_call(s, &env, admission, D1_OP_UNLOCK, cohort, 1, ref),
+	      "an unlock names it");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and releases it");
+	check(d1_store_visible(s, &object, 0, &replacement) &&
+		      !d1_version_eq(replacement, one),
+	      "the chunk shows the replacement the repair published");
+
+	/*
+	 * Only now is the custody what answers, and section 7 asks for
+	 * fresh custody bound to that replacement rather than the custody
+	 * the repair was opened under.
+	 */
+	check(rollback_naming(s, admission, 0, 65, member, &status) &&
+		      status == D1_STALE_AUTH,
+	      "an unlocked rollback that brings no custody is refused for it");
+	fresh_custody = d1_fixture_custody(s, replacement);
+	check(d1_custody_live(fresh_custody),
+	      "fresh custody is issued over the replacement");
+	check(rollback_one(s, admission, 0, 65, member,
+			   &(struct rollback_expect){ .custody_present = true,
+						      .custody = fresh_custody,
+						      .visible_present = true,
+						      .visible = replacement,
+						      .predecessor_present =
+							      true,
+						      .predecessor = one },
+			   NULL) == D1_OK,
+	      "and under it the committed replacement rolls back");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_eq(seen, one),
+	      "which puts back the version it displaced");
 
 	rebuilt = replayed(s, &store_uuid, &status);
 	check(rebuilt != NULL, "every receipt replays");
@@ -13292,9 +13339,10 @@ static void test_a_replacement_owner_is_its_writers(void)
  *
  * And the rule has a limit.  Section 7 allows a rollback of a
  * committed replacement under fresh repair custody, so the INVALID is
- * for the two private phases only; once the repair is committed and
- * unlocked, its replacement is rolled back like any other committed
- * version.
+ * for the phases before the cohort publishes -- ADMITTED, PREPARED and
+ * the FINALIZED the cohort row carries; once the repair is committed
+ * and unlocked, its replacement is rolled back like any other
+ * committed version.
  */
 static void test_a_member_is_refused_before_its_chunk_is(void)
 {
