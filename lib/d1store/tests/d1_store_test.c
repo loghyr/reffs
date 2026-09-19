@@ -9999,6 +9999,35 @@ static void repair_member(struct d1_repair_entry *e, uint64_t index,
 	e->predecessor = predecessor;
 }
 
+/*
+ * Read one chunk's committed bytes through an ordinary view.
+ *
+ * Answers the view's status, and on D1_OK the bytes and their length.
+ * The comparison the fault tests make is between the bytes a live
+ * store serves and the bytes a store rebuilt from its log serves, so
+ * the read has to be the data and not the pointer: two stores can name
+ * the same version and hand back different bytes for it, which is
+ * exactly the divergence an undo that lost a row produced.
+ */
+static uint32_t read_a_chunk(struct d1_store *s, d1_admission_id admission,
+			     uint64_t index, uint8_t *out, uint32_t cap,
+			     uint32_t *out_len)
+{
+	struct d1_selection_spec sel;
+	struct d1_view *view;
+	uint32_t status;
+
+	*out_len = 0;
+	ordinary_sel(&sel);
+	status = d1_view_open(s, &object, admission, &sel, index * CHUNK_BYTES,
+			      (index + 1u) * CHUNK_BYTES, &view);
+	if (status != D1_OK)
+		return status;
+	status = d1_view_read(view, index * CHUNK_BYTES, out, cap, out_len);
+	d1_view_close(view);
+	return status;
+}
+
 /* One member of a cohort, as the calls that follow name it. */
 struct repair_ref {
 	uint64_t index;
@@ -10581,6 +10610,440 @@ static void test_a_repair_publishes_its_whole_vector_or_none(void)
 		      "a log with a published repair in it rebuilds");
 		check(object_states_agree(s, rebuilt, &object),
 		      "into the same store");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
+ * A repair call whose event never lands leaves the cohort whole.
+ *
+ * Section 7 keeps an allocation or append failure before the event's
+ * frontier UNRECORDED and leaves "the previous whole cohort state";
+ * section 9 says the same of every event.  The undo restored the rows a
+ * refused call had taken and the cohort row it had changed, but not the
+ * rows it had released -- and an abort releases two rows per member
+ * that earlier calls took: the replacement prepare_repair staged and
+ * the transaction begin_repair issued.
+ *
+ * So the cohort came back naming rows that were free.  The next
+ * ordinary write took them, the repair then committed over a version
+ * row that no longer described its payload, and the chunk's visible
+ * pointer named nothing at all: the live store read a hole where a
+ * store rebuilt from the same log read the replacement.  That is the
+ * disagreement section 9 fails closed on, reached without one corrupt
+ * byte.
+ *
+ * Two arms.  The first refuses the abort and then publishes, which is
+ * where the divergence appeared.  The second refuses the abort and
+ * retries it exactly -- an UNRECORDED failure records no receipt, so
+ * the retry executes rather than conflicting -- and the rows are then
+ * released once, not twice.
+ */
+static void test_an_unrecorded_abort_keeps_the_cohort_whole(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32], fixed[32], filler[32];
+	uint8_t live_bytes[32], rebuilt_bytes[32];
+	uint32_t live_len, rebuilt_len;
+	struct d1_guard guard;
+	const uint8_t *log;
+	size_t len, before, after;
+	d1_admission_id admission;
+	d1_version_id one, two, one_gone, two_gone, staged, again, seen;
+	d1_custody_id one_custody, two_custody;
+	d1_postcond_id one_post, two_post;
+	d1_txn_id one_txn, two_txn, member, member_again;
+	d1_repair_id cohort;
+	struct repair_ref ref[1];
+
+	memset(older, 0x71, sizeof(older));
+	memset(newer, 0x72, sizeof(newer));
+	memset(fixed, 0x73, sizeof(fixed));
+	memset(filler, 0x74, sizeof(filler));
+	fill_uuid(&store_uuid, 0x73);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	one = make_a_repair_case(s, admission, 0, 1, older, newer,
+				 (uint32_t)sizeof(older), &one_gone,
+				 &one_custody, &one_post, &one_txn);
+	two = make_a_repair_case(s, admission, 1, 5, older, newer,
+				 (uint32_t)sizeof(older), &two_gone,
+				 &two_custody, &two_post, &two_txn);
+	check(d1_version_live(one) && d1_version_live(two),
+	      "two chunks are repair cases");
+
+	/* The first, staged and finalized. */
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 0, 60, one_custody, one,
+		     one_gone, one_post);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a repair opens over the first");
+	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 60;
+	ref[0].custody = one_custody;
+	ref[0].successor = one;
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "a prepare names the cohort's vector");
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the replacement is staged");
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 1,
+			  ref),
+	      "a finalize names it too");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the cohort finalizes");
+	check(d1_fixture_repair_member(s, cohort, 0, &member, &staged) &&
+		      d1_txn_live(member) && d1_version_live(staged),
+	      "the member holds its transaction and its replacement");
+
+	/* An abort of it whose durable event never lands. */
+	check(repair_call(s, &env, admission, D1_OP_ABORT_REPAIR, cohort, 1,
+			  ref),
+	      "an abort names the cohort's vector");
+	env.body.repair.phase = D1_PHASE_FINALIZED;
+	(void)journal_of(s, &before);
+	d1_fixture_fail_next_append(s);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_IO &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "and the abort's event does not land");
+	(void)journal_of(s, &after);
+	check(after == before, "so the log did not grow");
+	check(d1_fixture_repair_member(s, cohort, 0, &member_again, &again) &&
+		      d1_txn_eq(member_again, member) &&
+		      d1_version_eq(again, staged),
+	      "and the cohort still names the same transaction and "
+	      "replacement");
+
+	/*
+	 * An ordinary write between the two, which is what took the rows
+	 * the abort had freed.  Nothing here depends on which rows the
+	 * store happens to hand out: what the write needs is a version
+	 * and a transaction, and a released row is the first one free.
+	 */
+	check(d1_version_live(
+		      commit_chunk(s, admission, 3, 70, filler, sizeof(filler),
+				   &(struct d1_guard){ .never_written = true },
+				   d1_version_none(), NULL)),
+	      "an ordinary write of another chunk commits between them");
+
+	/* The repair the abort did not abort still publishes its own bytes. */
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "a commit names the vector it publishes");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_COMMITTED,
+	      "and the cohort commits");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_eq(seen, staged),
+	      "the chunk holds the replacement that was staged");
+	check(repair_call(s, &env, admission, D1_OP_UNLOCK, cohort, 1, ref),
+	      "an unlock names the member");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and releases it");
+	check(read_a_chunk(s, admission, 0, live_bytes, sizeof(live_bytes),
+			   &live_len) == D1_OK &&
+		      live_len == (uint32_t)sizeof(fixed) &&
+		      memcmp(live_bytes, fixed, sizeof(fixed)) == 0,
+	      "an ordinary read of it returns the replacement's bytes");
+
+	/* The second, aborted under a fault and then aborted exactly. */
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 1;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 1, 80, two_custody, two,
+		     two_gone, two_post);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a repair opens over the second");
+	cohort = res.entries[0].cohort;
+	ref[0].index = 1;
+	ref[0].co_id = 80;
+	ref[0].custody = two_custody;
+	ref[0].successor = two;
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "a prepare names its vector");
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and stages a replacement of its own");
+
+	check(repair_call(s, &env, admission, D1_OP_ABORT_REPAIR, cohort, 1,
+			  ref),
+	      "an abort names that cohort's vector");
+	env.body.repair.phase = D1_PHASE_PREPARED;
+	d1_fixture_fail_next_append(s);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_IO &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "whose event does not land either");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_ABORTED,
+	      "and the exact retry executes, because nothing was recorded");
+	check(d1_store_visible(s, &object, 1, &seen) &&
+		      d1_version_eq(seen, two),
+	      "the chunk still holds what the repair was opened over");
+	d1_store_guard(s, &object, 1, &guard);
+	env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 1, 11, 85, filler,
+		    sizeof(filler), true, &guard);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the abort that did land gave it back to ordinary writers");
+
+	/* Live and rebuilt answer with the same bytes, not the same holes. */
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "the history rebuilds");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		check(read_a_chunk(rebuilt,
+				   d1_fixture_admission_handle(
+					   rebuilt,
+					   d1_admission_raw(admission)),
+				   0, rebuilt_bytes, sizeof(rebuilt_bytes),
+				   &rebuilt_len) == D1_OK &&
+			      rebuilt_len == live_len &&
+			      memcmp(rebuilt_bytes, live_bytes, live_len) == 0,
+		      "which reads the same bytes the live store reads");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
+ * The same, for the abort a prepare makes of its own failure.
+ *
+ * Section 7's G1: once an authorized, correct-phase prepare_repair has
+ * begun evaluating member predicates, a failed payload checksum
+ * abandons every still-private member in one durable cohort event.
+ * That event can fail to land like any other, and then the abort did
+ * not happen: the cohort is where it was, its transactions are where
+ * they were, and the correct prepare after it stages rather than
+ * reporting a want of room that a lost row invented.
+ *
+ * The cohort here has two members and it is the second payload that
+ * does not verify, because that is the arm where one call both takes a
+ * row and releases it -- the first member's replacement is staged and
+ * then abandoned in the same call.  Such a row has to come back free,
+ * not in use: the undo also puts the version counter back, so a row
+ * left in use is a second row wearing an ID the next allocation is
+ * about to hand out, and a lookup that finds the wrong one of the two
+ * serves the payload of the attempt that was refused.
+ */
+static void test_an_unrecorded_prepare_abort_keeps_the_cohort_whole(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32], fixed[32], mended[32];
+	uint8_t live_bytes[32], rebuilt_bytes[32];
+	uint32_t live_len, rebuilt_len;
+	const uint8_t *log;
+	size_t len, before, after;
+	d1_admission_id admission, control, fresh;
+	d1_version_id one, two, one_gone, two_gone, staged, seen;
+	d1_custody_id one_custody, two_custody;
+	d1_postcond_id one_post, two_post;
+	d1_txn_id one_txn, two_txn, member, member_again;
+	d1_repair_id cohort;
+	struct repair_ref ref[2];
+	uint32_t i;
+
+	memset(older, 0x91, sizeof(older));
+	memset(newer, 0x92, sizeof(newer));
+	memset(fixed, 0x93, sizeof(fixed));
+	memset(mended, 0x94, sizeof(mended));
+	fill_uuid(&store_uuid, 0x93);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	control = d1_fixture_admit(s, &object, 11, D1_RIGHT_CONTROL);
+	one = make_a_repair_case(s, admission, 0, 1, older, newer,
+				 (uint32_t)sizeof(older), &one_gone,
+				 &one_custody, &one_post, &one_txn);
+	two = make_a_repair_case(s, admission, 1, 5, older, newer,
+				 (uint32_t)sizeof(older), &two_gone,
+				 &two_custody, &two_post, &two_txn);
+	check(d1_version_live(one) && d1_version_live(two),
+	      "two chunks are repair cases");
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	repair_nopre(&env.body.repair.entries[0], 0, 65, one_custody, one,
+		     one_gone, one_post);
+	repair_nopre(&env.body.repair.entries[1], 1, 66, two_custody, two,
+		     two_gone, two_post);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a repair opens over both");
+	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 65;
+	ref[0].custody = one_custody;
+	ref[0].successor = one;
+	ref[1].index = 1;
+	ref[1].co_id = 66;
+	ref[1].custody = two_custody;
+	ref[1].successor = two;
+	check(d1_fixture_repair_member(s, cohort, 0, &member, &staged) &&
+		      d1_txn_live(member) && !d1_version_live(staged),
+	      "the first member has a transaction and no replacement yet");
+
+	/*
+	 * A prepare whose second payload does not verify.  The first
+	 * member is staged before the second is judged, so the cohort
+	 * abort that follows releases a row this very call took.
+	 */
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 2,
+			  ref),
+	      "a prepare names the cohort's vector");
+	for (i = 0; i < 2; i++) {
+		struct d1_repair_entry *e = &env.body.repair.entries[i];
+
+		e->payload_present = true;
+		e->payload = fixed;
+		e->payload_len = (uint32_t)sizeof(fixed);
+		d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+				    &e->checksum);
+	}
+	env.body.repair.entries[1].checksum.digest[0] ^= 0xffu;
+	(void)journal_of(s, &before);
+	d1_fixture_fail_next_append(s);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_IO &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "and its cohort abort does not land");
+	(void)journal_of(s, &after);
+	check(after == before, "so the log did not grow");
+	check(d1_fixture_repair_member(s, cohort, 0, &member_again, &staged) &&
+		      d1_txn_eq(member_again, member) &&
+		      !d1_version_live(staged),
+	      "and the first member is where it was, with its transaction");
+
+	/*
+	 * Which is the point: an abort that did not happen has not spent
+	 * anything.  The correct prepare after it stages different bytes,
+	 * so a row the refused attempt left behind would be visible as
+	 * the payload it staged rather than as a number nobody can see.
+	 */
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 2,
+			  ref),
+	      "the correct prepare names the same vector");
+	for (i = 0; i < 2; i++) {
+		struct d1_repair_entry *e = &env.body.repair.entries[i];
+
+		e->payload_present = true;
+		e->payload = mended;
+		e->payload_len = (uint32_t)sizeof(mended);
+		d1_checksum_compute(D1_CKSUM_CRC32C, mended, sizeof(mended),
+				    &e->checksum);
+	}
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_PREPARED,
+	      "and stages both replacements");
+
+	/* And the member is still a member recovery can move. */
+	fresh = d1_fixture_admit(s, &object, 11,
+				 D1_RIGHT_READ | D1_RIGHT_WRITE |
+					 D1_RIGHT_REPAIR |
+					 D1_RIGHT_SINGLE_WRITER);
+	env_init(&env, s, control, D1_OP_RECOVERY_ADMIT);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = member;
+	env.body.control.old_admission = admission;
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = fresh;
+	env.body.control.read_epoch_present = true;
+	env.body.control.read_epoch = 0;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a recovery_admit still finds the member the abort did not take");
+
+	check(repair_call(s, &env, fresh, D1_OP_FINALIZE_REPAIR, cohort, 2,
+			  ref),
+	      "a finalize names the vector");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the cohort finalizes under the handle recovery gave it");
+	check(repair_call(s, &env, fresh, D1_OP_COMMIT_REPAIR, cohort, 2, ref),
+	      "a commit names it too");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and publishes");
+	check(repair_call(s, &env, fresh, D1_OP_UNLOCK, cohort, 2, ref),
+	      "an unlock names both members");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and releases them");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      !d1_version_eq(seen, one),
+	      "the first chunk holds a replacement");
+	check(read_a_chunk(s, fresh, 0, live_bytes, sizeof(live_bytes),
+			   &live_len) == D1_OK &&
+		      live_len == (uint32_t)sizeof(mended) &&
+		      memcmp(live_bytes, mended, sizeof(mended)) == 0,
+	      "and reads the bytes the prepare that landed staged");
+
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "the history rebuilds");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		check(read_a_chunk(rebuilt,
+				   d1_fixture_admission_handle(
+					   rebuilt, d1_admission_raw(fresh)),
+				   0, rebuilt_bytes, sizeof(rebuilt_bytes),
+				   &rebuilt_len) == D1_OK &&
+			      rebuilt_len == live_len &&
+			      memcmp(rebuilt_bytes, live_bytes, live_len) == 0,
+		      "and reads the same bytes the live store reads");
 		d1_store_free(rebuilt);
 	}
 	d1_store_free(s);
@@ -16444,6 +16907,8 @@ int main(void)
 	test_a_mixed_rollback_answers_each_member_for_itself();
 	test_a_repair_opens_only_over_what_it_may_repair();
 	test_a_repair_publishes_its_whole_vector_or_none();
+	test_an_unrecorded_abort_keeps_the_cohort_whole();
+	test_an_unrecorded_prepare_abort_keeps_the_cohort_whole();
 	test_a_repair_does_not_reach_into_an_open_view();
 	test_an_error_repair_clears_and_unlocks_separately();
 	test_a_marked_version_is_quarantined();

@@ -2457,6 +2457,26 @@ struct d1_repair_undo {
 	struct d1_version *fresh_version[D1_BATCH_ENTRIES_MAX];
 	struct d1_txn *fresh_txn[D1_BATCH_ENTRIES_MAX];
 	/*
+	 * Rows a refused call released, which it does not get to lose.
+	 *
+	 * A cohort abort frees the replacements its members staged and
+	 * the transactions begin_repair issued them, and those rows were
+	 * taken by the calls before this one.  Section 7 leaves an append
+	 * failure before the frontier UNRECORDED with the previous whole
+	 * cohort state intact, so a release has to be as reversible as an
+	 * allocation: without this the cohort came back naming rows that
+	 * were free, the next write took them, and a chunk whose visible
+	 * pointer named one read as a hole while a store rebuilt from the
+	 * same log read the replacement.
+	 *
+	 * Only the used flag is cleared by the release, so only that is
+	 * put back here; the member fields that name the rows live in the
+	 * cohort row, which is saved whole.
+	 */
+	uint32_t drop_count;
+	struct d1_version *drop_version[D1_BATCH_ENTRIES_MAX];
+	struct d1_txn *drop_txn[D1_BATCH_ENTRIES_MAX];
+	/*
 	 * Association rows a member took or moved.  These are restored
 	 * whole rather than released, because prepare_repair moves an
 	 * existing binding onto the replacement it stages and only
@@ -2511,6 +2531,16 @@ static void d1_repair_undo_fresh(struct d1_repair_undo *u,
 	u->fresh_count++;
 }
 
+static void d1_repair_undo_drop(struct d1_repair_undo *u,
+				struct d1_version *ver, struct d1_txn *txn)
+{
+	if (u->drop_count >= D1_BATCH_ENTRIES_MAX)
+		return;
+	u->drop_version[u->drop_count] = ver;
+	u->drop_txn[u->drop_count] = txn;
+	u->drop_count++;
+}
+
 static void d1_repair_undo_owner(struct d1_repair_undo *u,
 				 struct d1_owner_assoc *assoc)
 {
@@ -2563,6 +2593,20 @@ static void d1_repair_undo_apply(struct d1_store *s, struct d1_repair_undo *u)
 		u->fresh->used = false;
 	if (u->fresh_episode)
 		u->fresh_episode->used = false;
+	/*
+	 * Released rows before taken rows, because one call can do both
+	 * to the same row: prepare_repair stages a replacement and then
+	 * abandons it in the cohort abort of its own checksum failure.
+	 * Restoring first and releasing second leaves such a row free,
+	 * which is what it was before the call, and leaves a row this
+	 * call only released in use, which is what it was before too.
+	 */
+	for (i = 0; i < u->drop_count; i++) {
+		if (u->drop_version[i])
+			u->drop_version[i]->used = true;
+		if (u->drop_txn[i])
+			u->drop_txn[i]->used = true;
+	}
 	for (i = 0; i < u->fresh_count; i++) {
 		if (u->fresh_version[i])
 			u->fresh_version[i]->used = false;
@@ -2869,14 +2913,23 @@ static uint32_t d1_do_begin_repair(struct d1_store *s,
 	return D1_OK;
 }
 
-/* Drop the private work a member staged, replacement and transaction. */
+/*
+ * Drop the private work a member staged, replacement and transaction.
+ *
+ * The rows go on the undo before they are freed.  They are not this
+ * call's rows -- begin_repair issued the transaction and prepare_repair
+ * staged the replacement -- so if this call turns out never to have
+ * happened, they have to be there still.
+ */
 static void d1_repair_member_drop(struct d1_store *s,
-				  struct d1_repair_member *m)
+				  struct d1_repair_member *m,
+				  struct d1_repair_undo *u)
 {
 	struct d1_version *ver =
 		d1_version_find(s, d1_version_of(s, m->version));
 	struct d1_txn *txn = d1_txn_find(s, d1_txn_of(s, m->txn));
 
+	d1_repair_undo_drop(u, ver, txn);
 	if (ver)
 		ver->used = false;
 	if (txn)
@@ -2914,7 +2967,7 @@ static uint32_t d1_do_abort_repair(struct d1_store *s, struct d1_repair *cohort,
 		d1_repair_undo_chunk(u, chunk);
 		chunk->repair_present = false;
 		chunk->repair = 0;
-		d1_repair_member_drop(s, m);
+		d1_repair_member_drop(s, m, u);
 	}
 	cohort->phase = D1_PHASE_ABORTED;
 	res->phase = cohort->phase;
@@ -3054,7 +3107,7 @@ d1_do_prepare_repair(struct d1_store *s, const struct d1_envelope *env,
 			d1_repair_undo_chunk(u, chunk);
 			chunk->repair_present = false;
 			chunk->repair = 0;
-			d1_repair_member_drop(s, m);
+			d1_repair_member_drop(s, m, u);
 		}
 		cohort->phase = D1_PHASE_ABORTED;
 		res->phase = cohort->phase;
@@ -5171,6 +5224,23 @@ uint32_t d1_view_open(struct d1_store *s, const struct d1_objkey *object,
 			ver = d1_version_find(s, d1_version_of(s, chosen[i]));
 		if (!ver && c->visible_present)
 			ver = d1_version_find(s, d1_version_of(s, c->visible));
+		/*
+		 * A pointer with no row is not a hole.  A hole is a chunk
+		 * that has no visible version; a chunk that names one the
+		 * store cannot find is a store disagreeing with itself,
+		 * and section 9 says any disagreement fails closed.
+		 * Reading it as absent would let a lost row become a
+		 * silent zero-filled success, which is exactly the answer
+		 * a rebuilt store would not give.  This guard is defence
+		 * in depth behind the undo that keeps the row; it is not
+		 * the reason the row is kept.
+		 */
+		if (!ver && c->visible_present) {
+			d1_view_unpin(s, v);
+			v->used = false;
+			status = D1_INVALID;
+			goto out;
+		}
 		if (!ver)
 			continue;
 		v->extent_present[i] = true;
