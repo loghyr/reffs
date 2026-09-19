@@ -11144,6 +11144,627 @@ static void test_an_unrecorded_prepare_abort_keeps_the_cohort_whole(void)
 }
 
 /*
+ * A prepare that is not recorded leaves its member's phase alone.
+ *
+ * Section 7 leaves an allocation or append failure before the event's
+ * frontier UNRECORDED with the previous whole cohort state, and section
+ * 9 has recovery re-execute the log and fail closed on any
+ * disagreement.  A repair member is a transaction, and prepare_repair
+ * moves two fields on it -- the phase and the version it carries -- in
+ * the same call that stages the replacement.
+ *
+ * The undo gave back every row a refused call took and every row it
+ * released, and the cohort, the chunks, the counters, the owner and
+ * postcondition rows.  It did not give back those two fields, so a
+ * prepare whose append failed left the member PREPARED in a store whose
+ * log says ADMITTED.  The next phase-sensitive call was answered from
+ * the phase that never happened and the answer was recorded, and the
+ * store could not be rebuilt from its own log afterwards.
+ *
+ * So this asks the question the retry would hide: after the fault, and
+ * before anything overwrites the residue, does a store rebuilt from the
+ * log hold the same member?
+ */
+static void test_an_unrecorded_prepare_leaves_the_member_admitted(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32], fixed[32];
+	uint8_t live_bytes[32], rebuilt_bytes[32];
+	uint32_t live_len, rebuilt_len;
+	size_t before, after;
+	d1_admission_id admission;
+	d1_version_id one, one_gone, staged;
+	d1_custody_id one_custody;
+	d1_postcond_id one_post;
+	d1_txn_id one_txn, member;
+	d1_repair_id cohort;
+	struct repair_ref ref[1];
+	uint32_t status;
+
+	memset(older, 0x31, sizeof(older));
+	memset(newer, 0x32, sizeof(newer));
+	memset(fixed, 0x33, sizeof(fixed));
+	fill_uuid(&store_uuid, 0x31);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	one = make_a_repair_case(s, admission, 0, 1, older, newer,
+				 (uint32_t)sizeof(older), &one_gone,
+				 &one_custody, &one_post, &one_txn);
+	check(d1_version_live(one), "a chunk is a repair case");
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 0, 65, one_custody, one,
+		     one_gone, one_post);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a repair opens over it");
+	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 65;
+	ref[0].custody = one_custody;
+	ref[0].successor = one;
+	check(d1_fixture_repair_member(s, cohort, 0, &member, &staged) &&
+		      d1_txn_live(member) && !d1_version_live(staged),
+	      "and issues the member its transaction");
+
+	(void)journal_of(s, &before);
+	d1_fixture_fail_next_append(s);
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "a prepare names the member");
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_IO &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "and its append does not land");
+	(void)journal_of(s, &after);
+	check(after == before, "so the log did not grow");
+	check(d1_fixture_repair_member(s, cohort, 0, &member, &staged) &&
+		      !d1_version_live(staged),
+	      "and the cohort row stages nothing");
+
+	/*
+	 * The member itself, against the log.  This is the comparison the
+	 * receipts cannot make for this arm: section 5 refuses a private
+	 * rollback of a REPAIR member in every private phase, so the two
+	 * phases answer alike, and only the state says which one is there.
+	 */
+	rebuilt = replayed(s, &store_uuid, &status);
+	check(rebuilt != NULL, "the log replays");
+	if (rebuilt) {
+		check(member_states_agree(s, rebuilt, member),
+		      "and the member is in the phase the log gives it");
+		d1_store_free(rebuilt);
+	}
+
+	/* A phase-sensitive call between the fault and the retry. */
+	check(rollback_naming(s, admission, 0, 65, member, &status) &&
+		      status == D1_INVALID,
+	      "a private rollback of the member is refused and recorded");
+
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "the retry names the same member");
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_PREPARED,
+	      "and stages the replacement");
+
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 1,
+			  ref),
+	      "a finalize names it");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the cohort finalizes");
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "a commit names it");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and publishes");
+	check(repair_call(s, &env, admission, D1_OP_UNLOCK, cohort, 1, ref),
+	      "an unlock names it");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and releases it");
+	check(read_a_chunk(s, admission, 0, live_bytes, sizeof(live_bytes),
+			   &live_len) == D1_OK &&
+		      live_len == (uint32_t)sizeof(fixed) &&
+		      memcmp(live_bytes, fixed, sizeof(fixed)) == 0,
+	      "the chunk reads the bytes the prepare that landed staged");
+
+	rebuilt = replayed(s, &store_uuid, &status);
+	check(rebuilt != NULL, "the whole history replays");
+	if (rebuilt) {
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		check(member_states_agree(s, rebuilt, member),
+		      "with the member in the same phase");
+		check(read_a_chunk(rebuilt,
+				   d1_fixture_admission_handle(
+					   rebuilt,
+					   d1_admission_raw(admission)),
+				   0, rebuilt_bytes, sizeof(rebuilt_bytes),
+				   &rebuilt_len) == D1_OK &&
+			      rebuilt_len == live_len &&
+			      memcmp(rebuilt_bytes, live_bytes, live_len) == 0,
+		      "and reads the same bytes");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
+ * The member a mid-vector abort both staged and dropped.
+ *
+ * Section 7's cohort abort abandons every still-private member in one
+ * durable event, so a prepare whose second payload fails its checksum
+ * has already staged the first: that member is written by the call
+ * (phase and version) and then released by the same call.  When the
+ * abort's own append fails, the undo has to put both back -- the rows
+ * it released and the fields it wrote -- and the two have to agree,
+ * because a member whose row is back but whose phase is not is a member
+ * no log describes.
+ *
+ * Section 7 says what the answer is: the previous whole cohort state.
+ * The member that was never reached is beside it as the control.
+ */
+static void test_an_unrecorded_mid_cohort_abort_keeps_its_members(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32], fixed[32], mended[32];
+	size_t before, after;
+	d1_admission_id admission;
+	d1_version_id v[3], gone[3], staged;
+	d1_custody_id custody[3];
+	d1_postcond_id post[3];
+	d1_txn_id txn[3], member[3];
+	d1_repair_id cohort;
+	struct repair_ref ref[3];
+	uint32_t status, i;
+
+	memset(older, 0x41, sizeof(older));
+	memset(newer, 0x42, sizeof(newer));
+	memset(fixed, 0x43, sizeof(fixed));
+	memset(mended, 0x44, sizeof(mended));
+	fill_uuid(&store_uuid, 0x41);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	for (i = 0; i < 3; i++) {
+		v[i] = make_a_repair_case(s, admission, i, 1u + i * 4u, older,
+					  newer, (uint32_t)sizeof(older),
+					  &gone[i], &custody[i], &post[i],
+					  &txn[i]);
+		check(d1_version_live(v[i]), "a chunk is a repair case");
+	}
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 3;
+	env.body.repair.count = 3;
+	for (i = 0; i < 3; i++)
+		repair_nopre(&env.body.repair.entries[i], i, 65u + i,
+			     custody[i], v[i], gone[i], post[i]);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a repair opens over all three");
+	cohort = res.entries[0].cohort;
+	for (i = 0; i < 3; i++) {
+		ref[i].index = i;
+		ref[i].co_id = 65u + i;
+		ref[i].custody = custody[i];
+		ref[i].successor = v[i];
+		check(d1_fixture_repair_member(s, cohort, i, &member[i],
+					       &staged) &&
+			      d1_txn_live(member[i]),
+		      "and issues each member its transaction");
+	}
+
+	/*
+	 * A prepare whose middle payload does not verify.  Member 0 is
+	 * staged before member 1 is judged, so the abort that follows
+	 * releases work this very call did.
+	 */
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 3,
+			  ref),
+	      "a prepare names the whole vector");
+	for (i = 0; i < 3; i++) {
+		struct d1_repair_entry *e = &env.body.repair.entries[i];
+
+		e->payload_present = true;
+		e->payload = fixed;
+		e->payload_len = (uint32_t)sizeof(fixed);
+		d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+				    &e->checksum);
+	}
+	env.body.repair.entries[1].checksum.digest[0] ^= 0xffu;
+	(void)journal_of(s, &before);
+	d1_fixture_fail_next_append(s);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_IO &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "and its cohort abort does not land");
+	(void)journal_of(s, &after);
+	check(after == before, "so the log did not grow");
+
+	rebuilt = replayed(s, &store_uuid, &status);
+	check(rebuilt != NULL, "the log replays");
+	if (rebuilt) {
+		check(member_states_agree(s, rebuilt, member[0]),
+		      "the member that was staged and dropped is unchanged");
+		check(member_states_agree(s, rebuilt, member[1]),
+		      "the member whose payload failed is unchanged");
+		check(member_states_agree(s, rebuilt, member[2]),
+		      "and so is the member that was never reached");
+		d1_store_free(rebuilt);
+	}
+
+	/* Phase-sensitive calls on both, between the fault and the retry. */
+	check(rollback_naming(s, admission, 0, 65, member[0], &status) &&
+		      status == D1_INVALID,
+	      "a private rollback of the staged member is refused");
+	check(rollback_naming(s, admission, 2, 67, member[2], &status) &&
+		      status == D1_INVALID,
+	      "and so is one of the member never reached");
+
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 3,
+			  ref),
+	      "the correct prepare names the same vector");
+	for (i = 0; i < 3; i++) {
+		struct d1_repair_entry *e = &env.body.repair.entries[i];
+
+		e->payload_present = true;
+		e->payload = mended;
+		e->payload_len = (uint32_t)sizeof(mended);
+		d1_checksum_compute(D1_CKSUM_CRC32C, mended, sizeof(mended),
+				    &e->checksum);
+	}
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_PREPARED,
+	      "and stages all three replacements");
+
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 3,
+			  ref),
+	      "a finalize names the vector");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the cohort finalizes");
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 3,
+			  ref),
+	      "a commit names it");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and publishes the whole vector");
+
+	rebuilt = replayed(s, &store_uuid, &status);
+	check(rebuilt != NULL, "the whole history replays");
+	if (rebuilt) {
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		for (i = 0; i < 3; i++)
+			check(member_states_agree(s, rebuilt, member[i]),
+			      "with every member in the same phase");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
+ * A commit that is not recorded leaves its members finalized.
+ *
+ * commit_repair publishes the whole vector at one index epoch and moves
+ * each member to COMMITTED.  When its append fails the visible pointers
+ * go back, the epoch goes back, the cohort goes back -- and the members
+ * did not, so the cohort was FINALIZED with COMMITTED members.
+ *
+ * That one is visible in a receipt: section 7 allows a COMMITTED
+ * replacement's rollback under fresh repair custody, so the private
+ * refusal section 5 gives every other phase is skipped and the call is
+ * judged as a rollback instead.  The live store answered QUARANTINED
+ * where the log's FINALIZED member says INVALID, recorded it, and could
+ * not be rebuilt afterwards.
+ */
+static void test_an_unrecorded_commit_leaves_the_member_finalized(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32], fixed[32];
+	size_t before, after;
+	d1_admission_id admission;
+	d1_version_id one, one_gone, staged, seen;
+	d1_custody_id one_custody;
+	d1_postcond_id one_post;
+	d1_txn_id one_txn, member;
+	d1_repair_id cohort;
+	struct repair_ref ref[1];
+	uint32_t status;
+
+	memset(older, 0x51, sizeof(older));
+	memset(newer, 0x52, sizeof(newer));
+	memset(fixed, 0x53, sizeof(fixed));
+	fill_uuid(&store_uuid, 0x51);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	one = make_a_repair_case(s, admission, 0, 1, older, newer,
+				 (uint32_t)sizeof(older), &one_gone,
+				 &one_custody, &one_post, &one_txn);
+	check(d1_version_live(one), "a chunk is a repair case");
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 0, 65, one_custody, one,
+		     one_gone, one_post);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a repair opens over it");
+	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 65;
+	ref[0].custody = one_custody;
+	ref[0].successor = one;
+	check(d1_fixture_repair_member(s, cohort, 0, &member, &staged),
+	      "and issues the member its transaction");
+
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "a prepare names it");
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and stages the replacement");
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 1,
+			  ref),
+	      "a finalize names it");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the cohort finalizes");
+
+	(void)journal_of(s, &before);
+	d1_fixture_fail_next_append(s);
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "a commit names it");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_IO &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "and does not land");
+	(void)journal_of(s, &after);
+	check(after == before, "so the log did not grow");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_eq(seen, one),
+	      "the chunk still shows the version in error");
+
+	rebuilt = replayed(s, &store_uuid, &status);
+	check(rebuilt != NULL, "the log replays");
+	if (rebuilt) {
+		check(member_states_agree(s, rebuilt, member),
+		      "and the member is in the phase the log gives it");
+		d1_store_free(rebuilt);
+	}
+
+	/*
+	 * The phase-sensitive call, between the fault and the retry.  A
+	 * COMMITTED member skips section 5's refusal; a FINALIZED one
+	 * does not, and the log says FINALIZED.
+	 */
+	check(rollback_naming(s, admission, 0, 65, member, &status) &&
+		      status == D1_INVALID,
+	      "a private rollback of the member is refused as a member");
+
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "the retry names it");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and publishes");
+	check(repair_call(s, &env, admission, D1_OP_UNLOCK, cohort, 1, ref),
+	      "an unlock names it");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and releases it");
+
+	rebuilt = replayed(s, &store_uuid, &status);
+	check(rebuilt != NULL, "the whole history replays");
+	if (rebuilt) {
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		check(member_states_agree(s, rebuilt, member),
+		      "with the member in the same phase");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
+ * The same fault, answered by a recovery instead of a rollback.
+ *
+ * A lease-driven re-admission is the other call that reads a member's
+ * phase: section 9 lets recovery re-bind a member that still has work
+ * to drive, and a COMMITTED member is only that while its cohort is
+ * still holding the chunks it repaired.  After an unrecorded commit the
+ * live member was COMMITTED under a cohort that was still FINALIZED, so
+ * recovery found nothing to drive and recorded BAD_PHASE -- while the
+ * store the log rebuilds has a FINALIZED member and admits it.
+ *
+ * It needs no reopen and no second writer: one fault, then the lease
+ * the owner already lost.
+ */
+static void test_an_unrecorded_commit_leaves_recovery_its_answer(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32], fixed[32];
+	size_t before, after;
+	d1_admission_id admission, control, fresh;
+	d1_version_id one, one_gone, staged;
+	d1_custody_id one_custody;
+	d1_postcond_id one_post;
+	d1_txn_id one_txn, member;
+	d1_repair_id cohort;
+	struct repair_ref ref[1];
+	uint32_t status;
+
+	memset(older, 0x61, sizeof(older));
+	memset(newer, 0x62, sizeof(newer));
+	memset(fixed, 0x63, sizeof(fixed));
+	fill_uuid(&store_uuid, 0x61);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	control = d1_fixture_admit(s, &object, 11, D1_RIGHT_CONTROL);
+	one = make_a_repair_case(s, admission, 0, 1, older, newer,
+				 (uint32_t)sizeof(older), &one_gone,
+				 &one_custody, &one_post, &one_txn);
+	check(d1_version_live(one), "a chunk is a repair case");
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 0, 65, one_custody, one,
+		     one_gone, one_post);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a repair opens over it");
+	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 65;
+	ref[0].custody = one_custody;
+	ref[0].successor = one;
+	check(d1_fixture_repair_member(s, cohort, 0, &member, &staged),
+	      "and issues the member its transaction");
+
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "a prepare names it");
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and stages the replacement");
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 1,
+			  ref),
+	      "a finalize names it");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the cohort finalizes");
+
+	(void)journal_of(s, &before);
+	d1_fixture_fail_next_append(s);
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "a commit names it");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_IO &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "and does not land");
+	(void)journal_of(s, &after);
+	check(after == before, "so the log did not grow");
+
+	/* The recovery, between the fault and any retry. */
+	fresh = d1_fixture_admit(s, &object, 11,
+				 D1_RIGHT_READ | D1_RIGHT_WRITE |
+					 D1_RIGHT_REPAIR |
+					 D1_RIGHT_SINGLE_WRITER);
+	env_init(&env, s, control, D1_OP_RECOVERY_ADMIT);
+	env.body.control.count = 1;
+	env.body.control.txns[0] = member;
+	env.body.control.old_admission = admission;
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = fresh;
+	env.body.control.read_epoch_present = true;
+	env.body.control.read_epoch = 0;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a recovery_admit finds a member with work still to drive");
+
+	rebuilt = replayed(s, &store_uuid, &status);
+	check(rebuilt != NULL, "the log replays");
+	if (rebuilt) {
+		check(member_states_agree(s, rebuilt, member),
+		      "and the member is in the phase the log gives it");
+		d1_store_free(rebuilt);
+	}
+
+	check(repair_call(s, &env, fresh, D1_OP_COMMIT_REPAIR, cohort, 1, ref),
+	      "the commit is retried under the handle recovery granted");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and publishes");
+	check(repair_call(s, &env, fresh, D1_OP_UNLOCK, cohort, 1, ref),
+	      "an unlock names it");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and releases it");
+
+	rebuilt = replayed(s, &store_uuid, &status);
+	check(rebuilt != NULL, "the whole history replays");
+	if (rebuilt) {
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		check(member_states_agree(s, rebuilt, member),
+		      "with the member in the same phase");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
  * A repair member is refused the same way in every private phase.
  *
  * Section 5: "ordinary finalize_batch/commit_batch and private-
@@ -18559,6 +19180,10 @@ int main(void)
 	test_a_repair_publishes_its_whole_vector_or_none();
 	test_an_unrecorded_abort_keeps_the_cohort_whole();
 	test_an_unrecorded_prepare_abort_keeps_the_cohort_whole();
+	test_an_unrecorded_prepare_leaves_the_member_admitted();
+	test_an_unrecorded_mid_cohort_abort_keeps_its_members();
+	test_an_unrecorded_commit_leaves_the_member_finalized();
+	test_an_unrecorded_commit_leaves_recovery_its_answer();
 	test_a_private_rollback_refuses_a_member_in_every_phase();
 	test_an_unrecorded_recovery_rebinds_nothing();
 	test_a_repair_does_not_reach_into_an_open_view();

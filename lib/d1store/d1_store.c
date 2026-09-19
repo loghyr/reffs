@@ -2513,6 +2513,29 @@ struct d1_repair_undo {
 	struct d1_version *drop_version[D1_BATCH_ENTRIES_MAX];
 	struct d1_txn *drop_txn[D1_BATCH_ENTRIES_MAX];
 	/*
+	 * Fields a refused call left written on a member's transaction.
+	 *
+	 * A repair member is a transaction, and prepare_repair and
+	 * commit_repair move its phase along with the cohort.  The rows
+	 * above are its existence; these two are its state, and an
+	 * UNRECORDED call has to give back both.  Section 7 leaves the
+	 * previous whole cohort state, and section 9 has recovery
+	 * re-execute the log and fail closed on any disagreement, so a
+	 * phase the log never saw is a phase the next call must not be
+	 * answered from: the answer is recorded, and the rebuilt store
+	 * computes a different one from the phase the log does say.
+	 *
+	 * Kept per transaction and deduplicated, because one call walks
+	 * the whole vector and a member can be written more than once --
+	 * staged by prepare and then abandoned by the same call's cohort
+	 * abort.  The first image is the pre-call one, which is the one
+	 * that has to come back.
+	 */
+	uint32_t txn_count;
+	struct d1_txn *txn[D1_BATCH_ENTRIES_MAX];
+	uint32_t txn_phase_before[D1_BATCH_ENTRIES_MAX];
+	uint64_t txn_version_before[D1_BATCH_ENTRIES_MAX];
+	/*
 	 * Association rows a member took or moved.  These are restored
 	 * whole rather than released, because prepare_repair moves an
 	 * existing binding onto the replacement it stages and only
@@ -2575,6 +2598,25 @@ static void d1_repair_undo_drop(struct d1_repair_undo *u,
 	u->drop_version[u->drop_count] = ver;
 	u->drop_txn[u->drop_count] = txn;
 	u->drop_count++;
+}
+
+/*
+ * Record a member transaction's phase and version before the first
+ * change to it, the way the ordinary path's d1_undo_txn does.
+ */
+static void d1_repair_undo_txn(struct d1_repair_undo *u, struct d1_txn *txn)
+{
+	uint32_t i;
+
+	for (i = 0; i < u->txn_count; i++)
+		if (u->txn[i] == txn)
+			return;
+	if (u->txn_count >= D1_BATCH_ENTRIES_MAX)
+		return;
+	u->txn[u->txn_count] = txn;
+	u->txn_phase_before[u->txn_count] = txn->phase;
+	u->txn_version_before[u->txn_count] = txn->version;
+	u->txn_count++;
 }
 
 static void d1_repair_undo_owner(struct d1_repair_undo *u,
@@ -2648,6 +2690,15 @@ static void d1_repair_undo_apply(struct d1_store *s, struct d1_repair_undo *u)
 			u->fresh_version[i]->used = false;
 		if (u->fresh_txn[i])
 			u->fresh_txn[i]->used = false;
+	}
+	/*
+	 * After the rows exist again, because a member this call both
+	 * wrote and dropped is put back in use above and wants the
+	 * fields it had before the call, not the ones the drop left.
+	 */
+	for (i = 0; i < u->txn_count; i++) {
+		u->txn[i]->phase = u->txn_phase_before[i];
+		u->txn[i]->version = u->txn_version_before[i];
 	}
 	for (i = 0; i < u->owner_count; i++)
 		*u->owner[i] = u->owner_before[i];
@@ -3137,6 +3188,7 @@ d1_do_prepare_repair(struct d1_store *s, const struct d1_envelope *env,
 		 * rather than leading it: section 7 publishes the whole
 		 * local vector or none of it.
 		 */
+		d1_repair_undo_txn(u, txn);
 		txn->version = ver->id;
 		txn->phase = D1_PHASE_PREPARED;
 		d1_repair_undo_fresh(u, ver, NULL);
@@ -3253,8 +3305,10 @@ static uint32_t d1_do_commit_repair(struct d1_store *s,
 		d1_repair_undo_chunk(u, chunk);
 		d1_publish_visible(s, chunk, m->version);
 		chunk->repair_locked = true;
-		if (txn)
+		if (txn) {
+			d1_repair_undo_txn(u, txn);
 			txn->phase = D1_PHASE_COMMITTED;
+		}
 	}
 	/* One epoch for the whole vector, not one for each member. */
 	s->index_epoch++;
