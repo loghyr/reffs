@@ -10450,8 +10450,10 @@ static bool member_states_agree(struct d1_store *a, struct d1_store *b,
  * the receipt it records is what a rebuilt store has to agree with.
  *
  * It names nothing but the member: no custody, no expected visible
- * version, no predecessor.  Those are checked after the phase, so the
- * answer here is the phase's alone.
+ * version, no predecessor.  Those are checked after the phase, so while
+ * the member is in a private phase the answer here is the phase's
+ * alone -- and once it is COMMITTED the call falls through to the
+ * section 7 judgement, where the absent custody is what answers.
  */
 static bool rollback_naming(struct d1_store *s, d1_admission_id admission,
 			    uint64_t index, uint32_t co_id, d1_txn_id txn,
@@ -11435,7 +11437,7 @@ static void test_an_unrecorded_mid_cohort_abort_keeps_its_members(void)
 	      "a private rollback of the staged member is refused");
 	check(rollback_naming(s, admission, 2, 67, member[2], &status) &&
 		      status == D1_INVALID,
-	      "and so is one of the member never reached");
+	      "and so is one naming the member never reached");
 
 	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 3,
 			  ref),
