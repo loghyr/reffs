@@ -11050,6 +11050,181 @@ static void test_an_unrecorded_prepare_abort_keeps_the_cohort_whole(void)
 }
 
 /*
+ * A recovery that is not recorded re-binds nothing.
+ *
+ * Section 9 leaves an append failure before the durable frontier
+ * changing nothing, and sections 8 and 9 together say what a control's
+ * effect is: it exists through its record and not otherwise.
+ *
+ * The undo saved a before-image per member rather than per cohort, so a
+ * request naming two members of one repair saved that cohort's
+ * admission twice -- and the second read it after the first had already
+ * replaced it.  Reversing the call then wrote the fresh handle back,
+ * which is the opposite of undoing it.  The members went back to the
+ * old handle and the cohort stayed on the new one, so the live store
+ * accepted a commit under a handle no record says the cohort was ever
+ * given, while a store rebuilt from the same log computed STALE_AUTH
+ * and failed closed.  A store that took that path could not be
+ * rebuilt after its next reboot.
+ *
+ * So the answers a refused recovery leaves are pinned from both sides:
+ * the fresh handle it did not grant cannot drive the cohort, the old
+ * handle it did not revoke still can, and the history the old handle
+ * writes replays.
+ */
+static void test_an_unrecorded_recovery_rebinds_nothing(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *partial, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32], fixed[32];
+	const uint8_t *log;
+	size_t len, before, after;
+	d1_admission_id admission, control, fresh;
+	d1_version_id one, two, one_gone, two_gone, seen;
+	d1_custody_id one_custody, two_custody;
+	d1_postcond_id one_post, two_post;
+	d1_txn_id one_txn, two_txn, first, second;
+	d1_version_id staged;
+	d1_repair_id cohort;
+	struct repair_ref ref[2];
+	uint32_t i;
+
+	memset(older, 0xa1, sizeof(older));
+	memset(newer, 0xa2, sizeof(newer));
+	memset(fixed, 0xa3, sizeof(fixed));
+	fill_uuid(&store_uuid, 0xa3);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	control = d1_fixture_admit(s, &object, 11, D1_RIGHT_CONTROL);
+	one = make_a_repair_case(s, admission, 0, 1, older, newer,
+				 (uint32_t)sizeof(older), &one_gone,
+				 &one_custody, &one_post, &one_txn);
+	two = make_a_repair_case(s, admission, 1, 5, older, newer,
+				 (uint32_t)sizeof(older), &two_gone,
+				 &two_custody, &two_post, &two_txn);
+	check(d1_version_live(one) && d1_version_live(two),
+	      "two chunks are repair cases");
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	repair_nopre(&env.body.repair.entries[0], 0, 71, one_custody, one,
+		     one_gone, one_post);
+	repair_nopre(&env.body.repair.entries[1], 1, 72, two_custody, two,
+		     two_gone, two_post);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a repair opens over both");
+	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 71;
+	ref[0].custody = one_custody;
+	ref[0].successor = one;
+	ref[1].index = 1;
+	ref[1].co_id = 72;
+	ref[1].custody = two_custody;
+	ref[1].successor = two;
+	check(d1_fixture_repair_member(s, cohort, 0, &first, &staged) &&
+		      d1_fixture_repair_member(s, cohort, 1, &second, &staged),
+	      "and both members have transactions of their own");
+
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 2,
+			  ref),
+	      "a prepare names the cohort's vector");
+	for (i = 0; i < 2; i++) {
+		struct d1_repair_entry *e = &env.body.repair.entries[i];
+
+		e->payload_present = true;
+		e->payload = fixed;
+		e->payload_len = (uint32_t)sizeof(fixed);
+		d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+				    &e->checksum);
+	}
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and both replacements are staged");
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 2,
+			  ref),
+	      "a finalize names them");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the cohort finalizes");
+
+	/* A recovery naming both members, whose event does not land. */
+	fresh = d1_fixture_admit(s, &object, 11,
+				 D1_RIGHT_READ | D1_RIGHT_WRITE |
+					 D1_RIGHT_REPAIR |
+					 D1_RIGHT_SINGLE_WRITER);
+	env_init(&env, s, control, D1_OP_RECOVERY_ADMIT);
+	env.body.control.count = 2;
+	env.body.control.txns[0] = first;
+	env.body.control.txns[1] = second;
+	env.body.control.old_admission = admission;
+	env.body.control.new_admission_present = true;
+	env.body.control.new_admission = fresh;
+	env.body.control.read_epoch_present = true;
+	env.body.control.read_epoch = 0;
+	(void)journal_of(s, &before);
+	d1_fixture_fail_next_append(s);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_IO &&
+		      res.entries[0].disposition == D1_UNRECORDED,
+	      "a recovery naming both members does not record");
+	log = journal_of(s, &after);
+	check(after == before, "so the log did not grow");
+	partial = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (partial) {
+		check(d1_store_replay(partial, log, after) == D1_OK,
+		      "and the history up to it rebuilds");
+		d1_store_free(partial);
+	}
+
+	/* The handle it did not grant cannot drive the cohort. */
+	check(repair_call(s, &env, fresh, D1_OP_COMMIT_REPAIR, cohort, 2, ref),
+	      "a commit under the fresh handle names the vector");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "and is refused, because no record re-bound the cohort to it");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      d1_version_eq(seen, one),
+	      "so nothing was published under it");
+
+	/* The handle it did not revoke still can. */
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 2,
+			  ref),
+	      "a commit under the handle the cohort still has names it too");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_COMMITTED,
+	      "and publishes");
+	check(repair_call(s, &env, admission, D1_OP_UNLOCK, cohort, 2, ref),
+	      "an unlock names both members");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and releases them");
+
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "the whole history rebuilds");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
  * An ERROR repair clears and unlocks as two separate calls.
  *
  * The memo's G3.  An ERROR-mode cohort needs a durable episode before
@@ -16909,6 +17084,7 @@ int main(void)
 	test_a_repair_publishes_its_whole_vector_or_none();
 	test_an_unrecorded_abort_keeps_the_cohort_whole();
 	test_an_unrecorded_prepare_abort_keeps_the_cohort_whole();
+	test_an_unrecorded_recovery_rebinds_nothing();
 	test_a_repair_does_not_reach_into_an_open_view();
 	test_an_error_repair_clears_and_unlocks_separately();
 	test_a_marked_version_is_quarantined();

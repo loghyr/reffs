@@ -3634,7 +3634,8 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 	struct d1_object *o = d1_object_find(s, &env->object);
 	struct d1_admission *old, *fresh = NULL;
 	struct d1_txn *named[D1_BATCH_ENTRIES_MAX];
-	uint32_t i;
+	struct d1_repair *cohort;
+	uint32_t i, j;
 
 	if (!o)
 		return D1_INVALID;
@@ -3744,12 +3745,30 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 			named[i]->read_epoch = cb->read_epoch;
 			if (named[i]->mode != D1_MODE_REPAIR)
 				continue;
-			u->cohort[i] = d1_repair_of_member(s, named[i]->id);
-			if (u->cohort[i]) {
-				u->cohort_admission[i] =
-					u->cohort[i]->admission;
-				u->cohort[i]->admission = fresh->id;
+			cohort = d1_repair_of_member(s, named[i]->id);
+			if (!cohort)
+				continue;
+			/*
+			 * One before-image per cohort, not per member.  A
+			 * request may name two members of the same repair,
+			 * and the second of them reads an admission the
+			 * first has already replaced -- so the saved value
+			 * was the fresh handle, and reversing the call
+			 * restored the rebinding instead of undoing it.
+			 * The cohort then answered to a handle no record
+			 * says it was ever given: the live store accepted
+			 * the next call and a store rebuilt from the same
+			 * log refused it, which is a history that cannot
+			 * be replayed.
+			 */
+			for (j = 0; j < i; j++)
+				if (u->cohort[j] == cohort)
+					break;
+			if (j == i) {
+				u->cohort[i] = cohort;
+				u->cohort_admission[i] = cohort->admission;
 			}
+			cohort->admission = fresh->id;
 		}
 		old->revoked = true;
 		d1_verifier_of(s->incarnation, res->verifier);
