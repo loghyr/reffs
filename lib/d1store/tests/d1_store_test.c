@@ -12267,6 +12267,143 @@ static void test_an_episode_names_the_repair_that_holds_it(void)
 }
 
 /*
+ * A replacement owner is one writer's, like every other owner.
+ *
+ * Section 2 puts "writer-bearing input must match its granted writer
+ * ID" with the export, object and principal bindings.  The ordinary
+ * write path has always asked it.  begin_repair did not, and section 3
+ * gives an owner key one object, chunk and version for as long as the
+ * store lives -- so once a replacement owner entered the association
+ * table, a repair under one writer's admission could declare an owner
+ * naming another writer and take the key.  The writer whose ID it was
+ * then wrote its own owner and was told OWNER_CONFLICT, with no way to
+ * tell that the key it was refused had been taken in its name.
+ *
+ * So the declared owner's writer must be the granted one, and the
+ * attempted capture is refused for what it is: a binding failure, not
+ * a conflict over a key.
+ */
+static void test_a_replacement_owner_is_its_writers(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32], fixed[32];
+	d1_admission_id mine, theirs;
+	d1_version_id broken, displaced, seen;
+	d1_custody_id custody;
+	d1_postcond_id postcond;
+	d1_txn_id txn;
+	d1_repair_id cohort;
+	struct repair_ref ref[1];
+
+	memset(older, 0xc1, sizeof(older));
+	memset(newer, 0xc2, sizeof(newer));
+	memset(fixed, 0xc3, sizeof(fixed));
+	fill_uuid(&store_uuid, 0xc4);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	mine = d1_fixture_admit(s, &object, 11,
+				D1_RIGHT_READ | D1_RIGHT_WRITE |
+					D1_RIGHT_REPAIR |
+					D1_RIGHT_SINGLE_WRITER);
+	theirs = d1_fixture_admit(s, &object, 12,
+				  D1_RIGHT_READ | D1_RIGHT_WRITE |
+					  D1_RIGHT_SINGLE_WRITER);
+	broken = make_a_repair_case(s, mine, 0, 1, older, newer,
+				    (uint32_t)sizeof(older), &displaced,
+				    &custody, &postcond, &txn);
+	check(d1_version_live(broken), "a chunk is a repair case");
+
+	/* A repair that declares an owner belonging to another writer. */
+	env_init(&env, s, mine, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 0, 31, custody, broken,
+		     displaced, postcond);
+	env.body.repair.entries[0].owner.writer = 12;
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_STALE_AUTH,
+	      "a repair may not declare another writer's owner");
+	check(!res.entries[0].cohort_present, "and opens no cohort at all");
+
+	/* And the writer whose ID it is still has the key. */
+	env_init(&env, s, theirs, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 4, 12, 31, older, sizeof(older),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "so that writer's own write of that owner is admitted");
+
+	/* The same repair under its own writer opens. */
+	env_init(&env, s, mine, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 0, 32, custody, broken,
+		     displaced, postcond);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a repair declaring its own writer's owner opens");
+	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 32;
+	ref[0].custody = custody;
+	ref[0].successor = broken;
+	check(repair_call(s, &env, mine, D1_OP_PREPARE_REPAIR, cohort, 1, ref),
+	      "a prepare names its vector");
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and stages its replacement");
+	check(repair_call(s, &env, mine, D1_OP_FINALIZE_REPAIR, cohort, 1,
+			  ref) &&
+		      d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the cohort finalizes");
+	check(repair_call(s, &env, mine, D1_OP_COMMIT_REPAIR, cohort, 1, ref) &&
+		      d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and commits");
+	check(d1_store_visible(s, &object, 0, &seen) &&
+		      !d1_version_eq(seen, broken),
+	      "so the replacement is what the chunk holds");
+
+	/*
+	 * The key the repair took is its own writer's key.  An ordinary
+	 * write declaring it is refused, and the same co_id under another
+	 * writer is a different key and is not.
+	 */
+	env_init(&env, s, mine, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 5, 11, 32, older, sizeof(older),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OWNER_CONFLICT,
+	      "an ordinary write of the owner the repair took is refused");
+	env_init(&env, s, theirs, D1_OP_WRITE_BATCH);
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	write_entry(&env.body.write.entries[0], 5, 12, 32, older, sizeof(older),
+		    true, &(struct d1_guard){ .never_written = true });
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the same co_id under another writer is another key");
+	d1_store_free(s);
+}
+
+/*
  * A cohort record's bytes are the ones its digest covers.
  *
  * An ENTRY record has carried its request digest since the first slice,
@@ -17891,6 +18028,7 @@ int main(void)
 	test_a_committed_cohort_can_be_finished_after_a_reopen();
 	test_a_begin_answers_with_its_member_handles();
 	test_an_episode_names_the_repair_that_holds_it();
+	test_a_replacement_owner_is_its_writers();
 	test_a_marked_version_is_quarantined();
 	test_a_repair_member_is_a_transaction();
 	test_a_mixed_cohort_clears_and_unlocks();

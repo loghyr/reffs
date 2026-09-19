@@ -2644,8 +2644,8 @@ static void d1_repair_undo_apply(struct d1_store *s, struct d1_repair_undo *u)
  */
 static uint32_t
 d1_do_begin_repair(struct d1_store *s, const struct d1_envelope *env,
-		   struct d1_object *o, struct d1_entry_result *res,
-		   struct d1_repair_undo *u)
+		   const struct d1_admission *a, struct d1_object *o,
+		   struct d1_entry_result *res, struct d1_repair_undo *u)
 {
 	const struct d1_repair_batch *rb = &env->body.repair;
 	struct d1_episode *episode = NULL;
@@ -2679,6 +2679,18 @@ d1_do_begin_repair(struct d1_store *s, const struct d1_envelope *env,
 		res->guard = chunk->guard;
 		res->member_present = true;
 		res->member = i;
+		/*
+		 * Section 2 puts "writer-bearing input must match its
+		 * granted writer ID" among the bindings, and a
+		 * replacement owner is writer-bearing input.  The ordinary
+		 * write path has always asked it; begin_repair did not,
+		 * and since the replacement owner entered the association
+		 * table a repair could take a key belonging to another
+		 * writer -- after which that writer's own write of its own
+		 * owner answered OWNER_CONFLICT.
+		 */
+		if (e->owner.writer != a->writer)
+			return D1_STALE_AUTH;
 		/* One repair at a time, and not over private work. */
 		if (chunk->repair_present || chunk->repair_locked)
 			return D1_QUARANTINED;
@@ -3505,7 +3517,7 @@ static uint32_t d1_do_repair(struct d1_store *s, const struct d1_envelope *env,
 	if (env->op == D1_OP_MARK_ERROR)
 		return d1_do_mark_error(s, env, o, res, u);
 	if (env->op == D1_OP_BEGIN_REPAIR)
-		return d1_do_begin_repair(s, env, o, res, u);
+		return d1_do_begin_repair(s, env, a, o, res, u);
 
 	if (rb->cohort_present) {
 		cohort = d1_repair_find(s, rb->cohort);
