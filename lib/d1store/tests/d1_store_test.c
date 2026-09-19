@@ -13762,21 +13762,28 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 				     D1_RIGHT_READ | D1_RIGHT_WRITE |
 					     D1_RIGHT_REPAIR |
 					     D1_RIGHT_SINGLE_WRITER);
-	/* Chunk 0 will carry an episode; chunk 1 is a NOPRE case. */
-	marked = make_a_repair_case(s, admission, 0, 1, older, newer,
-				    (uint32_t)sizeof(older), &marked_gone,
-				    &marked_custody, &marked_post, &marked_txn);
-	nopre = make_a_repair_case(s, admission, 1, 5, older, newer,
+	/*
+	 * Chunk 1 will carry an episode; chunk 0 is a NOPRE case.  The
+	 * NOPRE member is the lower index and so is member zero of the
+	 * cohort, which is the order that makes the unlock below say
+	 * something: an episode named for a cohort has to resolve through
+	 * the ERROR member of the vector, not through whichever member
+	 * happens to come first.
+	 */
+	nopre = make_a_repair_case(s, admission, 0, 1, older, newer,
 				   (uint32_t)sizeof(older), &nopre_gone,
 				   &nopre_custody, &nopre_post, &nopre_txn);
+	marked = make_a_repair_case(s, admission, 1, 5, older, newer,
+				    (uint32_t)sizeof(older), &marked_gone,
+				    &marked_custody, &marked_post, &marked_txn);
 	check(d1_version_live(marked) && d1_version_live(nopre),
 	      "two chunks are repair cases");
 
 	env_init(&env, s, admission, D1_OP_MARK_ERROR);
-	env.body.repair.range_begin = 0;
-	env.body.repair.range_end = 1;
+	env.body.repair.range_begin = 1;
+	env.body.repair.range_end = 2;
 	env.body.repair.count = 1;
-	repair_member(&env.body.repair.entries[0], 0, 0, 40, marked_custody,
+	repair_member(&env.body.repair.entries[0], 1, 0, 40, marked_custody,
 		      marked, marked_gone);
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK &&
@@ -13789,10 +13796,10 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 	env.body.repair.range_begin = 0;
 	env.body.repair.range_end = 2;
 	env.body.repair.count = 2;
-	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_ERROR, 40,
-		      marked_custody, marked, marked_gone);
-	repair_nopre(&env.body.repair.entries[1], 1, 41, nopre_custody, nopre,
+	repair_nopre(&env.body.repair.entries[0], 0, 41, nopre_custody, nopre,
 		     nopre_gone, nopre_post);
+	repair_member(&env.body.repair.entries[1], 1, D1_REPAIR_ERROR, 40,
+		      marked_custody, marked, marked_gone);
 	env.body.repair.episode_present = true;
 	env.body.repair.episode = episode;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
@@ -13800,13 +13807,13 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 	      "a cohort opens over both of them");
 	cohort = res.entries[0].cohort;
 	ref[0].index = 0;
-	ref[0].co_id = 40;
-	ref[0].custody = marked_custody;
-	ref[0].successor = marked;
+	ref[0].co_id = 41;
+	ref[0].custody = nopre_custody;
+	ref[0].successor = nopre;
 	ref[1].index = 1;
-	ref[1].co_id = 41;
-	ref[1].custody = nopre_custody;
-	ref[1].successor = nopre;
+	ref[1].co_id = 40;
+	ref[1].custody = marked_custody;
+	ref[1].successor = marked;
 
 	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 2,
 			  ref),
@@ -13862,11 +13869,20 @@ static void test_a_mixed_cohort_clears_and_unlocks(void)
 		      res.entries[0].status == D1_OK,
 	      "a clear naming the whole cohort clears the error member");
 
+	/*
+	 * Named for the episode, which section 4 allows and which a mixed
+	 * cohort is the hard case for: the vector's first member is the
+	 * NOPRE one, which is in no episode at all, so the resolution has
+	 * to look past it to the ERROR member that is.
+	 */
 	check(repair_call(s, &env, admission, D1_OP_UNLOCK, cohort, 2, ref),
 	      "an unlock names the cohort's vector");
+	env.body.repair.cohort_present = false;
+	env.body.repair.episode_present = true;
+	env.body.repair.episode = episode;
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
-	      "and the whole vector then unlocks");
+	      "and the whole vector then unlocks, named for its episode");
 
 	/* Both chunks are ordinary writers' again. */
 	for (i = 0; i < 2u; i++) {

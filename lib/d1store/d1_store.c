@@ -3506,26 +3506,38 @@ static uint32_t d1_do_unlock(struct d1_store *s, struct d1_repair *cohort,
  */
 static struct d1_repair *d1_repair_of_episode(struct d1_store *s,
 					      struct d1_object *o,
-					      uint64_t episode, uint64_t index)
+					      uint64_t episode,
+					      const struct d1_repair_batch *rb)
 {
-	const struct d1_chunk *c;
-	uint32_t i, j;
+	uint32_t n, i, j;
 
-	if (index >= D1_MAX_CHUNKS)
-		return NULL;
-	c = &o->chunks[index];
-	if (!c->repair_present || c->error_episode != episode)
-		return NULL;
-	for (i = 0; i < D1_MAX_REPAIRS; i++) {
-		struct d1_repair *row = &s->repairs[i];
+	for (n = 0; n < rb->count; n++) {
+		const struct d1_chunk *c;
+		uint64_t index = rb->entries[n].index;
 
-		if (!row->used || row->id != c->repair ||
-		    row->object != d1_object_slot(s, o))
+		if (index >= D1_MAX_CHUNKS)
+			return NULL;
+		c = &o->chunks[index];
+		/*
+		 * A member of another mode, or one this episode does not
+		 * cover, says nothing about which cohort this is; the
+		 * vector's ERROR members are the ones that do.  A mixed
+		 * cohort may name a NOPRE member first.
+		 */
+		if (!c->repair_present || c->error_episode != episode)
 			continue;
-		for (j = 0; j < row->count; j++)
-			if (row->member[j].index == index &&
-			    row->member[j].mode == D1_REPAIR_ERROR)
-				return row;
+		for (i = 0; i < D1_MAX_REPAIRS; i++) {
+			struct d1_repair *row = &s->repairs[i];
+
+			if (!row->used || row->id != c->repair ||
+			    row->object != d1_object_slot(s, o))
+				continue;
+			for (j = 0; j < row->count; j++)
+				if (row->member[j].index == index &&
+				    row->member[j].mode == D1_REPAIR_ERROR)
+					return row;
+			return NULL;
+		}
 		return NULL;
 	}
 	return NULL;
@@ -3559,8 +3571,7 @@ static uint32_t d1_do_repair(struct d1_store *s, const struct d1_envelope *env,
 
 		if (!episode)
 			return D1_STALE_AUTH;
-		cohort = d1_repair_of_episode(s, o, episode->id,
-					      rb->entries[0].index);
+		cohort = d1_repair_of_episode(s, o, episode->id, rb);
 	}
 	if (!cohort)
 		return D1_INVALID;
