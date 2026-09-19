@@ -11938,6 +11938,335 @@ static void test_a_begin_answers_with_its_member_handles(void)
 }
 
 /*
+ * An episode names the repair that is holding it, not the first one
+ * that tried.
+ *
+ * Section 4 offers unlock the cohort or the episode as two names for
+ * one release.  An episode outlives the cohorts that try to repair it:
+ * section 7 has an aborted repair keep the quarantine and the custody,
+ * so the chunk still names the episode afterwards and the next cohort
+ * opens in it.  Resolving the episode to the first row with a member
+ * in it therefore answered with whichever repair was earliest in the
+ * table, abandoned ones included -- so after the memo's own G1 abort
+ * and the G2 repair that follows it, the episode name was refused
+ * while the cohort name succeeded, and the two names were not two
+ * names for one thing at all.
+ *
+ * Both chunks here go through the same G1 abort and G2 repair.  One is
+ * released by its episode and one by its cohort, and the two answers
+ * have to be the same answer.
+ */
+static void test_an_episode_names_the_repair_that_holds_it(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32], fixed[32];
+	static uint8_t certificate[D1_CERTIFICATE_BYTES];
+	struct d1_guard guard;
+	const uint8_t *log;
+	size_t len;
+	d1_admission_id admission;
+	d1_version_id gone[2], broken[2], seen;
+	d1_custody_id custody[2];
+	d1_episode_id episode[2], shared;
+	d1_repair_id abandoned[2], holding[2];
+	struct repair_ref ref[1];
+	uint32_t i;
+
+	memset(older, 0xb6, sizeof(older));
+	memset(newer, 0xb7, sizeof(newer));
+	memset(fixed, 0xb8, sizeof(fixed));
+	memset(certificate, 0xb9, sizeof(certificate));
+	fill_uuid(&store_uuid, 0xb6);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	d1_fixture_certificate(s, certificate);
+
+	for (i = 0; i < 2; i++) {
+		gone[i] = commit_chunk(
+			s, admission, i, 1u + 10u * i, older, sizeof(older),
+			&(struct d1_guard){ .never_written = true },
+			d1_version_none(), NULL);
+		d1_store_guard(s, &object, i, &guard);
+		broken[i] = commit_chunk(s, admission, i, 2u + 10u * i, newer,
+					 sizeof(newer), &guard, gone[i], NULL);
+		check(d1_version_live(broken[i]),
+		      "a chunk holds a version in error");
+		custody[i] = d1_fixture_custody(s, broken[i]);
+		check(d1_custody_live(custody[i]), "with custody over it");
+
+		env_init(&env, s, admission, D1_OP_MARK_ERROR);
+		env.body.repair.range_begin = i;
+		env.body.repair.range_end = i + 1u;
+		env.body.repair.count = 1;
+		repair_member(&env.body.repair.entries[0], i, 0, 3u + 10u * i,
+			      custody[i], broken[i], gone[i]);
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and an episode is marked over it");
+		episode[i] = res.entries[0].episode;
+
+		/* G1: a cohort whose payload does not verify, abandoned. */
+		env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+		env.body.repair.range_begin = i;
+		env.body.repair.range_end = i + 1u;
+		env.body.repair.count = 1;
+		repair_member(&env.body.repair.entries[0], i, D1_REPAIR_ERROR,
+			      4u + 10u * i, custody[i], broken[i], gone[i]);
+		env.body.repair.episode_present = true;
+		env.body.repair.episode = episode[i];
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "a first repair opens in that episode");
+		abandoned[i] = res.entries[0].cohort;
+		ref[0].index = i;
+		ref[0].co_id = 4u + 10u * i;
+		ref[0].custody = custody[i];
+		ref[0].successor = broken[i];
+		check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR,
+				  abandoned[i], 1, ref),
+		      "a prepare names its vector");
+		env.body.repair.entries[0].payload_present = true;
+		env.body.repair.entries[0].payload = fixed;
+		env.body.repair.entries[0].payload_len =
+			(uint32_t)sizeof(fixed);
+		d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+				    &env.body.repair.entries[0].checksum);
+		env.body.repair.entries[0].checksum.digest[0] ^= 0xffu;
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_CHECKSUM &&
+			      res.entries[0].phase == D1_PHASE_ABORTED,
+		      "whose payload does not verify, so the cohort aborts");
+
+		/* G2: a second cohort in the same episode, which publishes. */
+		env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+		env.body.repair.range_begin = i;
+		env.body.repair.range_end = i + 1u;
+		env.body.repair.count = 1;
+		repair_member(&env.body.repair.entries[0], i, D1_REPAIR_ERROR,
+			      5u + 10u * i, custody[i], broken[i], gone[i]);
+		env.body.repair.episode_present = true;
+		env.body.repair.episode = episode[i];
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "a second repair opens in the same episode");
+		holding[i] = res.entries[0].cohort;
+		check(!d1_repair_eq(holding[i], abandoned[i]),
+		      "and it is a different cohort");
+		ref[0].co_id = 5u + 10u * i;
+		check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR,
+				  holding[i], 1, ref),
+		      "a prepare names its vector");
+		env.body.repair.entries[0].payload_present = true;
+		env.body.repair.entries[0].payload = fixed;
+		env.body.repair.entries[0].payload_len =
+			(uint32_t)sizeof(fixed);
+		d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+				    &env.body.repair.entries[0].checksum);
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and this one stages");
+		check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR,
+				  holding[i], 1, ref) &&
+			      d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "the cohort finalizes");
+		check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR,
+				  holding[i], 1, ref) &&
+			      d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and commits");
+		check(repair_call(s, &env, admission, D1_OP_CLEAR_ERROR,
+				  holding[i], 1, ref),
+		      "a clear names it");
+		env.body.repair.episode_present = true;
+		env.body.repair.episode = episode[i];
+		env.body.repair.certificate_present = true;
+		memcpy(env.body.repair.certificate, certificate,
+		       sizeof(certificate));
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and the episode clears");
+	}
+
+	/* The first chunk is released by its episode. */
+	ref[0].index = 0;
+	ref[0].co_id = 5;
+	ref[0].custody = custody[0];
+	ref[0].successor = broken[0];
+	check(repair_call(s, &env, admission, D1_OP_UNLOCK, holding[0], 1, ref),
+	      "an unlock names the members");
+	env.body.repair.cohort_present = false;
+	env.body.repair.episode_present = true;
+	env.body.repair.episode = episode[0];
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the episode resolves to the cohort that is holding it");
+
+	/* The second by its cohort, which has to be the same answer. */
+	ref[0].index = 1;
+	ref[0].co_id = 15;
+	ref[0].custody = custody[1];
+	ref[0].successor = broken[1];
+	check(repair_call(s, &env, admission, D1_OP_UNLOCK, holding[1], 1, ref),
+	      "an unlock of the other names its cohort");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and releases it too");
+
+	/* Released means released: both chunks are ordinary again. */
+	for (i = 0; i < 2; i++) {
+		check(d1_store_visible(s, &object, i, &seen) &&
+			      !d1_version_eq(seen, broken[i]),
+		      "the replacement is what the chunk holds");
+		d1_store_guard(s, &object, i, &guard);
+		env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], i, 11, 40u + i, older,
+			    sizeof(older), true, &guard);
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and an ordinary write of it is admitted");
+	}
+
+	/*
+	 * And an episode is not a cohort: one mark_error may cover
+	 * several chunks, and each may be repaired by a cohort of its
+	 * own.  The unlock names its members, so the episode resolves
+	 * through them rather than through row order.
+	 */
+	for (i = 2; i < 4; i++) {
+		gone[i - 2] = commit_chunk(
+			s, admission, i, 200u + i, older, sizeof(older),
+			&(struct d1_guard){ .never_written = true },
+			d1_version_none(), NULL);
+		d1_store_guard(s, &object, i, &guard);
+		broken[i - 2] = commit_chunk(s, admission, i, 210u + i, newer,
+					     sizeof(newer), &guard, gone[i - 2],
+					     NULL);
+		custody[i - 2] = d1_fixture_custody(s, broken[i - 2]);
+		check(d1_version_live(broken[i - 2]) &&
+			      d1_custody_live(custody[i - 2]),
+		      "another chunk holds a version in error, with custody");
+	}
+	env_init(&env, s, admission, D1_OP_MARK_ERROR);
+	env.body.repair.range_begin = 2;
+	env.body.repair.range_end = 4;
+	env.body.repair.count = 2;
+	for (i = 0; i < 2; i++)
+		repair_member(&env.body.repair.entries[i], i + 2u, 0, 220u + i,
+			      custody[i], broken[i], gone[i]);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "one episode is marked over both of them");
+	shared = res.entries[0].episode;
+
+	/*
+	 * The higher chunk's cohort is opened first, so it is the earlier
+	 * row -- which is what a resolution by row order would find.
+	 */
+	for (i = 2; i-- > 0;) {
+		env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+		env.body.repair.range_begin = i + 2u;
+		env.body.repair.range_end = i + 3u;
+		env.body.repair.count = 1;
+		repair_member(&env.body.repair.entries[0], i + 2u,
+			      D1_REPAIR_ERROR, 230u + i, custody[i], broken[i],
+			      gone[i]);
+		env.body.repair.episode_present = true;
+		env.body.repair.episode = shared;
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "a repair opens over one member of the shared episode");
+		holding[i] = res.entries[0].cohort;
+		ref[0].index = i + 2u;
+		ref[0].co_id = 230u + i;
+		ref[0].custody = custody[i];
+		ref[0].successor = broken[i];
+		check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR,
+				  holding[i], 1, ref),
+		      "a prepare names its vector");
+		env.body.repair.entries[0].payload_present = true;
+		env.body.repair.entries[0].payload = fixed;
+		env.body.repair.entries[0].payload_len =
+			(uint32_t)sizeof(fixed);
+		d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+				    &env.body.repair.entries[0].checksum);
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and it stages");
+		check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR,
+				  holding[i], 1, ref) &&
+			      d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "the cohort finalizes");
+		check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR,
+				  holding[i], 1, ref) &&
+			      d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and commits");
+		check(repair_call(s, &env, admission, D1_OP_CLEAR_ERROR,
+				  holding[i], 1, ref),
+		      "a clear names it");
+		env.body.repair.episode_present = true;
+		env.body.repair.episode = shared;
+		env.body.repair.certificate_present = true;
+		memcpy(env.body.repair.certificate, certificate,
+		       sizeof(certificate));
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and its member of the episode clears");
+	}
+
+	/* Each is released by the episode, and each reaches its own. */
+	for (i = 0; i < 2; i++) {
+		ref[0].index = i + 2u;
+		ref[0].co_id = 230u + i;
+		ref[0].custody = custody[i];
+		ref[0].successor = broken[i];
+		check(repair_call(s, &env, admission, D1_OP_UNLOCK, holding[i],
+				  1, ref),
+		      "an unlock names one cohort's member");
+		env.body.repair.cohort_present = false;
+		env.body.repair.episode_present = true;
+		env.body.repair.episode = shared;
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and the shared episode resolves through the member "
+		      "named");
+		d1_store_guard(s, &object, i + 2u, &guard);
+		env_init(&env, s, admission, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], i + 2u, 11, 240u + i,
+			    older, sizeof(older), true, &guard);
+		check(d1_store_apply(s, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "so that chunk is an ordinary writer's again");
+	}
+
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (rebuilt) {
+		check(d1_store_replay(rebuilt, log, len) == D1_OK,
+		      "the history rebuilds");
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
  * A cohort record's bytes are the ones its digest covers.
  *
  * An ENTRY record has carried its request digest since the first slice,
@@ -17561,6 +17890,7 @@ int main(void)
 	test_an_error_repair_clears_and_unlocks_separately();
 	test_a_committed_cohort_can_be_finished_after_a_reopen();
 	test_a_begin_answers_with_its_member_handles();
+	test_an_episode_names_the_repair_that_holds_it();
 	test_a_marked_version_is_quarantined();
 	test_a_repair_member_is_a_transaction();
 	test_a_mixed_cohort_clears_and_unlocks();

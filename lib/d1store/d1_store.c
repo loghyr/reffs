@@ -2642,11 +2642,10 @@ static void d1_repair_undo_apply(struct d1_store *s, struct d1_repair_undo *u)
  * capturing it here is what lets every later call in the repair be
  * checked against it rather than against itself.
  */
-static uint32_t d1_do_begin_repair(struct d1_store *s,
-				   const struct d1_envelope *env,
-				   struct d1_object *o,
-				   struct d1_entry_result *res,
-				   struct d1_repair_undo *u)
+static uint32_t
+d1_do_begin_repair(struct d1_store *s, const struct d1_envelope *env,
+		   struct d1_object *o, struct d1_entry_result *res,
+		   struct d1_repair_undo *u)
 {
 	const struct d1_repair_batch *rb = &env->body.repair;
 	struct d1_episode *episode = NULL;
@@ -3436,31 +3435,57 @@ static uint32_t d1_do_unlock(struct d1_store *s, struct d1_repair *cohort,
  * vector/order" and this is where that is asked, once, for all of them.
  */
 /*
- * The cohort whose ERROR members are in this episode.
+ * The cohort holding @index, whose ERROR member there is in @episode.
  *
- * Section 4 lets unlock name the episode instead of the cohort, and
- * the members it releases are the cohort's either way, so the one has
- * to resolve to the other.  A cohort's ERROR members are all in one
- * episode, so the first member that matches settles it.
+ * Section 4 lets unlock name the episode instead of the cohort, and the
+ * members it releases are the cohort's either way, so the one has to
+ * resolve to the other.  An episode is not a cohort, though: it may
+ * cover several chunks, several cohorts may repair them, and section 7
+ * has an aborted repair keep the quarantine and the custody -- so the
+ * chunk still names the episode afterwards and the next cohort opens
+ * in it.  An episode therefore names any number of cohorts over its
+ * life and more than one at a time.
+ *
+ * What settles it is the request, which names its members: a chunk is
+ * held by at most one repair, because begin_repair refuses a chunk
+ * another holds.  So the cohort an unlock by episode is about is the
+ * one currently holding the first member the request names, and its
+ * member there has to be an ERROR member of that episode.
+ *
+ * Resolving to the first row with any member in the episode answered
+ * with whichever repair was earliest in the table.  After the memo's
+ * own G1 abort and the G2 repair that follows it, that was the
+ * abandoned one -- so the episode name was refused while the cohort
+ * name succeeded, though section 4 offers them as two names for one
+ * thing.
+ *
+ * A holder that has not committed resolves here too, and d1_do_unlock
+ * refuses it for its phase.  That is the right answer rather than a
+ * missed one: the repair the request named is real and is not finished.
  */
-static struct d1_repair *
-d1_repair_of_episode(struct d1_store *s, struct d1_object *o, uint64_t episode)
+static struct d1_repair *d1_repair_of_episode(struct d1_store *s,
+					      struct d1_object *o,
+					      uint64_t episode, uint64_t index)
 {
+	const struct d1_chunk *c;
 	uint32_t i, j;
 
+	if (index >= D1_MAX_CHUNKS)
+		return NULL;
+	c = &o->chunks[index];
+	if (!c->repair_present || c->error_episode != episode)
+		return NULL;
 	for (i = 0; i < D1_MAX_REPAIRS; i++) {
 		struct d1_repair *row = &s->repairs[i];
 
-		if (!row->used || row->object != d1_object_slot(s, o))
+		if (!row->used || row->id != c->repair ||
+		    row->object != d1_object_slot(s, o))
 			continue;
-		for (j = 0; j < row->count; j++) {
-			const struct d1_chunk *c =
-				&o->chunks[row->member[j].index];
-
-			if (row->member[j].mode == D1_REPAIR_ERROR &&
-			    c->error_episode == episode)
+		for (j = 0; j < row->count; j++)
+			if (row->member[j].index == index &&
+			    row->member[j].mode == D1_REPAIR_ERROR)
 				return row;
-		}
+		return NULL;
 	}
 	return NULL;
 }
@@ -3493,7 +3518,8 @@ static uint32_t d1_do_repair(struct d1_store *s, const struct d1_envelope *env,
 
 		if (!episode)
 			return D1_STALE_AUTH;
-		cohort = d1_repair_of_episode(s, o, episode->id);
+		cohort = d1_repair_of_episode(s, o, episode->id,
+					      rb->entries[0].index);
 	}
 	if (!cohort)
 		return D1_INVALID;
