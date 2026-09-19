@@ -11481,21 +11481,25 @@ static void test_an_unrecorded_mid_cohort_abort_keeps_its_members(void)
 }
 
 /*
- * A commit that is not recorded leaves its members finalized.
+ * A commit that is not recorded leaves its members where they were.
  *
- * commit_repair publishes the whole vector at one index epoch and moves
- * each member to COMMITTED.  When its append fails the visible pointers
- * go back, the epoch goes back, the cohort goes back -- and the members
- * did not, so the cohort was FINALIZED with COMMITTED members.
+ * A repair member's phase follows its cohort but does not copy it:
+ * begin_repair issues it ADMITTED, prepare_repair moves it to PREPARED,
+ * and commit_repair moves it to COMMITTED.  finalize_repair moves the
+ * cohort alone, so PREPARED is where a member of a finalized cohort is.
+ *
+ * When the commit's append fails the visible pointers go back, the
+ * epoch goes back, the cohort goes back -- and the members did not, so
+ * the cohort was FINALIZED with COMMITTED members.
  *
  * That one is visible in a receipt: section 7 allows a COMMITTED
  * replacement's rollback under fresh repair custody, so the private
  * refusal section 5 gives every other phase is skipped and the call is
  * judged as a rollback instead.  The live store answered QUARANTINED
- * where the log's FINALIZED member says INVALID, recorded it, and could
+ * where the log's PREPARED member says INVALID, recorded it, and could
  * not be rebuilt afterwards.
  */
-static void test_an_unrecorded_commit_leaves_the_member_finalized(void)
+static void test_an_unrecorded_commit_leaves_the_member_prepared(void)
 {
 	struct d1_uuid store_uuid;
 	struct d1_store *s, *rebuilt;
@@ -11589,8 +11593,8 @@ static void test_an_unrecorded_commit_leaves_the_member_finalized(void)
 
 	/*
 	 * The phase-sensitive call, between the fault and the retry.  A
-	 * COMMITTED member skips section 5's refusal; a FINALIZED one
-	 * does not, and the log says FINALIZED.
+	 * COMMITTED member skips section 5's refusal; a PREPARED one
+	 * does not, and the log says PREPARED.
 	 */
 	check(rollback_naming(s, admission, 0, 65, member, &status) &&
 		      status == D1_INVALID,
@@ -11629,7 +11633,7 @@ static void test_an_unrecorded_commit_leaves_the_member_finalized(void)
  * still holding the chunks it repaired.  After an unrecorded commit the
  * live member was COMMITTED under a cohort that was still FINALIZED, so
  * recovery found nothing to drive and recorded BAD_PHASE -- while the
- * store the log rebuilds has a FINALIZED member and admits it.
+ * store the log rebuilds has a PREPARED member and admits it.
  *
  * It needs no reopen and no second writer: one fault, then the lease
  * the owner already lost.
@@ -11770,9 +11774,14 @@ static void test_an_unrecorded_commit_leaves_recovery_its_answer(void)
  * Section 5: "ordinary finalize_batch/commit_batch and private-
  * transaction rollback reject REPAIR members with INVALID".  One
  * sentence, three operations, and what it turns on is what the member
- * is rather than how far its cohort has carried it -- so ADMITTED,
- * PREPARED and FINALIZED all answer INVALID, and all three refuse
- * without a transition.
+ * is rather than how far its cohort has carried it -- so every phase a
+ * member can reach before its cohort publishes answers INVALID, and
+ * refuses without a transition.
+ *
+ * The phases a member can reach are ADMITTED, PREPARED and COMMITTED.
+ * FINALIZE is a cohort transition: finalize_repair moves the cohort and
+ * leaves every member PREPARED, which is checked here rather than
+ * assumed, because the guard names a phase no repair member is ever in.
  *
  * COMMITTED is the phase section 7 takes back out: a committed
  * replacement can be rolled back under fresh repair custody, and this
@@ -11788,13 +11797,13 @@ static void test_a_private_rollback_refuses_a_member_in_every_phase(void)
 	struct d1_result res;
 	static uint8_t older[32], newer[32], fixed[32];
 	d1_admission_id admission;
-	d1_version_id one, one_gone, staged;
+	d1_version_id one, one_gone, staged, carried;
 	d1_custody_id one_custody;
 	d1_postcond_id one_post;
 	d1_txn_id one_txn, member;
 	d1_repair_id cohort;
 	struct repair_ref ref[1];
-	uint32_t status;
+	uint32_t status, phase;
 
 	memset(older, 0x71, sizeof(older));
 	memset(newer, 0x72, sizeof(newer));
@@ -11869,9 +11878,12 @@ static void test_a_private_rollback_refuses_a_member_in_every_phase(void)
 	check(d1_store_apply(s, &env, &res) == D1_OK &&
 		      res.entries[0].status == D1_OK,
 	      "and the cohort finalizes");
+	check(d1_fixture_txn_state(s, member, &phase, &carried) &&
+		      phase == D1_PHASE_PREPARED,
+	      "the cohort's FINALIZE leaves its member PREPARED");
 	check(rollback_naming(s, admission, 0, 65, member, &status) &&
 		      status == D1_INVALID,
-	      "a FINALIZED member answers INVALID");
+	      "and it still answers INVALID");
 
 	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
 			  ref),
@@ -19182,7 +19194,7 @@ int main(void)
 	test_an_unrecorded_prepare_abort_keeps_the_cohort_whole();
 	test_an_unrecorded_prepare_leaves_the_member_admitted();
 	test_an_unrecorded_mid_cohort_abort_keeps_its_members();
-	test_an_unrecorded_commit_leaves_the_member_finalized();
+	test_an_unrecorded_commit_leaves_the_member_prepared();
 	test_an_unrecorded_commit_leaves_recovery_its_answer();
 	test_a_private_rollback_refuses_a_member_in_every_phase();
 	test_an_unrecorded_recovery_rebinds_nothing();
