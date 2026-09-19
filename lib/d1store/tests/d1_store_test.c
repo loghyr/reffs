@@ -11466,6 +11466,299 @@ static void test_an_error_repair_clears_and_unlocks_separately(void)
 }
 
 /*
+ * The two crash boundaries of the memo's G3 both have a way forward.
+ *
+ * Section 10's G3 crashes at each of the repair's last two frontiers.
+ * At L=14 the cohort is finalized and private; at L=15 it is a
+ * committed whole cohort with ERROR still set, and what it is waiting
+ * for is "clear16 with certificate, unlock17 separately".
+ *
+ * A START fences the admission the cohort was opened under, and every
+ * repair call is checked against that admission, so after a reopen the
+ * only way back to a cohort is recovery_admit.  It took PREPARED,
+ * FINALIZED and a repair member's ADMITTED phase, and refused a
+ * COMMITTED one -- which is every phase but the one G3's later crash
+ * leaves.  The L=15 store therefore had no call that could clear or
+ * unlock: the repair calls answered STALE_AUTH under either handle, the
+ * recovery answered BAD_PHASE, and the chunks stayed quarantined for
+ * the store's life.  The committed replacement was published and
+ * unreachable, which is a worse state than the crash it survived.
+ *
+ * A repair member whose cohort has committed and not yet unlocked is
+ * now work a recovery may re-bind, like the other unfinished phases.
+ * It is not a second commit: the replacement is already visible when
+ * the store comes back, and what the fresh custody path completes is
+ * the clear and the unlock the memo puts after it.  A cohort that has
+ * been unlocked is finished and is not re-bound.
+ */
+static void test_a_committed_cohort_can_be_finished_after_a_reopen(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *live, *at14, *at15;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32], fixed[32];
+	static uint8_t certificate[D1_CERTIFICATE_BYTES];
+	struct d1_guard guard;
+	const uint8_t *log;
+	size_t at_14, at_15;
+	d1_admission_id admission, control, fresh;
+	d1_version_id displaced, broken, published, seen;
+	d1_custody_id custody;
+	d1_episode_id episode;
+	d1_repair_id cohort, there;
+	d1_txn_id member;
+	d1_version_id staged;
+	struct repair_ref ref[1];
+
+	memset(older, 0xd1, sizeof(older));
+	memset(newer, 0xd2, sizeof(newer));
+	memset(fixed, 0xd3, sizeof(fixed));
+	memset(certificate, 0xd4, sizeof(certificate));
+	fill_uuid(&store_uuid, 0xd3);
+	live = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!live)
+		return;
+	d1_store_journal_enable(live);
+	admission = d1_fixture_admit(live, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	d1_fixture_certificate(live, certificate);
+	displaced = commit_chunk(live, admission, 0, 1, older, sizeof(older),
+				 &(struct d1_guard){ .never_written = true },
+				 d1_version_none(), NULL);
+	d1_store_guard(live, &object, 0, &guard);
+	broken = commit_chunk(live, admission, 0, 2, newer, sizeof(newer),
+			      &guard, displaced, NULL);
+	check(d1_version_live(broken), "a chunk holds the version in error");
+	custody = d1_fixture_custody(live, broken);
+	check(d1_custody_live(custody), "and custody is issued over it");
+
+	env_init(&env, live, admission, D1_OP_MARK_ERROR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, 0, 60, custody, broken,
+		      displaced);
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "an episode is marked over it");
+	episode = res.entries[0].episode;
+
+	env_init(&env, live, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_member(&env.body.repair.entries[0], 0, D1_REPAIR_ERROR, 60,
+		      custody, broken, displaced);
+	env.body.repair.episode_present = true;
+	env.body.repair.episode = episode;
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "an ERROR repair opens over it");
+	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 60;
+	ref[0].custody = custody;
+	ref[0].successor = broken;
+
+	check(repair_call(live, &env, admission, D1_OP_PREPARE_REPAIR, cohort,
+			  1, ref),
+	      "a prepare names the cohort's vector");
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "the replacement stages");
+	check(repair_call(live, &env, admission, D1_OP_FINALIZE_REPAIR, cohort,
+			  1, ref),
+	      "a finalize names it");
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the cohort finalizes");
+	log = journal_of(live, &at_14);
+
+	/* G3 at L=14: the finalized cohort, recovered and then finished. */
+	at14 = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (at14) {
+		check(d1_store_reopen(at14, log, at_14) == D1_OK,
+		      "the store reopens on the finalized cohort");
+		check(!d1_store_visible(at14, &object, 0, &seen) ||
+			      d1_version_raw(seen) == d1_version_raw(broken),
+		      "with nothing of the repair published");
+		there = d1_fixture_repair_handle(at14, d1_repair_raw(cohort));
+		ref[0].custody = d1_fixture_custody_handle(
+			at14, d1_custody_raw(custody));
+		ref[0].successor =
+			d1_fixture_version_handle(at14, d1_version_raw(broken));
+		check(d1_fixture_repair_member(at14, there, 0, &member,
+					       &staged),
+		      "and the member is still there");
+		control = d1_fixture_admit(at14, &object, 11, D1_RIGHT_CONTROL);
+		fresh = d1_fixture_admit(at14, &object, 11,
+					 D1_RIGHT_READ | D1_RIGHT_WRITE |
+						 D1_RIGHT_REPAIR |
+						 D1_RIGHT_SINGLE_WRITER);
+		env_init(&env, at14, control, D1_OP_RECOVERY_ADMIT);
+		env.body.control.count = 1;
+		env.body.control.txns[0] = member;
+		env.body.control.old_admission = d1_fixture_admission_handle(
+			at14, d1_admission_raw(admission));
+		env.body.control.new_admission_present = true;
+		env.body.control.new_admission = fresh;
+		env.body.control.read_epoch_present = true;
+		env.body.control.read_epoch = 0;
+		check(d1_store_apply(at14, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "a recovery_admit re-binds the finalized member");
+		check(repair_call(at14, &env, fresh, D1_OP_COMMIT_REPAIR, there,
+				  1, ref),
+		      "a commit names the cohort's vector");
+		check(d1_store_apply(at14, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and the repair publishes after the reopen");
+		check(repair_call(at14, &env, fresh, D1_OP_CLEAR_ERROR, there,
+				  1, ref),
+		      "a clear names it");
+		env.body.repair.episode_present = true;
+		env.body.repair.episode = d1_fixture_episode_handle(
+			at14, d1_episode_raw(episode));
+		env.body.repair.certificate_present = true;
+		memcpy(env.body.repair.certificate, certificate,
+		       sizeof(certificate));
+		check(d1_store_apply(at14, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and the episode clears");
+		check(repair_call(at14, &env, fresh, D1_OP_UNLOCK, there, 1,
+				  ref),
+		      "an unlock names it");
+		check(d1_store_apply(at14, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and the member is released");
+		d1_store_free(at14);
+	}
+
+	/* L=15 on the live store: the committed cohort, ERROR still set. */
+	ref[0].custody = custody;
+	ref[0].successor = broken;
+	check(repair_call(live, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "the live store commits the cohort");
+	check(d1_store_apply(live, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK &&
+		      res.entries[0].phase == D1_PHASE_COMMITTED,
+	      "which publishes the whole vector");
+	check(d1_store_visible(live, &object, 0, &published) &&
+		      d1_version_raw(published) != d1_version_raw(broken),
+	      "and leaves the replacement visible");
+	log = journal_of(live, &at_15);
+
+	at15 = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (at15) {
+		check(d1_store_reopen(at15, log, at_15) == D1_OK,
+		      "the store reopens on the committed cohort");
+		check(d1_store_visible(at15, &object, 0, &seen) &&
+			      d1_version_raw(seen) == d1_version_raw(published),
+		      "with the committed replacement already visible");
+		there = d1_fixture_repair_handle(at15, d1_repair_raw(cohort));
+		ref[0].custody = d1_fixture_custody_handle(
+			at15, d1_custody_raw(custody));
+		ref[0].successor =
+			d1_fixture_version_handle(at15, d1_version_raw(broken));
+		check(d1_fixture_repair_member(at15, there, 0, &member,
+					       &staged),
+		      "and the member is still there");
+		control = d1_fixture_admit(at15, &object, 11, D1_RIGHT_CONTROL);
+		fresh = d1_fixture_admit(at15, &object, 11,
+					 D1_RIGHT_READ | D1_RIGHT_WRITE |
+						 D1_RIGHT_REPAIR |
+						 D1_RIGHT_SINGLE_WRITER);
+
+		/* The fenced handle is no way back, which is the fence. */
+		check(repair_call(at15, &env, admission, D1_OP_CLEAR_ERROR,
+				  there, 1, ref),
+		      "a clear under the pre-crash handle names the vector");
+		env.body.repair.episode_present = true;
+		env.body.repair.episode = d1_fixture_episode_handle(
+			at15, d1_episode_raw(episode));
+		env.body.repair.certificate_present = true;
+		memcpy(env.body.repair.certificate, certificate,
+		       sizeof(certificate));
+		check(d1_store_apply(at15, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_STALE_AUTH,
+		      "and is refused, because a START fenced it");
+
+		env_init(&env, at15, control, D1_OP_RECOVERY_ADMIT);
+		env.body.control.count = 1;
+		env.body.control.txns[0] = member;
+		env.body.control.old_admission = d1_fixture_admission_handle(
+			at15, d1_admission_raw(admission));
+		env.body.control.new_admission_present = true;
+		env.body.control.new_admission = fresh;
+		env.body.control.read_epoch_present = true;
+		env.body.control.read_epoch = 0;
+		check(d1_store_apply(at15, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "a recovery_admit re-binds the committed member");
+		check(d1_store_visible(at15, &object, 0, &seen) &&
+			      d1_version_raw(seen) == d1_version_raw(published),
+		      "without republishing anything");
+
+		check(repair_call(at15, &env, fresh, D1_OP_CLEAR_ERROR, there,
+				  1, ref),
+		      "a clear under the handle recovery gave it names it");
+		env.body.repair.episode_present = true;
+		env.body.repair.episode = d1_fixture_episode_handle(
+			at15, d1_episode_raw(episode));
+		env.body.repair.certificate_present = true;
+		memcpy(env.body.repair.certificate, certificate,
+		       sizeof(certificate));
+		check(d1_store_apply(at15, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and the episode clears, as G3's clear16 does");
+		check(repair_call(at15, &env, fresh, D1_OP_UNLOCK, there, 1,
+				  ref),
+		      "an unlock names it");
+		check(d1_store_apply(at15, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "and G3's unlock17 releases the member");
+
+		/* Which is what "released" has to mean: an ordinary chunk. */
+		d1_store_guard(at15, &object, 0, &guard);
+		env_init(&env, at15, fresh, D1_OP_WRITE_BATCH);
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		write_entry(&env.body.write.entries[0], 0, 11, 90, older,
+			    sizeof(older), true, &guard);
+		check(d1_store_apply(at15, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_OK,
+		      "an ordinary write of the chunk is admitted again");
+
+		/* And a finished cohort is not re-bound a second time. */
+		env_init(&env, at15, control, D1_OP_RECOVERY_ADMIT);
+		env.body.control.count = 1;
+		env.body.control.txns[0] = member;
+		env.body.control.old_admission = fresh;
+		env.body.control.new_admission_present = true;
+		env.body.control.new_admission = d1_fixture_admit(
+			at15, &object, 11,
+			D1_RIGHT_READ | D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+				D1_RIGHT_SINGLE_WRITER);
+		env.body.control.read_epoch_present = true;
+		env.body.control.read_epoch = 0;
+		check(d1_store_apply(at15, &env, &res) == D1_OK &&
+			      res.entries[0].status == D1_BAD_PHASE,
+		      "a cohort that has been unlocked is finished work");
+		d1_store_free(at15);
+	}
+	d1_store_free(live);
+}
+
+/*
  * A cohort record's bytes are the ones its digest covers.
  *
  * An ENTRY record has carried its request digest since the first slice,
@@ -17087,6 +17380,7 @@ int main(void)
 	test_an_unrecorded_recovery_rebinds_nothing();
 	test_a_repair_does_not_reach_into_an_open_view();
 	test_an_error_repair_clears_and_unlocks_separately();
+	test_a_committed_cohort_can_be_finished_after_a_reopen();
 	test_a_marked_version_is_quarantined();
 	test_a_repair_member_is_a_transaction();
 	test_a_mixed_cohort_clears_and_unlocks();

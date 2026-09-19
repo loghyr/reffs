@@ -3608,6 +3608,53 @@ static struct d1_repair *d1_repair_of_member(struct d1_store *s, uint64_t txn)
 	return NULL;
 }
 
+/*
+ * Whether a committed cohort is still holding the chunks it repaired.
+ *
+ * COMMIT is not the end of a repair.  Section 7 has it clear no ERROR
+ * episode and release no custody, so a committed cohort is still
+ * waiting for clear_error and unlock -- which is exactly the state the
+ * memo's G3 leaves at L=15, a committed whole cohort with ERROR still
+ * set.  Unlock is what ends it, and until then the members are held.
+ */
+static bool d1_repair_still_held(struct d1_store *s,
+				 const struct d1_repair *cohort)
+{
+	const struct d1_object *o;
+	uint32_t i;
+
+	if (cohort->phase != D1_PHASE_COMMITTED ||
+	    cohort->object >= D1_MAX_OBJECTS)
+		return false;
+	o = &s->objects[cohort->object];
+	for (i = 0; i < cohort->count; i++) {
+		const struct d1_chunk *c = &o->chunks[cohort->member[i].index];
+
+		if (c->repair_locked && c->repair_present &&
+		    c->repair == cohort->id)
+			return true;
+	}
+	return false;
+}
+
+/*
+ * Whether this repair member is one a recovery may still re-bind.
+ *
+ * Between COMMIT and unlock the cohort's admission is the only handle
+ * that can clear or unlock it, and a START fences that handle.  Without
+ * this the memo's G3 at L=15 had no way forward after a reopen: every
+ * repair call answered STALE_AUTH, recovery_admit answered BAD_PHASE
+ * because the member was COMMITTED, and the chunks stayed quarantined
+ * for the store's life.  A member whose cohort has been unlocked is
+ * finished work and is not re-bound; there is nothing left to drive.
+ */
+static bool d1_repair_member_unfinished(struct d1_store *s, uint64_t txn)
+{
+	const struct d1_repair *cohort = d1_repair_of_member(s, txn);
+
+	return cohort && d1_repair_still_held(s, cohort);
+}
+
 static void d1_control_undo_apply(struct d1_control_undo *u)
 {
 	uint32_t i;
@@ -3673,16 +3720,23 @@ static uint32_t d1_do_control(struct d1_store *s, const struct d1_envelope *env,
 			return D1_INVALID;
 		/*
 		 * Work a fenced handle left: pending or finalized for an
-		 * ordinary transaction, and for a repair member also the
-		 * admitted phase it sits in between begin_repair and the
-		 * prepare that stages its replacement.  A cohort opened and
-		 * not yet staged is work too, and leaving it unrecoverable
-		 * would lock its chunks for the store's life.
+		 * ordinary transaction, and for a repair member the two
+		 * phases a cohort sits in that an ordinary transaction has
+		 * no equivalent of: the admitted phase between
+		 * begin_repair and the prepare that stages its
+		 * replacement, and the committed phase between
+		 * commit_repair and the unlock that ends the repair.  Both
+		 * are work, and leaving either unrecoverable locks the
+		 * chunks for the store's life.  The second is the memo's
+		 * G3 at L=15, a committed whole cohort with ERROR still set
+		 * and its clear and unlock still to come.
 		 */
 		if (t->phase != D1_PHASE_PREPARED &&
 		    t->phase != D1_PHASE_FINALIZED &&
 		    !(t->mode == D1_MODE_REPAIR &&
-		      t->phase == D1_PHASE_ADMITTED))
+		      (t->phase == D1_PHASE_ADMITTED ||
+		       (t->phase == D1_PHASE_COMMITTED &&
+			d1_repair_member_unfinished(s, t->id)))))
 			return D1_BAD_PHASE;
 		if (t->admission != old->id)
 			return D1_OWNER_CONFLICT;
