@@ -2265,17 +2265,24 @@ d1_do_rollback_entry(struct d1_store *s, const struct d1_envelope *env,
 	res->guard = chunk->guard;
 	txn = d1_txn_find(s, e->txn);
 	/*
-	 * The same precedence as the lifecycle path, for the same reason
-	 * and with the same limit: trace J1's INVALID is about a private
-	 * rollback of a repair member, which section 5 refuses for what
-	 * the member is.  A COMMITTED replacement is not that -- section 7
-	 * allows its rollback under fresh repair custody -- so only the
-	 * two private phases are answered here, and the committed case
-	 * goes on to be judged as a rollback.
+	 * The same precedence as the lifecycle path, for the same reason:
+	 * trace J1's INVALID is about a private rollback of a repair
+	 * member, which section 5 refuses for what the member is.  What
+	 * it is does not depend on how far its cohort has moved it, so
+	 * ADMITTED is refused here beside PREPARED and FINALIZED -- the
+	 * lifecycle guard refuses a REPAIR member in any phase, and a
+	 * member that answered INVALID to finalize_batch and commit_batch
+	 * while answering QUARANTINED to rollback put one sentence of
+	 * section 5 under two different receipts.
+	 *
+	 * A COMMITTED replacement is the one case that is not private
+	 * work: section 7 allows its rollback under fresh repair custody,
+	 * so it goes on to be judged as a rollback.
 	 */
 	if (txn && txn->object == d1_object_slot(s, o) &&
 	    txn->index == e->index && txn->mode != D1_MODE_ORDINARY &&
-	    (txn->phase == D1_PHASE_PREPARED ||
+	    (txn->phase == D1_PHASE_ADMITTED ||
+	     txn->phase == D1_PHASE_PREPARED ||
 	     txn->phase == D1_PHASE_FINALIZED))
 		return D1_INVALID;
 	if (d1_chunk_writable(chunk) != D1_OK)
@@ -6101,6 +6108,24 @@ bool d1_fixture_repair_member(struct d1_store *s, d1_repair_id cohort,
 			row->member[index].staged ?
 				d1_version_of(s, row->member[index].version) :
 				d1_version_none();
+		found = true;
+	}
+	pthread_mutex_unlock(&s->lock);
+	return found;
+}
+
+bool d1_fixture_txn_state(struct d1_store *s, d1_txn_id txn, uint32_t *phase,
+			  d1_version_id *version)
+{
+	const struct d1_txn *t;
+	bool found = false;
+
+	pthread_mutex_lock(&s->lock);
+	t = d1_txn_find(s, txn);
+	if (t) {
+		*phase = t->phase;
+		*version = t->version ? d1_version_of(s, t->version) :
+					d1_version_none();
 		found = true;
 	}
 	pthread_mutex_unlock(&s->lock);

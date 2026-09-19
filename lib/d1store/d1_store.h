@@ -393,6 +393,22 @@ bool d1_fixture_repair_member(struct d1_store *s, d1_repair_id cohort,
 			      d1_version_id *version);
 
 /*
+ * A transaction's phase and the version it carries.
+ *
+ * A repair member is a transaction, and the fields the cohort moves on
+ * it are not reachable through any operation once section 5 refuses a
+ * private rollback of a REPAIR member in every private phase.  They are
+ * still part of the state recovery must reproduce: section 9 has a
+ * rebuilt store re-execute the log and fail closed on any disagreement,
+ * so a test that compares a live store against one rebuilt from its own
+ * log has to be able to see them.
+ *
+ * False when no such transaction exists in this store.
+ */
+bool d1_fixture_txn_state(struct d1_store *s, d1_txn_id txn, uint32_t *phase,
+			  d1_version_id *version);
+
+/*
  * Release the retention of one predecessor version.  Allowed only for a
  * version nothing makes visible and nothing else holds: it removes the
  * durable retention root and changes what a future rollback is eligible

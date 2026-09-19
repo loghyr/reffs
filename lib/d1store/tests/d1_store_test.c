@@ -10386,6 +10386,100 @@ refuse_a_rollback(struct d1_store *s, d1_admission_id admission, uint64_t index,
 	return res.entries[0].postcond;
 }
 
+/*
+ * Replay a store's whole log into a fresh store.
+ *
+ * The section 9 oracle needs both halves of the comparison at the same
+ * instant: what the live store answers now, and what a store rebuilt
+ * from the log it has written so far answers to the same question.  A
+ * refused call that left something behind shows up here as a rebuilt
+ * store that disagrees, before any later call has a chance to overwrite
+ * the residue with the value it would have had.
+ *
+ * NULL when the log does not replay, with the status it gave.
+ */
+static struct d1_store *
+replayed(struct d1_store *s, const struct d1_uuid *store_uuid, uint32_t *status)
+{
+	struct d1_store *rebuilt;
+	const uint8_t *log;
+	size_t len;
+
+	log = journal_of(s, &len);
+	rebuilt = d1_store_open(store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!rebuilt) {
+		*status = D1_NOSPC;
+		return NULL;
+	}
+	*status = d1_store_replay(rebuilt, log, len);
+	if (*status != D1_OK) {
+		d1_store_free(rebuilt);
+		return NULL;
+	}
+	return rebuilt;
+}
+
+/*
+ * Whether one member transaction is in the same state in both stores.
+ *
+ * Handles are store-bound, so the rebuilt store's handle for the same
+ * durable id has to be asked for rather than reused.
+ */
+static bool member_states_agree(struct d1_store *a, struct d1_store *b,
+				d1_txn_id txn)
+{
+	uint32_t pa, pb;
+	d1_version_id va, vb;
+
+	if (!d1_fixture_txn_state(a, txn, &pa, &va))
+		return false;
+	if (!d1_fixture_txn_state(b, d1_fixture_txn_handle(b, d1_txn_raw(txn)),
+				  &pb, &vb))
+		return false;
+	return pa == pb && va.raw == vb.raw;
+}
+
+/*
+ * An ordinary private rollback naming a repair member's transaction.
+ *
+ * This is the phase-sensitive call the section 9 oracle needs between
+ * a refused repair call and its retry.  Section 5 has ordinary private
+ * rollback refuse a REPAIR member with INVALID, and the guard that
+ * does so reads the member's phase -- so its answer is exactly what a
+ * phase left behind by a call that never happened would change, and
+ * the receipt it records is what a rebuilt store has to agree with.
+ *
+ * It names nothing but the member: no custody, no expected visible
+ * version, no predecessor.  Those are checked after the phase, so the
+ * answer here is the phase's alone.
+ */
+static bool rollback_naming(struct d1_store *s, d1_admission_id admission,
+			    uint64_t index, uint32_t co_id, d1_txn_id txn,
+			    uint32_t *status)
+{
+	struct d1_envelope env;
+	struct d1_result res;
+	struct d1_rollback_entry *e;
+
+	*status = D1_INVALID;
+	env_init(&env, s, admission, D1_OP_ROLLBACK_BATCH);
+	env.body.rollback.range_begin = index;
+	env.body.rollback.range_end = index + 1u;
+	env.body.rollback.count = 1;
+	e = &env.body.rollback.entries[0];
+	e->index = index;
+	e->owner.cohort.raw = 1;
+	e->owner.writer = 11;
+	e->owner.co_id = co_id;
+	e->txn = txn;
+	if (d1_store_apply(s, &env, &res) != D1_OK)
+		return false;
+	if (res.entries[0].disposition != D1_COMPLETED)
+		return false;
+	*status = res.entries[0].status;
+	return true;
+}
+
 static d1_version_id
 make_a_repair_case(struct d1_store *s, d1_admission_id admission,
 		   uint64_t index, uint32_t co_id, const uint8_t *old_bytes,
@@ -11044,6 +11138,142 @@ static void test_an_unrecorded_prepare_abort_keeps_the_cohort_whole(void)
 			      rebuilt_len == live_len &&
 			      memcmp(rebuilt_bytes, live_bytes, live_len) == 0,
 		      "and reads the same bytes the live store reads");
+		d1_store_free(rebuilt);
+	}
+	d1_store_free(s);
+}
+
+/*
+ * A repair member is refused the same way in every private phase.
+ *
+ * Section 5: "ordinary finalize_batch/commit_batch and private-
+ * transaction rollback reject REPAIR members with INVALID".  One
+ * sentence, three operations, and what it turns on is what the member
+ * is rather than how far its cohort has carried it -- so ADMITTED,
+ * PREPARED and FINALIZED all answer INVALID, and all three refuse
+ * without a transition.
+ *
+ * COMMITTED is the phase section 7 takes back out: a committed
+ * replacement can be rolled back under fresh repair custody, and this
+ * pins that the new rule does not close that door.  A rollback naming
+ * only the member gets as far as asking for the custody it did not
+ * bring, which is where a committed version's rollback is judged.
+ */
+static void test_a_private_rollback_refuses_a_member_in_every_phase(void)
+{
+	struct d1_uuid store_uuid;
+	struct d1_store *s, *rebuilt;
+	struct d1_envelope env;
+	struct d1_result res;
+	static uint8_t older[32], newer[32], fixed[32];
+	d1_admission_id admission;
+	d1_version_id one, one_gone, staged;
+	d1_custody_id one_custody;
+	d1_postcond_id one_post;
+	d1_txn_id one_txn, member;
+	d1_repair_id cohort;
+	struct repair_ref ref[1];
+	uint32_t status;
+
+	memset(older, 0x71, sizeof(older));
+	memset(newer, 0x72, sizeof(newer));
+	memset(fixed, 0x73, sizeof(fixed));
+	fill_uuid(&store_uuid, 0x71);
+	s = d1_store_open(&store_uuid, CHUNK_BYTES, MAX_FILE_BYTES);
+	if (!s)
+		return;
+	d1_store_journal_enable(s);
+	admission = d1_fixture_admit(s, &object, 11,
+				     D1_RIGHT_READ | D1_RIGHT_WRITE |
+					     D1_RIGHT_REPAIR |
+					     D1_RIGHT_SINGLE_WRITER);
+	one = make_a_repair_case(s, admission, 0, 1, older, newer,
+				 (uint32_t)sizeof(older), &one_gone,
+				 &one_custody, &one_post, &one_txn);
+	check(d1_version_live(one), "a chunk is a repair case");
+
+	env_init(&env, s, admission, D1_OP_BEGIN_REPAIR);
+	env.body.repair.range_begin = 0;
+	env.body.repair.range_end = 1;
+	env.body.repair.count = 1;
+	repair_nopre(&env.body.repair.entries[0], 0, 65, one_custody, one,
+		     one_gone, one_post);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "a repair opens over it");
+	cohort = res.entries[0].cohort;
+	ref[0].index = 0;
+	ref[0].co_id = 65;
+	ref[0].custody = one_custody;
+	ref[0].successor = one;
+	check(d1_fixture_repair_member(s, cohort, 0, &member, &staged),
+	      "and issues the member its transaction");
+
+	/* ADMITTED: a member before its cohort has staged anything. */
+	check(rollback_naming(s, admission, 0, 65, member, &status) &&
+		      status == D1_INVALID,
+	      "an ADMITTED member's private rollback answers INVALID");
+	env_init(&env, s, admission, D1_OP_FINALIZE_BATCH);
+	env.body.lifecycle.range_begin = 0;
+	env.body.lifecycle.range_end = 1;
+	env.body.lifecycle.count = 1;
+	env.body.lifecycle.entries[0].index = 0;
+	env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+	env.body.lifecycle.entries[0].owner.writer = 11;
+	env.body.lifecycle.entries[0].owner.co_id = 65;
+	env.body.lifecycle.entries[0].txn = member;
+	d1_store_verifier(s, env.body.lifecycle.prior_verifier);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_INVALID,
+	      "and so does its ordinary finalize");
+
+	check(repair_call(s, &env, admission, D1_OP_PREPARE_REPAIR, cohort, 1,
+			  ref),
+	      "a prepare names it");
+	env.body.repair.entries[0].payload_present = true;
+	env.body.repair.entries[0].payload = fixed;
+	env.body.repair.entries[0].payload_len = (uint32_t)sizeof(fixed);
+	d1_checksum_compute(D1_CKSUM_CRC32C, fixed, sizeof(fixed),
+			    &env.body.repair.entries[0].checksum);
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and stages the replacement");
+	check(rollback_naming(s, admission, 0, 65, member, &status) &&
+		      status == D1_INVALID,
+	      "a PREPARED member answers INVALID");
+
+	check(repair_call(s, &env, admission, D1_OP_FINALIZE_REPAIR, cohort, 1,
+			  ref),
+	      "a finalize names it");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and the cohort finalizes");
+	check(rollback_naming(s, admission, 0, 65, member, &status) &&
+		      status == D1_INVALID,
+	      "a FINALIZED member answers INVALID");
+
+	check(repair_call(s, &env, admission, D1_OP_COMMIT_REPAIR, cohort, 1,
+			  ref),
+	      "a commit names it");
+	check(d1_store_apply(s, &env, &res) == D1_OK &&
+		      res.entries[0].status == D1_OK,
+	      "and publishes");
+	/*
+	 * COMMITTED: section 7's door.  The refusal is no longer the
+	 * member refusal -- the call is judged as a rollback of committed
+	 * data, and answers for the custody it did not bring.
+	 */
+	check(rollback_naming(s, admission, 0, 65, member, &status) &&
+		      status != D1_INVALID,
+	      "a COMMITTED replacement is judged as a rollback instead");
+
+	rebuilt = replayed(s, &store_uuid, &status);
+	check(rebuilt != NULL, "every receipt replays");
+	if (rebuilt) {
+		check(object_states_agree(s, rebuilt, &object),
+		      "into the same store");
+		check(member_states_agree(s, rebuilt, member),
+		      "with the member in the same phase");
 		d1_store_free(rebuilt);
 	}
 	d1_store_free(s);
@@ -18329,6 +18559,7 @@ int main(void)
 	test_a_repair_publishes_its_whole_vector_or_none();
 	test_an_unrecorded_abort_keeps_the_cohort_whole();
 	test_an_unrecorded_prepare_abort_keeps_the_cohort_whole();
+	test_a_private_rollback_refuses_a_member_in_every_phase();
 	test_an_unrecorded_recovery_rebinds_nothing();
 	test_a_repair_does_not_reach_into_an_open_view();
 	test_an_error_repair_clears_and_unlocks_separately();
