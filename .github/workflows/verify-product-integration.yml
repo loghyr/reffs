@@ -1,0 +1,111 @@
+# Required landing gate for protected main; process contract: AGENTS.md.
+#
+# This status is not qualification authority. It runs the batch integration
+# v2 landing verifier on the exact pull-request edge and reports one context.
+# No work item may cite it as evidence.
+name: verify-product-integration
+
+env:
+  BIQ_REF_NAMESPACE: reffs-work-queue
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-product-integration-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify-product-integration:
+    name: verify-product-integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out fetched main
+        # The verifier's executing-owner gate requires the running tool to be
+        # byte-identical to fetched origin/main, so the tool comes from main,
+        # never from the pull-request head.
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Fetch the exact pull-request edge and queue refs
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "refs/pull/${PR_NUMBER}/head:refs/remotes/pull/${PR_NUMBER}/head" \
+            "+refs/heads/${BIQ_REF_NAMESPACE}/*:refs/remotes/origin/${BIQ_REF_NAMESPACE}/*"
+          git cat-file -e "${BASE_SHA}^{commit}"
+          git cat-file -e "${HEAD_SHA}^{commit}"
+          test "$(git rev-parse "refs/remotes/pull/${PR_NUMBER}/head")" = "${HEAD_SHA}"
+          # The edge the gate verifies starts where the head was staged, not at the moving base tip:
+          # a landing staged on an older main is still exactly one merge onto that main, and the
+          # merge GitHub makes onto the newer main is refused as DIRTY when it would conflict.
+          echo "GATE_BASE_SHA=$(git merge-base "${BASE_SHA}" "${HEAD_SHA}")" >> "${GITHUB_ENV}"
+
+      - name: verify-product-integration
+        env:
+          BASE_SHA: ${{ env.GATE_BASE_SHA }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 tools/biq.py verify --base "${BASE_SHA}" --head "${HEAD_SHA}"
+
+      - name: Read the proposed installed release
+        id: release
+        env:
+          BASE_SHA: ${{ env.GATE_BASE_SHA }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          import os
+          from pathlib import Path
+          import sys
+
+          root = Path.cwd()
+          spec = importlib.util.spec_from_file_location("biq", root / "tools/biq.py")
+          biq = importlib.util.module_from_spec(spec)
+          sys.modules[spec.name] = biq
+          spec.loader.exec_module(biq)
+          base = biq.rev(root, os.environ["BASE_SHA"])
+          head = biq.rev(root, os.environ["HEAD_SHA"])
+          required = bool(set(biq.changed_paths(root, base, head)) & set(biq.ADOPTION_FILES.values()))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"required={str(required).lower()}", file=output)
+              if required:
+                  _mode, source = biq.adoption_file(root, head, "tools/biq.py")
+                  tag, _sha = biq.release_header(source, consumer=True)
+                  print(f"tag={tag}", file=output)
+          PY
+
+      - name: Check out the shared release
+        if: steps.release.outputs.required == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: slipstream-io-llc/engineering-workflow
+          ref: ${{ steps.release.outputs.tag }}
+          token: ${{ secrets.ENGINEERING_WORKFLOW_READ }}
+          path: .engineering-workflow-upstream
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the proposed installed files
+        if: steps.release.outputs.required == 'true'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ENGINEERING_WORKFLOW_CHECKOUT: .engineering-workflow-upstream
+        run: |
+          python3 tools/biq.py adoption \
+            --upstream "${ENGINEERING_WORKFLOW_CHECKOUT}" --tree "${HEAD_SHA}"
