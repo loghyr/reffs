@@ -30,8 +30,8 @@
 - Dependencies: `none`
 - Previous attempt: `none`
 - Next attempt: `none`
-- Candidate base: `pending`
-- Candidate commit: `pending`
+- Candidate base: `7513cd3e6c6a8e94432671cad1d420a60efad1d0`
+- Candidate commit: `4ac0fa27454076ed56fb5dca289776788e4bd8a1`
 - Submitted At: `pending`
 - Submitted owner: `pending`
 - Priority: `production`
