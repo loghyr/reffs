@@ -1,7 +1,7 @@
 # WI-CI-TOOLING-WORKFLOW-PILOT-SMOKE: prove the adopted queue lifecycle with a packet-only change
 
 - ID: `WI-CI-TOOLING-WORKFLOW-PILOT-SMOKE`
-- Status: `submitted`
+- Status: `completed`
 - Kind: `tooling`
 - Level of effort: `low`
 - Area: `queue lifecycle in reffs`
@@ -9,11 +9,11 @@
 - Created human_owner: `David Flynn`
 - Created host_user: `davidflynn2`
 - Created hostname: `MacBook-Pro-10.local`
-- Completed human_owner: `pending`
-- Completed host_user: `pending`
-- Completed hostname: `pending`
+- Completed human_owner: `David Flynn`
+- Completed host_user: `davidflynn2`
+- Completed hostname: `MacBook-Pro-10.local`
 - Claimed At: `2026-09-21T21:09:07Z`
-- Closed At: `pending`
+- Closed At: `2026-09-21T21:11:24Z`
 - Implementation Duration: `PT58S`
 - Tokens Used: `pending`
 - Model Used: `pending`
@@ -112,6 +112,8 @@ None.
 None.
 
 ## Resolution
+
+Landed on `main` by WI-CI-TOOLING-WORKFLOW-PILOT-SMOKE.
 
 Work-queue substantive work provenance v1: {"claim_head":"7513cd3e6c6a8e94432671cad1d420a60efad1d0","human_owner":"David Flynn","item":"WI-CI-TOOLING-WORKFLOW-PILOT-SMOKE","owner":"claude-reffs-pilot","recorded_at":"2026-09-21T21:10:05Z","role":"implementation","schema":1}
 Retrospective: `docs/work-queue/retrospectives/2026-09-21-workflow-pilot-smoke.md` (sha256 `2b27210d056a6c2624f2d61bf4a58e9b8c4df45432dd4d6b3a1994cb08323d7f`) landed on protected origin/main at `863b0e9993087ff22dd3fe5d172be4ab8ce12178`.
