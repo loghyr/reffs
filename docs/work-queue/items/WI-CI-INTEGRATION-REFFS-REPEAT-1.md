@@ -35,7 +35,7 @@
 - Started At: `2026-09-22T01:28:59Z`
 - Base: `c779eabb68f6b3442fb0089c3aed310e824904da`
 - Predecessor: `none`
-- Integration commit: `bf57bf084f9a4afbf81334ea19a7357e2f4c99b7`
+- Integration commit: `0ce87e5bef27d573610db70f4e637623b45c3e79`
 - Result commit: `pending`
 - Tests: `reffs-check=pending`
 - Cost: `$0`
@@ -144,6 +144,8 @@ None.
 none
 
 ## Resolution
+
+Integration fix applied; tests reset.
 
 Integration fix applied; tests reset.
 
