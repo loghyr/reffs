@@ -1,7 +1,7 @@
 # WI-CI-BUILD-LICENSE-GATE-ADOPTED-TOOLING: main passes make license again and standards.md names the landing route main enforces
 
 - ID: `WI-CI-BUILD-LICENSE-GATE-ADOPTED-TOOLING`
-- Status: `open`
+- Status: `submitted`
 - Kind: `build`
 - Level of effort: `low`
 - Area: `repository gates: check_license.sh and the landing workflow in .claude/standards.md`
@@ -12,9 +12,9 @@
 - Completed human_owner: `pending`
 - Completed host_user: `pending`
 - Completed hostname: `pending`
-- Claimed At: `pending`
+- Claimed At: `2026-09-22T01:22:01Z`
 - Closed At: `pending`
-- Implementation Duration: `pending`
+- Implementation Duration: `PT216S`
 - Tokens Used: `pending`
 - Model Used: `pending`
 - Estimated Cost: `pending`
@@ -27,13 +27,15 @@
 - Architecture decision owner: `none`
 - Documentation impact: `.claude/standards.md`
 - Documentation impact rationale: `The Branch and Commit Methodology section describes fast-forward pushes to main, which branch protection now rejects; it is rewritten to name the queue route this repository actually enforces.`
+- Queues: `REFFS`
+- Implied dependencies: `none`
 - Dependencies: `none`
 - Previous attempt: `none`
 - Next attempt: `none`
 - Candidate base: `c43abc6898a9cdfd31d3c4d77e2608398b55563a`
 - Candidate commit: `1be3f4f10110c8ee2d9c43d1500314b301bfef46`
-- Submitted At: `pending`
-- Submitted owner: `pending`
+- Submitted At: `2026-09-22T01:25:37Z`
+- Submitted owner: `claude-reffs-loghyr`
 - Priority: `production`
 - Decision owner: `none`
 
@@ -166,4 +168,5 @@ None.
 
 ## Resolution
 
-pending
+Work-queue substantive work provenance v1: {"claim_head":"c43abc6898a9cdfd31d3c4d77e2608398b55563a","human_owner":"Tom Haynes","item":"WI-CI-BUILD-LICENSE-GATE-ADOPTED-TOOLING","owner":"claude-reffs-loghyr","recorded_at":"2026-09-22T01:25:37Z","role":"implementation","schema":1}
+Retrospective: `docs/work-queue/retrospectives/2026-09-22-license-gate-adopted-tooling.md` (sha256 `97a88479e98b4f580c183b1c2cc3bf9c757a546f0dce10c026d29dd9e86b4d48`) landed on protected origin/main at `fd847053245e158740e52ea13ae6aff01fdc0ccc`.
