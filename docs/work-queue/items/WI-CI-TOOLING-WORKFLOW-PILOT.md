@@ -36,7 +36,7 @@
 - Submitted owner: `pending`
 - Priority: `production`
 - Container mode: `project`
-- Container members: `WI-CI-INTEGRATION-REFFS-REPEAT-1, WI-CI-TOOLING-WORKFLOW-PILOT-SMOKE`
+- Container members: `WI-CI-BUILD-LICENSE-GATE-ADOPTED-TOOLING, WI-CI-INTEGRATION-REFFS-REPEAT-1, WI-CI-TOOLING-WORKFLOW-PILOT-SMOKE`
 - Decision owner: `none`
 
 ## Objective
