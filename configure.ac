@@ -910,6 +910,8 @@ AC_CONFIG_FILES([
 	lib/config/tests/Makefile
 	lib/d1store/Makefile
 	lib/d1store/tests/Makefile
+	lib/d2store/Makefile
+	lib/d2store/tests/Makefile
 	lib/backends/Makefile
 	lib/ec/Makefile
 	lib/ec/snapraid-raid/Makefile
