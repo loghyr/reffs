@@ -37,7 +37,7 @@
 - Predecessor: `none`
 - Integration commit: `585a50bd5e5cdb55eea99f33fa6c1e1d73f77263`
 - Result commit: `pending`
-- Tests: `reffs-check=pending`
+- Tests: `reffs-check=green`
 - Cost: `$0`
 - Budget: `$0`
 - Dependencies: `none`
@@ -153,4 +153,4 @@ Integration fix applied; tests reset.
 
 ## Evidence
 
-none
+- reffs-check: green, `agent-work/WI-CI-INTEGRATION-REFFS-REPEAT-1/evidence/reffs-check.log`
