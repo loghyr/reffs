@@ -1,7 +1,7 @@
 # WI-CI-INTEGRATION-REFFS-REPEAT-1: REFFS batch integration run 1
 
 - ID: `WI-CI-INTEGRATION-REFFS-REPEAT-1`
-- Status: `open`
+- Status: `submitted`
 - Kind: `integration`
 - Level of effort: `medium`
 - Area: `work-queue batch integration: REFFS run`
@@ -14,7 +14,7 @@
 - Completed hostname: `pending`
 - Claimed At: `2026-09-22T01:28:59Z`
 - Closed At: `pending`
-- Implementation Duration: `pending`
+- Implementation Duration: `PT4903S`
 - Tokens Used: `pending`
 - Model Used: `pending`
 - Estimated Cost: `pending`
@@ -36,17 +36,17 @@
 - Base: `c779eabb68f6b3442fb0089c3aed310e824904da`
 - Predecessor: `none`
 - Integration commit: `585a50bd5e5cdb55eea99f33fa6c1e1d73f77263`
-- Result commit: `pending`
+- Result commit: `585a50bd5e5cdb55eea99f33fa6c1e1d73f77263`
 - Tests: `reffs-check=green`
 - Cost: `$0`
 - Budget: `$0`
 - Dependencies: `none`
 - Previous attempt: `none`
 - Next attempt: `none`
-- Candidate base: `pending`
-- Candidate commit: `pending`
-- Submitted At: `pending`
-- Submitted owner: `pending`
+- Candidate base: `c779eabb68f6b3442fb0089c3aed310e824904da`
+- Candidate commit: `585a50bd5e5cdb55eea99f33fa6c1e1d73f77263`
+- Submitted At: `2026-09-22T02:50:42Z`
+- Submitted owner: `claude-reffs-loghyr`
 - Decision owner: `none`
 
 ## Objective
@@ -150,6 +150,8 @@ Integration fix applied; tests reset.
 Integration fix applied; tests reset.
 
 Integration fix applied; tests reset.
+
+Tested green on `585a50bd5e5cdb55eea99f33fa6c1e1d73f77263`; ready to land.
 
 ## Evidence
 
