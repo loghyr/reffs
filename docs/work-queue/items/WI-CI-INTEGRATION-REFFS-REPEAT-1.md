@@ -154,3 +154,4 @@ Integration fix applied; tests reset.
 ## Evidence
 
 - reffs-check: green, `agent-work/WI-CI-INTEGRATION-REFFS-REPEAT-1/evidence/reffs-check.log`
+- reffs-check: green, `agent-work/WI-CI-INTEGRATION-REFFS-REPEAT-1/evidence/reffs-check.log`
