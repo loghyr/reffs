@@ -30,7 +30,7 @@ check_spdx_headers() {
 # Get a list of all files, excluding .gitignore, LICENSES directory, .x files,
 # LICENSE / LICENSE-EXCEPTIONS, COPYING files, and XDR-generated Python files
 # (which have "DO NOT EDIT" marker).
-files=$(git ls-files | grep -vE '\.gitignore$|LICENSES/|\.x$|^LICENSE([-.][A-Za-z0-9.-]+)?$|(^|/)COPYING$|deploy/benchmark/results/|_xdr_(const|type|pack)\.py$|^lib/ec/snapraid-raid/[^/]+\.[ch]$|^lib/ec/linux-md-raid/([^/]+\.[ch]|linux/raid/[^/]+\.h|int\.uc|neon\.uc|unroll\.awk)$|^lib/ec/isa-l-erasure/(LICENSE|(erasure_code|include)/[^/]+\.[chS]|erasure_code/[^/]+\.(asm|inc)|erasure_code/aarch64/[^/]+\.[cSh]|include/[^/]+\.(asm|inc))$')
+files=$(git ls-files | grep -vE '\.gitignore$|LICENSES/|\.x$|^LICENSE([-.][A-Za-z0-9.-]+)?$|(^|/)COPYING$|deploy/benchmark/results/|_xdr_(const|type|pack)\.py$|^lib/ec/snapraid-raid/[^/]+\.[ch]$|^lib/ec/linux-md-raid/([^/]+\.[ch]|linux/raid/[^/]+\.h|int\.uc|neon\.uc|unroll\.awk)$|^lib/ec/isa-l-erasure/(LICENSE|(erasure_code|include)/[^/]+\.[chS]|erasure_code/[^/]+\.(asm|inc)|erasure_code/aarch64/[^/]+\.[cSh]|include/[^/]+\.(asm|inc))$|^tools/(biq|test_biq)\.py$|^AGENTS\.md$|^docs/work-queue/|^\.github/workflows/verify-product-integration\.yml$')
 
 # Vendored subtree: lib/ec/snapraid-raid/ carries Andrea Mazzoleni's
 # SPDX-License-Identifier (GPL-2.0-or-later / GPL-3.0-or-later) but uses
@@ -40,6 +40,19 @@ files=$(git ls-files | grep -vE '\.gitignore$|LICENSES/|\.x$|^LICENSE([-.][A-Za-
 # in that directory are ours and DO carry SPDX-FileCopyrightText.
 # See lib/ec/snapraid-raid/NOTICE.md for upstream provenance + license
 # per file.
+
+# Adopted work-queue tooling: tools/biq.py, tools/test_biq.py, AGENTS.md,
+# docs/work-queue/TEMPLATE.md, docs/work-queue/retrospectives/TEMPLATE.md
+# and .github/workflows/verify-product-integration.yml are installed
+# verbatim from a tagged engineering-workflow release
+# (github.com/slipstream-io-llc/engineering-workflow; the tag and its
+# commit are recorded in the header of tools/biq.py).  The integration
+# gate (`tools/biq.py adoption`) requires them byte-equal to that tag
+# outside four named local bindings, so they cannot carry a header,
+# and the upstream repository ships no licence file to cite.  The rest
+# of docs/work-queue/ (items/, retrospectives/) is written by the tool
+# itself as queue state.  docs/LOCAL-AGENTS.md is ours and carries a
+# header.
 
 # Check each file
 error_count=0
