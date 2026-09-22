@@ -1,7 +1,7 @@
 # WI-CI-BUILD-LICENSE-GATE-ADOPTED-TOOLING: main passes make license again and standards.md names the landing route main enforces
 
 - ID: `WI-CI-BUILD-LICENSE-GATE-ADOPTED-TOOLING`
-- Status: `submitted`
+- Status: `completed`
 - Kind: `build`
 - Level of effort: `low`
 - Area: `repository gates: check_license.sh and the landing workflow in .claude/standards.md`
@@ -9,11 +9,11 @@
 - Created human_owner: `Tom Haynes`
 - Created host_user: `loghyr`
 - Created hostname: `mana`
-- Completed human_owner: `pending`
-- Completed host_user: `pending`
-- Completed hostname: `pending`
+- Completed human_owner: `Tom Haynes`
+- Completed host_user: `loghyr`
+- Completed hostname: `mana`
 - Claimed At: `2026-09-22T01:22:01Z`
-- Closed At: `pending`
+- Closed At: `2026-09-22T02:51:39Z`
 - Implementation Duration: `PT216S`
 - Tokens Used: `pending`
 - Model Used: `pending`
@@ -167,6 +167,8 @@ decision and is tracked in issue #75.
 None.
 
 ## Resolution
+
+Landed on `main` by WI-CI-INTEGRATION-REFFS-REPEAT-1.
 
 Work-queue substantive work provenance v1: {"claim_head":"c43abc6898a9cdfd31d3c4d77e2608398b55563a","human_owner":"Tom Haynes","item":"WI-CI-BUILD-LICENSE-GATE-ADOPTED-TOOLING","owner":"claude-reffs-loghyr","recorded_at":"2026-09-22T01:25:37Z","role":"implementation","schema":1}
 Retrospective: `docs/work-queue/retrospectives/2026-09-22-license-gate-adopted-tooling.md` (sha256 `97a88479e98b4f580c183b1c2cc3bf9c757a546f0dce10c026d29dd9e86b4d48`) landed on protected origin/main at `fd847053245e158740e52ea13ae6aff01fdc0ccc`.

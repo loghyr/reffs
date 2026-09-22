@@ -114,6 +114,12 @@ static /* Allow the variable to be controlled manually for testing */
 static
 #endif
     enum cpu_feature
+    get_cpu_features(void) __attribute__((unused));
+
+#if !defined(BLAKE3_TESTING)
+static
+#endif
+    enum cpu_feature
     get_cpu_features(void) {
 
   /* If TSAN detects a data race here, try compiling with -DBLAKE3_ATOMICS=1 */

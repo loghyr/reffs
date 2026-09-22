@@ -1,7 +1,7 @@
 # WI-CI-INTEGRATION-REFFS-REPEAT-1: REFFS batch integration run 1
 
 - ID: `WI-CI-INTEGRATION-REFFS-REPEAT-1`
-- Status: `submitted`
+- Status: `completed`
 - Kind: `integration`
 - Level of effort: `medium`
 - Area: `work-queue batch integration: REFFS run`
@@ -9,11 +9,11 @@
 - Created human_owner: `David Flynn`
 - Created host_user: `davidflynn2`
 - Created hostname: `MacBook-Pro-10.local`
-- Completed human_owner: `pending`
-- Completed host_user: `pending`
-- Completed hostname: `pending`
+- Completed human_owner: `Tom Haynes`
+- Completed host_user: `loghyr`
+- Completed hostname: `mana`
 - Claimed At: `2026-09-22T01:28:59Z`
-- Closed At: `pending`
+- Closed At: `2026-09-22T02:51:39Z`
 - Implementation Duration: `PT4903S`
 - Tokens Used: `pending`
 - Model Used: `pending`
@@ -152,6 +152,8 @@ Integration fix applied; tests reset.
 Integration fix applied; tests reset.
 
 Tested green on `585a50bd5e5cdb55eea99f33fa6c1e1d73f77263`; ready to land.
+
+Landed on `main` by WI-CI-INTEGRATION-REFFS-REPEAT-1.
 
 ## Evidence
 

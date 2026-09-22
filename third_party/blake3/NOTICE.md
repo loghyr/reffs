@@ -15,3 +15,12 @@ The files in this directory are from the official BLAKE3 C implementation:
 Only the portable implementation and runtime dispatcher are built.  The
 upstream SIMD and assembly implementations are intentionally omitted to keep
 the initial checksum implementation portable across Linux, macOS, and FreeBSD.
+
+## Local changes
+
+- `blake3_dispatch.c`: `get_cpu_features()` is declared
+  `__attribute__((unused))`.  Upstream defines it unconditionally but
+  calls it only under `IS_X86`; on aarch64 it has no callers, and reffs
+  builds with `-Werror`, so `-Wunused-function` broke every arm64 build
+  from the day the copy was vendored.  A one-line delta; re-apply when
+  refreshing the copy.
