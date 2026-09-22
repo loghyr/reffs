@@ -137,7 +137,7 @@ None.
 
 ## Members
 
-none
+- WI-CI-BUILD-LICENSE-GATE-ADOPTED-TOOLING @1be3f4f10110c8ee2d9c43d1500314b301bfef46
 
 ## Excluded
 
