@@ -40,9 +40,8 @@ struct d2_store {
 struct d2_replay {
 	struct d2_files *files;
 	struct d2_store *store;
-	uint8_t *snapshot;
-	size_t snapshot_len;
 	uint64_t highest_payload_id;
+	uint64_t last_incarnation;
 	uint32_t status;
 };
 
@@ -173,8 +172,153 @@ static bool d2_replay_admission(struct d2_replay *r,
 	auth.lease_epoch = entry->admission.lease_epoch;
 	auth.writer = entry->admission.writer;
 	auth.rights = entry->admission.rights;
+	if (!d2_admission_find(r->store, entry->admission.client_id)) {
+		d1_admission_id id =
+			d1_fixture_admit_full(r->store->model, object, &auth);
+
+		if (id.raw != entry->admission.client_id)
+			return false;
+	}
 	return d2_admission_remember(r->store, entry->admission.client_id,
 				     object, &auth);
+}
+
+static struct d1_objkey *d2_replay_object(struct d2_replay *r,
+					  const uint8_t file_key[32])
+{
+	uint32_t i;
+
+	for (i = 0; i < r->store->registered_count; i++)
+		if (!memcmp(r->store->registered[i].file_key, file_key, 32))
+			return &r->store->registered[i].object;
+	return NULL;
+}
+
+static bool d2_replay_entry(struct d2_replay *r, const struct d2_wal_header *h,
+			    const struct d2_entry *e)
+{
+	struct d2_payload_object object;
+	struct d1_envelope env = { 0 };
+	struct d1_result result;
+	struct d1_objkey *key;
+	struct d1_guard guard = { .never_written = true };
+	uint8_t *allocation = NULL, *scratch = NULL;
+	uint8_t digest[32];
+	bool ok = false;
+
+	if ((e->transition != D2_PREPARED && e->transition != D2_COMMITTED) ||
+	    e->status != D1_OK || !e->payload_object_id ||
+	    e->payload_object_id <= r->highest_payload_id)
+		return false;
+	key = d2_replay_object(r, e->file_key);
+	if (!key)
+		return false;
+	r->status = d2_files_payload_read(r->files, e->payload_object_offset,
+					  &object, &allocation);
+	if (r->status != D1_OK ||
+	    object.payload_object_id != e->payload_object_id ||
+	    object.content_len != e->payload_content_len)
+		goto out;
+	env.object = *key;
+	env.admission = d1_fixture_admission_handle(r->store->model,
+						    e->admission.client_id);
+	env.incarnation = h->ds_incarnation;
+	memcpy(env.key.origin.bytes, e->key.session, 16);
+	env.key.sequence = ((uint64_t)e->key.slot << 32) | e->key.sequence;
+	env.key.ordinal = e->key.compound_ordinal;
+	env.op = D1_OP_WRITE_BATCH;
+	env.body.write.count = 1;
+	env.body.write.stability = e->stability;
+	env.body.write.activate = e->result_activated;
+	env.body.write.entries[0].index = e->chunk_index;
+	env.body.write.entries[0].owner.cohort.raw = e->owner_cohort;
+	env.body.write.entries[0].owner.writer = e->owner_client_id;
+	env.body.write.entries[0].owner.co_id = e->owner_co_id;
+	(void)d1_store_guard(r->store->model, key, e->chunk_index, &guard);
+	env.body.write.entries[0].guard_check = true;
+	env.body.write.entries[0].expected = guard;
+	env.body.write.entries[0].payload = object.content;
+	env.body.write.entries[0].payload_len = object.content_len;
+	env.body.write.entries[0].checksum.alg = object.content_alg;
+	env.body.write.entries[0].checksum.len = object.content_ck_len;
+	memcpy(env.body.write.entries[0].checksum.digest, object.content_ck,
+	       object.content_ck_len);
+	scratch = malloc(D1_ENVELOPE_MAX);
+	if (!scratch)
+		goto out;
+	if (!d1_envelope_digest(&env, scratch, D1_ENVELOPE_MAX, digest))
+		goto out;
+	if (memcmp(digest, e->key.request_digest, sizeof(digest))) {
+		env.body.write.activate = !env.body.write.activate;
+		if (!d1_envelope_digest(&env, scratch, D1_ENVELOPE_MAX,
+					digest) ||
+		    memcmp(digest, e->key.request_digest, sizeof(digest)))
+			goto out;
+	}
+	r->status = d1_store_apply(r->store->model, &env, &result);
+	if (r->status != D1_OK || result.count != 1 ||
+	    result.entries[0].status != e->status ||
+	    result.entries[0].txn.raw != e->txn_id ||
+	    result.entries[0].version.raw != e->result_visible_object_id ||
+	    result.entries[0].guard.generation != e->result_guard_generation ||
+	    result.entries[0].guard.writer != e->result_guard_writer ||
+	    result.entries[0].guard.never_written !=
+		    e->result_guard_never_written ||
+	    result.eof != e->extent_high_water)
+		goto out;
+	r->highest_payload_id = object.payload_object_id;
+	ok = true;
+out:
+	free(scratch);
+	free(allocation);
+	return ok;
+}
+
+static uint32_t d2_model_next_incarnation(struct d2_store *s);
+
+static bool d2_replay_start(struct d2_replay *r, const struct d2_wal_header *h)
+{
+	if (!r->last_incarnation) {
+		r->last_incarnation = h->ds_incarnation;
+		return h->ds_incarnation ==
+		       d1_store_incarnation(r->store->model);
+	}
+	if (h->ds_incarnation != r->last_incarnation + 1 ||
+	    d1_store_incarnation(r->store->model) != r->last_incarnation)
+		return false;
+	r->status = d2_model_next_incarnation(r->store);
+	if (r->status != D1_OK ||
+	    d1_store_incarnation(r->store->model) != h->ds_incarnation) {
+		if (r->status == D1_OK)
+			r->status = D1_IO;
+		return false;
+	}
+	r->last_incarnation = h->ds_incarnation;
+	return true;
+}
+
+static uint32_t d2_model_next_incarnation(struct d2_store *s)
+{
+	uint8_t *journal = NULL;
+	struct d1_store *next = NULL;
+	size_t journal_len = 0;
+	uint32_t status;
+
+	status = d1_store_journal_snapshot(s->model, &journal, &journal_len);
+	if (status == D1_OK) {
+		next = d1_store_open(&s->uuid, s->chunk_bytes,
+				     s->max_file_bytes);
+		status = next ? d1_store_reopen(next, journal, journal_len) :
+				D1_NOSPC;
+	}
+	free(journal);
+	if (status != D1_OK) {
+		d1_store_free(next);
+		return status;
+	}
+	d1_store_free(s->model);
+	s->model = next;
+	return status;
 }
 
 static bool d2_replay_record(const struct d2_wal_header *h,
@@ -183,9 +327,9 @@ static bool d2_replay_record(const struct d2_wal_header *h,
 	struct d2_replay *r = arg;
 	struct d2_control control;
 	struct d2_entry e;
-	struct d2_payload_object object;
-	uint8_t *allocation = NULL;
 
+	if (h->family == D2_REC_START)
+		return d2_replay_start(r, h);
 	if (h->family == D2_REC_CONTROL) {
 		if (!d2_control_decode(record, h->total_bytes, h, &control))
 			return false;
@@ -197,29 +341,7 @@ static bool d2_replay_record(const struct d2_wal_header *h,
 		return false;
 	if (!d2_replay_admission(r, &e))
 		return false;
-	if (!e.payload_object_id ||
-	    e.payload_object_id <= r->highest_payload_id)
-		return true;
-	r->status = d2_files_payload_read(r->files, e.payload_object_offset,
-					  &object, &allocation);
-	if (r->status != D1_OK ||
-	    object.payload_object_id != e.payload_object_id ||
-	    object.content_len != e.payload_content_len) {
-		free(allocation);
-		return false;
-	}
-	free(r->snapshot);
-	r->snapshot = malloc(object.content_len ? object.content_len : 1);
-	if (!r->snapshot) {
-		free(allocation);
-		r->status = D1_NOSPC;
-		return false;
-	}
-	memcpy(r->snapshot, object.content, object.content_len);
-	r->snapshot_len = object.content_len;
-	r->highest_payload_id = object.payload_object_id;
-	free(allocation);
-	return true;
+	return d2_replay_entry(r, h, &e);
 }
 
 static void d2_store_key(struct d2_store *s, struct d2_key_block *key)
@@ -401,20 +523,15 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 	s->files = files;
 	replay.files = files;
 	replay.store = s;
+	status = d1_store_journal_enable(s->model);
+	if (status != D1_OK)
+		goto fail;
 	status = d2_files_scan(files, d2_replay_record, &replay, &scan, false);
 	if (status != D1_OK || replay.status != D1_OK)
 		goto fail;
-	if (replay.snapshot) {
-		status = d1_store_reopen(s->model, replay.snapshot,
-					 replay.snapshot_len);
-		s->next_payload_seq = (replay.highest_payload_id &
-				       ((UINT64_C(1) << 40) - 1)) +
-				      1;
-	} else {
-		status = d1_store_journal_enable(s->model);
-	}
-	free(replay.snapshot);
-	replay.snapshot = NULL;
+	s->next_payload_seq =
+		(replay.highest_payload_id & ((UINT64_C(1) << 40) - 1)) + 1;
+	status = d2_model_next_incarnation(s);
 	if (status != D1_OK)
 		goto fail;
 	first = d2_files_last_scan(files);
@@ -433,7 +550,6 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 	return D1_OK;
 
 fail:
-	free(replay.snapshot);
 	d2_store_free(s, false);
 	return status == D1_OK ? D1_IO : status;
 }
@@ -477,42 +593,35 @@ static uint64_t d2_entry_index(const struct d1_envelope *env)
 	}
 }
 
-static uint32_t d2_persist_snapshot(struct d2_store *s,
-				    const struct d1_envelope *env,
-				    const struct d1_result *result,
-				    uint64_t prior_eof)
+static uint32_t d2_persist_write(struct d2_store *s,
+				 const struct d1_envelope *env,
+				 const struct d1_result *result,
+				 uint64_t prior_eof)
 {
 	struct d2_payload_object object = { 0 };
 	struct d2_wal_header h = { 0 };
 	struct d2_entry entry = { 0 };
-	uint8_t *snapshot = NULL;
 	uint8_t *scratch = NULL;
 	uint8_t record[D2_ENTRY_RECORD_BYTES];
 	uint8_t handle[32];
-	size_t snapshot_len;
 	uint64_t eof, payload_id, offset;
 	uint32_t status;
+	const struct d1_write_entry *write = &env->body.write.entries[0];
 
-	status = d1_store_journal_snapshot(s->model, &snapshot, &snapshot_len);
-	if (status != D1_OK)
-		return status;
-	if (snapshot_len > UINT32_MAX ||
-	    s->next_payload_seq >= (UINT64_C(1) << 40)) {
-		free(snapshot);
+	if (s->next_payload_seq >= (UINT64_C(1) << 40))
 		return D1_NOSPC;
-	}
 	payload_id = (d2_files_super(s->files)->ds_incarnation << 40) |
 		     s->next_payload_seq;
 	memcpy(object.store_uuid, s->uuid.bytes, 16);
 	object.payload_object_id = payload_id;
-	object.content = snapshot;
-	object.content_len = (uint32_t)snapshot_len;
-	object.content_alg = 0;
+	object.content = write->payload;
+	object.content_len = write->payload_len;
+	object.content_alg = write->checksum.alg;
+	object.content_ck_len = write->checksum.len;
+	memcpy(object.content_ck, write->checksum.digest, write->checksum.len);
 	status = d2_files_payload_append(s->files, &object, &offset);
-	if (status != D1_OK) {
-		free(snapshot);
+	if (status != D1_OK)
 		return status;
-	}
 	h.family = D2_REC_ENTRY;
 	memcpy(h.store_uuid, s->uuid.bytes, 16);
 	memcpy(h.wal_uuid, d2_files_super(s->files)->wal_uuid, 16);
@@ -532,15 +641,13 @@ static uint32_t d2_persist_snapshot(struct d2_store *s,
 	d2_key_from_env(env, &entry.key);
 	d2_admission_encode(s, env->admission.raw, &entry.admission);
 	scratch = malloc(D1_ENVELOPE_MAX);
-	if (!scratch) {
-		free(scratch);
-		free(snapshot);
+	if (!scratch)
 		return D1_NOSPC;
-	}
 	if (!d1_envelope_digest(env, scratch, D1_ENVELOPE_MAX,
-				entry.key.request_digest))
-		d2_hash_domain("FFV2-D2B-SNAPSHOT-v1", snapshot, snapshot_len,
-			       entry.key.request_digest);
+				entry.key.request_digest)) {
+		free(scratch);
+		return D1_INVALID;
+	}
 	free(scratch);
 	entry.txn_id = result->entries[0].txn.raw;
 	entry.owner_cohort = result->entries[0].owner.cohort.raw;
@@ -555,7 +662,7 @@ static uint32_t d2_persist_snapshot(struct d2_store *s,
 	entry.result_visible_object_id = result->entries[0].version.raw;
 	entry.payload_object_id = payload_id;
 	entry.payload_object_offset = offset;
-	entry.payload_content_len = (uint32_t)snapshot_len;
+	entry.payload_content_len = write->payload_len;
 	eof = d1_store_eof(s->model, &env->object);
 	entry.extent_high_water = eof;
 	entry.extent_highest_index = eof ? (eof - 1) / s->chunk_bytes : 0;
@@ -564,12 +671,14 @@ static uint32_t d2_persist_snapshot(struct d2_store *s,
 					      D2_EXTENT_UNCHANGED;
 	entry.index_generation = result->index_epoch;
 	memcpy(entry.result_verifier, result->entries[0].verifier, 8);
+	entry.result_effective_len = write->payload_len;
+	entry.result_ck_alg = write->checksum.alg;
+	entry.result_ck_len = write->checksum.len;
+	memcpy(entry.result_ck, write->checksum.digest, write->checksum.len);
 	if (!d2_entry_encode(&h, &entry, record)) {
-		free(snapshot);
 		return D1_INVALID;
 	}
 	status = d2_files_wal_append(s->files, record, sizeof(record));
-	free(snapshot);
 	if (status == D1_OK)
 		s->next_payload_seq++;
 	return status;
@@ -588,7 +697,8 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 		return D1_INVALID;
 	if (!d1_envelope_validate(env))
 		return D1_INVALID;
-	if (env->op >= D1_OP_MARK_ERROR || d1_envelope_member_count(env) != 1) {
+	if (env->op != D1_OP_WRITE_BATCH ||
+	    d1_envelope_member_count(env) != 1) {
 		memset(result, 0, sizeof(*result));
 		result->key = env->key;
 		result->disposition = D1_UNRECORDED;
@@ -625,7 +735,7 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 	if (before_len == after_len &&
 	    (!before_len || !memcmp(before, after, before_len)))
 		goto out;
-	persist = d2_persist_snapshot(s, env, result, prior_eof);
+	persist = d2_persist_write(s, env, result, prior_eof);
 	if (persist != D1_OK) {
 		s->fenced = true;
 		status = persist;
@@ -637,23 +747,6 @@ out:
 	free(after);
 	pthread_mutex_unlock(&s->lock);
 	return status;
-}
-
-/* Fixture controls are persisted by D1 and fenced if D2 cannot claim them. */
-static uint32_t d2_fixture_checkpoint(struct d2_store *s)
-{
-	struct d1_envelope env = { 0 };
-	struct d1_result result = { 0 };
-
-	memcpy(env.key.origin.bytes, s->uuid.bytes, 16);
-	env.key.sequence = s->synthetic_sequence++;
-	env.op = D1_OP_LEASE_REAP;
-	result.count = 1;
-	result.disposition = D1_COMPLETED;
-	result.entries[0].status = D1_OK;
-	result.entries[0].disposition = D1_COMPLETED;
-	result.entries[0].stability = D1_FILE_SYNC;
-	return d2_persist_snapshot(s, &env, &result, 0);
 }
 
 d1_admission_id d2_store_admit_full(struct d2_store *s,
@@ -673,10 +766,6 @@ d1_admission_id d2_store_admit_full(struct d2_store *s,
 	if (!s->fenced)
 		if (status == D1_OK)
 			id = d1_fixture_admit_full(s->model, object, auth);
-	if (d1_admission_live(id) && d2_fixture_checkpoint(s) != D1_OK) {
-		s->fenced = true;
-		id = d1_admission_none();
-	}
 	if (d1_admission_live(id) &&
 	    !d2_admission_remember(s, id.raw, object, auth)) {
 		s->fenced = true;
@@ -704,27 +793,23 @@ d1_admission_id d2_store_admit(struct d2_store *s,
 
 void d2_store_revoke(struct d2_store *s, d1_admission_id admission)
 {
+	(void)admission;
 	if (!s)
 		return;
 	pthread_mutex_lock(&s->lock);
-	if (!s->fenced) {
-		d1_fixture_revoke(s->model, admission);
-		if (d2_fixture_checkpoint(s) != D1_OK)
-			s->fenced = true;
-	}
+	if (!s->fenced)
+		s->fenced = true;
 	pthread_mutex_unlock(&s->lock);
 }
 
 void d2_store_expire(struct d2_store *s, d1_admission_id admission)
 {
+	(void)admission;
 	if (!s)
 		return;
 	pthread_mutex_lock(&s->lock);
-	if (!s->fenced) {
-		d1_fixture_expire(s->model, admission);
-		if (d2_fixture_checkpoint(s) != D1_OK)
-			s->fenced = true;
-	}
+	if (!s->fenced)
+		s->fenced = true;
 	pthread_mutex_unlock(&s->lock);
 }
 
@@ -732,15 +817,12 @@ d1_custody_id d2_store_custody(struct d2_store *s, d1_version_id version)
 {
 	d1_custody_id id = d1_custody_none();
 
+	(void)version;
 	if (!s)
 		return id;
 	pthread_mutex_lock(&s->lock);
 	if (!s->fenced)
-		id = d1_fixture_custody(s->model, version);
-	if (d1_custody_live(id) && d2_fixture_checkpoint(s) != D1_OK) {
 		s->fenced = true;
-		id = d1_custody_none();
-	}
 	pthread_mutex_unlock(&s->lock);
 	return id;
 }
@@ -748,14 +830,12 @@ d1_custody_id d2_store_custody(struct d2_store *s, d1_version_id version)
 void d2_store_certificate(struct d2_store *s,
 			  const uint8_t certificate[D1_CERTIFICATE_BYTES])
 {
+	(void)certificate;
 	if (!s)
 		return;
 	pthread_mutex_lock(&s->lock);
-	if (!s->fenced) {
-		d1_fixture_certificate(s->model, certificate);
-		if (d2_fixture_checkpoint(s) != D1_OK)
-			s->fenced = true;
-	}
+	if (!s->fenced)
+		s->fenced = true;
 	pthread_mutex_unlock(&s->lock);
 }
 

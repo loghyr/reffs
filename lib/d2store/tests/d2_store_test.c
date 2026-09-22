@@ -187,6 +187,20 @@ int main(void)
 	write_request(&env, 1, 0, 1, &guard, payload, sizeof(payload));
 	check(d2_store_apply(store, &env, &result) == D1_OK,
 	      "payload then WAL apply");
+	{
+		uint8_t persisted[sizeof(payload)];
+		int payload_fd = openat(dirfd, "payload", O_RDONLY | O_CLOEXEC);
+
+		check(payload_fd >= 0 &&
+			      pread(payload_fd, persisted, sizeof(persisted),
+				    D2_PAYLOAD_ALIGN +
+					    D2_PAYLOAD_HEADER_BYTES) ==
+				      (ssize_t)sizeof(persisted) &&
+			      !memcmp(persisted, payload, sizeof(persisted)),
+		      "payload object contains application bytes");
+		if (payload_fd >= 0)
+			close(payload_fd);
+	}
 	check(entry_has_admission(dirfd, d2_store_wal_bytes(store), &binding,
 				  admission.raw),
 	      "ENTRY carries injective admission surrogate");
@@ -264,6 +278,25 @@ int main(void)
 				      durable_result.entries[0].version.raw &&
 			      d2_store_wal_bytes(store) == wal_bytes,
 		      "restart returns exact durable receipt once");
+	}
+	if (store) {
+		admission = d2_store_admit(store, &object, 17,
+					   D1_RIGHT_READ | D1_RIGHT_WRITE |
+						   D1_RIGHT_SINGLE_WRITER);
+		guard = (struct d1_guard){ .never_written = true };
+		env.admission = admission;
+		env.incarnation = d2_store_incarnation(store);
+		write_request(&env, 5, 6, 5, &guard, replacement,
+			      sizeof(replacement));
+		check(d2_store_apply(store, &env, &result) == D1_OK,
+		      "post-restart write uses the next incarnation");
+		d2_store_crash(store);
+		store = NULL;
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+			      D1_OK,
+		      "second restart rebinds both incarnations");
+		check(store && d2_store_visible(store, &object, 6, &visible),
+		      "second restart publishes post-restart write");
 	}
 	if (store) {
 		uint8_t byte;
