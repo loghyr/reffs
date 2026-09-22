@@ -115,9 +115,11 @@ int main(void)
 	struct d2_store *store = NULL;
 	struct d1_objkey object = { 0 };
 	struct d1_envelope env = { 0 };
+	struct d1_envelope refused;
 	struct d1_envelope unsupported;
 	struct d1_result result = { 0 };
 	struct d1_result durable_result = { 0 };
+	struct d1_result refused_result = { 0 };
 	d1_admission_id admission;
 	d1_version_id visible;
 	struct d2_wal_header wal_header;
@@ -241,6 +243,13 @@ int main(void)
 		      result.disposition == D1_UNRECORDED &&
 		      d2_store_wal_bytes(store) == wal_bytes,
 	      "unimplemented control is explicitly unsupported");
+	refused = env;
+	write_request(&refused, 40, 0, 40,
+		      &(struct d1_guard){ .never_written = true }, payload,
+		      sizeof(payload));
+	check(d2_store_apply(store, &refused, &refused_result) == D1_OK &&
+		      refused_result.entries[0].status == D1_GUARDED,
+	      "guard refusal is recorded without changing state");
 	guard = (struct d1_guard){ .never_written = true };
 	write_request(&env, 3, 5, 3, &guard, payload, sizeof(payload));
 	check(d2_store_apply(store, &env, &result) == D1_OK &&
@@ -270,6 +279,15 @@ int main(void)
 	check(store && d2_store_visible(store, &object, 3, &visible) &&
 		      d2_store_visible(store, &object, 5, &visible),
 	      "replay reconstructs sparse visible map");
+	if (store) {
+		wal_bytes = d2_store_wal_bytes(store);
+		refused.admission =
+			d2_store_admission_handle(store, refused.admission.raw);
+		check(d2_store_apply(store, &refused, &result) == D1_OK &&
+			      result.entries[0].status == D1_GUARDED &&
+			      d2_store_wal_bytes(store) == wal_bytes,
+		      "restart returns exact refused receipt");
+	}
 	if (store) {
 		env.admission = d2_store_admission_handle(store, admission.raw);
 		wal_bytes = d2_store_wal_bytes(store);
