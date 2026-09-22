@@ -119,7 +119,10 @@ must be at 100% pass rate — CI gates on `make check`.
 
 **Never commit directly to `main` for feature work.** All development
 happens on a named branch.  `main` receives only clean, reviewed,
-squashed changesets.
+squashed changesets, and only through a pull request: branch
+protection on `main` requires a PR, requires the
+`verify-product-integration` status check, and applies to admins,
+so a direct push to `main` is rejected by GitHub.
 
 ### Workflow
 
@@ -143,23 +146,38 @@ squashed changesets.
 4. **Run the reviewer before merging**
    Invoke `/review` on the cleaned branch.  Address BLOCKERs.
 
-5. **Merge to main (fast-forward only)**
+5. **Rebase onto main and push the branch**
    ```
-   git checkout main
-   git merge --ff-only <topic>
+   git rebase main
+   git push origin <topic>
    ```
-   If `--ff-only` fails, rebase topic onto main first.  No merge
-   commits on `main`.
+   The branch must be up to date with `main` before the PR is
+   opened so the merge commit carries no conflict resolution.
 
-6. **Push `main` only when clean**
+6. **Open a PR and enable auto-merge**
+   ```
+   gh pr create --base main --head <topic> --fill
+   gh pr merge --auto --merge
+   ```
+   The repository allows merge commits only (squash and rebase
+   merges are disabled), so `--merge` is the only valid strategy.
+   No approvals are required; the PR merges automatically once
+   the `verify-product-integration` check passes.  The merge
+   commit is GitHub's; the topic commits land on `main` unchanged,
+   which keeps `git bisect` runnable across them.
+
+7. **`main` must stay clean**
    `main` at origin must always build, pass tests, pass license.
+   The required check enforces this; do not bypass it.
 
 ### Prohibited on `main`
 
 - Direct `git commit` for active development
-- `git push --force` (sole-developer exception only)
-- Merge commits (use `--ff-only`)
-- "WIP" or "debug" commit messages
+- Direct `git push` (rejected by branch protection, admins included)
+- `git push --force` and branch deletion (rejected by branch
+  protection)
+- Squash or rebase merges (disabled at the repository level)
+- "WIP" or "debug" commit messages in the commits a PR carries
 
 ### Syncing dev work across machines
 
