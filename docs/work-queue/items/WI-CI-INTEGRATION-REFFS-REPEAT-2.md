@@ -1,27 +1,27 @@
-# WI-CI-INTEGRATION-REFFS-REPEAT-1: REFFS batch integration run 1
+# WI-CI-INTEGRATION-REFFS-REPEAT-2: REFFS batch integration run 2
 
-- ID: `WI-CI-INTEGRATION-REFFS-REPEAT-1`
+- ID: `WI-CI-INTEGRATION-REFFS-REPEAT-2`
 - Status: `open`
 - Kind: `integration`
 - Level of effort: `medium`
 - Area: `work-queue batch integration: REFFS run`
-- Created: `2026-09-21T21:00:07Z`
-- Created human_owner: `David Flynn`
-- Created host_user: `davidflynn2`
-- Created hostname: `MacBook-Pro-10.local`
+- Created: `2026-09-22T01:29:01Z`
+- Created human_owner: `Tom Haynes`
+- Created host_user: `loghyr`
+- Created hostname: `mana`
 - Completed human_owner: `pending`
 - Completed host_user: `pending`
 - Completed hostname: `pending`
-- Claimed At: `2026-09-22T01:28:59Z`
+- Claimed At: `pending`
 - Closed At: `pending`
 - Implementation Duration: `pending`
 - Tokens Used: `pending`
 - Model Used: `pending`
 - Estimated Cost: `pending`
 - Estimated AWS Cost: `pending`
-- Baseline: `origin/main 75c2523606dabaded95a473b76c3cda0b6e84e07`
+- Baseline: `origin/main c779eabb68f6b3442fb0089c3aed310e824904da`
 - Task packet: `3`
-- Accountable owner: `David Flynn`
+- Accountable owner: `Tom Haynes`
 - Architecture gate: `not-required`
 - Architecture decision: `none`
 - Architecture decision owner: `none`
@@ -32,12 +32,12 @@
 - Feeds: `none`
 - Feeders: `none`
 - Qualification: `none`
-- Started At: `2026-09-22T01:28:59Z`
-- Base: `c779eabb68f6b3442fb0089c3aed310e824904da`
+- Started At: `pending`
+- Base: `pending`
 - Predecessor: `none`
-- Integration commit: `dd45220881ea0df6e30ef74db2ad7c494c2b35e9`
+- Integration commit: `pending`
 - Result commit: `pending`
-- Tests: `reffs-check=pending`
+- Tests: `pending`
 - Cost: `$0`
 - Budget: `$0`
 - Dependencies: `none`
@@ -89,10 +89,10 @@ Queue budget `$0` per run.
 ## Implementation outline
 
 1. `python3 tools/biq.py run start REFFS --owner <you> --apply`
-2. `run review REFFS 1`, read each member's candidate, then per member `run review REFFS 1 <ID> --ok | --reject <reason> | --hold <question> --apply`
-3. Fix any integration or landing-gate defect on a descendant commit with `run fix REFFS 1 --commit <sha> --owner <you> --apply`; this resets every test.
-4. `run test REFFS 1 <test> --result green|red --evidence <path> --cost <usd>` per test
-5. `run complete REFFS 1 [--reject <ID>] --apply`
+2. `run review REFFS 2`, read each member's candidate, then per member `run review REFFS 2 <ID> --ok | --reject <reason> | --hold <question> --apply`
+3. Fix any integration or landing-gate defect on a descendant commit with `run fix REFFS 2 --commit <sha> --owner <you> --apply`; this resets every test.
+4. `run test REFFS 2 <test> --result green|red --evidence <path> --cost <usd>` per test
+5. `run complete REFFS 2 [--reject <ID>] --apply`
 
 ## Acceptance and completion evidence
 
@@ -137,7 +137,7 @@ None.
 
 ## Members
 
-- WI-CI-BUILD-LICENSE-GATE-ADOPTED-TOOLING @1be3f4f10110c8ee2d9c43d1500314b301bfef46
+none
 
 ## Excluded
 
