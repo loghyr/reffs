@@ -6,7 +6,9 @@ AUTOMAKE_OPTIONS = serial-tests
 LDADD = $(top_builddir)/lib/d2store/libd2store.la \
 	$(top_builddir)/lib/d1store/libd1store.la -lpthread
 
-TESTS = d2_format_test d2_recovery_test
+TESTS = d2_format_test d2_recovery_test d2_store_test d2_crash_test
 check_PROGRAMS = $(TESTS)
 d2_format_test_SOURCES = d2_format_test.c
 d2_recovery_test_SOURCES = d2_recovery_test.c
+d2_store_test_SOURCES = d2_store_test.c
+d2_crash_test_SOURCES = d2_crash_test.c
