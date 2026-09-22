@@ -784,6 +784,84 @@ review output.
 
 ---
 
+## 18. Minimality, reuse, and hot-path cost
+
+Every step above asks whether the code is correct.  This one asks
+whether it should exist and what it costs each time it runs.  A
+retained line is a future obligation; at equal behavior, clarity, and
+safety, the version with less live surface -- fewer owners, paths,
+states, modes, allocations, copies, locks -- is the better one.  Do
+not reward code golf; necessary validation and invariant rationale
+stay.  Apply Step 17 to these findings as strictly as to correctness
+ones: name the duplicated owner, the violated invariant, or the path
+and its cost, by file:line.  Line count and preference alone are not a
+finding.
+
+### 18a. New mechanism without a reuse decision -- WARNING [NEW-MECHANISM]
+
+A new map, registry, queue, cache, state machine, allocator, parser,
+wrapper, or config flag beside one the subsystem already owns.  Ask
+which existing module owns this behavior today and whether it could be
+parameterized or repaired instead of wrapped.  A wrapper is acceptable
+only when it removes real duplication without hiding cost, allocation,
+locking, or error behavior.  Moving logic into a new file to avoid
+understanding the current owner is the smell.  Flag when the diff adds
+the mechanism and neither the code nor the commit message says why the
+owner could not be extended.
+
+### 18b. Second source of truth -- BLOCKER [SHADOW-STATE]
+
+State mirrored into an auxiliary structure that must stay in sync with
+its owner: a cached count, a shadow flag, a parallel list.  Rule: one
+owner per state bit.  A mirror needs a named owner, a synchronization
+protocol, a lifecycle, and a test that exercises the two falling out of
+step; without all four it is a BLOCKER.  `sb_inode_lru_count` and
+friends are the documented heuristic exception (see standards.md).
+
+### 18c. Replaced behavior whose old path stays live -- WARNING [DEAD-PATH-RETAINED]
+
+When new code replaces old behavior, the old path is deleted or
+quarantined in the same change.  `git grep` the old entry point after
+the diff: no callers means it goes; remaining callers mean the change
+converts them or states the compatibility window and when it ends.
+
+### 18d. Cope code -- BLOCKER [COPE-CODE]
+
+A fallback, retry, cleanup, remap, clamp, or alternate path whose real
+purpose is to make progress after an internal invariant, precondition,
+or ownership rule was violated.  It hides the bug in the owner that
+violated it.  Retries are correct only for explicitly modeled external
+conditions -- a documented protocol state (NFS4ERR_DELAY), contention,
+a transient I/O status, a race the design admits.  Never for a
+logically impossible state.  Ask which of those the retry models; "just
+in case" is cope code.  Turning a wrong internal decision into a
+success path is a BLOCKER even when the tests pass.  `NOT_NOW_BROWN_COW`
+marks deferred work, not a license to continue past a broken invariant.
+
+### 18e. Unbudgeted cost on a hot path -- WARNING [HOT-PATH-COST]
+
+On a path that runs per RPC, per I/O, per dirent, or under a lock,
+every allocation, bulk copy, lock, atomic, syscall, `snprintf`, and
+`LOG`/`TRACE` formatting is a cost.  Code that looks allocation-free
+can still move bytes: `memcpy`/`memmove`, large structs passed or
+returned by value, aggregate assignment, compaction, XDR staging.  Ask
+the author to classify the path (hot / warm / cold / init-only /
+shutdown-only / test-only) and, for a hot path, to state the
+allocations, bytes copied, locks, and syscalls added per operation.  A
+performance claim without a measurement or a measurement plan is not
+evidence; a profile sample inside a lock is not evidence the lock is
+the problem rather than a caller taking it too often.
+
+### 18f. Change too large to review -- NOTE [SPLIT-REQUESTED]
+
+Past a few hundred meaningful lines, defect-finding quality collapses.
+If the diff cannot be reasoned about in one pass, say so in the report
+and ask for a split or an author-provided review map (which hunks are
+mechanical, which carry the behavior change, reading order) rather
+than reviewing it badly.
+
+---
+
 ## Output format
 
 ```
@@ -889,6 +967,8 @@ is safe to commit as-is>
 | `ERRNO-CLOBBERED` | Error handling | errno read after an intervening call that may have reset it |
 | `CALLBACK-STALE-CONTEXT` | Callbacks | Callback registered with context that outlives its lifetime |
 | `CALLBACK-LOCK-INVERSION` | Callbacks | Callback invoked while holding a lock it also acquires |
+| `SHADOW-STATE` | Minimality | Second source of truth without owner, sync protocol, lifecycle, and test |
+| `COPE-CODE` | Minimality | Fallback/retry/clamp continues past a violated internal invariant |
 
 ### WARNING tags (should fix, not blocking)
 
@@ -909,6 +989,9 @@ is safe to commit as-is>
 | `CALLBACK-NOT-DEREGISTERED` | Callbacks | Callback registered but no matching deregister in cleanup path |
 | `CLOSE-ERROR-IGNORED` | Error handling | close() return not checked after a write or fsync on the same fd |
 | `CLIENTID-RAW-CMP` | NFSv4 | clientid4 compared as raw integer instead of via accessor macros |
+| `NEW-MECHANISM` | Minimality | New map/registry/queue/cache/wrapper beside an existing owner, no reuse decision |
+| `DEAD-PATH-RETAINED` | Minimality | Replaced behavior's old path left live without a stated compatibility window |
+| `HOT-PATH-COST` | Minimality | Unbudgeted allocation, bulk copy, lock, syscall, or formatting on a hot path |
 | `BEHAVIOR-DELTA` | Callers | Caller-visible behavior changed; some callers may be affected |
 
 ### NOTE tags (observations, suggestions)
@@ -921,6 +1004,7 @@ is safe to commit as-is>
 | `SCOPE-BLOCK` | Standards | Unnecessary scope block to limit variable lifetime |
 | `NOT-NOW-BROWN-COW` | Design | New code depends on a deferred item |
 | `TEST-SUGGEST` | Tests | No existing test covers this path; suggest adding one |
+| `SPLIT-REQUESTED` | Minimality | Diff too large to review in one pass; split or review map requested |
 
 ---
 
