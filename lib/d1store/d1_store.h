@@ -413,6 +413,10 @@ bool d1_fixture_version_predecessor(struct d1_store *s, d1_version_id version,
 				    bool *present,
 				    d1_version_id *predecessor);
 
+/* Whether a canonical version row is still retained, and its release bit. */
+bool d1_fixture_version_retained(struct d1_store *s, d1_version_id version,
+				 bool *released);
+
 /*
  * Release the retention of one predecessor version.  Allowed only for a
  * version nothing makes visible and nothing else holds: it removes the

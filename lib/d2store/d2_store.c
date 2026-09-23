@@ -50,6 +50,9 @@ struct d2_store {
 		uint64_t version_id;
 		uint64_t admission_id;
 		struct d1_objkey object;
+		struct d1_owner owner;
+		bool predecessor_present;
+		uint64_t predecessor_id;
 	} work[D1_MAX_TXNS];
 	struct {
 		bool used;
@@ -122,6 +125,9 @@ struct d2_replay {
 	uint64_t postcond_custody_id;
 };
 
+static struct d1_objkey *d2_replay_object(struct d2_replay *r,
+					  const uint8_t file_key[32]);
+
 static bool d2_same_object(const struct d1_objkey *a, const struct d1_objkey *b)
 {
 	return !memcmp(a, b, sizeof(*a));
@@ -192,7 +198,10 @@ static bool d2_receipt_remember(struct d2_store *s,
 
 static bool d2_work_remember(struct d2_store *s, uint64_t txn_id,
 			     uint64_t version_id, uint64_t admission_id,
-			     const struct d1_objkey *object)
+			     const struct d1_objkey *object,
+			     const struct d1_owner *owner,
+			     bool predecessor_present,
+			     uint64_t predecessor_id)
 {
 	uint32_t i;
 
@@ -202,6 +211,10 @@ static bool d2_work_remember(struct d2_store *s, uint64_t txn_id,
 		if (s->work[i].used && s->work[i].txn_id == txn_id)
 			return s->work[i].version_id == version_id &&
 			       s->work[i].admission_id == admission_id &&
+			       !memcmp(&s->work[i].owner, owner, sizeof(*owner)) &&
+			       s->work[i].predecessor_present ==
+				       predecessor_present &&
+			       s->work[i].predecessor_id == predecessor_id &&
 			       !memcmp(&s->work[i].object, object,
 				       sizeof(*object));
 		if (!s->work[i].used) {
@@ -210,6 +223,9 @@ static bool d2_work_remember(struct d2_store *s, uint64_t txn_id,
 			s->work[i].version_id = version_id;
 			s->work[i].admission_id = admission_id;
 			s->work[i].object = *object;
+			s->work[i].owner = *owner;
+			s->work[i].predecessor_present = predecessor_present;
+			s->work[i].predecessor_id = predecessor_id;
 			return true;
 		}
 	}
@@ -791,10 +807,15 @@ static bool d2_replay_postcond(struct d2_replay *r,
 			       const struct d2_control *control)
 {
 	const typeof(r->store->custodies[0]) *custody;
+	const typeof(r->store->work[0]) *work;
+	struct d1_envelope env = { 0 };
+	struct d1_result result;
 	struct d1_cursor cursor;
+	struct d1_objkey *object = NULL;
 	uint8_t file_key[32];
 	uint64_t id, index, version_id, custody_id;
 	uint32_t kind, i;
+	bool predecessor_retained, predecessor_released = false;
 	bool registered = false;
 
 	if (control->subtype != D2_CTL_POSTCOND)
@@ -813,10 +834,53 @@ static bool d2_replay_postcond(struct d2_replay *r,
 		if (!memcmp(r->store->registered[i].file_key, file_key,
 			    sizeof(file_key))) {
 			registered = true;
+			object = &r->store->registered[i].object;
 			break;
 		}
 	custody = d2_custody_by_version(r->store, version_id);
-	if (!registered || !custody || custody->custody_id != custody_id)
+	work = d2_work_by_version(r->store, version_id);
+	if (!registered || !custody || custody->custody_id != custody_id ||
+	    !work || !d2_same_object(&work->object, object))
+		return false;
+	predecessor_retained = work->predecessor_present &&
+		d1_fixture_version_retained(
+			r->store->model,
+			d1_fixture_version_handle(r->store->model,
+						  work->predecessor_id),
+			&predecessor_released);
+	if ((!work->predecessor_present && kind != 1) ||
+	    (work->predecessor_present && !predecessor_retained && kind != 2) ||
+	    (predecessor_retained && (!predecessor_released || kind != 3)))
+		return false;
+	env.object = *object;
+	env.admission = d1_fixture_admission_handle(r->store->model,
+						     work->admission_id);
+	env.incarnation = d1_store_incarnation(r->store->model);
+	env.key.sequence = id;
+	env.op = D1_OP_ROLLBACK_BATCH;
+	env.body.rollback.range_begin = index;
+	env.body.rollback.range_end = index + 1;
+	env.body.rollback.count = 1;
+	env.body.rollback.entries[0].index = index;
+	env.body.rollback.entries[0].owner = work->owner;
+	env.body.rollback.entries[0].txn =
+		d1_fixture_txn_handle(r->store->model, work->txn_id);
+	env.body.rollback.entries[0].visible_present = true;
+	env.body.rollback.entries[0].visible =
+		d1_fixture_version_handle(r->store->model, version_id);
+	env.body.rollback.entries[0].predecessor_present =
+		work->predecessor_present;
+	env.body.rollback.entries[0].predecessor =
+		d1_fixture_version_handle(r->store->model, work->predecessor_id);
+	env.body.rollback.entries[0].custody_present = true;
+	env.body.rollback.entries[0].custody =
+		d1_fixture_custody_handle(r->store->model, custody_id);
+	r->status = d1_store_apply(r->store->model, &env, &result);
+	if (r->status != D1_OK || result.count != 1 ||
+	    result.entries[0].status != D1_NO_PREDECESSOR ||
+	    !result.entries[0].postcond_present ||
+	    result.entries[0].postcond.raw != id ||
+	    result.entries[0].version.raw != version_id)
 		return false;
 	r->postcond_pending = true;
 	r->postcond_id = id;
@@ -926,7 +990,10 @@ static bool d2_replay_receipt(struct d2_replay *r,
 	return (!e->payload_object_id ||
 		d2_work_remember(r->store, e->txn_id,
 				 e->result_visible_object_id,
-				 e->admission.client_id, object)) &&
+				 e->admission.client_id, object,
+				 &result.entries[0].owner,
+				 e->predecessor_present,
+				 e->predecessor_object_id)) &&
 	       d2_receipt_remember(r->store, &object->export_uuid, &key,
 				   e->key.request_digest, &result);
 }
@@ -1073,7 +1140,7 @@ static bool d2_replay_entry(struct d2_replay *r, const struct d2_wal_header *h,
 	if (e->transition == D2_REFUSED &&
 	    e->status == D1_NO_PREDECESSOR && e->postcond_present)
 		return !e->payload_object_id &&
-		       d2_replay_rollback(r, h, e, key);
+		       d2_replay_receipt(r, key, e);
 	if (e->transition == D2_REFUSED || e->transition == D2_ABORTED)
 		return !e->payload_object_id && d2_replay_receipt(r, key, e);
 	if (!e->payload_object_id)
@@ -1889,8 +1956,11 @@ static bool d2_replay_record(const struct d2_wal_header *h,
 	const typeof(r->store->work[0]) *paired_work;
 	bool paired, replayed;
 
-	if (r->postcond_pending && h->family != D2_REC_ENTRY)
+	if (r->postcond_pending && h->family == D2_REC_START) {
 		r->postcond_pending = false;
+	} else if (r->postcond_pending && h->family != D2_REC_ENTRY) {
+		return false;
+	}
 	if (h->family == D2_REC_START)
 		return d2_replay_start(r, h);
 	if (h->family == D2_REC_CONTROL) {
@@ -2241,6 +2311,8 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 	uint8_t handle[32];
 	uint64_t eof, payload_id = 0, offset = 0;
 	uint32_t status;
+	bool predecessor_present = false;
+	d1_version_id predecessor = d1_version_none();
 	const struct d1_write_entry *write =
 		env->op == D1_OP_WRITE_BATCH ? &env->body.write.entries[0] :
 					       NULL;
@@ -2306,7 +2378,14 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 	entry.owner_client_id = result->entries[0].owner.writer;
 	entry.owner_co_id = result->entries[0].owner.co_id;
 	entry.generation = result->entries[0].guard.generation;
-	if (life) {
+	if (write && result->entries[0].version_present) {
+		if (!d1_fixture_version_predecessor(
+			    s->model, result->entries[0].version,
+			    &predecessor_present, &predecessor))
+			return D1_IO;
+		entry.predecessor_present = predecessor_present;
+		entry.predecessor_object_id = predecessor.raw;
+	} else if (life) {
 		entry.predecessor_present = life->predecessor_present;
 		entry.predecessor_object_id = life->predecessor.raw;
 	} else if (rollback) {
@@ -2772,6 +2851,8 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 	size_t before_len = 0, after_len = 0;
 	uint64_t prior_eof;
 	uint32_t status, persist;
+	bool predecessor_present = false;
+	d1_version_id predecessor = d1_version_none();
 
 	if (!s || !env || !result)
 		return D1_INVALID;
@@ -2870,9 +2951,19 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 		s->fenced = true;
 		status = D1_IO;
 	} else if (env->op == D1_OP_WRITE_BATCH &&
+		   result->entries[0].version_present &&
+		   !d1_fixture_version_predecessor(
+			   s->model, result->entries[0].version,
+			   &predecessor_present, &predecessor)) {
+		s->fenced = true;
+		status = D1_IO;
+	} else if (env->op == D1_OP_WRITE_BATCH &&
+		   result->entries[0].version_present &&
 		   !d2_work_remember(s, result->entries[0].txn.raw,
 				     result->entries[0].version.raw,
-				     env->admission.raw, &env->object)) {
+				     env->admission.raw, &env->object,
+				     &result->entries[0].owner,
+				     predecessor_present, predecessor.raw)) {
 		s->fenced = true;
 		status = D1_IO;
 	} else if (env->op == D1_OP_RECOVERY_ADMIT &&
@@ -3327,6 +3418,15 @@ bool d2_store_guard(struct d2_store *s, const struct d1_objkey *object,
 {
 	return s && !s->fenced &&
 	       d1_store_guard(s->model, object, index, guard);
+}
+
+bool d2_store_postcond(struct d2_store *s, uint64_t raw, uint64_t *index,
+		       d1_version_id *successor, bool *consumed)
+{
+	return s && !s->fenced && index && successor && consumed &&
+	       d1_fixture_postcond(s->model,
+				   d1_fixture_postcond_handle(s->model, raw),
+				   index, successor, consumed);
 }
 
 uint64_t d2_store_eof(struct d2_store *s, const struct d1_objkey *object)

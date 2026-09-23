@@ -166,6 +166,118 @@ int main(void)
 		if (store)
 			d2_store_close(store);
 	}
+	{
+		struct d2_store_config config = { 0 };
+		struct d2_store_rebind reopen = { 0 };
+		struct d2_binding binding = { 0 };
+		struct d2_store *store = NULL;
+		struct d1_objkey object = { 0 };
+		struct d1_envelope env = { 0 };
+		struct d1_result result;
+		d1_admission_id admission;
+		d1_txn_id txn;
+		d1_version_id successor;
+		d1_custody_id custody;
+		d1_version_id restored_successor;
+		uint64_t restored_index;
+		bool consumed;
+		bool restored;
+		struct cut cut = { .target = D2_IO_WAL_DURABLE };
+		pid_t pid;
+		int child_status;
+
+		clean_root(dirfd);
+		memset(config.files.export_uuid, 0x21, 16);
+		config.files.binding_token = token;
+		config.files.binding_token_len = sizeof(token);
+		config.files.capacity_wal_bytes = D2_MIN_WAL_BYTES;
+		config.files.capacity_payload_bytes = 32u * 1024u * 1024u;
+		config.chunk_bytes = sizeof(payload);
+		config.max_file_bytes = 64u * sizeof(payload);
+		check(d2_store_provision(dirfd, &config, &binding, &store) ==
+			      D1_OK,
+		      "postcondition cut fixture provisions");
+		memset(object.export_uuid.bytes, 0x21, 16);
+		memset(object.object_uuid.bytes, 0x55, 16);
+		admission = d2_store_admit(store, &object, 9,
+					   D1_RIGHT_READ | D1_RIGHT_WRITE |
+						   D1_RIGHT_REPAIR |
+						   D1_RIGHT_SINGLE_WRITER);
+		env.object = object;
+		env.admission = admission;
+		env.incarnation = d2_store_incarnation(store);
+		memset(env.key.origin.bytes, 0x72, 16);
+		env.key.sequence = 1;
+		env.op = D1_OP_WRITE_BATCH;
+		env.body.write.count = 1;
+		env.body.write.stability = D1_FILE_SYNC;
+		env.body.write.activate = true;
+		env.body.write.entries[0].owner.cohort.raw = 1;
+		env.body.write.entries[0].owner.writer = 9;
+		env.body.write.entries[0].owner.co_id = 1;
+		env.body.write.entries[0].guard_check = true;
+		env.body.write.entries[0].expected.never_written = true;
+		env.body.write.entries[0].payload = payload;
+		env.body.write.entries[0].payload_len = sizeof(payload);
+		fill_checksum(&env.body.write.entries[0], payload,
+			      sizeof(payload));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "postcondition cut publishes successor");
+		txn = result.entries[0].txn;
+		successor = result.entries[0].version;
+		custody = d2_store_custody(store, successor);
+		memset(&env.body, 0, sizeof(env.body));
+		env.key.sequence = 2;
+		env.op = D1_OP_ROLLBACK_BATCH;
+		env.body.rollback.range_end = 1;
+		env.body.rollback.count = 1;
+		env.body.rollback.entries[0].owner.cohort.raw = 1;
+		env.body.rollback.entries[0].owner.writer = 9;
+		env.body.rollback.entries[0].owner.co_id = 1;
+		env.body.rollback.entries[0].txn = txn;
+		env.body.rollback.entries[0].visible_present = true;
+		env.body.rollback.entries[0].visible = successor;
+		env.body.rollback.entries[0].custody_present = true;
+		env.body.rollback.entries[0].custody = custody;
+		pid = fork();
+		if (pid == 0) {
+			d2_store_set_io_hook(store, cut_hook, &cut);
+			(void)d2_store_apply(store, &env, &result);
+			_exit(2);
+		}
+		check(pid > 0 && waitpid(pid, &child_status, 0) == pid &&
+			      WIFEXITED(child_status) &&
+			      WEXITSTATUS(child_status) ==
+				      100 + D2_IO_WAL_DURABLE,
+		      "crash leaves durable orphan postcondition");
+		d2_store_crash(store);
+		store = NULL;
+		memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
+		memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
+		reopen.files.expected_root_ino = binding.root_ino;
+		reopen.files.binding_token = token;
+		reopen.files.binding_token_len = sizeof(token);
+		reopen.chunk_bytes = config.chunk_bytes;
+		reopen.max_file_bytes = config.max_file_bytes;
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) == D1_OK,
+		      "orphan postcondition replays after crash");
+		restored = d2_store_postcond(store, 1, &restored_index,
+					     &restored_successor, &consumed);
+		check(restored &&
+			      restored_index == 0 &&
+			      restored_successor.raw == successor.raw && !consumed,
+		      "orphan postcondition remains available after restart");
+		d2_store_crash(store);
+		store = NULL;
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) == D1_OK &&
+			      d2_store_postcond(store, 1, &restored_index,
+						&restored_successor, &consumed) &&
+			      restored_successor.raw == successor.raw && !consumed,
+		      "orphan postcondition survives another incarnation");
+		if (store)
+			d2_store_close(store);
+	}
 	close(dirfd);
 	printf("D2 CRASH: %u checks, %u failures\n", checks, failures);
 	return failures != 0;

@@ -6213,6 +6213,24 @@ bool d1_fixture_version_predecessor(struct d1_store *s, d1_version_id version,
 	return found;
 }
 
+bool d1_fixture_version_retained(struct d1_store *s, d1_version_id version,
+				 bool *released)
+{
+	struct d1_version *row;
+	bool found = false;
+
+	if (!s || !released)
+		return false;
+	pthread_mutex_lock(&s->lock);
+	row = d1_version_find(s, version);
+	if (row) {
+		*released = row->released;
+		found = true;
+	}
+	pthread_mutex_unlock(&s->lock);
+	return found;
+}
+
 d1_custody_id d1_fixture_custody(struct d1_store *s, d1_version_id version)
 {
 	struct d1_control_request request;
