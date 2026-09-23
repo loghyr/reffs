@@ -368,8 +368,8 @@ int main(void)
 		      "restart returns exact durable receipt once");
 	}
 	if (store) {
-		check(d2_store_visible(store, &object, 5, &predecessor) &&
-			      d2_store_guard(store, &object, 5, &guard),
+		check(d2_store_visible(store, &object, 3, &predecessor) &&
+			      d2_store_guard(store, &object, 3, &guard),
 		      "committed rollback captures predecessor");
 		admission = d2_store_admit(store, &object, 17,
 					   D1_RIGHT_READ | D1_RIGHT_WRITE |
@@ -378,8 +378,7 @@ int main(void)
 		env.admission = admission;
 		env.incarnation = d2_store_incarnation(store);
 		env.op = D1_OP_WRITE_BATCH;
-		write_request(&env, 20, 5, 20, &guard, replacement,
-			      sizeof(replacement));
+		write_request(&env, 20, 3, 20, &guard, replacement, 137);
 		env.body.write.activate = false;
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].status == D1_OK,
@@ -389,10 +388,10 @@ int main(void)
 		memset(&env.body, 0, sizeof(env.body));
 		env.key.sequence = 21;
 		env.op = D1_OP_FINALIZE_BATCH;
-		env.body.lifecycle.range_begin = 5;
-		env.body.lifecycle.range_end = 6;
+		env.body.lifecycle.range_begin = 3;
+		env.body.lifecycle.range_end = 4;
 		env.body.lifecycle.count = 1;
-		env.body.lifecycle.entries[0].index = 5;
+		env.body.lifecycle.entries[0].index = 3;
 		env.body.lifecycle.entries[0].owner.cohort.raw = 1;
 		env.body.lifecycle.entries[0].owner.writer = 17;
 		env.body.lifecycle.entries[0].owner.co_id = 20;
@@ -408,17 +407,19 @@ int main(void)
 		env.key.sequence = 22;
 		env.op = D1_OP_COMMIT_BATCH;
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
-			      result.entries[0].phase == D2_COMMITTED,
-		      "replacement commits before custody rollback");
+			      result.entries[0].phase == D2_COMMITTED &&
+			      d2_store_eof(store, &object) == 6u * sizeof(payload) &&
+			      d2_store_visible(store, &object, 5, &visible),
+		      "short interior replacement preserves higher extent");
 		custody = d2_store_custody(store, successor);
 		check(d1_custody_live(custody), "custody issue is durable");
 		memset(&env.body, 0, sizeof(env.body));
 		env.key.sequence = 23;
 		env.op = D1_OP_ROLLBACK_BATCH;
-		env.body.rollback.range_begin = 5;
-		env.body.rollback.range_end = 6;
+		env.body.rollback.range_begin = 3;
+		env.body.rollback.range_end = 4;
 		env.body.rollback.count = 1;
-		env.body.rollback.entries[0].index = 5;
+		env.body.rollback.entries[0].index = 3;
 		env.body.rollback.entries[0].owner.cohort.raw = 1;
 		env.body.rollback.entries[0].owner.writer = 17;
 		env.body.rollback.entries[0].owner.co_id = 20;
@@ -431,15 +432,17 @@ int main(void)
 		env.body.rollback.entries[0].custody = custody;
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].phase == D2_ROLLED_BACK &&
+			      d2_store_visible(store, &object, 3, &visible) &&
+			      visible.raw == predecessor.raw &&
 			      d2_store_visible(store, &object, 5, &visible) &&
-			      visible.raw == predecessor.raw,
-		      "custody rollback restores predecessor");
+			      d2_store_eof(store, &object) == 6u * sizeof(payload),
+		      "interior rollback preserves unrelated higher extent");
 		committed_rollback = env;
 		d2_store_crash(store);
 		store = NULL;
 		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
 				      D1_OK &&
-			      d2_store_visible(store, &object, 5, &visible) &&
+			      d2_store_visible(store, &object, 3, &visible) &&
 			      visible.raw == predecessor.raw,
 		      "restart replays custody rollback");
 		if (store) {
