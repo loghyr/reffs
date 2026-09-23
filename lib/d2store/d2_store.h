@@ -54,7 +54,8 @@ uint32_t d2_store_revoke_authority(struct d2_store *store,
 void d2_store_expire(struct d2_store *store, d1_admission_id admission);
 d1_custody_id d2_store_custody(struct d2_store *store, d1_version_id version);
 uint32_t d2_store_certificate(
-	struct d2_store *store, d1_episode_id episode, d1_repair_id cohort,
+	struct d2_store *store, d1_admission_id actor,
+	const struct d1_opkey *key, d1_episode_id episode, d1_repair_id cohort,
 	const uint8_t certificate[D1_CERTIFICATE_BYTES]);
 uint32_t d2_store_retire(struct d2_store *store, uint32_t reason);
 uint32_t d2_store_tombstone_file(struct d2_store *store,
@@ -74,8 +75,13 @@ void d2_store_fail_next_wal_write(struct d2_store *store);
 void d2_store_set_io_hook(struct d2_store *store, d2_io_hook_fn hook,
 			  void *arg);
 
+/* Observer calls require a quiescent store; they do not take store->lock. */
 bool d2_store_visible(struct d2_store *store, const struct d1_objkey *object,
 		      uint64_t index, d1_version_id *version);
+bool d2_store_overlay_active(struct d2_store *store);
+bool d2_store_materialized(struct d2_store *store,
+			   const struct d1_objkey *object, uint64_t index,
+			   d1_version_id *version);
 bool d2_store_guard(struct d2_store *store, const struct d1_objkey *object,
 		    uint64_t index, struct d1_guard *guard);
 bool d2_store_postcond(struct d2_store *store, uint64_t raw, uint64_t *index,

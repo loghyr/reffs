@@ -62,6 +62,12 @@ struct d2_store {
 	} receipts[D1_MAX_RECEIPTS];
 	struct {
 		bool used;
+		struct d1_opkey key;
+		uint8_t digest[D1_DIGEST_BYTES];
+		uint32_t status;
+	} certificate_receipts[D1_MAX_RECEIPTS];
+	struct {
+		bool used;
 		uint64_t txn_id;
 		uint64_t version_id;
 		uint64_t admission_id;
@@ -94,6 +100,7 @@ struct d2_store {
 		uint64_t episode_id;
 		bool certificate_installed;
 		bool episode_cleared;
+		bool unlocked;
 		uint32_t count;
 		struct {
 			uint32_t mode;
@@ -136,6 +143,7 @@ struct d2_store {
 		uint8_t value[D1_CERTIFICATE_BYTES];
 	} certificates[D1_MAX_REPAIRS];
 	bool fenced;
+	bool fail_next_index;
 };
 
 struct d2_replay {
@@ -278,8 +286,10 @@ static uint64_t d2_cohort_promise(uint32_t phase, size_t record_bytes,
 		return 0;
 	}
 	return records * record_bytes +
-	       (episode_present && !installed ? 268u : 0u) +
-	       (episode_present && !cleared ? 916u : 0u);
+	       (episode_present && !installed ?
+			D2_CERTIFICATE_RECORD_BYTES : 0u) +
+	       (episode_present && !cleared ?
+			D2_EPISODE_CLEAR_MAX_RECORD_BYTES : 0u);
 }
 
 static uint64_t d2_work_promise(uint32_t phase)
@@ -308,7 +318,7 @@ static bool d2_rebuild_promises(struct d2_store *s)
 	uint32_t i;
 
 	for (i = 0; i < D1_MAX_REPAIRS; i++) {
-		if (!s->cohorts[i].used)
+		if (!s->cohorts[i].used || s->cohorts[i].unlocked)
 			continue;
 		add = d2_cohort_promise(s->cohorts[i].phase,
 					332u + 244u * s->cohorts[i].count,
@@ -443,6 +453,42 @@ static bool d2_receipt_remember(struct d2_store *s,
 		s->receipts[i].result = *result;
 		return true;
 	}
+	return false;
+}
+
+static int d2_certificate_receipt_lookup(
+	const struct d2_store *s, const struct d1_opkey *key,
+	const uint8_t digest[D1_DIGEST_BYTES], uint32_t *status)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_RECEIPTS; i++) {
+		if (!s->certificate_receipts[i].used ||
+		    !d2_same_key(&s->certificate_receipts[i].key, key))
+			continue;
+		*status = memcmp(s->certificate_receipts[i].digest, digest,
+				 D1_DIGEST_BYTES) ? D1_REPLAY_CONFLICT :
+				s->certificate_receipts[i].status;
+		return 1;
+	}
+	return 0;
+}
+
+static bool d2_certificate_receipt_remember(
+	struct d2_store *s, const struct d1_opkey *key,
+	const uint8_t digest[D1_DIGEST_BYTES], uint32_t status)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_RECEIPTS; i++)
+		if (!s->certificate_receipts[i].used) {
+			s->certificate_receipts[i].used = true;
+			s->certificate_receipts[i].key = *key;
+			memcpy(s->certificate_receipts[i].digest, digest,
+			       D1_DIGEST_BYTES);
+			s->certificate_receipts[i].status = status;
+			return true;
+		}
 	return false;
 }
 
@@ -834,6 +880,15 @@ static bool d2_certificate_remember(
 	return false;
 }
 
+static void d2_certificate_select(struct d2_store *s, uint64_t episode_id,
+				  uint64_t cohort_id)
+{
+	const typeof(s->certificates[0]) *installed =
+		d2_certificate_find(s, episode_id, cohort_id);
+
+	d1_fixture_certificate(s->model, installed ? installed->value : NULL);
+}
+
 static bool d2_cohort_remember_begin(struct d2_store *s,
 				     const struct d1_envelope *env,
 				     const struct d1_result *result)
@@ -1081,7 +1136,9 @@ static bool d2_replay_trust(struct d2_replay *r,
 	auth.rights = rights;
 	actor = d2_admission_slot(r->store, control->admission_client_id);
 	if (control->admission_client_id != beneficiary_id &&
-	    (!actor || memcmp(actor->auth.issuer.bytes, auth.issuer.bytes,
+	    (!actor || !actor->authority_seen || actor->revoked ||
+	     actor->expired || !(actor->auth.rights & D1_RIGHT_CONTROL) ||
+	     memcmp(actor->auth.issuer.bytes, auth.issuer.bytes,
 			      D1_UUID_BYTES) ||
 	     actor->auth.authority_epoch != auth.authority_epoch))
 		return false;
@@ -1174,8 +1231,19 @@ static bool d2_replay_authority(struct d2_replay *r,
 		    candidate[i]->recovery_vouched)
 			funded = false;
 	}
-	if (!d1_dec_finished(&cursor))
+	if (!d1_dec_finished(&cursor) || actor->revoked || actor->expired)
 		return false;
+	{
+		bool self_admission = false;
+
+		for (i = 0; i < count; i++)
+			if (beneficiary[i] == actor)
+				self_admission = true;
+		if ((!actor->authority_seen ||
+		     !(actor->auth.rights & D1_RIGHT_CONTROL)) &&
+		    !self_admission)
+			return false;
+	}
 	if (funded) {
 		if (h->total_bytes > r->store->recovery_allowance)
 			return false;
@@ -1287,6 +1355,7 @@ static bool d2_replay_custody(struct d2_replay *r,
 			      const struct d2_control *control)
 {
 	const typeof(r->store->work[0]) *work;
+	const typeof(r->store->admissions[0]) *slot;
 	const struct d1_fixture_authority *auth;
 	struct d1_cursor cursor;
 	d1_custody_id custody;
@@ -1308,7 +1377,10 @@ static bool d2_replay_custody(struct d2_replay *r,
 	    d2_object_tombstoned(r->store, &work->object))
 		return false;
 	auth = d2_admission_find(r->store, work->admission_id);
-	if (!auth || memcmp(holder, auth->principal.bytes, sizeof(holder)) ||
+	slot = d2_admission_slot(r->store, work->admission_id);
+	if (!auth || !slot || !slot->authority_seen || slot->revoked ||
+	    slot->expired ||
+	    memcmp(holder, auth->principal.bytes, sizeof(holder)) ||
 	    memcmp(control->admission_issuer, auth->issuer.bytes, 16) ||
 	    control->admission_authority_epoch != auth->authority_epoch)
 		return false;
@@ -1576,8 +1648,8 @@ static bool d2_replay_receipt(struct d2_replay *r,
 	result.disposition = D1_COMPLETED;
 	result.count = 1;
 	result.entries[0].status = e->status;
-	result.entries[0].txn_present = e->txn_id != 0;
-	result.entries[0].txn.raw = e->txn_id;
+	result.entries[0].txn_present = (e->predecessor_generation & 1u) != 0;
+	result.entries[0].txn.raw = result.entries[0].txn_present ? e->txn_id : 0;
 	result.entries[0].version_present = e->result_visible_object_id != 0;
 	result.entries[0].version.raw = e->result_visible_object_id;
 	result.entries[0].postcond_present = e->postcond_present;
@@ -1590,8 +1662,7 @@ static bool d2_replay_receipt(struct d2_replay *r,
 	result.entries[0].owner.co_id = e->owner_co_id;
 	result.entries[0].stability = e->stability;
 	result.entries[0].activated = e->result_activated;
-	result.entries[0].phase =
-		e->transition <= D2_ROLLED_BACK ? e->transition : 0;
+	result.entries[0].phase = e->generation;
 	memcpy(result.entries[0].verifier, e->result_verifier,
 	       D1_VERIFIER_BYTES);
 	result.entries[0].disposition = D1_COMPLETED;
@@ -2174,44 +2245,47 @@ static bool d2_replay_recovery(struct d2_replay *r,
 	for (i = 0; i < count; i++)
 		env.body.control.txns[i] = d1_fixture_txn_handle(
 			r->store->model, work[i]->txn_id);
-	env.body.control.old_admission = d1_fixture_admission_handle(
-		r->store->model, work[0]->admission_id);
 	env.body.control.new_admission_present = true;
 	env.body.control.new_admission = d1_fixture_admission_handle(
 		r->store->model, control->admission_client_id);
 	env.body.control.read_epoch_present = true;
 	env.body.control.read_epoch = read_epoch;
-	if (control->transition == D2_REFUSED) {
-		memset(&result, 0, sizeof(result));
-		result.key = env.key;
-		result.count = 1;
-		result.disposition = D1_COMPLETED;
-		result.entries[0].status = control->status;
-		result.entries[0].disposition = D1_COMPLETED;
-		return d2_receipt_remember(r->store,
-					   &work[0]->object.export_uuid,
-					   &env.key,
-					   control->key.request_digest,
-					   &result);
-	}
-	for (i = 0; i < D1_MAX_ADMISSIONS; i++) {
-		typeof(r->store->admissions[0]) *slot =
-			&r->store->admissions[i];
+	for (i = 0; i < D1_MAX_ADMISSIONS && !matched; i++) {
+		typeof(r->store->admissions[0]) *old = &r->store->admissions[i];
+		uint32_t j;
 
-		if (!slot->used || !slot->model_bound || !slot->object_known ||
-		    !d2_same_object(&slot->object, &work[0]->object))
+		if (!old->used || !old->model_bound)
 			continue;
-		env.admission =
-			d1_fixture_admission_handle(r->store->model, slot->id);
-		if (d2_env_digest(&env, digest) &&
-		    !memcmp(digest, control->key.request_digest,
-			    D1_DIGEST_BYTES)) {
-			matched = true;
-			break;
+		env.body.control.old_admission = d1_fixture_admission_handle(
+			r->store->model, old->id);
+		for (j = 0; j < D1_MAX_ADMISSIONS; j++) {
+			typeof(r->store->admissions[0]) *slot =
+				&r->store->admissions[j];
+
+			if (!slot->used || !slot->model_bound ||
+			    !slot->object_known ||
+			    !d2_same_object(&slot->object, &work[0]->object))
+				continue;
+			env.admission = d1_fixture_admission_handle(
+				r->store->model, slot->id);
+			if (d2_env_digest(&env, digest) &&
+			    !memcmp(digest, control->key.request_digest,
+				    D1_DIGEST_BYTES)) {
+				matched = true;
+				break;
+			}
 		}
 	}
 	if (!matched)
 		return false;
+	if (control->transition == D2_REFUSED) {
+		r->status = d1_store_probe(r->store->model, &env, &result);
+		return r->status == D1_OK && result.count == 1 &&
+		       result.entries[0].status == control->status &&
+		       d2_receipt_remember(r->store,
+			       &work[0]->object.export_uuid, &env.key,
+			       control->key.request_digest, &result);
+	}
 	r->status = d1_store_apply(r->store->model, &env, &result);
 	if (r->status != D1_OK || result.count != 1 ||
 	    result.entries[0].status != control->status ||
@@ -2234,6 +2308,16 @@ static bool d2_replay_recovery(struct d2_replay *r,
 	return d2_receipt_remember(r->store, &work[0]->object.export_uuid,
 				   &env.key, control->key.request_digest,
 				   &result);
+}
+
+static uint32_t d2_live_txn_count(const struct d2_store *s)
+{
+	uint32_t count = 0, i;
+
+	for (i = 0; i < D1_MAX_TXNS; i++)
+		if (s->work[i].used && d2_work_recoverable(&s->work[i]))
+			count++;
+	return count;
 }
 
 static bool d2_replay_episode_mark(struct d2_replay *r,
@@ -2325,19 +2409,13 @@ static bool d2_replay_episode_mark(struct d2_replay *r,
 	if (!d1_dec_finished(&cursor))
 		return false;
 	if (!committed) {
-		memset(&result, 0, sizeof(result));
-		result.key = env.key;
-		result.count = 1;
-		result.disposition = D1_COMPLETED;
-		result.eof = d1_store_eof(r->store->model, &env.object);
-		result.entries[0].status = control->status;
-		result.entries[0].disposition = D1_COMPLETED;
-		result.entries[0].stability = D1_FILE_SYNC;
-		d1_store_verifier(r->store->model,
-				  result.entries[0].verifier);
-		return d2_receipt_remember(r->store,
-			&env.object.export_uuid, &env.key,
-			control->key.request_digest, &result);
+		r->status = d1_store_probe(r->store->model, &env, &result);
+		return r->status == D1_OK && result.count == 1 &&
+		       result.entries[0].status == control->status &&
+		       d2_receipt_remember(r->store, &env.object.export_uuid,
+					   &env.key,
+					   control->key.request_digest,
+					   &result);
 	}
 	r->status = d1_store_apply(r->store->model, &env, &result);
 	if (r->status != D1_OK || result.count != 1 ||
@@ -2354,37 +2432,71 @@ static bool d2_replay_certificate(struct d2_replay *r,
 				  const struct d2_control *control)
 {
 	typeof(r->store->cohorts[0]) *cohort;
-	const struct d1_fixture_authority *auth;
+	typeof(r->store->admissions[0]) *actor;
+	const struct d1_fixture_authority *auth, *cohort_auth;
+	struct d1_opkey key = { 0 };
 	struct d1_cursor cursor;
-	uint8_t episode_uuid[D1_UUID_BYTES];
+	uint8_t digest[D1_DIGEST_BYTES], episode_uuid[D1_UUID_BYTES];
 	uint8_t certificate[D1_CERTIFICATE_BYTES];
 	uint64_t episode_id, cohort_id;
+	uint32_t expected;
+	bool committed;
 
 	if (control->subtype != D2_CTL_CERTIFICATE_INSTALL)
 		return true;
-	if (control->transition != D2_COMMITTED || control->status != D1_OK)
+	committed = control->transition == D2_COMMITTED &&
+		    control->status == D1_OK;
+	if (!committed && (control->transition != D2_REFUSED ||
+			   control->status == D1_OK))
 		return false;
 	d1_dec_init(&cursor, control->body, control->body_len);
 	if (!d1_dec_raw(&cursor, episode_uuid, sizeof(episode_uuid)) ||
 	    !d1_dec_u64(&cursor, &cohort_id) ||
 	    !d1_dec_raw(&cursor, certificate, sizeof(certificate)) ||
 	    !d1_dec_finished(&cursor) ||
-	    !d2_episode_id(episode_uuid, &episode_id) ||
-	    d2_certificate_find(r->store, episode_id, cohort_id))
+	    !d2_episode_id(episode_uuid, &episode_id))
 		return false;
+	d2_hash_domain("FFV2-D2B-CONTROL-v1", control->body,
+		       control->body_len, digest);
+	if (memcmp(digest, control->key.request_digest, sizeof(digest)))
+		return false;
+	memcpy(key.origin.bytes, control->key.session, D1_UUID_BYTES);
+	key.sequence = ((uint64_t)control->key.slot << 32) |
+		       control->key.sequence;
+	key.ordinal = control->key.compound_ordinal;
 	cohort = d2_cohort_find(r->store, cohort_id);
-	if (!cohort || !cohort->count ||
-	    d2_object_tombstoned(r->store, &cohort->members[0].object) ||
-	    cohort->phase != D2_COMMITTED ||
-	    !cohort->episode_present || cohort->episode_id != episode_id ||
-	    cohort->admission_id != control->admission_client_id)
-		return false;
-	auth = d2_admission_find(r->store, cohort->admission_id);
-	if (!auth ||
+	actor = d2_admission_slot(r->store, control->admission_client_id);
+	auth = d2_admission_find(r->store, control->admission_client_id);
+	cohort_auth = cohort ?
+		d2_admission_find(r->store, cohort->admission_id) : NULL;
+	if (!actor || !auth ||
 	    memcmp(control->admission_issuer, auth->issuer.bytes,
 		   D1_UUID_BYTES) ||
 	    control->admission_authority_epoch != auth->authority_epoch)
 		return false;
+	if (!actor->authority_seen || actor->revoked || actor->expired ||
+	    !(auth->rights & D1_RIGHT_CONTROL))
+		expected = D1_STALE_AUTH;
+	else if (cohort && cohort->count &&
+		 d2_object_tombstoned(r->store, &cohort->members[0].object))
+		expected = D1_BAD_PHASE;
+	else if (!cohort || cohort->phase != D2_COMMITTED ||
+		 !cohort->episode_present || cohort->episode_id != episode_id)
+		expected = D1_STALE_AUTH;
+	else if (!cohort_auth ||
+		 memcmp(auth->issuer.bytes, cohort_auth->issuer.bytes,
+			D1_UUID_BYTES) ||
+		 auth->authority_epoch != cohort_auth->authority_epoch)
+		expected = D1_STALE_AUTH;
+	else if (d2_certificate_find(r->store, episode_id, cohort_id))
+		expected = D1_BAD_PHASE;
+	else
+		expected = D1_OK;
+	if (control->status != expected || committed != (expected == D1_OK) ||
+	    !d2_certificate_receipt_remember(r->store, &key, digest, expected))
+		return false;
+	if (!committed)
+		return true;
 	d1_fixture_certificate(r->store->model, certificate);
 	if (!d2_certificate_remember(r->store, episode_id, cohort_id,
 				    certificate))
@@ -2498,6 +2610,7 @@ static bool d2_replay_episode_clear(struct d2_replay *r,
 							 episode_id);
 	env.body.repair.certificate_present = true;
 	memcpy(env.body.repair.certificate, certificate, sizeof(certificate));
+	d2_certificate_select(r->store, episode_id, cohort_id);
 	r->status = d1_store_apply(r->store->model, &env, &result);
 	if (r->status != D1_OK || result.count != 1 ||
 	    result.entries[0].status != control->status)
@@ -2839,9 +2952,11 @@ static bool d2_replay_cohort(struct d2_replay *r, const struct d2_wal_header *h,
 		if (!d2_repair_work_set_phase(r->store, saved->id,
 					      disk->transition))
 			goto out;
-	} else if (!d2_repair_work_set_phase(r->store, saved->id,
-					       D2_UNLOCKED))
-		goto out;
+	} else {
+		saved->unlocked = true;
+		if (!d2_repair_work_set_phase(r->store, saved->id, D2_UNLOCKED))
+			goto out;
+	}
 	ok = d2_receipt_remember(r->store, &env.object.export_uuid, &env.key,
 				 disk->key.request_digest, &result);
 out:
@@ -3231,6 +3346,17 @@ static void d2_key_from_env(const struct d1_envelope *env,
 			 key->compound_ordinal, key->operation_key);
 }
 
+static void d2_key_from_opkey(const struct d1_opkey *opkey,
+			      struct d2_key_block *key)
+{
+	memcpy(key->session, opkey->origin.bytes, D1_UUID_BYTES);
+	key->slot = (uint32_t)(opkey->sequence >> 32);
+	key->sequence = (uint32_t)opkey->sequence;
+	key->compound_ordinal = opkey->ordinal;
+	d2_operation_key(key->session, key->slot, key->sequence,
+			 key->compound_ordinal, key->operation_key);
+}
+
 static uint32_t d2_transition(const struct d1_envelope *env,
 			      const struct d1_result *result)
 {
@@ -3304,6 +3430,9 @@ static uint32_t d2_preflight_ordinary(struct d2_store *s,
 	switch (env->op) {
 	case D1_OP_WRITE_BATCH:
 		add = D2_ENTRY_RECORD_BYTES;
+		if (!env->body.write.activate &&
+		    d2_live_txn_count(s) == D2_MAX_LIVE_TXNS)
+			return D1_NOSPC;
 		if (probe->entries[0].status != D1_OK)
 			break;
 		payload_need = d2_payload_object_bytes(
@@ -3350,6 +3479,13 @@ static uint32_t d2_preflight_ordinary(struct d2_store *s,
 			add = record_bytes;
 		break;
 	case D1_OP_BEGIN_REPAIR:
+		if (probe->entries[0].status == D1_OK) {
+			uint32_t live = d2_live_txn_count(s);
+
+			if (live > D2_MAX_LIVE_TXNS ||
+			    env->body.repair.count > D2_MAX_LIVE_TXNS - live)
+				return D1_NOSPC;
+		}
 		record_bytes = 332u + 244u * env->body.repair.count;
 		add = record_bytes;
 		if (probe->entries[0].status == D1_OK)
@@ -3512,7 +3648,7 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 	uint8_t group[D2_POSTCOND_RECORD_BYTES + D2_ENTRY_RECORD_BYTES];
 	uint8_t record[D2_ENTRY_RECORD_BYTES];
 	uint8_t handle[32];
-	uint64_t eof, payload_id = 0, offset = 0;
+	uint64_t eof, payload_id = 0, offset = 0, request_txn_id;
 	uint64_t old_promise = 0, new_promise, promised;
 	size_t postcond_written = 0;
 	uint32_t status;
@@ -3577,10 +3713,12 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 		return D1_INVALID;
 	}
 	free(scratch);
-	entry.txn_id = life	? life->txn.raw :
-		       rollback ? rollback->txn.raw :
-				  result->entries[0].txn.raw;
-	saved = d2_work_by_txn(s, entry.txn_id);
+	request_txn_id = life	 ? life->txn.raw :
+			 rollback ? rollback->txn.raw :
+				    result->entries[0].txn.raw;
+	entry.txn_id = request_txn_id;
+	entry.predecessor_generation = result->entries[0].txn_present ? 1u : 0u;
+	saved = d2_work_by_txn(s, request_txn_id);
 	if (saved)
 		old_promise = d2_work_promise(saved->phase);
 	new_promise = result->entries[0].status == D1_OK ||
@@ -3593,7 +3731,7 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 	entry.owner_cohort = result->entries[0].owner.cohort.raw;
 	entry.owner_client_id = result->entries[0].owner.writer;
 	entry.owner_co_id = result->entries[0].owner.co_id;
-	entry.generation = result->entries[0].guard.generation;
+	entry.generation = result->entries[0].phase;
 	if (write && result->entries[0].version_present) {
 		if (!d1_fixture_version_predecessor(
 			    s->model, result->entries[0].version,
@@ -3619,7 +3757,7 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 	entry.payload_object_id = payload_id;
 	entry.payload_object_offset = offset;
 	entry.payload_content_len = has_payload ? write->payload_len : 0;
-	eof = d1_store_eof(s->model, &env->object);
+	eof = result->eof;
 	entry.extent_high_water = eof;
 	entry.extent_highest_index = eof ? (eof - 1) / s->chunk_bytes : 0;
 	entry.extent_kind = eof > prior_eof ? D2_EXTENT_EXTEND :
@@ -4118,9 +4256,11 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 		saved->phase = disk.transition;
 		if (!d2_repair_work_set_phase(s, saved->id, disk.transition))
 			return D1_IO;
-	} else if (!refused && saved && env->op == D1_OP_UNLOCK &&
-		   !d2_repair_work_set_phase(s, saved->id, D2_UNLOCKED))
-		return D1_IO;
+	} else if (!refused && saved && env->op == D1_OP_UNLOCK) {
+		saved->unlocked = true;
+		if (!d2_repair_work_set_phase(s, saved->id, D2_UNLOCKED))
+			return D1_IO;
+	}
 	if (saved && (env->op == D1_OP_ABORT_REPAIR || kept_abort))
 		for (i = 0; i < saved->count; i++) {
 			saved->members[i].payload_id = 0;
@@ -4239,6 +4379,9 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 		pthread_mutex_unlock(&s->lock);
 		return status;
 	}
+	if (env->op == D1_OP_CLEAR_ERROR)
+		d2_certificate_select(s, env->body.repair.episode.raw,
+				      env->body.repair.cohort.raw);
 	status = d1_store_probe(s->model, env, &probe);
 	if (status != D1_OK) {
 		if (status == D1_NOSPC)
@@ -4343,7 +4486,18 @@ recorded:
 		status = persist;
 		memset(result, 0, sizeof(*result));
 		result->disposition = D1_UNRECORDED;
-	} else if (!d2_receipt_remember(s, &env->object.export_uuid, &env->key,
+	} else if (s->fail_next_index && env->op == D1_OP_WRITE_BATCH &&
+		   result->entries[0].status == D1_OK &&
+		   result->entries[0].version_present) {
+		s->fail_next_index = false;
+		if (!d1_fixture_stale_index(s->model, &env->object,
+					    env->body.write.entries[0].index)) {
+			s->fenced = true;
+			status = D1_IO;
+		}
+	}
+	if (status == D1_OK &&
+	    !d2_receipt_remember(s, &env->object.export_uuid, &env->key,
 					digest, result)) {
 		s->fenced = true;
 		status = D1_IO;
@@ -4539,8 +4693,16 @@ uint32_t d2_store_trust_admission(struct d2_store *s, d1_admission_id actor,
 		status = D1_IO;
 		goto out;
 	}
-	if (!actor_auth || !beneficiary_auth ||
-	    memcmp(actor_auth->issuer.bytes, beneficiary_auth->issuer.bytes,
+	if (!actor_auth || !beneficiary_auth)
+		goto out;
+	if (!d2_admission_slot(s, actor.raw)->authority_seen ||
+	    d2_admission_slot(s, actor.raw)->revoked ||
+	    d2_admission_slot(s, actor.raw)->expired ||
+	    !(actor_auth->rights & D1_RIGHT_CONTROL)) {
+		status = D1_STALE_AUTH;
+		goto out;
+	}
+	if (memcmp(actor_auth->issuer.bytes, beneficiary_auth->issuer.bytes,
 		   D1_UUID_BYTES) ||
 	    actor_auth->authority_epoch != beneficiary_auth->authority_epoch)
 		goto out;
@@ -4610,6 +4772,13 @@ uint32_t d2_store_admit_authority(struct d2_store *s,
 	}
 	if (!actor_auth)
 		goto out;
+	if (!d2_admission_slot(s, actor.raw)->authority_seen ||
+	    d2_admission_slot(s, actor.raw)->revoked ||
+	    d2_admission_slot(s, actor.raw)->expired ||
+	    !(actor_auth->rights & D1_RIGHT_CONTROL)) {
+		status = D1_STALE_AUTH;
+		goto out;
+	}
 	d1_enc_init(&cursor, body, 28u + 16u * count);
 	d1_enc_raw(&cursor, actor_auth->issuer.bytes, D1_UUID_BYTES);
 	d1_enc_u64(&cursor, actor_auth->authority_epoch);
@@ -4860,11 +5029,11 @@ static uint32_t d2_custody_control(struct d2_store *s, d1_custody_id custody,
 }
 
 static uint32_t d2_certificate_control(
-	struct d2_store *s, const typeof(s->cohorts[0]) *cohort,
+	struct d2_store *s, d1_admission_id actor,
+	const struct d1_fixture_authority *auth, const struct d1_opkey *key,
+	uint32_t status, uint64_t episode_id, uint64_t cohort_id,
 	const uint8_t certificate[D1_CERTIFICATE_BYTES])
 {
-	const struct d1_fixture_authority *auth =
-		d2_admission_find(s, cohort->admission_id);
 	struct d2_wal_header h = { 0 };
 	struct d2_control control = { 0 };
 	struct d1_cursor cursor;
@@ -4882,20 +5051,17 @@ static uint32_t d2_certificate_control(
 	if (h.lsn > UINT32_MAX)
 		return D1_NOSPC;
 	control.subtype = D2_CTL_CERTIFICATE_INSTALL;
-	control.transition = D2_COMMITTED;
-	control.status = D1_OK;
-	memcpy(control.key.session, auth->session, D1_UUID_BYTES);
-	control.key.sequence = (uint32_t)h.lsn;
-	d2_operation_key(control.key.session, 0, control.key.sequence, 0,
-			 control.key.operation_key);
+	control.transition = status == D1_OK ? D2_COMMITTED : D2_REFUSED;
+	control.status = status;
+	d2_key_from_opkey(key, &control.key);
 	memcpy(control.admission_issuer, auth->issuer.bytes, D1_UUID_BYTES);
 	control.admission_authority_epoch = auth->authority_epoch;
-	control.admission_client_id = cohort->admission_id;
+	control.admission_client_id = actor.raw;
 	control.body_len = 56;
 	d1_enc_init(&cursor, control.body, control.body_len);
-	d2_episode_uuid(cohort->episode_id, episode_uuid);
+	d2_episode_uuid(episode_id, episode_uuid);
 	d1_enc_raw(&cursor, episode_uuid, sizeof(episode_uuid));
-	d1_enc_u64(&cursor, cohort->id);
+	d1_enc_u64(&cursor, cohort_id);
 	d1_enc_raw(&cursor, certificate, D1_CERTIFICATE_BYTES);
 	if (!d1_cursor_ok(&cursor))
 		return D1_INVALID;
@@ -4903,9 +5069,10 @@ static uint32_t d2_certificate_control(
 		       control.body_len, control.key.request_digest);
 	if (!d2_control_encode(&h, &control, record, sizeof(record), &written))
 		return D1_INVALID;
-	if (s->wal_promised < written)
+	if (status == D1_OK && s->wal_promised < written)
 		return D1_IO;
-	promised = s->wal_promised - written;
+	promised = status == D1_OK ? s->wal_promised - written :
+				       s->wal_promised;
 	if (d2_wal_append_floor(s, record, written, promised) != D1_OK)
 		return D1_NOSPC;
 	s->wal_promised = promised;
@@ -5015,12 +5182,15 @@ d1_custody_id d2_store_custody(struct d2_store *s, d1_version_id version)
 {
 	d1_custody_id id = d1_custody_none();
 	const typeof(s->work[0]) *work;
+	const typeof(s->admissions[0]) *slot;
 
 	if (!s)
 		return id;
 	pthread_mutex_lock(&s->lock);
 	work = d2_work_by_version(s, version.raw);
+	slot = work ? d2_admission_slot(s, work->admission_id) : NULL;
 	if (!s->fenced && !s->retired && work &&
+	    slot && slot->authority_seen && !slot->revoked && !slot->expired &&
 	    !d2_object_tombstoned(s, &work->object) &&
 	    d2_wal_has_room(s, 248u))
 		id = d1_fixture_custody(s->model, version);
@@ -5036,43 +5206,86 @@ d1_custody_id d2_store_custody(struct d2_store *s, d1_version_id version)
 }
 
 uint32_t d2_store_certificate(
-	struct d2_store *s, d1_episode_id episode, d1_repair_id repair,
+	struct d2_store *s, d1_admission_id actor, const struct d1_opkey *key,
+	d1_episode_id episode, d1_repair_id repair,
 	const uint8_t certificate[D1_CERTIFICATE_BYTES])
 {
+	const struct d1_fixture_authority *actor_auth, *cohort_auth;
+	typeof(s->admissions[0]) *actor_slot;
 	typeof(s->cohorts[0]) *cohort;
+	struct d1_cursor cursor;
+	uint8_t body[56], digest[D1_DIGEST_BYTES], episode_uuid[D1_UUID_BYTES];
 	uint32_t status = D1_INVALID;
 
-	if (!s || !certificate ||
+	if (!s || !key || !certificate ||
+	    !memcmp(key->origin.bytes, (uint8_t[D1_UUID_BYTES]){ 0 },
+		    D1_UUID_BYTES) ||
 	    !memcmp(certificate, (uint8_t[D1_CERTIFICATE_BYTES]){ 0 },
 		    D1_CERTIFICATE_BYTES))
 		return D1_INVALID;
+	d2_episode_uuid(episode.raw, episode_uuid);
+	d1_enc_init(&cursor, body, sizeof(body));
+	d1_enc_raw(&cursor, episode_uuid, sizeof(episode_uuid));
+	d1_enc_u64(&cursor, repair.raw);
+	d1_enc_raw(&cursor, certificate, D1_CERTIFICATE_BYTES);
+	if (!d1_cursor_ok(&cursor))
+		return D1_INVALID;
+	d2_hash_domain("FFV2-D2B-CONTROL-v1", body, sizeof(body), digest);
 	pthread_mutex_lock(&s->lock);
 	cohort = d2_cohort_find(s, repair.raw);
+	actor_slot = d2_admission_slot(s, actor.raw);
+	actor_auth = d2_admission_find(s, actor.raw);
+	cohort_auth = cohort ? d2_admission_find(s, cohort->admission_id) : NULL;
 	if (s->fenced)
 		status = D1_IO;
+	else if (d2_certificate_receipt_lookup(s, key, digest, &status))
+		goto out;
 	else if (s->retired)
 		status = D1_BAD_PHASE;
+	else if (!actor_slot || !actor_auth || !actor_slot->authority_seen ||
+		 actor_slot->revoked || actor_slot->expired ||
+		 !(actor_auth->rights & D1_RIGHT_CONTROL))
+		status = D1_STALE_AUTH;
 	else if (cohort && cohort->count &&
 		 d2_object_tombstoned(s, &cohort->members[0].object))
 		status = D1_BAD_PHASE;
 	else if (!cohort || cohort->phase != D2_COMMITTED ||
 		 !cohort->episode_present || cohort->episode_id != episode.raw)
 		status = D1_STALE_AUTH;
+	else if (!cohort_auth ||
+		 memcmp(actor_auth->issuer.bytes, cohort_auth->issuer.bytes,
+			D1_UUID_BYTES) ||
+		 actor_auth->authority_epoch != cohort_auth->authority_epoch)
+		status = D1_STALE_AUTH;
 	else if (d2_certificate_find(s, episode.raw, repair.raw))
 		status = D1_BAD_PHASE;
-	else {
-		status = d2_certificate_control(s, cohort, certificate);
+	else
+		status = D1_OK;
+	if (status != D1_IO && actor_auth) {
+		uint32_t append = d2_certificate_control(
+			s, actor, actor_auth, key, status, episode.raw, repair.raw,
+			certificate);
+
+		if (append != D1_OK) {
+			status = append;
+			goto out;
+		}
+		if (!d2_certificate_receipt_remember(s, key, digest, status)) {
+			s->fenced = true;
+			status = D1_IO;
+			goto out;
+		}
 		if (status == D1_OK) {
 			d1_fixture_certificate(s->model, certificate);
 			if (!d2_certificate_remember(s, episode.raw, repair.raw,
-						     certificate))
+						     certificate)) {
+				s->fenced = true;
 				status = D1_IO;
-			else
+			} else
 				cohort->certificate_installed = true;
 		}
-		if (status != D1_OK && status != D1_NOSPC)
-			s->fenced = true;
 	}
+out:
 	pthread_mutex_unlock(&s->lock);
 	return status;
 }
@@ -5237,8 +5450,12 @@ uint64_t d2_store_incarnation(struct d2_store *s)
 
 void d2_store_fail_next_index(struct d2_store *s)
 {
-	if (s && !s->fenced)
-		d1_fixture_fail_next_index(s->model);
+	if (!s)
+		return;
+	pthread_mutex_lock(&s->lock);
+	if (!s->fenced)
+		s->fail_next_index = true;
+	pthread_mutex_unlock(&s->lock);
 }
 
 void d2_store_fail_next_wal_write(struct d2_store *s)
@@ -5258,6 +5475,19 @@ bool d2_store_visible(struct d2_store *s, const struct d1_objkey *object,
 {
 	return s && !s->fenced &&
 	       d1_store_visible(s->model, object, index, version);
+}
+
+bool d2_store_overlay_active(struct d2_store *s)
+{
+	return s && !s->fenced && d1_store_overlay_active(s->model);
+}
+
+bool d2_store_materialized(struct d2_store *s,
+			   const struct d1_objkey *object, uint64_t index,
+			   d1_version_id *version)
+{
+	return s && !s->fenced &&
+	       d1_store_materialized(s->model, object, index, version);
 }
 
 bool d2_store_guard(struct d2_store *s, const struct d1_objkey *object,

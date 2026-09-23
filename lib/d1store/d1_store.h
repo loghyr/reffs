@@ -731,6 +731,8 @@ void d1_fixture_fail_reopen_start(struct d1_store *s, uint32_t which);
  * recovery.
  */
 void d1_fixture_fail_next_index(struct d1_store *s);
+bool d1_fixture_stale_index(struct d1_store *s,
+			    const struct d1_objkey *object, uint64_t index);
 
 /*
  * Fixture fault control: refuse the next journal snapshot, as an

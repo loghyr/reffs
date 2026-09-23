@@ -5914,6 +5914,30 @@ void d1_fixture_fail_next_index(struct d1_store *s)
 	pthread_mutex_unlock(&s->lock);
 }
 
+bool d1_fixture_stale_index(struct d1_store *s,
+			    const struct d1_objkey *object, uint64_t index)
+{
+	struct d1_object *o;
+	struct d1_version *v;
+	bool changed = false;
+
+	pthread_mutex_lock(&s->lock);
+	o = d1_store_serving(s) ? d1_object_find(s, object) : NULL;
+	if (o && index < D1_MAX_CHUNKS && o->chunks[index].visible_present) {
+		v = d1_version_find(s, d1_version_of(s, o->chunks[index].visible));
+		if (v) {
+			o->chunks[index].materialized_present =
+				v->predecessor_present;
+			o->chunks[index].materialized = v->predecessor;
+			o->chunks[index].index_stale = true;
+			s->overlay_active = true;
+			changed = true;
+		}
+	}
+	pthread_mutex_unlock(&s->lock);
+	return changed;
+}
+
 bool d1_store_overlay_active(struct d1_store *s)
 {
 	bool active;

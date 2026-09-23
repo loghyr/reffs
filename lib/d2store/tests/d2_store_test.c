@@ -39,6 +39,51 @@ static void fill(uint8_t *p, size_t len, uint8_t seed)
 		p[i] = (uint8_t)(seed + i);
 }
 
+static bool same_result(const struct d1_result *a, const struct d1_result *b)
+{
+	uint32_t i, j;
+
+	if (memcmp(a->key.origin.bytes, b->key.origin.bytes, D1_UUID_BYTES) ||
+	    a->key.sequence != b->key.sequence ||
+	    a->key.ordinal != b->key.ordinal ||
+	    a->index_epoch != b->index_epoch || a->eof != b->eof ||
+	    a->disposition != b->disposition || a->count != b->count)
+		return false;
+	for (i = 0; i < a->count; i++) {
+		const struct d1_entry_result *x = &a->entries[i];
+		const struct d1_entry_result *y = &b->entries[i];
+
+		if (x->status != y->status ||
+		    x->version_present != y->version_present ||
+		    x->version.raw != y->version.raw ||
+		    x->txn_present != y->txn_present || x->txn.raw != y->txn.raw ||
+		    x->cohort_present != y->cohort_present ||
+		    x->cohort.raw != y->cohort.raw ||
+		    x->member_txn_count != y->member_txn_count ||
+		    x->postcond_present != y->postcond_present ||
+		    x->postcond.raw != y->postcond.raw ||
+		    x->episode_present != y->episode_present ||
+		    x->episode.raw != y->episode.raw ||
+		    x->member_present != y->member_present ||
+		    x->member != y->member ||
+		    x->guard.never_written != y->guard.never_written ||
+		    x->guard.generation != y->guard.generation ||
+		    x->guard.writer != y->guard.writer ||
+		    x->owner.cohort.raw != y->owner.cohort.raw ||
+		    x->owner.writer != y->owner.writer ||
+		    x->owner.co_id != y->owner.co_id ||
+		    x->stability != y->stability || x->activated != y->activated ||
+		    x->phase != y->phase ||
+		    memcmp(x->verifier, y->verifier, D1_VERIFIER_BYTES) ||
+		    x->disposition != y->disposition)
+			return false;
+		for (j = 0; j < x->member_txn_count; j++)
+			if (x->member_txn[j].raw != y->member_txn[j].raw)
+				return false;
+	}
+	return true;
+}
+
 static void write_request(struct d1_envelope *env, uint64_t sequence,
 			  uint64_t index, uint32_t co_id,
 			  const struct d1_guard *guard, const uint8_t *payload,
@@ -164,6 +209,8 @@ struct authority_race {
 	d1_admission_id actor;
 	uint64_t epoch;
 	atomic_bool go;
+	atomic_bool first_done;
+	int forced_order;
 	uint32_t transition_status;
 	uint32_t revoke_status;
 };
@@ -174,9 +221,16 @@ static void *race_transition(void *arg)
 
 	while (!atomic_load_explicit(&race->go, memory_order_acquire))
 		sched_yield();
+	if (race->forced_order == 2)
+		while (!atomic_load_explicit(&race->first_done,
+					    memory_order_acquire))
+			sched_yield();
 	race->transition_status = d2_store_apply(race->store,
 						 &race->transition,
 						 &race->transition_result);
+	if (race->forced_order == 1)
+		atomic_store_explicit(&race->first_done, true,
+				      memory_order_release);
 	return NULL;
 }
 
@@ -186,8 +240,15 @@ static void *race_revoke(void *arg)
 
 	while (!atomic_load_explicit(&race->go, memory_order_acquire))
 		sched_yield();
+	if (race->forced_order == 1)
+		while (!atomic_load_explicit(&race->first_done,
+					    memory_order_acquire))
+			sched_yield();
 	race->revoke_status = d2_store_revoke_authority(
 		race->store, race->actor, &race->issuer, race->epoch, 1);
+	if (race->forced_order == 2)
+		atomic_store_explicit(&race->first_done, true,
+				      memory_order_release);
 	return NULL;
 }
 
@@ -266,6 +327,8 @@ struct rebind_race {
 	struct d1_result transition_result;
 	struct d1_result recovery_result;
 	atomic_bool go;
+	atomic_bool first_done;
+	int forced_order;
 	uint32_t transition_status;
 	uint32_t recovery_status;
 };
@@ -276,9 +339,16 @@ static void *race_rebind_transition(void *arg)
 
 	while (!atomic_load_explicit(&race->go, memory_order_acquire))
 		sched_yield();
+	if (race->forced_order == 2)
+		while (!atomic_load_explicit(&race->first_done,
+					    memory_order_acquire))
+			sched_yield();
 	race->transition_status = d2_store_apply(race->store,
 						 &race->transition,
 						 &race->transition_result);
+	if (race->forced_order == 1)
+		atomic_store_explicit(&race->first_done, true,
+				      memory_order_release);
 	return NULL;
 }
 
@@ -288,8 +358,15 @@ static void *race_recovery_admit(void *arg)
 
 	while (!atomic_load_explicit(&race->go, memory_order_acquire))
 		sched_yield();
+	if (race->forced_order == 1)
+		while (!atomic_load_explicit(&race->first_done,
+					    memory_order_acquire))
+			sched_yield();
 	race->recovery_status = d2_store_apply(race->store, &race->recovery,
 					       &race->recovery_result);
+	if (race->forced_order == 2)
+		atomic_store_explicit(&race->first_done, true,
+				      memory_order_release);
 	return NULL;
 }
 
@@ -707,6 +784,7 @@ static bool admitted_error_repair(struct d2_store *store,
 
 static bool committed_error_repair(struct d2_store *store,
 				   const struct d1_objkey *object,
+				   d1_admission_id actor,
 				   d1_admission_id admission, uint32_t writer,
 				   uint64_t index, uint8_t origin_seed,
 				   const uint8_t *payload, uint32_t payload_len,
@@ -718,6 +796,7 @@ static bool committed_error_repair(struct d2_store *store,
 	d1_custody_id custody;
 	d1_episode_id episode;
 	d1_version_id predecessor;
+	struct d1_opkey certificate_key = { 0 };
 	uint8_t certificate[32];
 
 	if (!admitted_error_repair(store, object, admission, writer, index,
@@ -761,8 +840,11 @@ static bool committed_error_repair(struct d2_store *store,
 	    result.entries[0].phase != D2_COMMITTED)
 		return false;
 	fill(certificate, sizeof(certificate), (uint8_t)(origin_seed + 1));
-	if (d2_store_certificate(store, episode, *cohort_out, certificate) !=
-	    D1_OK)
+	fill(certificate_key.origin.bytes, D1_UUID_BYTES,
+	     (uint8_t)(origin_seed + 2));
+	certificate_key.sequence = 1;
+	if (d2_store_certificate(store, actor, &certificate_key, episode,
+				 *cohort_out, certificate) != D1_OK)
 		return false;
 	memset(&env.body, 0, sizeof(env.body));
 	env.key.sequence = 7;
@@ -820,6 +902,7 @@ int main(void)
 	struct d1_envelope nopre;
 	struct d1_envelope marked;
 	struct d1_envelope repair_unlock;
+	struct d1_envelope second_error_unlock;
 	struct d1_envelope stale_incarnation;
 	struct d1_envelope recovery;
 	struct d1_envelope retired_exact;
@@ -831,14 +914,24 @@ int main(void)
 	struct d1_result result = { 0 };
 	struct d1_result durable_result = { 0 };
 	struct d1_result refused_result = { 0 };
+	struct d1_result nopre_result = { 0 }, unlock_result = { 0 };
+	struct d1_result refused_recovery_result = { 0 }, marked_result = { 0 };
+	struct d1_result refused_mark_result = { 0 }, refused_repair_result = { 0 };
+	struct d1_result aborted_result = { 0 }, refused_clear_result = { 0 };
+	struct d1_result error_unlock_result = { 0 };
+	struct d1_opkey certificate_key = { 0 };
+	struct d1_opkey stale_certificate_key = { 0 };
 	d1_admission_id admission;
 	d1_admission_id control_admission, fresh_admission, next_control,
 		next_fresh;
+	d1_admission_id stale_certificate_actor = { 0 };
+	d1_admission_id second_error_admission = { 0 };
 	d1_custody_id custody, custody2;
 	d1_episode_id episode;
 	d1_postcond_id postcond;
 	d1_repair_id repair;
-	d1_txn_id repair_txn, repair_txn2, staged_txn;
+	d1_repair_id second_error_repair;
+	d1_txn_id repair_txn, repair_txn2, second_error_txn, staged_txn;
 	d1_version_id broken, broken2, predecessor, successor, visible;
 	struct d2_wal_header wal_header;
 	struct d2_control control;
@@ -847,6 +940,7 @@ int main(void)
 	struct d1_guard guard = { .never_written = true };
 	struct d1_view *view = NULL;
 	uint8_t certificate[D1_CERTIFICATE_BYTES];
+	uint8_t second_certificate[D1_CERTIFICATE_BYTES];
 	uint8_t payload[4096], replacement[4096], readback[4096], token[32];
 	uint8_t verifier[D1_VERIFIER_BYTES];
 	uint8_t registration[396];
@@ -999,11 +1093,25 @@ int main(void)
 		      d2_store_eof(store, &object) == 6u * sizeof(payload),
 	      "sparse high chunk extends EOF");
 	write_request(&env, 4, 3, 4, &guard, payload, sizeof(payload));
+	check(d2_store_apply(store, &env, &result) == D1_OK,
+	      "interior chunk commits before publication fault control");
+	write_request(&env, 5, 6, 5, &guard, payload, sizeof(payload));
 	d2_store_fail_next_index(store);
+	wal_bytes = d2_store_wal_bytes(store);
 	check(d2_store_apply(store, &env, &result) == D1_OK &&
-		      d2_store_eof(store, &object) == 6u * sizeof(payload),
-	      "durable commit survives failed index publication");
+		      d2_store_wal_bytes(store) > wal_bytes &&
+		      d2_store_overlay_active(store) &&
+		      d2_store_visible(store, &object, 6, &visible) &&
+		      visible.raw == result.entries[0].version.raw &&
+		      !d2_store_materialized(store, &object, 6, &predecessor) &&
+		      d2_store_eof(store, &object) == 7u * sizeof(payload),
+	      "post-WAL index failure serves the overlay and advances EOF");
 	durable_result = result;
+	wal_bytes = d2_store_wal_bytes(store);
+	check(d2_store_apply(store, &env, &result) == D1_OK &&
+		      same_result(&result, &durable_result) &&
+		      d2_store_wal_bytes(store) == wal_bytes,
+	      "post-WAL index failure retry returns the exact receipt once");
 	d2_store_crash(store);
 	store = NULL;
 	memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
@@ -1017,17 +1125,18 @@ int main(void)
 	      "fresh process rebinds fixed files");
 	check(store && d2_store_visible(store, &object, 0, &visible),
 	      "replay reconstructs visible version");
-	check(store && d2_store_eof(store, &object) == 6u * sizeof(payload),
+	check(store && d2_store_eof(store, &object) == 7u * sizeof(payload),
 	      "replay reconstructs EOF");
 	check(store && d2_store_visible(store, &object, 3, &visible) &&
-		      d2_store_visible(store, &object, 5, &visible),
+		      d2_store_visible(store, &object, 5, &visible) &&
+		      d2_store_visible(store, &object, 6, &visible),
 	      "replay reconstructs sparse visible map");
 	if (store) {
 		wal_bytes = d2_store_wal_bytes(store);
 		refused.admission =
 			d2_store_admission_handle(store, refused.admission.raw);
 		check(d2_store_apply(store, &refused, &result) == D1_OK &&
-			      result.entries[0].status == D1_GUARDED &&
+			      same_result(&result, &refused_result) &&
 			      d2_store_wal_bytes(store) == wal_bytes,
 		      "restart returns exact refused receipt");
 		conflict.admission = d2_store_admission_handle(
@@ -1048,8 +1157,7 @@ int main(void)
 		env.admission = d2_store_admission_handle(store, admission.raw);
 		wal_bytes = d2_store_wal_bytes(store);
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
-			      result.entries[0].version.raw ==
-				      durable_result.entries[0].version.raw &&
+			      same_result(&result, &durable_result) &&
 			      d2_store_wal_bytes(store) == wal_bytes,
 		      "restart returns exact durable receipt once");
 	}
@@ -1094,8 +1202,8 @@ int main(void)
 		env.op = D1_OP_COMMIT_BATCH;
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].phase == D2_COMMITTED &&
-			      d2_store_eof(store, &object) == 6u * sizeof(payload) &&
-			      d2_store_visible(store, &object, 5, &visible),
+			      d2_store_eof(store, &object) == 7u * sizeof(payload) &&
+			      d2_store_visible(store, &object, 6, &visible),
 		      "short interior replacement preserves higher extent");
 		custody = d2_store_custody(store, successor);
 		check(d1_custody_live(custody), "custody issue is durable");
@@ -1120,8 +1228,8 @@ int main(void)
 			      result.entries[0].phase == D2_ROLLED_BACK &&
 			      d2_store_visible(store, &object, 3, &visible) &&
 			      visible.raw == predecessor.raw &&
-			      d2_store_visible(store, &object, 5, &visible) &&
-			      d2_store_eof(store, &object) == 6u * sizeof(payload),
+			      d2_store_visible(store, &object, 6, &visible) &&
+			      d2_store_eof(store, &object) == 7u * sizeof(payload),
 		      "interior rollback preserves unrelated higher extent");
 		committed_rollback = env;
 		d2_store_crash(store);
@@ -1312,6 +1420,7 @@ int main(void)
 		check(d2_store_apply(store, &recovery, &result) == D1_OK &&
 			      result.entries[0].status == D1_OWNER_CONFLICT,
 		      "recovery refusal is recorded without rebinding work");
+		refused_recovery_result = result;
 		admission = d2_store_admit(store, &object, 17,
 					   D1_RIGHT_READ | D1_RIGHT_WRITE |
 						   D1_RIGHT_REPAIR |
@@ -1352,6 +1461,7 @@ int main(void)
 		      "no-predecessor rollback persists its postcondition group");
 		postcond = result.entries[0].postcond;
 		nopre = env;
+		nopre_result = result;
 
 		memset(&env.body, 0, sizeof(env.body));
 		env.key.sequence = 3;
@@ -1496,6 +1606,7 @@ int main(void)
 			      result.entries[0].status == D1_OK,
 		      "no-predecessor repair unlock persists");
 		repair_unlock = env;
+		unlock_result = result;
 	}
 	if (store) {
 		admission = d2_store_admit(store, &object, 17,
@@ -1588,10 +1699,7 @@ int main(void)
 				nopre.body.rollback.entries[0].visible.raw);
 			wal_bytes = d2_store_wal_bytes(store);
 			check(d2_store_apply(store, &nopre, &result) == D1_OK &&
-				      result.entries[0].status ==
-					      D1_NO_PREDECESSOR &&
-				      result.entries[0].postcond.raw ==
-					      postcond.raw &&
+				      same_result(&result, &nopre_result) &&
 				      d2_store_wal_bytes(store) == wal_bytes,
 			      "restart returns exact no-predecessor receipt");
 			repair_unlock.admission = d2_store_admission_handle(
@@ -1608,7 +1716,7 @@ int main(void)
 			wal_bytes = d2_store_wal_bytes(store);
 			check(d2_store_apply(store, &repair_unlock, &result) ==
 					      D1_OK &&
-				      result.entries[0].status == D1_OK &&
+				      same_result(&result, &unlock_result) &&
 				      d2_store_wal_bytes(store) == wal_bytes,
 			      "restart returns exact repair unlock receipt");
 			recovery.admission = d2_store_admission_handle(
@@ -1624,8 +1732,8 @@ int main(void)
 			wal_bytes = d2_store_wal_bytes(store);
 			check(d2_store_apply(store, &recovery, &result) ==
 					      D1_OK &&
-				      result.entries[0].status ==
-					      D1_OWNER_CONFLICT &&
+				      same_result(&result,
+						  &refused_recovery_result) &&
 				      d2_store_wal_bytes(store) == wal_bytes,
 			      "restart returns exact refused recovery receipt");
 			env.admission =
@@ -1759,6 +1867,7 @@ int main(void)
 		      "error episode mark persists");
 		episode = result.entries[0].episode;
 		marked = env;
+		marked_result = result;
 		d2_store_crash(store);
 		store = NULL;
 		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
@@ -1785,8 +1894,7 @@ int main(void)
 					marked.body.repair.entries[1].successor.raw);
 			wal_bytes = d2_store_wal_bytes(store);
 			check(d2_store_apply(store, &marked, &result) == D1_OK &&
-				      result.entries[0].status == D1_OK &&
-				      result.entries[0].episode.raw == episode.raw &&
+				      same_result(&result, &marked_result) &&
 				      d2_store_wal_bytes(store) == wal_bytes,
 			      "restart returns exact episode-mark receipt");
 
@@ -1808,6 +1916,7 @@ int main(void)
 				      D1_OK &&
 				      result.entries[0].status == D1_BAD_PHASE,
 			      "repeated episode mark refusal persists");
+			refused_mark_result = result;
 			memset(&env, 0, sizeof(env));
 			env.object = object;
 			env.admission = admission;
@@ -1844,6 +1953,7 @@ int main(void)
 				      result.entries[0].status == D1_STALE_AUTH,
 			      "repair writer mismatch refusal persists");
 			refused_repair = env;
+			refused_repair_result = result;
 			env.key.sequence = 22;
 			env.body.repair.entries[0].owner.writer = 17;
 			env.body.repair.entries[1].owner.writer = 17;
@@ -1893,6 +2003,7 @@ int main(void)
 				      result.entries[0].phase == D2_ABORTED,
 				      "failed two-member prepare aborts atomically");
 				aborted_prepare = env;
+				aborted_result = result;
 				d2_store_crash(store);
 				store = NULL;
 				check(d2_store_rebind(dirfd, &reopen, &binding,
@@ -1925,8 +2036,7 @@ int main(void)
 				wal_bytes = d2_store_wal_bytes(store);
 				check(d2_store_apply(store, &aborted_prepare,
 						     &result) == D1_OK &&
-					      result.entries[0].status == D1_CHECKSUM &&
-					      result.entries[0].phase == D2_ABORTED &&
+					      same_result(&result, &aborted_result) &&
 					      d2_store_wal_bytes(store) == wal_bytes,
 				      "restart returns kept abort before new cohort");
 				admission = d2_store_admit(
@@ -2105,17 +2215,57 @@ int main(void)
 					      result.entries[0].status == D1_OK,
 				      "restart atomically rebinds repair vector");
 				admission = fresh_admission;
+				stale_certificate_actor = d2_store_admit(
+					store, &object, 18, D1_RIGHT_CONTROL);
+				fill(stale_certificate_key.origin.bytes,
+				     D1_UUID_BYTES, 0xcb);
+				stale_certificate_key.sequence = 1;
+				d2_store_revoke(store, stale_certificate_actor);
 				fill(certificate, sizeof(certificate), 0xc0);
-			check(d2_store_certificate(store, episode, repair,
+				wal_bytes = d2_store_wal_bytes(store);
+				check(d2_store_certificate(
+					      store, stale_certificate_actor,
+					      &stale_certificate_key, episode, repair,
+					      certificate) == D1_STALE_AUTH &&
+					      d2_store_wal_bytes(store) > wal_bytes,
+				      "revoked MDS certificate refusal persists");
+				wal_bytes = d2_store_wal_bytes(store);
+				check(d2_store_certificate(
+					      store, stale_certificate_actor,
+					      &stale_certificate_key, episode, repair,
+					      certificate) == D1_STALE_AUTH &&
+					      d2_store_wal_bytes(store) == wal_bytes,
+				      "revoked MDS certificate retry is exact");
+				fill(certificate_key.origin.bytes, D1_UUID_BYTES, 0xca);
+				certificate_key.sequence = 1;
+			check(d2_store_certificate(store, control_admission,
+						   &certificate_key, episode, repair,
 						   certificate) == D1_OK &&
 				      d2_store_wal_promised(store) ==
 					      promise_base + 1736,
 			      "completion certificate install persists");
 			wal_bytes = d2_store_wal_bytes(store);
-			check(d2_store_certificate(store, episode, repair,
-						   certificate) == D1_BAD_PHASE &&
+			check(d2_store_certificate(store, control_admission,
+						   &certificate_key, episode, repair,
+						   certificate) == D1_OK &&
 				      d2_store_wal_bytes(store) == wal_bytes,
-			      "duplicate completion certificate is refused");
+			      "completion certificate retry is exact");
+			fill(second_certificate, sizeof(second_certificate), 0xd6);
+			second_error_admission = d2_store_admit(
+				store, &object, 18,
+				D1_RIGHT_READ | D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+					D1_RIGHT_SINGLE_WRITER);
+			check(committed_error_repair(
+				      store, &object, control_admission,
+				      second_error_admission, 18,
+				      25, 0xd5, replacement, sizeof(replacement),
+				      &second_error_unlock, &second_error_repair,
+				      &second_error_txn),
+			      "second certificate subject completes independently");
+			check(d2_store_apply(store, &second_error_unlock, &result) ==
+				      D1_OK &&
+				      result.entries[0].status == D1_OK,
+			      "second certificate subject unlocks independently");
 				memset(&env.body, 0, sizeof(env.body));
 				env.admission = admission;
 				env.key.sequence = 28;
@@ -2142,11 +2292,13 @@ int main(void)
 			env.body.repair.entries[1].owner.co_id = 38;
 			env.body.repair.entries[1].custody_present = true;
 			env.body.repair.entries[1].custody = custody2;
-			env.body.repair.certificate[0] ^= 0xff;
+			memcpy(env.body.repair.certificate, second_certificate,
+			       sizeof(second_certificate));
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
 				      result.entries[0].status == D1_STALE_AUTH,
-			      "mismatched completion certificate is refused");
+			      "cross-cohort completion certificate is refused");
 			refused_clear = env;
+			refused_clear_result = result;
 			env.key.sequence = 29;
 			memcpy(env.body.repair.certificate, certificate,
 			       sizeof(certificate));
@@ -2180,16 +2332,29 @@ int main(void)
 				      d2_store_wal_promised(store) == promise_base,
 			      "cleared error repair unlock persists");
 			error_unlock = env;
+			error_unlock_result = result;
 			d2_store_crash(store);
 			store = NULL;
 			check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
 				      D1_OK &&
+				      d2_store_wal_promised(store) == promise_base &&
 				      d2_store_visible(store, &object, 23, &visible) &&
 				      visible.raw != broken.raw &&
 				      d2_store_visible(store, &object, 24, &visible) &&
 				      visible.raw != broken2.raw,
 			      "completed error repair replays after restart");
 			if (store) {
+				stale_certificate_actor = d2_store_admission_handle(
+					store, stale_certificate_actor.raw);
+				wal_bytes = d2_store_wal_bytes(store);
+				check(d2_store_certificate(
+					      store, stale_certificate_actor,
+					      &stale_certificate_key,
+					      d2_store_episode_handle(store, episode.raw),
+					      d2_store_repair_handle(store, repair.raw),
+					      certificate) == D1_STALE_AUTH &&
+					      d2_store_wal_bytes(store) == wal_bytes,
+				      "restart returns revoked certificate receipt");
 				error_unlock.admission = d2_store_admission_handle(
 					store, error_unlock.admission.raw);
 				error_unlock.body.repair.cohort =
@@ -2209,7 +2374,8 @@ int main(void)
 				wal_bytes = d2_store_wal_bytes(store);
 				check(d2_store_apply(store, &error_unlock,
 						     &result) == D1_OK &&
-					      result.entries[0].status == D1_OK &&
+					      same_result(&result,
+						  &error_unlock_result) &&
 					      d2_store_wal_bytes(store) == wal_bytes,
 				      "restart returns exact error unlock receipt");
 				refused_clear.admission =
@@ -2236,8 +2402,8 @@ int main(void)
 				wal_bytes = d2_store_wal_bytes(store);
 				check(d2_store_apply(store, &refused_clear,
 						     &result) == D1_OK &&
-					      result.entries[0].status ==
-						      D1_STALE_AUTH &&
+					      same_result(&result,
+						  &refused_clear_result) &&
 					      d2_store_wal_bytes(store) == wal_bytes,
 				      "restart returns refused clear receipt");
 				refused_repair.admission =
@@ -2270,8 +2436,8 @@ int main(void)
 				wal_bytes = d2_store_wal_bytes(store);
 				check(d2_store_apply(store, &refused_repair,
 						     &result) == D1_OK &&
-					      result.entries[0].status ==
-						      D1_STALE_AUTH &&
+					      same_result(&result,
+						  &refused_repair_result) &&
 					      d2_store_wal_bytes(store) == wal_bytes,
 				      "restart returns refused repair receipt");
 				refused_mark.admission = d2_store_admission_handle(
@@ -2299,8 +2465,8 @@ int main(void)
 				wal_bytes = d2_store_wal_bytes(store);
 				check(d2_store_apply(store, &refused_mark,
 						     &result) == D1_OK &&
-					      result.entries[0].status ==
-						      D1_BAD_PHASE &&
+					      same_result(&result,
+						  &refused_mark_result) &&
 					      d2_store_wal_bytes(store) == wal_bytes,
 				      "restart returns refused mark receipt");
 				aborted_prepare.admission =
@@ -2323,8 +2489,7 @@ int main(void)
 				wal_bytes = d2_store_wal_bytes(store);
 				check(d2_store_apply(store, &aborted_prepare,
 						     &result) == D1_OK &&
-					      result.entries[0].status == D1_CHECKSUM &&
-					      result.entries[0].phase == D2_ABORTED &&
+					      same_result(&result, &aborted_result) &&
 					      d2_store_wal_bytes(store) == wal_bytes,
 				      "restart returns kept-abort receipt");
 			}
@@ -2879,10 +3044,11 @@ int main(void)
 	      "provision batched-authority fixture");
 	if (store) {
 		struct d1_fixture_authority mds = { 0 }, first = { 0 },
-					    second = { 0 };
+					    second = { 0 }, third = { 0 };
 		struct d1_envelope authority_refused;
-		d1_admission_id mds_id, first_id, second_id;
+		d1_admission_id mds_id, first_id, second_id, third_id;
 		d1_admission_id beneficiaries[2], repeated[2];
+		d1_version_id first_version;
 
 		fill(mds.issuer.bytes, sizeof(mds.issuer.bytes), 0x31);
 		fill(mds.principal.bytes, sizeof(mds.principal.bytes), 0x41);
@@ -2952,6 +3118,7 @@ int main(void)
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].status == D1_OK,
 		      "first beneficiary mutates after batched authority");
+		first_version = result.entries[0].version;
 		env.admission = second_id;
 		write_request(&env, 2, 1, 51, &guard, replacement,
 			      sizeof(replacement));
@@ -2962,6 +3129,21 @@ int main(void)
 		check(d2_store_revoke_authority(store, mds_id, &mds.issuer,
 						7, 1) == D1_OK,
 		      "MDS revokes the admitted authority epoch");
+		third = first;
+		fill(third.principal.bytes, sizeof(third.principal.bytes), 0xa1);
+		fill(third.session, sizeof(third.session), 0xb1);
+		third.writer = 93;
+		third_id = d2_store_admit_bare(store, &object, &third);
+		wal_bytes = d2_store_wal_bytes(store);
+		check(d1_admission_live(third_id) &&
+			      d2_store_trust_admission(store, mds_id, third_id) ==
+				      D1_STALE_AUTH &&
+			      d2_store_admit_authority(store, mds_id, &third_id, 1) ==
+				      D1_STALE_AUTH &&
+			      !d1_custody_live(
+				      d2_store_custody(store, first_version)) &&
+			      d2_store_wal_bytes(store) == wal_bytes,
+		      "revoked authority cannot issue trust, authority or custody");
 		wal_bytes = d2_store_wal_bytes(store);
 		env.admission = first_id;
 		write_request(&env, 3, 2, 52, &guard, payload, sizeof(payload));
@@ -3094,6 +3276,8 @@ int main(void)
 			d2_store_verifier(store,
 					  race.transition.body.lifecycle.prior_verifier);
 			atomic_init(&race.go, false);
+			atomic_init(&race.first_done, false);
+			race.forced_order = i == 0 ? 1 : i == 1 ? 2 : 0;
 			begin = d2_store_wal_bytes(store);
 			transition_created = pthread_create(&transition_thread, NULL,
 						    race_transition, &race);
@@ -3282,6 +3466,8 @@ int main(void)
 					new_admissions[i];
 				race.recovery.body.control.read_epoch_present = true;
 				atomic_init(&race.go, false);
+				atomic_init(&race.first_done, false);
+				race.forced_order = i == 0 ? 1 : i == 1 ? 2 : 0;
 				begin = d2_store_wal_bytes(store);
 				transition_created = pthread_create(
 					&transition_thread, NULL,
@@ -3539,6 +3725,8 @@ int main(void)
 			race.issuer = mds.issuer;
 			race.epoch = mds.authority_epoch;
 			atomic_init(&race.go, false);
+			atomic_init(&race.first_done, false);
+			race.forced_order = i == 0 ? 1 : i == 1 ? 2 : 0;
 			begin = d2_store_wal_bytes(store);
 			prepare_created = pthread_create(&prepare_thread, NULL,
 						 race_transition, &race);
@@ -3681,6 +3869,8 @@ int main(void)
 			race.issuer = mds.issuer;
 			race.epoch = mds.authority_epoch;
 			atomic_init(&race.go, false);
+			atomic_init(&race.first_done, false);
+			race.forced_order = i == 0 ? 1 : i == 1 ? 2 : 0;
 			begin = d2_store_wal_bytes(store);
 			prepare_created = pthread_create(&prepare_thread, NULL,
 						 race_transition, &race);
@@ -3803,6 +3993,7 @@ int main(void)
 			     (uint8_t)(0x50 + i));
 			client.writer = 170 + i;
 			client.rights = D1_RIGHT_READ | D1_RIGHT_WRITE |
+					D1_RIGHT_REPAIR |
 					D1_RIGHT_SINGLE_WRITER;
 			client.lease_epoch = 1110 + i;
 			client.fence_sequence = 1120 + i;
@@ -3861,6 +4052,8 @@ int main(void)
 			race.issuer = mds.issuer;
 			race.epoch = mds.authority_epoch;
 			atomic_init(&race.go, false);
+			atomic_init(&race.first_done, false);
+			race.forced_order = i == 0 ? 1 : i == 1 ? 2 : 0;
 			begin = d2_store_wal_bytes(store);
 			rollback_created = pthread_create(&rollback_thread, NULL,
 						  race_transition, &race);
@@ -4035,6 +4228,8 @@ int main(void)
 			race.recovery.body.control.new_admission = new_admissions[i];
 			race.recovery.body.control.read_epoch_present = true;
 			atomic_init(&race.go, false);
+			atomic_init(&race.first_done, false);
+			race.forced_order = i == 0 ? 1 : i == 1 ? 2 : 0;
 			begin = d2_store_wal_bytes(store);
 			abort_created = pthread_create(&abort_thread, NULL,
 					       race_rebind_transition, &race);
@@ -4177,7 +4372,8 @@ int main(void)
 					D1_RIGHT_SINGLE_WRITER);
 			if (!d1_admission_live(old_admission) ||
 			    !committed_error_repair(
-				    store, &object, old_admission, 190 + i, 32 + i,
+				    store, &object, recovery_actor, old_admission,
+				    190 + i, 32 + i,
 				    (uint8_t)(0x90 + i), payload, sizeof(payload),
 				    &race.transition, &cohorts[i], &txn)) {
 				races_ok = false;
@@ -4204,6 +4400,8 @@ int main(void)
 			race.recovery.body.control.new_admission = new_admissions[i];
 			race.recovery.body.control.read_epoch_present = true;
 			atomic_init(&race.go, false);
+			atomic_init(&race.first_done, false);
+			race.forced_order = i == 0 ? 1 : i == 1 ? 2 : 0;
 			begin = d2_store_wal_bytes(store);
 			unlock_created = pthread_create(&unlock_thread, NULL,
 						 race_rebind_transition, &race);
@@ -4304,6 +4502,84 @@ int main(void)
 		}
 		check(store && replay_ok,
 		      "repair unlock-rebind race receipts replay exactly");
+	}
+	if (store) {
+		d2_store_close(store);
+		store = NULL;
+	}
+	unlinkat(dirfd, "super", 0);
+	unlinkat(dirfd, "wal", 0);
+	unlinkat(dirfd, "payload", 0);
+	memset(&binding, 0, sizeof(binding));
+	config.files.capacity_wal_bytes = 8u * 1024u * 1024u;
+	config.max_file_bytes = 128u * sizeof(payload);
+	reopen.max_file_bytes = config.max_file_bytes;
+	check(d2_store_provision(dirfd, &config, &binding, &store) == D1_OK,
+	      "provision live-transaction bound fixture");
+	if (store) {
+		d1_txn_id survivors[D2_MAX_LIVE_TXNS];
+		bool admitted_all = true, replayed_all = true;
+		unsigned int i;
+
+		admission = d2_store_admit(
+			store, &object, 17,
+			D1_RIGHT_READ | D1_RIGHT_WRITE | D1_RIGHT_SINGLE_WRITER);
+		check(d1_admission_live(admission),
+		      "live-transaction bound admission is issued");
+		memset(&env, 0, sizeof(env));
+		env.object = object;
+		env.admission = admission;
+		env.incarnation = d2_store_incarnation(store);
+		fill(env.key.origin.bytes, D1_UUID_BYTES, 0xdc);
+		env.op = D1_OP_WRITE_BATCH;
+		guard = (struct d1_guard){ .never_written = true };
+		for (i = 0; i < D2_MAX_LIVE_TXNS; i++) {
+			uint32_t apply_status;
+
+			write_request(&env, i + 1, i, 700 + i, &guard, payload,
+				      sizeof(payload));
+			env.body.write.activate = false;
+			env.body.write.entries[0].owner.writer = 17;
+			apply_status = d2_store_apply(store, &env, &result);
+			if (apply_status != D1_OK ||
+			    result.entries[0].status != D1_OK ||
+			    result.entries[0].phase != D2_PREPARED) {
+				admitted_all = false;
+				break;
+			}
+			survivors[i] = result.entries[0].txn;
+		}
+		write_request(&env, D2_MAX_LIVE_TXNS + 1,
+			      D2_MAX_LIVE_TXNS, 800, &guard, replacement,
+			      sizeof(replacement));
+		env.body.write.activate = false;
+		env.body.write.entries[0].owner.writer = 17;
+		{
+			uint32_t bound_status = d2_store_apply(store, &env, &result);
+		check(admitted_all && bound_status == D1_NOSPC &&
+			      result.disposition == D1_UNRECORDED,
+		      "sixty-fifth live transaction is refused at admission");
+		}
+		memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
+		memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
+		reopen.files.expected_root_ino = binding.root_ino;
+		d2_store_crash(store);
+		store = NULL;
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) == D1_OK &&
+			      d2_store_recovery_allowance(store) == D2_RESTART_SWEEP,
+		      "restart sweep funds sixty-four surviving transactions");
+		for (i = 0; store && i < D2_MAX_LIVE_TXNS; i++) {
+			uint32_t phase;
+			uint64_t admission_id;
+
+			if (!d2_store_txn_state(store, survivors[i].raw, &phase,
+						&admission_id) ||
+			    phase != D2_PREPARED) {
+				replayed_all = false;
+			}
+		}
+		check(store && replayed_all,
+		      "all sixty-four funded transactions survive restart");
 	}
 
 done:
