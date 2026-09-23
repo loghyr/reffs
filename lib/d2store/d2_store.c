@@ -3755,10 +3755,14 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 		entry.predecessor_object_id = predecessor.raw;
 	} else if (life) {
 		entry.predecessor_present = life->predecessor_present;
-		entry.predecessor_object_id = life->predecessor.raw;
+		entry.predecessor_object_id = life->predecessor_present ?
+						      life->predecessor.raw :
+						      0;
 	} else if (rollback) {
 		entry.predecessor_present = rollback->predecessor_present;
-		entry.predecessor_object_id = rollback->predecessor.raw;
+		entry.predecessor_object_id = rollback->predecessor_present ?
+						      rollback->predecessor.raw :
+						      0;
 	}
 	entry.postcond_present = result->entries[0].postcond_present;
 	entry.postcond_id = result->entries[0].postcond.raw;
