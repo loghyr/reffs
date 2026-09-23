@@ -46,6 +46,38 @@ static void setup_rebind(struct d2_rebind *r, const struct d2_binding *binding,
 	r->binding_token_len = (uint32_t)token_len;
 }
 
+static bool control_record(struct d2_files *files, uint32_t subtype,
+			   uint32_t body_len, uint8_t *record, size_t cap,
+			   size_t *written)
+{
+	const struct d2_superblock *super = d2_files_super(files);
+	struct d2_wal_header h = { 0 };
+	struct d2_control control = { 0 };
+
+	h.family = D2_REC_CONTROL;
+	memcpy(h.store_uuid, super->store_uuid, 16);
+	memcpy(h.wal_uuid, super->wal_uuid, 16);
+	h.lsn = d2_files_next_lsn(files);
+	h.ds_incarnation = super->ds_incarnation;
+	control.subtype = subtype;
+	control.transition = D2_COMMITTED;
+	control.status = D1_OK;
+	memset(control.key.session, 0x71, 16);
+	control.key.sequence = (uint32_t)h.lsn;
+	d2_operation_key(control.key.session, 0, control.key.sequence, 0,
+			 control.key.operation_key);
+	control.body_len = body_len;
+	if (subtype == D2_CTL_CERTIFICATE_INSTALL) {
+		memset(control.body, 1, body_len);
+	} else if (subtype == D2_CTL_EPISODE_CLEAR) {
+		memset(control.body, 1, 16);
+		control.body[23] = 1;
+		control.body[31] = 16;
+		memset(control.body + 32, 1, D1_CERTIFICATE_BYTES);
+	}
+	return d2_control_encode(&h, &control, record, cap, written);
+}
+
 int main(void)
 {
 	const char *root = getenv("D2_TEST_ROOT");
@@ -126,6 +158,44 @@ int main(void)
 	check(d2_files_rebind(dirfd, &rebind, &binding, &files) != D1_OK &&
 		      !files,
 	      "overlong suffix fences before zero-tail rule");
+	clean_root(dirfd);
+	check(d2_files_provision(dirfd, &provision, &binding, &files) == D1_OK,
+	      "provision low-headroom fixture");
+	if (files) {
+		uint8_t record[D2_MAX_RECORD_BYTES];
+		size_t written;
+
+		do {
+			if (!control_record(files, D2_CTL_AUTHORITY_REVOKE, 28,
+					    record, sizeof(record), &written)) {
+				status = D1_INVALID;
+				break;
+			}
+			status = d2_files_wal_append_floor(files, record, written,
+							1184);
+		} while (status == D1_OK);
+		check(status == D1_NOSPC,
+		      "ordinary append preserves ERROR completion promise");
+		check(control_record(files, D2_CTL_CERTIFICATE_INSTALL, 56,
+				     record, sizeof(record), &written) &&
+			      written == 268 &&
+			      d2_files_wal_append_floor(files, record, written,
+							916) == D1_OK,
+		      "certificate install spends its 268-byte promise");
+		do {
+			control_record(files, D2_CTL_AUTHORITY_REVOKE, 28,
+				       record, sizeof(record), &written);
+			status = d2_files_wal_append_floor(files, record, written,
+							916);
+		} while (status == D1_OK);
+		check(status == D1_NOSPC &&
+			      control_record(files, D2_CTL_EPISODE_CLEAR, 704,
+					     record, sizeof(record), &written) &&
+			      written == 916 &&
+			      d2_files_wal_append_floor(files, record, written, 0) ==
+				      D1_OK,
+		      "episode clear spends its 916-byte promise");
+	}
 
 done:
 	if (files)

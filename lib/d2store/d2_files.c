@@ -315,7 +315,7 @@ static void d2_verifier(const uint8_t store_uuid[16], uint64_t epoch,
 
 static uint32_t d2_files_wal_append_internal(struct d2_files *f,
 					     const uint8_t *record, size_t len,
-					     bool reserved);
+					     bool reserved, uint64_t promised);
 
 static uint32_t d2_initial_start(struct d2_files *f)
 {
@@ -340,7 +340,7 @@ static uint32_t d2_initial_start(struct d2_files *f)
 	f->wal_cursor = 0;
 	f->payload_cursor = D2_PAYLOAD_ALIGN;
 	f->next_lsn = 1;
-	return d2_files_wal_append_internal(f, record, sizeof(record), true);
+	return d2_files_wal_append_internal(f, record, sizeof(record), true, 0);
 }
 
 uint32_t d2_files_provision(int dirfd, const struct d2_provision *p,
@@ -619,7 +619,7 @@ uint32_t d2_files_payload_append(struct d2_files *f,
 
 static uint32_t d2_files_wal_append_internal(struct d2_files *f,
 					     const uint8_t *record, size_t len,
-					     bool reserved)
+					     bool reserved, uint64_t promised)
 {
 	struct d2_wal_header h;
 	uint64_t available, restarts, required;
@@ -641,7 +641,8 @@ static uint32_t d2_files_wal_append_internal(struct d2_files *f,
 	required =
 		(D2_MIN_RESTARTS - restarts) * D2_RESTART_HEADROOM +
 		(D2_RECOVERY_HEADROOM - D2_MIN_RESTARTS * D2_RESTART_HEADROOM);
-	if (!reserved && available - len < required)
+	if (promised > UINT64_MAX - required ||
+	    (!reserved && available - len < required + promised))
 		return D1_NOSPC;
 	if (!d2_pwrite_all(f->wal_fd, record, len, f->wal_cursor))
 		return d2_errno_status();
@@ -660,7 +661,14 @@ static uint32_t d2_files_wal_append_internal(struct d2_files *f,
 uint32_t d2_files_wal_append(struct d2_files *f, const uint8_t *record,
 			     size_t len)
 {
-	return d2_files_wal_append_internal(f, record, len, false);
+	return d2_files_wal_append_internal(f, record, len, false, 0);
+}
+
+uint32_t d2_files_wal_append_floor(struct d2_files *f,
+				   const uint8_t *record, size_t len,
+				   uint64_t promised)
+{
+	return d2_files_wal_append_internal(f, record, len, false, promised);
 }
 
 uint32_t d2_files_start(struct d2_files *f, uint32_t recovery_decision,
@@ -707,7 +715,8 @@ uint32_t d2_files_start(struct d2_files *f, uint32_t recovery_decision,
 		return 2;
 	/* START is the one record allowed to introduce the next incarnation. */
 	f->super.ds_incarnation = next;
-	status = d2_files_wal_append_internal(f, record, sizeof(record), true);
+	status = d2_files_wal_append_internal(f, record, sizeof(record), true,
+					      0);
 	if (status != 1) {
 		f->super.ds_incarnation = prior;
 		return status;

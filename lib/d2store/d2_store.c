@@ -23,6 +23,7 @@ struct d2_store {
 	uint64_t max_file_bytes;
 	uint64_t next_payload_seq;
 	uint64_t synthetic_sequence;
+	uint64_t wal_promised;
 	uint32_t registered_count;
 	struct {
 		struct d1_objkey object;
@@ -67,6 +68,8 @@ struct d2_store {
 		uint32_t phase;
 		bool episode_present;
 		uint64_t episode_id;
+		bool certificate_installed;
+		bool episode_cleared;
 		uint32_t count;
 		struct {
 			uint32_t mode;
@@ -137,6 +140,68 @@ static bool d2_same_key(const struct d1_opkey *a, const struct d1_opkey *b)
 {
 	return !memcmp(a->origin.bytes, b->origin.bytes, D1_UUID_BYTES) &&
 	       a->sequence == b->sequence && a->ordinal == b->ordinal;
+}
+
+static uint32_t d2_wal_append(struct d2_store *s, const uint8_t *record,
+			      size_t len)
+{
+	return d2_files_wal_append_floor(s->files, record, len,
+					 s->wal_promised);
+}
+
+static uint32_t d2_wal_append_floor(struct d2_store *s,
+				    const uint8_t *record, size_t len,
+				    uint64_t promised)
+{
+	return d2_files_wal_append_floor(s->files, record, len, promised);
+}
+
+static uint64_t d2_cohort_promise(uint32_t phase, size_t record_bytes,
+				  bool episode_present, bool installed,
+				  bool cleared)
+{
+	uint64_t records;
+
+	switch (phase) {
+	case D2_ADMITTED:
+		records = 4;
+		break;
+	case D2_PREPARED:
+		records = 3;
+		break;
+	case D2_FINALIZED:
+		records = 2;
+		break;
+	case D2_COMMITTED:
+		records = 1;
+		break;
+	default:
+		return 0;
+	}
+	return records * record_bytes +
+	       (episode_present && !installed ? 268u : 0u) +
+	       (episode_present && !cleared ? 916u : 0u);
+}
+
+static bool d2_rebuild_promises(struct d2_store *s)
+{
+	uint64_t total = 0, add;
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_REPAIRS; i++) {
+		if (!s->cohorts[i].used)
+			continue;
+		add = d2_cohort_promise(s->cohorts[i].phase,
+					332u + 244u * s->cohorts[i].count,
+					s->cohorts[i].episode_present,
+					s->cohorts[i].certificate_installed,
+					s->cohorts[i].episode_cleared);
+		if (add > UINT64_MAX - total)
+			return false;
+		total += add;
+	}
+	s->wal_promised = total;
+	return true;
 }
 
 static int d2_receipt_lookup(const struct d2_store *s,
@@ -1209,8 +1274,15 @@ out:
 
 static uint32_t d2_model_next_incarnation(struct d2_store *s);
 
-static bool d2_replay_start(struct d2_replay *r, const struct d2_wal_header *h)
+static bool d2_replay_start(struct d2_replay *r, const struct d2_wal_header *h,
+			    const uint8_t *record)
 {
+	struct d2_start start;
+
+	if (!d2_start_decode(record, h->total_bytes, h, &start) ||
+	    !d2_rebuild_promises(r->store) ||
+	    start.live_txn_wal_reserved != r->store->wal_promised)
+		return false;
 	if (!r->last_incarnation) {
 		r->last_incarnation = h->ds_incarnation;
 		return h->ds_incarnation ==
@@ -1529,8 +1601,11 @@ static bool d2_replay_certificate(struct d2_replay *r,
 	    control->admission_authority_epoch != auth->authority_epoch)
 		return false;
 	d1_fixture_certificate(r->store->model, certificate);
-	return d2_certificate_remember(r->store, episode_id, cohort_id,
-				       certificate);
+	if (!d2_certificate_remember(r->store, episode_id, cohort_id,
+				    certificate))
+		return false;
+	cohort->certificate_installed = true;
+	return true;
 }
 
 static bool d2_replay_episode_clear(struct d2_replay *r,
@@ -1642,6 +1717,8 @@ static bool d2_replay_episode_clear(struct d2_replay *r,
 	if (r->status != D1_OK || result.count != 1 ||
 	    result.entries[0].status != control->status)
 		return false;
+	if (committed)
+		cohort->episode_cleared = true;
 	return d2_receipt_remember(r->store, &env.object.export_uuid, &env.key,
 				   control->key.request_digest, &result);
 }
@@ -1962,7 +2039,7 @@ static bool d2_replay_record(const struct d2_wal_header *h,
 		return false;
 	}
 	if (h->family == D2_REC_START)
-		return d2_replay_start(r, h);
+		return d2_replay_start(r, h, record);
 	if (h->family == D2_REC_CONTROL) {
 		if (!d2_control_decode(record, h->total_bytes, h, &control))
 			return false;
@@ -2069,7 +2146,7 @@ static uint32_t d2_register_file(struct d2_store *s,
 	if (!d1_cursor_ok(&cursor) ||
 	    !d2_control_encode(&h, &control, record, sizeof(record), &written))
 		return D1_INVALID;
-	status = d2_files_wal_append(s->files, record, written);
+	status = d2_wal_append(s, record, written);
 	if (status != D1_OK)
 		return status;
 	i = s->registered_count++;
@@ -2189,6 +2266,10 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 	status = d2_files_scan(files, d2_replay_record, &replay, &scan, false);
 	if (status != D1_OK || replay.status != D1_OK)
 		goto fail;
+	if (!d2_rebuild_promises(s)) {
+		status = D1_IO;
+		goto fail;
+	}
 	s->next_payload_seq =
 		(replay.highest_payload_id & ((UINT64_C(1) << 40) - 1)) + 1;
 	status = d2_model_next_incarnation(s);
@@ -2203,7 +2284,7 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 		decision |= D2_RD_TRUNCATED_NONZERO_TAIL;
 	status = d2_files_start(files, decision,
 				first ? first->truncated_bytes : 0,
-				d2_files_payload_cursor(files), 0, 0, 0);
+				d2_files_payload_cursor(files), s->wal_promised, 0, 0);
 	if (status != D1_OK)
 		goto fail;
 	*out = s;
@@ -2295,7 +2376,7 @@ static uint32_t d2_persist_postcond(struct d2_store *s,
 		return D1_INVALID;
 	if (!d2_control_encode(&h, &control, record, sizeof(record), &written))
 		return D1_INVALID;
-	return d2_files_wal_append(s->files, record, written);
+	return d2_wal_append(s, record, written);
 }
 
 static uint32_t d2_persist_entry(struct d2_store *s,
@@ -2425,7 +2506,7 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 	if (status == D1_OK) {
 		h.lsn = d2_files_next_lsn(s->files);
 		status = d2_entry_encode(&h, &entry, record) ?
-				 d2_files_wal_append(s->files, record,
+				 d2_wal_append(s, record,
 						     sizeof(record)) :
 				 D1_INVALID;
 	}
@@ -2476,7 +2557,7 @@ static uint32_t d2_persist_recovery(struct d2_store *s,
 	if (!d1_cursor_ok(&cursor) ||
 	    !d2_control_encode(&h, &control, record, sizeof(record), &written))
 		return D1_INVALID;
-	return d2_files_wal_append(s->files, record, written);
+	return d2_wal_append(s, record, written);
 }
 
 static uint32_t d2_persist_episode_mark(struct d2_store *s,
@@ -2538,7 +2619,7 @@ static uint32_t d2_persist_episode_mark(struct d2_store *s,
 	if (!d1_cursor_ok(&cursor) ||
 	    !d2_control_encode(&h, &control, record, sizeof(record), &written))
 		return D1_INVALID;
-	status = d2_files_wal_append(s->files, record, written);
+	status = d2_wal_append(s, record, written);
 	if (status == D1_OK && result->entries[0].status == D1_OK &&
 	    !d2_episode_remember(s, env, result))
 		return D1_IO;
@@ -2556,7 +2637,9 @@ static uint32_t d2_persist_episode_clear(struct d2_store *s,
 	struct d1_cursor cursor;
 	uint8_t episode_uuid[D1_UUID_BYTES], handle[32], file_key[32];
 	uint8_t record[D2_MAX_RECORD_BYTES];
-	uint32_t i;
+	uint32_t i, status;
+	typeof(s->cohorts[0]) *cohort;
+	uint64_t promised;
 	size_t written;
 
 	if (!auth || env->op != D1_OP_CLEAR_ERROR ||
@@ -2601,7 +2684,18 @@ static uint32_t d2_persist_episode_clear(struct d2_store *s,
 	if (!d1_cursor_ok(&cursor) ||
 	    !d2_control_encode(&h, &control, record, sizeof(record), &written))
 		return D1_INVALID;
-	return d2_files_wal_append(s->files, record, written);
+	cohort = d2_cohort_find(s, env->body.repair.cohort.raw);
+	if (result->entries[0].status != D1_OK)
+		return d2_wal_append(s, record, written);
+	if (!cohort || s->wal_promised < 916u)
+		return D1_IO;
+	promised = s->wal_promised - 916u;
+	status = d2_wal_append_floor(s, record, written, promised);
+	if (status == D1_OK) {
+		s->wal_promised = promised;
+		cohort->episode_cleared = true;
+	}
+	return status;
 }
 
 static bool d2_repair_operation(uint32_t op)
@@ -2624,6 +2718,7 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 	uint8_t record[D2_MAX_RECORD_BYTES], handle[32];
 	uint64_t eof, payload_ids[D1_BATCH_ENTRIES_MAX] = { 0 };
 	uint64_t payload_offsets[D1_BATCH_ENTRIES_MAX] = { 0 };
+	uint64_t old_promise = 0, new_promise, promised;
 	uint32_t i, payload_count = 0, status;
 	size_t written;
 	bool kept_abort, refused;
@@ -2805,9 +2900,24 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 	}
 	if (!d2_cohort_encode(&h, &disk, record, sizeof(record), &written))
 		return D1_INVALID;
-	status = d2_files_wal_append(s->files, record, written);
+	if (saved)
+		old_promise = d2_cohort_promise(saved->phase, written,
+						saved->episode_present,
+						saved->certificate_installed,
+						saved->episode_cleared);
+	new_promise = refused && !kept_abort ? old_promise :
+		      d2_cohort_promise(disk.transition, written,
+					disk.flags & 1u,
+					saved && saved->certificate_installed,
+					saved && saved->episode_cleared);
+	if (old_promise > s->wal_promised ||
+	    new_promise > UINT64_MAX - (s->wal_promised - old_promise))
+		return D1_IO;
+	promised = s->wal_promised - old_promise + new_promise;
+	status = d2_wal_append_floor(s, record, written, promised);
 	if (status != D1_OK)
 		return status;
+	s->wal_promised = promised;
 	s->next_payload_seq += payload_count;
 	if (!refused && env->op == D1_OP_BEGIN_REPAIR &&
 	    !d2_cohort_remember_begin(s, env, result))
@@ -3020,7 +3130,7 @@ static uint32_t d2_client_control(struct d2_store *s, uint32_t subtype,
 		       control.key.request_digest);
 	if (!d2_control_encode(&h, &control, record, sizeof(record), &written))
 		return D1_INVALID;
-	return d2_files_wal_append(s->files, record, written);
+	return d2_wal_append(s, record, written);
 }
 
 static uint32_t d2_admission_controls(struct d2_store *s, d1_admission_id id,
@@ -3169,7 +3279,7 @@ static uint32_t d2_liveness_control(struct d2_store *s,
 		       control.key.request_digest);
 	if (!d2_control_encode(&h, &control, record, sizeof(record), &written))
 		return D1_INVALID;
-	return d2_files_wal_append(s->files, record, written);
+	return d2_wal_append(s, record, written);
 }
 
 static uint32_t d2_custody_control(struct d2_store *s, d1_custody_id custody,
@@ -3214,7 +3324,7 @@ static uint32_t d2_custody_control(struct d2_store *s, d1_custody_id custody,
 		       control.key.request_digest);
 	if (!d2_control_encode(&h, &control, record, sizeof(record), &written))
 		return D1_INVALID;
-	return d2_files_wal_append(s->files, record, written);
+	return d2_wal_append(s, record, written);
 }
 
 static uint32_t d2_certificate_control(
@@ -3228,6 +3338,7 @@ static uint32_t d2_certificate_control(
 	struct d1_cursor cursor;
 	uint8_t episode_uuid[D1_UUID_BYTES], record[D2_MAX_RECORD_BYTES];
 	size_t written;
+	uint64_t promised;
 
 	if (!auth)
 		return D1_STALE_AUTH;
@@ -3260,7 +3371,13 @@ static uint32_t d2_certificate_control(
 		       control.body_len, control.key.request_digest);
 	if (!d2_control_encode(&h, &control, record, sizeof(record), &written))
 		return D1_INVALID;
-	return d2_files_wal_append(s->files, record, written);
+	if (s->wal_promised < written)
+		return D1_IO;
+	promised = s->wal_promised - written;
+	if (d2_wal_append_floor(s, record, written, promised) != D1_OK)
+		return D1_NOSPC;
+	s->wal_promised = promised;
+	return D1_OK;
 }
 
 void d2_store_revoke(struct d2_store *s, d1_admission_id admission)
@@ -3340,6 +3457,8 @@ uint32_t d2_store_certificate(
 			if (!d2_certificate_remember(s, episode.raw, repair.raw,
 						     certificate))
 				status = D1_IO;
+			else
+				cohort->certificate_installed = true;
 		}
 		if (status != D1_OK && status != D1_NOSPC)
 			s->fenced = true;
@@ -3437,6 +3556,11 @@ uint64_t d2_store_eof(struct d2_store *s, const struct d1_objkey *object)
 uint64_t d2_store_wal_bytes(struct d2_store *s)
 {
 	return s && !s->fenced ? d2_files_wal_cursor(s->files) : 0;
+}
+
+uint64_t d2_store_wal_promised(struct d2_store *s)
+{
+	return s && !s->fenced ? s->wal_promised : 0;
 }
 
 uint32_t d2_store_view_open(struct d2_store *s, const struct d1_objkey *object,

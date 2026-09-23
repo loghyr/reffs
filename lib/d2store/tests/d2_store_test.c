@@ -198,7 +198,7 @@ int main(void)
 	uint8_t verifier[D1_VERIFIER_BYTES];
 	uint8_t registration[396];
 	uint32_t read_len;
-	uint64_t wal_bytes;
+	uint64_t wal_bytes, promise_base;
 	int dirfd;
 
 	if (!root)
@@ -1100,6 +1100,7 @@ int main(void)
 			aborted_prepare = env;
 
 			memset(&env.body, 0, sizeof(env.body));
+			promise_base = d2_store_wal_promised(store);
 			env.key.sequence = 24;
 			env.op = D1_OP_BEGIN_REPAIR;
 			env.body.repair.range_begin = 23;
@@ -1127,7 +1128,9 @@ int main(void)
 			env.body.repair.entries[1].successor = broken2;
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
 				      result.entries[0].status == D1_OK &&
-				      result.entries[0].phase == D2_ADMITTED,
+				      result.entries[0].phase == D2_ADMITTED &&
+				      d2_store_wal_promised(store) ==
+					      promise_base + 4464,
 			      "two-member repair reopens after abort");
 			repair = result.entries[0].cohort;
 			repair_txn = result.entries[0].member_txn[0];
@@ -1168,7 +1171,9 @@ int main(void)
 					    &env.body.repair.entries[1].checksum);
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
 				      result.entries[0].status == D1_OK &&
-				      result.entries[0].phase == D2_PREPARED,
+				      result.entries[0].phase == D2_PREPARED &&
+				      d2_store_wal_promised(store) ==
+					      promise_base + 3644,
 			      "error repair payload persists");
 
 			memset(&env.body, 0, sizeof(env.body));
@@ -1204,7 +1209,9 @@ int main(void)
 			env.body.repair.entries[1].predecessor = broken2;
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
 				      result.entries[0].status == D1_OK &&
-				      result.entries[0].phase == D2_FINALIZED,
+				      result.entries[0].phase == D2_FINALIZED &&
+				      d2_store_wal_promised(store) ==
+					      promise_base + 2824,
 			      "error repair finalize persists");
 			env.key.sequence = 27;
 			env.op = D1_OP_COMMIT_REPAIR;
@@ -1216,11 +1223,15 @@ int main(void)
 				      d2_store_visible(store, &object, 23, &visible) &&
 				      visible.raw != broken.raw &&
 				      d2_store_visible(store, &object, 24, &visible) &&
-				      visible.raw != broken2.raw,
+				      visible.raw != broken2.raw &&
+				      d2_store_wal_promised(store) ==
+					      promise_base + 2004,
 			      "error repair commit persists replacement");
 			fill(certificate, sizeof(certificate), 0xc0);
 			check(d2_store_certificate(store, episode, repair,
-						   certificate) == D1_OK,
+						   certificate) == D1_OK &&
+				      d2_store_wal_promised(store) ==
+					      promise_base + 1736,
 			      "completion certificate install persists");
 			wal_bytes = d2_store_wal_bytes(store);
 			check(d2_store_certificate(store, episode, repair,
@@ -1261,7 +1272,9 @@ int main(void)
 			memcpy(env.body.repair.certificate, certificate,
 			       sizeof(certificate));
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
-				      result.entries[0].status == D1_OK,
+				      result.entries[0].status == D1_OK &&
+				      d2_store_wal_promised(store) ==
+					      promise_base + 820,
 			      "completion certificate clears error episode");
 			memset(&env.body, 0, sizeof(env.body));
 			env.key.sequence = 30;
@@ -1284,7 +1297,8 @@ int main(void)
 			env.body.repair.entries[1].custody_present = true;
 			env.body.repair.entries[1].custody = custody2;
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
-				      result.entries[0].status == D1_OK,
+				      result.entries[0].status == D1_OK &&
+				      d2_store_wal_promised(store) == promise_base,
 			      "cleared error repair unlock persists");
 			error_unlock = env;
 			d2_store_crash(store);

@@ -92,6 +92,9 @@ uint32_t d2_files_payload_append(struct d2_files *files,
 				 uint64_t *offset);
 uint32_t d2_files_wal_append(struct d2_files *files, const uint8_t *record,
 			     size_t len);
+uint32_t d2_files_wal_append_floor(struct d2_files *files,
+				   const uint8_t *record, size_t len,
+				   uint64_t promised);
 uint32_t d2_files_super_update(struct d2_files *files, uint32_t state);
 uint32_t d2_files_start(struct d2_files *files, uint32_t recovery_decision,
 			uint64_t truncated_bytes, uint64_t payload_cursor,
