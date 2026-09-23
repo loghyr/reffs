@@ -408,6 +408,66 @@ out:
 	return ok;
 }
 
+static bool repair_failure_revoke_race_log(
+	int dirfd, uint64_t begin, uint64_t end,
+	const struct d2_binding *binding, uint64_t cohort_id, bool *revoke_first)
+{
+	struct d2_wal_header header;
+	struct d2_control control;
+	struct d2_cohort cohort;
+	uint8_t *wal;
+	uint64_t at = begin, cohort_lsn = 0, revoke_lsn = 0;
+	uint32_t cohort_status = 0, cohort_transition = 0, cohort_flags = 0;
+	unsigned int cohorts = 0, revokes = 0;
+	int fd = -1;
+	bool ok = false;
+
+	wal = malloc((size_t)end);
+	if (!wal)
+		return false;
+	fd = openat(dirfd, "wal", O_RDONLY | O_CLOEXEC);
+	if (fd < 0 || pread(fd, wal, (size_t)end, 0) != (ssize_t)end)
+		goto out;
+	while (at < end &&
+	       d2_wal_header_decode(wal + at, (size_t)(end - at),
+				    binding->store_uuid, binding->wal_uuid,
+				    &header)) {
+		if (header.family == D2_REC_CONTROL &&
+		    d2_control_decode(wal + at, header.total_bytes, &header,
+				      &control) &&
+		    control.subtype == D2_CTL_AUTHORITY_REVOKE) {
+			revokes++;
+			revoke_lsn = header.lsn;
+		} else if (header.family == D2_REC_COHORT &&
+			   d2_cohort_decode(wal + at, header.total_bytes, &header,
+					    &cohort) &&
+			   cohort.cohort_id == cohort_id) {
+			cohorts++;
+			cohort_lsn = header.lsn;
+			cohort_status = cohort.status;
+			cohort_transition = cohort.transition;
+			cohort_flags = cohort.flags;
+		}
+		at += header.total_bytes;
+	}
+	if (at != end || cohorts != 1 || revokes != 1 ||
+	    cohort_lsn == revoke_lsn)
+		goto out;
+	*revoke_first = revoke_lsn < cohort_lsn;
+	ok = *revoke_first ?
+		     !(cohort_flags & 2u) &&
+			     cohort_transition == D2_REFUSED &&
+			     cohort_status == D1_STALE_AUTH :
+		     (cohort_flags & 2u) &&
+			     cohort_transition == D2_ABORTED &&
+			     cohort_status == D1_CHECKSUM;
+out:
+	if (fd >= 0)
+		close(fd);
+	free(wal);
+	return ok;
+}
+
 static bool repair_rebind_race_log(int dirfd, uint64_t begin, uint64_t end,
 				   const struct d2_binding *binding,
 				   uint64_t cohort_id, bool *rebind_first)
@@ -3376,6 +3436,151 @@ int main(void)
 	if (store) {
 		check(d2_store_close(store) == D1_OK,
 		      "close repair-revoke race fixture");
+		store = NULL;
+	}
+	unlinkat(dirfd, "super", 0);
+	unlinkat(dirfd, "wal", 0);
+	unlinkat(dirfd, "payload", 0);
+	memset(&binding, 0, sizeof(binding));
+	check(d2_store_provision(dirfd, &config, &binding, &store) == D1_OK,
+	      "provision failed-prepare revoke race fixture");
+	if (store) {
+		enum { FAILURE_REVOKE_RUNS = 4 };
+		struct d1_envelope retries[FAILURE_REVOKE_RUNS];
+		d1_repair_id cohorts[FAILURE_REVOKE_RUNS];
+		bool revoke_first[FAILURE_REVOKE_RUNS] = { 0 };
+		unsigned int i;
+		bool races_ok = true, replay_ok = true;
+
+		for (i = 0; i < FAILURE_REVOKE_RUNS; i++) {
+			struct d1_fixture_authority mds = { 0 }, client = { 0 };
+			struct authority_race race = { .store = store };
+			d1_admission_id mds_id, client_id;
+			pthread_t prepare_thread, revoke_thread;
+			uint32_t phase, members;
+			uint64_t begin, end;
+			int prepare_created, revoke_created;
+			bool run_ok;
+
+			fill(mds.issuer.bytes, sizeof(mds.issuer.bytes),
+			     (uint8_t)(0xb0 + i));
+			fill(mds.principal.bytes, sizeof(mds.principal.bytes),
+			     (uint8_t)(0x40 + i));
+			fill(mds.session, sizeof(mds.session),
+			     (uint8_t)(0x50 + i));
+			mds.writer = 140 + i;
+			mds.rights = D1_RIGHT_CONTROL;
+			mds.authority_epoch = 1000 + i;
+			client = mds;
+			fill(client.principal.bytes, sizeof(client.principal.bytes),
+			     (uint8_t)(0x60 + i));
+			fill(client.session, sizeof(client.session),
+			     (uint8_t)(0x70 + i));
+			client.writer = 150 + i;
+			client.rights = D1_RIGHT_READ | D1_RIGHT_WRITE |
+					D1_RIGHT_REPAIR |
+					D1_RIGHT_SINGLE_WRITER;
+			client.lease_epoch = 1010 + i;
+			client.fence_sequence = 1020 + i;
+			mds_id = d2_store_admit_full(store, &object, &mds);
+			client_id = d2_store_admit_bare(store, &object, &client);
+			if (!d1_admission_live(mds_id) ||
+			    !d1_admission_live(client_id) ||
+			    d2_store_trust_admission(store, mds_id, client_id) !=
+				    D1_OK ||
+			    d2_store_admit_authority(store, mds_id, &client_id, 1) !=
+				    D1_OK ||
+			    !admitted_error_repair(
+				    store, &object, client_id, client.writer, 16 + i,
+				    (uint8_t)(0xc0 + i), payload, sizeof(payload),
+				    &race.transition, &cohorts[i], NULL)) {
+				races_ok = false;
+				break;
+			}
+			race.transition.body.repair.entries[0].checksum.digest[0] ^=
+				0xff;
+			race.actor = mds_id;
+			race.issuer = mds.issuer;
+			race.epoch = mds.authority_epoch;
+			atomic_init(&race.go, false);
+			begin = d2_store_wal_bytes(store);
+			prepare_created = pthread_create(&prepare_thread, NULL,
+						 race_transition, &race);
+			revoke_created = prepare_created ? -1 :
+				pthread_create(&revoke_thread, NULL, race_revoke, &race);
+			atomic_store_explicit(&race.go, true, memory_order_release);
+			if (!prepare_created)
+				pthread_join(prepare_thread, NULL);
+			if (!revoke_created)
+				pthread_join(revoke_thread, NULL);
+			end = d2_store_wal_bytes(store);
+			run_ok = !prepare_created && !revoke_created &&
+				race.transition_status == D1_OK &&
+				race.revoke_status == D1_OK &&
+				repair_failure_revoke_race_log(
+					dirfd, begin, end, &binding, cohorts[i].raw,
+					&revoke_first[i]) &&
+				race.transition_result.entries[0].status ==
+					(revoke_first[i] ? D1_STALE_AUTH :
+							   D1_CHECKSUM) &&
+				race.transition_result.entries[0].phase ==
+					(revoke_first[i] ? 0 : D2_ABORTED) &&
+				d2_store_repair_state(store, cohorts[i].raw, &phase,
+						      &members) &&
+					phase == (revoke_first[i] ? D2_ADMITTED :
+								 D2_ABORTED) &&
+					members == 1;
+			races_ok = races_ok && run_ok;
+			retries[i] = race.transition;
+		}
+		check(races_ok,
+		      "kept prepare failure serializes with authority revoke");
+		memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
+		memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
+		reopen.files.expected_root_ino = binding.root_ino;
+		d2_store_crash(store);
+		store = NULL;
+		check(races_ok &&
+			      d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+				      D1_OK,
+		      "failed-prepare revoke race log replays");
+		if (store && races_ok) {
+			wal_bytes = d2_store_wal_bytes(store);
+			for (i = 0; i < FAILURE_REVOKE_RUNS; i++) {
+				uint32_t phase = 0, members = 0;
+
+				retries[i].admission = d2_store_admission_handle(
+					store, retries[i].admission.raw);
+				retries[i].body.repair.cohort =
+					d2_store_repair_handle(
+						store,
+						retries[i].body.repair.cohort.raw);
+				retries[i].body.repair.entries[0].txn =
+					d2_store_txn_handle(
+						store,
+						retries[i].body.repair.entries[0].txn.raw);
+				if (d2_store_apply(store, &retries[i], &result) !=
+						D1_OK ||
+				    result.entries[0].status !=
+					    (revoke_first[i] ? D1_STALE_AUTH :
+							       D1_CHECKSUM) ||
+				    result.entries[0].phase !=
+					    (revoke_first[i] ? 0 : D2_ABORTED) ||
+				    !d2_store_repair_state(store, cohorts[i].raw,
+							   &phase, &members) ||
+				    phase != (revoke_first[i] ? D2_ADMITTED :
+							       D2_ABORTED) ||
+				    members != 1 ||
+				    d2_store_wal_bytes(store) != wal_bytes)
+					replay_ok = false;
+			}
+		}
+		check(store && replay_ok,
+		      "failed-prepare revoke receipts replay exactly");
+	}
+	if (store) {
+		check(d2_store_close(store) == D1_OK,
+		      "close failed-prepare revoke race fixture");
 		store = NULL;
 	}
 	unlinkat(dirfd, "super", 0);
