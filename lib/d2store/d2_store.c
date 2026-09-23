@@ -40,6 +40,7 @@ struct d2_store {
 		bool model_bound;
 		bool authority_seen;
 		bool expired;
+		uint64_t recovery_txn_id;
 		uint64_t id;
 		struct d1_objkey object;
 		struct d1_fixture_authority auth;
@@ -1041,6 +1042,7 @@ static bool d2_replay_trust(struct d2_replay *r,
 				return false;
 			r->store->recovery_allowance -= h->total_bytes;
 			candidate->recovery_trusted = true;
+			slot->recovery_txn_id = candidate->txn_id;
 		}
 		return true;
 	}
@@ -1051,47 +1053,67 @@ static bool d2_replay_authority(struct d2_replay *r,
 				const struct d2_wal_header *h,
 				const struct d2_control *control)
 {
-	typeof(r->store->admissions[0]) *slot;
-	typeof(r->store->work[0]) *candidate = NULL;
+	typeof(r->store->admissions[0]) *actor, *beneficiary[64];
+	typeof(r->store->work[0]) *candidate[64];
 	struct d1_cursor cursor;
-	uint8_t issuer[16], other[12];
+	uint8_t issuer[16], other[12], expected_other[12];
 	uint64_t epoch;
-	uint32_t count, i, seqid, expected_seqid;
+	uint32_t count, i, j, seqid, expected_seqid;
+	bool funded = true;
 
 	if (control->subtype != D2_CTL_AUTHORITY_ADMIT)
 		return true;
-	slot = d2_admission_slot(r->store, control->admission_client_id);
-	d2_stateid(control->admission_client_id, &expected_seqid, other);
+	actor = d2_admission_slot(r->store, control->admission_client_id);
 	d1_dec_init(&cursor, control->body, control->body_len);
-	if (!slot || slot->authority_seen ||
+	if (!actor ||
 	    control->transition != D2_COMMITTED || control->status != D1_OK ||
 	    !d1_dec_raw(&cursor, issuer, sizeof(issuer)) ||
 	    !d1_dec_u64(&cursor, &epoch) || !d1_dec_u32(&cursor, &count) ||
-	    count != 1 || !d1_dec_u32(&cursor, &seqid) ||
-	    !d1_dec_raw(&cursor, other, sizeof(other)) ||
-	    !d1_dec_finished(&cursor) || seqid != expected_seqid ||
+	    !count || count > 64 ||
 	    memcmp(issuer, control->admission_issuer, sizeof(issuer)) ||
-	    epoch != control->admission_authority_epoch ||
-	    memcmp(issuer, slot->auth.issuer.bytes, sizeof(issuer)) ||
-	    epoch != slot->auth.authority_epoch)
+	    memcmp(issuer, actor->auth.issuer.bytes, sizeof(issuer)) ||
+	    control->admission_authority_epoch != actor->auth.authority_epoch)
 		return false;
-	d2_stateid(control->admission_client_id, &expected_seqid, issuer);
-	if (memcmp(other, issuer, sizeof(other)))
-		return false;
-	slot->authority_seen = true;
-	for (i = 0; i < D1_MAX_TXNS; i++)
-		if (r->store->work[i].recovery_trusted &&
-		    !r->store->work[i].recovery_vouched &&
-		    d2_recovery_matches(r->store, &r->store->work[i], NULL,
-				&slot->auth)) {
-			candidate = &r->store->work[i];
-			break;
+	for (i = 0; i < count; i++) {
+		beneficiary[i] = NULL;
+		candidate[i] = NULL;
+		if (!d1_dec_u32(&cursor, &seqid) ||
+		    !d1_dec_raw(&cursor, other, sizeof(other)))
+			return false;
+		for (j = 0; j < D1_MAX_ADMISSIONS; j++) {
+			typeof(r->store->admissions[0]) *slot =
+				&r->store->admissions[j];
+
+			if (!slot->used)
+				continue;
+			d2_stateid(slot->id, &expected_seqid, expected_other);
+			if (seqid == expected_seqid &&
+			    !memcmp(other, expected_other, sizeof(other))) {
+				beneficiary[i] = slot;
+				break;
+			}
 		}
-	if (candidate) {
+		if (!beneficiary[i] || beneficiary[i]->authority_seen)
+			return false;
+		candidate[i] = (typeof(r->store->work[0]) *)d2_work_by_txn(
+			r->store, beneficiary[i]->recovery_txn_id);
+		if (!candidate[i] || !candidate[i]->recovery_trusted ||
+		    candidate[i]->recovery_vouched)
+			funded = false;
+	}
+	if (!d1_dec_finished(&cursor))
+		return false;
+	if (funded) {
 		if (h->total_bytes > r->store->recovery_allowance)
 			return false;
 		r->store->recovery_allowance -= h->total_bytes;
-		candidate->recovery_vouched = true;
+	}
+	for (i = 0; i < count; i++) {
+		beneficiary[i]->authority_seen = true;
+		memcpy(beneficiary[i]->auth.issuer.bytes, issuer, sizeof(issuer));
+		beneficiary[i]->auth.authority_epoch = epoch;
+		if (funded)
+			candidate[i]->recovery_vouched = true;
 	}
 	return true;
 }
@@ -4153,6 +4175,8 @@ d1_admission_id d2_store_admit_full(struct d2_store *s,
 		if (funded) {
 			candidate->recovery_trusted = true;
 			candidate->recovery_vouched = true;
+			d2_admission_slot(s, id.raw)->recovery_txn_id =
+				candidate->txn_id;
 		}
 	}
 	s->recovery_spend = false;
