@@ -102,6 +102,7 @@ static void test_payload(void)
 	struct d2_payload_object object = { 0 }, decoded;
 	uint8_t header[D2_PAYLOAD_ALIGN];
 	uint8_t content[4096], *bytes;
+	bool content_ok;
 	size_t written;
 
 	fill(a.store_uuid, 16, 0x10);
@@ -153,6 +154,15 @@ static void test_payload(void)
 	bytes[D2_PAYLOAD_HEADER_BYTES + 9] ^= 1;
 	check(!d2_payload_decode(bytes, written, a.store_uuid, &decoded),
 	      "payload content CRC rejects mutation");
+	check(d2_payload_decode_content(bytes, written, a.store_uuid, &decoded,
+					&content_ok) &&
+		      !content_ok &&
+		      decoded.payload_object_id == object.payload_object_id,
+	      "payload framing identifies isolated content damage");
+	bytes[36] ^= 1;
+	check(!d2_payload_decode_content(bytes, written, a.store_uuid, &decoded,
+					 &content_ok),
+	      "payload header damage remains structural");
 	free(bytes);
 }
 

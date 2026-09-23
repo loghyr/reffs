@@ -320,6 +320,9 @@ bool d2_payload_encode(const struct d2_payload_object *o, uint8_t *out,
 bool d2_payload_decode(const uint8_t *in, size_t len,
 		       const uint8_t expected_store[16],
 		       struct d2_payload_object *o);
+bool d2_payload_decode_content(const uint8_t *in, size_t len,
+			       const uint8_t expected_store[16],
+			       struct d2_payload_object *o, bool *content_ok);
 
 bool d2_wal_header_decode(const uint8_t *in, size_t len,
 			  const uint8_t expected_store[16],

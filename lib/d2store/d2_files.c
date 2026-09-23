@@ -847,11 +847,12 @@ static bool d2_payload_ref_matches(struct d2_files *f, uint64_t id,
 	struct d2_payload_object object;
 	uint8_t *allocation = NULL;
 	uint32_t status;
-	bool matches;
+	bool content_ok, matches;
 
 	if (!id)
 		return offset == 0 && content_len == 0;
-	status = d2_files_payload_read(f, offset, &object, &allocation);
+	status = d2_files_payload_read_content(f, offset, &object, &allocation,
+					       &content_ok);
 	matches = status == D1_OK && object.payload_object_id == id &&
 		  object.content_len == content_len;
 	free(allocation);
@@ -1032,15 +1033,33 @@ uint32_t d2_files_payload_read(struct d2_files *f, uint64_t offset,
 			       struct d2_payload_object *object,
 			       uint8_t **allocation)
 {
+	bool content_ok;
+	uint32_t status;
+
+	status = d2_files_payload_read_content(f, offset, object, allocation,
+					       &content_ok);
+	if (status == D1_OK && !content_ok) {
+		free(*allocation);
+		*allocation = NULL;
+		return D1_CHECKSUM;
+	}
+	return status;
+}
+
+uint32_t d2_files_payload_read_content(struct d2_files *f, uint64_t offset,
+				       struct d2_payload_object *object,
+				       uint8_t **allocation, bool *content_ok)
+{
 	uint8_t header[D2_PAYLOAD_HEADER_BYTES];
 	uint8_t *bytes;
 	uint64_t extent;
 	uint32_t content_len;
 
-	if (!f || !object || !allocation || offset < D2_PAYLOAD_ALIGN ||
-	    offset % D2_PAYLOAD_ALIGN)
+	if (!f || !object || !allocation || !content_ok ||
+	    offset < D2_PAYLOAD_ALIGN || offset % D2_PAYLOAD_ALIGN)
 		return 2;
 	*allocation = NULL;
+	*content_ok = false;
 	if (!d2_pread_all(f->payload_fd, header, sizeof(header), offset))
 		return 11;
 	content_len = ((uint32_t)header[120] << 24) |
@@ -1054,8 +1073,9 @@ uint32_t d2_files_payload_read(struct d2_files *f, uint64_t offset,
 	if (!bytes)
 		return 10;
 	if (!d2_pread_all(f->payload_fd, bytes, (size_t)extent, offset) ||
-	    !d2_payload_decode(bytes, (size_t)extent, f->super.store_uuid,
-			       object)) {
+	    !d2_payload_decode_content(bytes, (size_t)extent,
+				       f->super.store_uuid, object,
+				       content_ok)) {
 		free(bytes);
 		return 9;
 	}

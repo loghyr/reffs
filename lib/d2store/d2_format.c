@@ -446,17 +446,18 @@ bool d2_payload_encode(const struct d2_payload_object *o, uint8_t *out,
 	return true;
 }
 
-bool d2_payload_decode(const uint8_t *in, size_t len,
-		       const uint8_t expected_store[16],
-		       struct d2_payload_object *o)
+bool d2_payload_decode_content(const uint8_t *in, size_t len,
+			       const uint8_t expected_store[16],
+			       struct d2_payload_object *o, bool *content_ok)
 {
 	struct d1_cursor c;
 	uint8_t store[16];
 	uint32_t total, reserved, stored_crc;
 	uint64_t object_bytes;
 
-	if (!in || !o || len < D2_PAYLOAD_HEADER_BYTES + 4)
+	if (!in || !o || !content_ok || len < D2_PAYLOAD_HEADER_BYTES + 4)
 		return false;
+	*content_ok = false;
 	total = ((uint32_t)in[12] << 24) | ((uint32_t)in[13] << 16) |
 		((uint32_t)in[14] << 8) | in[15];
 	if (total < D2_PAYLOAD_HEADER_BYTES + 4 || total > len)
@@ -490,8 +491,20 @@ bool d2_payload_decode(const uint8_t *in, size_t len,
 	o->content_crc32c = stored_crc;
 	o->object_bytes = object_bytes;
 	memcpy(o->store_uuid, store, 16);
-	return stored_crc == d1_crc32c(o->content, o->content_len) &&
+	*content_ok = stored_crc == d1_crc32c(o->content, o->content_len) &&
 	       d2_content_checksum_ok(o);
+	return true;
+}
+
+bool d2_payload_decode(const uint8_t *in, size_t len,
+		       const uint8_t expected_store[16],
+		       struct d2_payload_object *o)
+{
+	bool content_ok;
+
+	return d2_payload_decode_content(in, len, expected_store, o,
+					 &content_ok) &&
+	       content_ok;
 }
 
 static void d2_enc_wal_header(struct d1_cursor *c,

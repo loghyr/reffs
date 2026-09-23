@@ -106,5 +106,8 @@ uint32_t d2_files_scan(struct d2_files *files, d2_scan_fn fn, void *arg,
 uint32_t d2_files_payload_read(struct d2_files *files, uint64_t offset,
 			       struct d2_payload_object *object,
 			       uint8_t **allocation);
+uint32_t d2_files_payload_read_content(struct d2_files *files, uint64_t offset,
+				       struct d2_payload_object *object,
+				       uint8_t **allocation, bool *content_ok);
 
 #endif /* REFFS_D2_FILES_H */

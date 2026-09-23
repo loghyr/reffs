@@ -1692,8 +1692,357 @@ int main(void)
 		if (payload_fd >= 0)
 			close(payload_fd);
 		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
-			      D1_IO,
-		      "scan fences a corrupt referenced payload object");
+			      D1_OK,
+		      "damaged superseded payload does not block restart");
+		if (store) {
+			uint32_t open_status;
+
+			admission = d2_store_admit(store, &object, 17,
+						   D1_RIGHT_READ);
+			open_status = d2_store_view_open(store, &object,
+							 admission, &selection,
+							 0, sizeof(payload),
+							 &view);
+			check(open_status == D1_CHECKSUM && !view,
+			      "damaged visible payload returns checksum after restart");
+			if (view) {
+				d1_view_close(view);
+				view = NULL;
+			}
+			d2_store_close(store);
+			store = NULL;
+		}
+	}
+	unlinkat(dirfd, "super", 0);
+	unlinkat(dirfd, "wal", 0);
+	unlinkat(dirfd, "payload", 0);
+	memset(&binding, 0, sizeof(binding));
+	check(d2_store_provision(dirfd, &config, &binding, &store) == D1_OK,
+	      "provision pending-corruption fixture");
+	if (store) {
+		uint8_t byte;
+		int payload_fd;
+
+		memcpy(reopen.files.expected_store_uuid, binding.store_uuid,
+		       16);
+		memcpy(reopen.files.expected_export_uuid, binding.export_uuid,
+		       16);
+		reopen.files.expected_root_ino = binding.root_ino;
+		admission = d2_store_admit(store, &object, 17,
+					   D1_RIGHT_READ | D1_RIGHT_WRITE |
+						   D1_RIGHT_SINGLE_WRITER);
+		memset(&env, 0, sizeof(env));
+		env.object = object;
+		env.admission = admission;
+		env.incarnation = d2_store_incarnation(store);
+		fill(env.key.origin.bytes, 16, 0xb7);
+		env.op = D1_OP_WRITE_BATCH;
+		guard = (struct d1_guard){ .never_written = true };
+		write_request(&env, 1, 0, 1, &guard, payload, sizeof(payload));
+		env.body.write.activate = false;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].phase == D2_PREPARED,
+		      "pending-corruption fixture stages prepared chunk");
+		staged_txn = result.entries[0].txn;
+		write_request(&env, 2, 1, 2, &guard, replacement,
+			      sizeof(replacement));
+		env.body.write.activate = false;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].phase == D2_PREPARED,
+		      "pending-corruption fixture stages finalized chunk");
+		repair_txn = result.entries[0].txn;
+		memset(&env.body, 0, sizeof(env.body));
+		env.key.sequence = 3;
+		env.op = D1_OP_FINALIZE_BATCH;
+		env.body.lifecycle.range_begin = 1;
+		env.body.lifecycle.range_end = 2;
+		env.body.lifecycle.count = 1;
+		env.body.lifecycle.entries[0].index = 1;
+		env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+		env.body.lifecycle.entries[0].owner.writer = 17;
+		env.body.lifecycle.entries[0].owner.co_id = 2;
+		env.body.lifecycle.entries[0].txn = repair_txn;
+		d2_store_verifier(store, env.body.lifecycle.prior_verifier);
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].phase == D2_FINALIZED,
+		      "pending-corruption fixture finalizes second chunk");
+		check(d2_store_close(store) == D1_OK,
+		      "close pending-corruption fixture");
+		store = NULL;
+		payload_fd = openat(dirfd, "payload", O_RDWR | O_CLOEXEC);
+		check(payload_fd >= 0 &&
+			      pread(payload_fd, &byte, 1,
+				    D2_PAYLOAD_ALIGN +
+					    D2_PAYLOAD_HEADER_BYTES) == 1 &&
+			      (++byte,
+			       pwrite(payload_fd, &byte, 1,
+				      D2_PAYLOAD_ALIGN +
+					      D2_PAYLOAD_HEADER_BYTES) == 1) &&
+			      pread(payload_fd, &byte, 1,
+				    3u * D2_PAYLOAD_ALIGN +
+					    D2_PAYLOAD_HEADER_BYTES) == 1 &&
+			      (++byte,
+			       pwrite(payload_fd, &byte, 1,
+				      3u * D2_PAYLOAD_ALIGN +
+					      D2_PAYLOAD_HEADER_BYTES) == 1) &&
+			      fdatasync(payload_fd) == 0,
+		      "damage prepared and finalized payload content");
+		if (payload_fd >= 0)
+			close(payload_fd);
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+			      D1_OK,
+		      "damaged pending payloads remain recoverable");
+		if (store) {
+			control_admission = d2_store_admit(store, &object, 17,
+							   D1_RIGHT_CONTROL);
+			fresh_admission =
+				d2_store_admit(store, &object, 17,
+					       D1_RIGHT_READ | D1_RIGHT_WRITE |
+						       D1_RIGHT_SINGLE_WRITER);
+			memset(&recovery, 0, sizeof(recovery));
+			recovery.object = object;
+			recovery.admission = control_admission;
+			recovery.incarnation = d2_store_incarnation(store);
+			fill(recovery.key.origin.bytes, 16, 0xb8);
+			recovery.key.sequence = 1;
+			recovery.op = D1_OP_RECOVERY_ADMIT;
+			recovery.body.control.count = 2;
+			recovery.body.control.txns[0] =
+				d2_store_txn_handle(store, staged_txn.raw);
+			recovery.body.control.txns[1] =
+				d2_store_txn_handle(store, repair_txn.raw);
+			recovery.body.control.old_admission =
+				d2_store_admission_handle(store, admission.raw);
+			recovery.body.control.new_admission_present = true;
+			recovery.body.control.new_admission = fresh_admission;
+			recovery.body.control.read_epoch_present = true;
+			check(d2_store_apply(store, &recovery, &result) ==
+					      D1_OK &&
+				      result.entries[0].status == D1_OK,
+			      "re-admit transactions with damaged payloads");
+			memset(&env, 0, sizeof(env));
+			env.object = object;
+			env.admission = fresh_admission;
+			env.incarnation = d2_store_incarnation(store);
+			fill(env.key.origin.bytes, 16, 0xb9);
+			env.key.sequence = 1;
+			env.op = D1_OP_FINALIZE_BATCH;
+			env.body.lifecycle.range_begin = 0;
+			env.body.lifecycle.range_end = 1;
+			env.body.lifecycle.count = 1;
+			env.body.lifecycle.entries[0].index = 0;
+			env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+			env.body.lifecycle.entries[0].owner.writer = 17;
+			env.body.lifecycle.entries[0].owner.co_id = 1;
+			env.body.lifecycle.entries[0].txn =
+				d2_store_txn_handle(store, staged_txn.raw);
+			d2_store_verifier(store,
+					  env.body.lifecycle.prior_verifier);
+			check(d2_store_apply(store, &env, &result) == D1_OK &&
+				      result.entries[0].status == D1_CHECKSUM &&
+				      result.entries[0].disposition ==
+					      D1_COMPLETED,
+			      "damaged prepared payload refuses finalize");
+			refused = env;
+			wal_bytes = d2_store_wal_bytes(store);
+			check(d2_store_apply(store, &refused, &result) ==
+					      D1_OK &&
+				      result.entries[0].status == D1_CHECKSUM &&
+				      d2_store_wal_bytes(store) == wal_bytes,
+			      "checksum refusal replays exactly");
+			env.key.sequence = 2;
+			env.op = D1_OP_COMMIT_BATCH;
+			env.body.lifecycle.range_begin = 1;
+			env.body.lifecycle.range_end = 2;
+			env.body.lifecycle.entries[0].index = 1;
+			env.body.lifecycle.entries[0].owner.co_id = 2;
+			env.body.lifecycle.entries[0].txn =
+				d2_store_txn_handle(store, repair_txn.raw);
+			check(d2_store_apply(store, &env, &result) == D1_OK &&
+				      result.entries[0].status == D1_CHECKSUM &&
+				      result.entries[0].disposition ==
+					      D1_COMPLETED,
+			      "damaged finalized payload refuses commit");
+			d2_store_crash(store);
+			store = NULL;
+			check(d2_store_rebind(dirfd, &reopen, &binding,
+					      &store) == D1_OK,
+			      "checksum publication refusals survive restart");
+			if (store) {
+				refused.admission = d2_store_admission_handle(
+					store, refused.admission.raw);
+				refused.body.lifecycle.entries[0].txn =
+					d2_store_txn_handle(
+						store, refused.body.lifecycle
+							       .entries[0]
+							       .txn.raw);
+				wal_bytes = d2_store_wal_bytes(store);
+				check(d2_store_apply(store, &refused,
+						     &result) == D1_OK &&
+					      result.entries[0].status ==
+						      D1_CHECKSUM &&
+					      d2_store_wal_bytes(store) ==
+						      wal_bytes,
+				      "restarted checksum refusal replays exactly");
+				d2_store_close(store);
+				store = NULL;
+			}
+		}
+	}
+	unlinkat(dirfd, "super", 0);
+	unlinkat(dirfd, "wal", 0);
+	unlinkat(dirfd, "payload", 0);
+	memset(&binding, 0, sizeof(binding));
+	check(d2_store_provision(dirfd, &config, &binding, &store) == D1_OK,
+	      "provision visible-corruption fixture");
+	if (store) {
+		uint8_t byte;
+		int payload_fd;
+
+		memcpy(reopen.files.expected_store_uuid, binding.store_uuid,
+		       16);
+		memcpy(reopen.files.expected_export_uuid, binding.export_uuid,
+		       16);
+		reopen.files.expected_root_ino = binding.root_ino;
+		admission = d2_store_admit(store, &object, 17,
+					   D1_RIGHT_READ | D1_RIGHT_WRITE |
+						   D1_RIGHT_SINGLE_WRITER);
+		memset(&env, 0, sizeof(env));
+		env.object = object;
+		env.admission = admission;
+		env.incarnation = d2_store_incarnation(store);
+		fill(env.key.origin.bytes, 16, 0xb6);
+		env.op = D1_OP_WRITE_BATCH;
+		guard = (struct d1_guard){ .never_written = true };
+		write_request(&env, 1, 0, 1, &guard, payload, sizeof(payload));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "visible-corruption fixture writes target chunk");
+		retired_exact = env;
+		write_request(&env, 2, 1, 2, &guard, replacement,
+			      sizeof(replacement));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "visible-corruption fixture writes healthy chunk");
+		write_request(&env, 3, 2, 3, &guard, payload, sizeof(payload));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK &&
+			      d2_store_guard(store, &object, 2, &guard) &&
+			      d2_store_visible(store, &object, 2, &predecessor),
+		      "visible-corruption fixture writes superseded chunk");
+		write_request(&env, 4, 2, 4, &guard, replacement,
+			      sizeof(replacement));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "visible-corruption fixture stages replacement chunk");
+		staged_txn = result.entries[0].txn;
+		memset(&env.body, 0, sizeof(env.body));
+		env.key.sequence = 5;
+		env.op = D1_OP_FINALIZE_BATCH;
+		env.body.lifecycle.range_begin = 2;
+		env.body.lifecycle.range_end = 3;
+		env.body.lifecycle.count = 1;
+		env.body.lifecycle.entries[0].index = 2;
+		env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+		env.body.lifecycle.entries[0].owner.writer = 17;
+		env.body.lifecycle.entries[0].owner.co_id = 4;
+		env.body.lifecycle.entries[0].txn = staged_txn;
+		env.body.lifecycle.entries[0].predecessor_present = true;
+		env.body.lifecycle.entries[0].predecessor = predecessor;
+		d2_store_verifier(store, env.body.lifecycle.prior_verifier);
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].phase == D2_FINALIZED,
+		      "visible-corruption fixture finalizes replacement chunk");
+		env.key.sequence = 6;
+		env.op = D1_OP_COMMIT_BATCH;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].phase == D2_COMMITTED,
+		      "visible-corruption fixture commits replacement chunk");
+		check(d2_store_close(store) == D1_OK,
+		      "close visible-corruption fixture");
+		store = NULL;
+		payload_fd = openat(dirfd, "payload", O_RDWR | O_CLOEXEC);
+		check(payload_fd >= 0 &&
+			      pread(payload_fd, &byte, 1,
+				    D2_PAYLOAD_ALIGN +
+					    D2_PAYLOAD_HEADER_BYTES) == 1 &&
+			      (++byte,
+			       pwrite(payload_fd, &byte, 1,
+				      D2_PAYLOAD_ALIGN +
+					      D2_PAYLOAD_HEADER_BYTES) == 1) &&
+			      pread(payload_fd, &byte, 1,
+				    5u * D2_PAYLOAD_ALIGN +
+					    D2_PAYLOAD_HEADER_BYTES) == 1 &&
+			      (++byte,
+			       pwrite(payload_fd, &byte, 1,
+				      5u * D2_PAYLOAD_ALIGN +
+					      D2_PAYLOAD_HEADER_BYTES) == 1) &&
+			      fdatasync(payload_fd) == 0,
+		      "damage visible and superseded payload content");
+		if (payload_fd >= 0)
+			close(payload_fd);
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+			      D1_OK,
+		      "visible payload damage does not block restart");
+		if (store) {
+			uint32_t damaged_status;
+
+			admission = d2_store_admit(store, &object, 17,
+						   D1_RIGHT_READ);
+			damaged_status = d2_store_view_open(
+				store, &object, admission, &selection, 0,
+				sizeof(payload), &view);
+			check(damaged_status == D1_CHECKSUM && !view,
+			      "damaged visible chunk returns checksum");
+			check(d2_store_view_open(store, &object, admission,
+						 &selection, sizeof(payload),
+						 2u * sizeof(payload),
+						 &view) == D1_OK &&
+				      d1_view_read(view, sizeof(payload),
+						   readback, sizeof(readback),
+						   &read_len) == D1_OK &&
+				      read_len == sizeof(readback) &&
+				      !memcmp(readback, replacement,
+					      sizeof(replacement)),
+			      "unrelated visible chunk remains readable");
+			if (view) {
+				d1_view_close(view);
+				view = NULL;
+			}
+			{
+				uint32_t open_status, read_status = D1_INVALID;
+
+				open_status = d2_store_view_open(
+					store, &object, admission, &selection,
+					2u * sizeof(payload),
+					3u * sizeof(payload), &view);
+				if (open_status == D1_OK)
+					read_status = d1_view_read(
+						view, 2u * sizeof(payload),
+						readback, sizeof(readback),
+						&read_len);
+				check(open_status == D1_OK &&
+					      read_status == D1_OK &&
+					      read_len == sizeof(readback) &&
+					      !memcmp(readback, replacement,
+						      sizeof(replacement)),
+				      "damaged superseded object has no visible consequence");
+			}
+			if (view) {
+				d1_view_close(view);
+				view = NULL;
+			}
+			wal_bytes = d2_store_wal_bytes(store);
+			retired_exact.admission = d2_store_admission_handle(
+				store, retired_exact.admission.raw);
+			check(d2_store_apply(store, &retired_exact, &result) ==
+					      D1_OK &&
+				      result.entries[0].status == D1_OK &&
+				      d2_store_wal_bytes(store) == wal_bytes,
+			      "damaged write still returns exact receipt");
+			d2_store_close(store);
+			store = NULL;
+		}
 	}
 	unlinkat(dirfd, "super", 0);
 	unlinkat(dirfd, "wal", 0);

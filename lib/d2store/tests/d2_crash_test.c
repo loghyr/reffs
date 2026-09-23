@@ -252,6 +252,23 @@ static void repair_cut(int dirfd, const uint8_t *token,
 	      "repair child exits at selected barrier");
 	d2_store_crash(store);
 	store = NULL;
+	if (point == D2_IO_WAL_DURABLE) {
+		uint8_t byte;
+		int payload_fd = openat(dirfd, "payload", O_RDWR | O_CLOEXEC);
+
+		check(payload_fd >= 0 &&
+			      pread(payload_fd, &byte, 1,
+				    5u * D2_PAYLOAD_ALIGN +
+					    D2_PAYLOAD_HEADER_BYTES) == 1 &&
+			      (++byte,
+			       pwrite(payload_fd, &byte, 1,
+				      5u * D2_PAYLOAD_ALIGN +
+					      D2_PAYLOAD_HEADER_BYTES) == 1) &&
+			      fdatasync(payload_fd) == 0,
+		      "damage staged repair payload after durable WAL");
+		if (payload_fd >= 0)
+			close(payload_fd);
+	}
 	memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
 	memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
 	reopen.files.expected_root_ino = binding.root_ino;

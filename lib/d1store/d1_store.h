@@ -417,6 +417,10 @@ bool d1_fixture_version_predecessor(struct d1_store *s, d1_version_id version,
 bool d1_fixture_version_retained(struct d1_store *s, d1_version_id version,
 				 bool *released);
 
+/* Restore the recorded checksum after recovery found damaged bytes. */
+bool d1_fixture_version_damage(struct d1_store *s, d1_version_id version,
+			       const struct d1_checksum *checksum);
+
 /*
  * Release the retention of one predecessor version.  Allowed only for a
  * version nothing makes visible and nothing else holds: it removes the

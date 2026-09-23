@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "d1_codec.h"
+#include "d1_digest.h"
 #include "d2_store.h"
 
 struct d2_store {
@@ -30,6 +31,11 @@ struct d2_store {
 	uint32_t tombstone_count;
 	uint8_t tombstones[D1_MAX_OBJECTS][32];
 	uint32_t registered_count;
+	uint32_t damaged_count;
+	struct {
+		uint64_t version_id;
+		struct d1_checksum checksum;
+	} damaged[D1_MAX_VERSIONS];
 	struct {
 		struct d1_objkey object;
 		uint8_t file_key[32];
@@ -567,6 +573,16 @@ d2_work_by_txn(const struct d2_store *s, uint64_t txn_id)
 	return NULL;
 }
 
+static bool d2_version_damaged(const struct d2_store *s, uint64_t version_id)
+{
+	uint32_t i;
+
+	for (i = 0; i < s->damaged_count; i++)
+		if (s->damaged[i].version_id == version_id)
+			return true;
+	return false;
+}
+
 static bool d2_work_set_phase(struct d2_store *s, uint64_t txn_id,
 			      uint32_t phase)
 {
@@ -575,6 +591,19 @@ static bool d2_work_set_phase(struct d2_store *s, uint64_t txn_id,
 	for (i = 0; i < D1_MAX_TXNS; i++)
 		if (s->work[i].used && s->work[i].txn_id == txn_id) {
 			s->work[i].phase = phase;
+			return true;
+		}
+	return false;
+}
+
+static bool d2_work_set_version(struct d2_store *s, uint64_t txn_id,
+				uint64_t version_id)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_TXNS; i++)
+		if (s->work[i].used && s->work[i].txn_id == txn_id) {
+			s->work[i].version_id = version_id;
 			return true;
 		}
 	return false;
@@ -1621,13 +1650,14 @@ static bool d2_replay_entry(struct d2_replay *r, const struct d2_wal_header *h,
 			    const struct d2_entry *e)
 {
 	struct d2_payload_object object;
+	struct d1_checksum recorded_checksum;
 	struct d1_envelope env = { 0 };
 	struct d1_result result;
 	struct d1_objkey *key;
 	struct d1_guard guard = { .never_written = true };
 	uint8_t *allocation = NULL, *scratch = NULL;
 	uint8_t digest[32];
-	bool ok = false;
+	bool content_ok, ok = false;
 
 	if (e->transition != D2_PREPARED && e->transition != D2_FINALIZED &&
 	    e->transition != D2_COMMITTED && e->transition != D2_ROLLED_BACK &&
@@ -1651,8 +1681,9 @@ static bool d2_replay_entry(struct d2_replay *r, const struct d2_wal_header *h,
 	if (e->status != D1_OK || !e->payload_object_id ||
 	    e->payload_object_id <= r->highest_payload_id)
 		return false;
-	r->status = d2_files_payload_read(r->files, e->payload_object_offset,
-					  &object, &allocation);
+	r->status = d2_files_payload_read_content(r->files,
+					  e->payload_object_offset, &object,
+					  &allocation, &content_ok);
 	if (r->status != D1_OK ||
 	    object.payload_object_id != e->payload_object_id ||
 	    object.content_len != e->payload_content_len)
@@ -1675,12 +1706,18 @@ static bool d2_replay_entry(struct d2_replay *r, const struct d2_wal_header *h,
 	env.body.write.entries[0].checksum.len = object.content_ck_len;
 	memcpy(env.body.write.entries[0].checksum.digest, object.content_ck,
 	       object.content_ck_len);
+	recorded_checksum = env.body.write.entries[0].checksum;
+	if (!content_ok &&
+	    !d1_checksum_compute(recorded_checksum.alg, object.content,
+				 object.content_len,
+				 &env.body.write.entries[0].checksum))
+		goto out;
 	scratch = malloc(D1_ENVELOPE_MAX);
 	if (!scratch)
 		goto out;
 	if (!d1_envelope_digest(&env, scratch, D1_ENVELOPE_MAX, digest))
 		goto out;
-	if (memcmp(digest, e->key.request_digest, sizeof(digest))) {
+	if (content_ok && memcmp(digest, e->key.request_digest, sizeof(digest))) {
 		env.body.write.activate = !env.body.write.activate;
 		if (!d1_envelope_digest(&env, scratch, D1_ENVELOPE_MAX,
 					digest) ||
@@ -1698,6 +1735,15 @@ static bool d2_replay_entry(struct d2_replay *r, const struct d2_wal_header *h,
 		    e->result_guard_never_written ||
 	    result.eof != e->extent_high_water)
 		goto out;
+	if (!content_ok) {
+		if (r->store->damaged_count >= D1_MAX_VERSIONS)
+			goto out;
+		r->store->damaged[r->store->damaged_count].version_id =
+			e->result_visible_object_id;
+		r->store->damaged[r->store->damaged_count].checksum =
+			recorded_checksum;
+		r->store->damaged_count++;
+	}
 	r->highest_payload_id = object.payload_object_id;
 	ok = d2_replay_receipt(r, key, e);
 out:
@@ -1904,6 +1950,20 @@ static uint32_t d2_model_next_incarnation(struct d2_store *s)
 	d1_store_free(s->model);
 	s->model = next;
 	return status;
+}
+
+static uint32_t d2_model_apply_damage(struct d2_store *s)
+{
+	uint32_t i;
+
+	for (i = 0; i < s->damaged_count; i++)
+		if (!d1_fixture_version_damage(
+			    s->model,
+			    d1_fixture_version_handle(
+				    s->model, s->damaged[i].version_id),
+			    &s->damaged[i].checksum))
+			return D1_IO;
+	return D1_OK;
 }
 
 static bool d2_bind_pending_admissions(struct d2_replay *r,
@@ -2413,12 +2473,14 @@ static bool d2_replay_cohort(struct d2_replay *r, const struct d2_wal_header *h,
 	struct d1_result result;
 	struct d2_entry admission_entry = { 0 };
 	struct d2_payload_object payloads[D1_BATCH_ENTRIES_MAX];
+	struct d1_checksum recorded_checksum[D1_BATCH_ENTRIES_MAX];
 	uint8_t *allocations[D1_BATCH_ENTRIES_MAX] = { 0 };
 	uint8_t digest[D1_DIGEST_BYTES];
 	struct d1_objkey *first_object;
 	uint64_t prior_eof;
 	uint32_t expected_extent, i, op;
-	bool kept_abort, ok = false;
+	bool content_ok[D1_BATCH_ENTRIES_MAX] = { 0 };
+	bool damaged = false, kept_abort, ok = false;
 
 	if (disk->transition == D2_REFUSED)
 		return d2_replay_cohort_refusal(r, disk);
@@ -2514,9 +2576,9 @@ static bool d2_replay_cohort(struct d2_replay *r, const struct d2_wal_header *h,
 			if (!member->payload_object_id ||
 			    member->payload_object_id <= r->highest_payload_id)
 				goto out;
-			r->status = d2_files_payload_read(
+			r->status = d2_files_payload_read_content(
 				r->files, member->payload_object_offset,
-				&payloads[i], &allocations[i]);
+				&payloads[i], &allocations[i], &content_ok[i]);
 			if (r->status != D1_OK ||
 			    payloads[i].payload_object_id !=
 				    member->payload_object_id ||
@@ -2534,6 +2596,16 @@ static bool d2_replay_cohort(struct d2_replay *r, const struct d2_wal_header *h,
 			entry->checksum.len = payloads[i].content_ck_len;
 			memcpy(entry->checksum.digest, payloads[i].content_ck,
 			       payloads[i].content_ck_len);
+			recorded_checksum[i] = entry->checksum;
+			if (!content_ok[i]) {
+				damaged = true;
+				if (!d1_checksum_compute(
+					    recorded_checksum[i].alg,
+					    payloads[i].content,
+					    payloads[i].content_len,
+					    &entry->checksum))
+					goto out;
+			}
 		} else {
 			entry->custody_present = true;
 			entry->custody = d1_fixture_custody_handle(
@@ -2559,7 +2631,7 @@ static bool d2_replay_cohort(struct d2_replay *r, const struct d2_wal_header *h,
 		d1_store_verifier(r->store->model,
 				  env.body.repair.prior_verifier);
 	}
-	if (!kept_abort &&
+	if (!kept_abort && !damaged &&
 	    (!d2_env_digest(&env, digest) ||
 	     memcmp(digest, disk->key.request_digest, D1_DIGEST_BYTES)))
 		goto out;
@@ -2569,6 +2641,30 @@ static bool d2_replay_cohort(struct d2_replay *r, const struct d2_wal_header *h,
 	    memcmp(result.entries[0].verifier, disk->result_verifier,
 		   D1_VERIFIER_BYTES))
 		goto out;
+	if (op == D1_OP_PREPARE_REPAIR)
+		for (i = 0; i < disk->member_count; i++) {
+			d1_txn_id txn;
+			d1_version_id version;
+
+			if (!d1_fixture_repair_member(
+				    r->store->model,
+				    d1_fixture_repair_handle(r->store->model,
+						     disk->cohort_id),
+				    i, &txn, &version) ||
+			    txn.raw != disk->members[i].member_txn_id ||
+			    !version.raw ||
+			    !d2_work_set_version(r->store, txn.raw, version.raw))
+				goto out;
+			if (!content_ok[i]) {
+				if (r->store->damaged_count >= D1_MAX_VERSIONS)
+					goto out;
+				r->store->damaged[r->store->damaged_count]
+					.version_id = version.raw;
+				r->store->damaged[r->store->damaged_count]
+					.checksum = recorded_checksum[i];
+				r->store->damaged_count++;
+			}
+		}
 	expected_extent = result.eof > prior_eof ? D2_EXTENT_EXTEND :
 			  result.eof < prior_eof ? D2_EXTENT_SHRINK :
 						 D2_EXTENT_UNCHANGED;
@@ -2984,6 +3080,9 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 	}
 	s->recovery_allowance = 0;
 	status = d2_model_next_incarnation(s);
+	if (status != D1_OK)
+		goto fail;
+	status = d2_model_apply_damage(s);
 	if (status != D1_OK)
 		goto fail;
 	first = d2_files_last_scan(files);
@@ -3845,6 +3944,9 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 		return D1_IO;
 	if (!refused && env->op == D1_OP_PREPARE_REPAIR) {
 		for (i = 0; i < repair->count; i++) {
+			d1_txn_id txn;
+			d1_version_id version;
+
 			saved->members[i].payload_id = payload_ids[i];
 			saved->members[i].payload_offset = payload_offsets[i];
 			saved->members[i].payload_len =
@@ -3856,6 +3958,12 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 			memcpy(saved->members[i].payload_ck,
 			       repair->entries[i].checksum.digest,
 			       repair->entries[i].checksum.len);
+			if (!d1_fixture_repair_member(s->model,
+						      repair->cohort, i, &txn,
+						      &version) ||
+			    !version.raw ||
+			    !d2_work_set_version(s, txn.raw, version.raw))
+				return D1_IO;
 		}
 	}
 	if ((!refused || kept_abort) && saved && env->op != D1_OP_UNLOCK) {
@@ -3881,13 +3989,15 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 			struct d1_result *result)
 {
+	const typeof(s->work[0]) *damaged_work = NULL;
+	typeof(s->cohorts[0]) *damaged_cohort = NULL;
 	struct d1_result probe;
 	uint8_t *before = NULL, *after = NULL;
 	uint8_t digest[D1_DIGEST_BYTES];
 	uint8_t file_key[32];
 	size_t before_len = 0, after_len = 0;
 	uint64_t prior_eof;
-	uint32_t status, persist;
+	uint32_t damaged_member, status, persist;
 	bool predecessor_present = false;
 	d1_version_id predecessor = d1_version_none();
 
@@ -3980,6 +4090,62 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 		return status;
 	}
 	prior_eof = d1_store_eof(s->model, &env->object);
+	if (env->op == D1_OP_FINALIZE_BATCH ||
+	    env->op == D1_OP_COMMIT_BATCH) {
+		damaged_work = d2_work_by_txn(
+			s, env->body.lifecycle.entries[0].txn.raw);
+		if (damaged_work &&
+		    d2_version_damaged(s, damaged_work->version_id)) {
+			*result = probe;
+			if (env->op == D1_OP_COMMIT_BATCH && result->index_epoch)
+				result->index_epoch--;
+			result->eof = prior_eof;
+			result->disposition = D1_COMPLETED;
+			result->entries[0].status = D1_CHECKSUM;
+			result->entries[0].disposition = D1_COMPLETED;
+			result->entries[0].phase = damaged_work->phase;
+			status = D1_OK;
+			persist = d2_persist_entry(s, env, result, prior_eof);
+			goto recorded;
+		}
+	}
+	if (env->op == D1_OP_FINALIZE_REPAIR ||
+	    env->op == D1_OP_COMMIT_REPAIR) {
+		damaged_cohort = d2_cohort_find(s, env->body.repair.cohort.raw);
+		for (damaged_member = 0;
+		     damaged_cohort &&
+		     damaged_member < env->body.repair.count;
+		     damaged_member++) {
+			damaged_work = d2_work_by_txn(
+				s, env->body.repair.entries[damaged_member].txn.raw);
+			if (damaged_work &&
+			    d2_version_damaged(s, damaged_work->version_id))
+				break;
+		}
+		if (damaged_cohort &&
+		    damaged_member < env->body.repair.count) {
+			*result = probe;
+			if (env->op == D1_OP_COMMIT_REPAIR &&
+			    result->index_epoch)
+				result->index_epoch--;
+			result->eof = prior_eof;
+			result->disposition = D1_COMPLETED;
+			result->entries[0].status = D1_CHECKSUM;
+			result->entries[0].disposition = D1_COMPLETED;
+			result->entries[0].phase = damaged_cohort->phase;
+			result->entries[0].member_present = true;
+			result->entries[0].member = damaged_member;
+			if (!d1_store_guard(s->model, &damaged_work->object,
+					    damaged_work->index,
+					    &result->entries[0].guard)) {
+				status = D1_IO;
+				goto out;
+			}
+			status = D1_OK;
+			persist = d2_persist_cohort(s, env, result, prior_eof);
+			goto recorded;
+		}
+	}
 	status = d1_store_journal_snapshot(s->model, &before, &before_len);
 	if (status != D1_OK)
 		goto out;
@@ -4001,6 +4167,7 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 		persist = d2_persist_cohort(s, env, result, prior_eof);
 	else
 		persist = d2_persist_entry(s, env, result, prior_eof);
+recorded:
 	if (persist != D1_OK) {
 		s->fenced = true;
 		status = persist;

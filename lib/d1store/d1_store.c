@@ -6276,6 +6276,24 @@ bool d1_fixture_version_retained(struct d1_store *s, d1_version_id version,
 	return found;
 }
 
+bool d1_fixture_version_damage(struct d1_store *s, d1_version_id version,
+			       const struct d1_checksum *checksum)
+{
+	struct d1_version *row;
+	bool found = false;
+
+	if (!s || !checksum)
+		return false;
+	pthread_mutex_lock(&s->lock);
+	row = d1_version_find(s, version);
+	if (row && d1_store_serving(s)) {
+		row->checksum = *checksum;
+		found = true;
+	}
+	pthread_mutex_unlock(&s->lock);
+	return found;
+}
+
 d1_custody_id d1_fixture_custody(struct d1_store *s, d1_version_id version)
 {
 	struct d1_control_request request;
