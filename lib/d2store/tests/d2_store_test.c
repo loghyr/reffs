@@ -408,13 +408,80 @@ out:
 	return ok;
 }
 
+static bool repair_rebind_race_log(int dirfd, uint64_t begin, uint64_t end,
+				   const struct d2_binding *binding,
+				   uint64_t cohort_id, bool *rebind_first)
+{
+	struct d2_wal_header header;
+	struct d2_control control;
+	struct d2_cohort cohort;
+	uint8_t *wal;
+	uint64_t at = begin, cohort_lsn = 0, rebind_lsn = 0;
+	uint32_t cohort_status = 0, cohort_transition = 0, cohort_flags = 0;
+	uint32_t rebind_status = 0, rebind_transition = 0;
+	unsigned int cohorts = 0, rebinds = 0;
+	int fd = -1;
+	bool ok = false;
+
+	wal = malloc((size_t)end);
+	if (!wal)
+		return false;
+	fd = openat(dirfd, "wal", O_RDONLY | O_CLOEXEC);
+	if (fd < 0 || pread(fd, wal, (size_t)end, 0) != (ssize_t)end)
+		goto out;
+	while (at < end &&
+	       d2_wal_header_decode(wal + at, (size_t)(end - at),
+				    binding->store_uuid, binding->wal_uuid,
+				    &header)) {
+		if (header.family == D2_REC_CONTROL &&
+		    d2_control_decode(wal + at, header.total_bytes, &header,
+				      &control) &&
+		    control.subtype == D2_CTL_RECOVERY_ADMIT) {
+			rebinds++;
+			rebind_lsn = header.lsn;
+			rebind_status = control.status;
+			rebind_transition = control.transition;
+		} else if (header.family == D2_REC_COHORT &&
+			   d2_cohort_decode(wal + at, header.total_bytes, &header,
+					    &cohort) &&
+			   cohort.cohort_id == cohort_id) {
+			cohorts++;
+			cohort_lsn = header.lsn;
+			cohort_status = cohort.status;
+			cohort_transition = cohort.transition;
+			cohort_flags = cohort.flags;
+		}
+		at += header.total_bytes;
+	}
+	if (at != end || cohorts != 1 || rebinds != 1 ||
+	    cohort_lsn == rebind_lsn)
+		goto out;
+	*rebind_first = rebind_lsn < cohort_lsn;
+	ok = !(cohort_flags & 2u) &&
+	     (*rebind_first ?
+		      rebind_transition == D2_COMMITTED &&
+			      rebind_status == D1_OK &&
+			      cohort_transition == D2_REFUSED &&
+			      cohort_status == D1_STALE_AUTH :
+		      cohort_transition == D2_ABORTED &&
+			      cohort_status == D1_OK &&
+			      rebind_transition == D2_REFUSED &&
+			      rebind_status == D1_INVALID);
+out:
+	if (fd >= 0)
+		close(fd);
+	free(wal);
+	return ok;
+}
+
 static bool admitted_error_repair(struct d2_store *store,
 				  const struct d1_objkey *object,
 				  d1_admission_id admission, uint32_t writer,
 				  uint64_t index, uint8_t origin_seed,
 				  const uint8_t *payload, uint32_t payload_len,
 				  struct d1_envelope *prepare,
-				  d1_repair_id *cohort_out)
+				  d1_repair_id *cohort_out,
+				  d1_custody_id *custody_out)
 {
 	struct d1_envelope env = { 0 };
 	struct d1_result result;
@@ -439,6 +506,8 @@ static bool admitted_error_repair(struct d2_store *store,
 	custody = d2_store_custody(store, version);
 	if (!d1_custody_live(custody))
 		return false;
+	if (custody_out)
+		*custody_out = custody;
 	memset(&env.body, 0, sizeof(env.body));
 	env.key.sequence = 2;
 	env.op = D1_OP_MARK_ERROR;
@@ -3224,7 +3293,7 @@ int main(void)
 			    !admitted_error_repair(
 				    store, &object, client_id, client.writer, i,
 				    (uint8_t)(0xa0 + i), payload, sizeof(payload),
-				    &race.transition, &cohorts[i])) {
+				    &race.transition, &cohorts[i], NULL)) {
 				races_ok = false;
 				break;
 			}
@@ -3303,6 +3372,198 @@ int main(void)
 		}
 		check(store && replay_ok,
 		      "repair-revoke race receipts replay exactly");
+	}
+	if (store) {
+		check(d2_store_close(store) == D1_OK,
+		      "close repair-revoke race fixture");
+		store = NULL;
+	}
+	unlinkat(dirfd, "super", 0);
+	unlinkat(dirfd, "wal", 0);
+	unlinkat(dirfd, "payload", 0);
+	memset(&binding, 0, sizeof(binding));
+	check(d2_store_provision(dirfd, &config, &binding, &store) == D1_OK,
+	      "provision repair-rebind abort race fixture");
+	if (store) {
+		enum { REPAIR_REBIND_RUNS = 4 };
+		struct d1_envelope aborts[REPAIR_REBIND_RUNS];
+		struct d1_envelope recoveries[REPAIR_REBIND_RUNS];
+		d1_repair_id cohorts[REPAIR_REBIND_RUNS];
+		d1_admission_id old_admissions[REPAIR_REBIND_RUNS];
+		d1_admission_id new_admissions[REPAIR_REBIND_RUNS];
+		uint64_t txn_ids[REPAIR_REBIND_RUNS];
+		bool rebind_first[REPAIR_REBIND_RUNS] = { 0 };
+		d1_admission_id recovery_actor;
+		unsigned int i;
+		bool races_ok = true, replay_ok = true;
+
+		recovery_actor = d2_store_admit(store, &object, 120,
+						D1_RIGHT_CONTROL);
+		for (i = 0; i < REPAIR_REBIND_RUNS; i++) {
+			struct d1_envelope prepare;
+			struct rebind_race race = { .store = store };
+			d1_custody_id custody;
+			pthread_t abort_thread, recovery_thread;
+			uint32_t repair_phase = 0, txn_phase = 0, members = 0;
+			uint64_t admission_id = 0, begin, end;
+			int abort_created, recovery_created;
+			bool log_ok, repair_ok, run_ok, txn_ok;
+
+			old_admissions[i] = d2_store_admit(
+				store, &object, 130 + i,
+				D1_RIGHT_READ | D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+					D1_RIGHT_SINGLE_WRITER);
+			if (!d1_admission_live(old_admissions[i]) ||
+			    !admitted_error_repair(
+				    store, &object, old_admissions[i], 130 + i,
+				    8 + i, (uint8_t)(0xb0 + i), payload,
+				    sizeof(payload), &prepare, &cohorts[i], &custody)) {
+				races_ok = false;
+				break;
+			}
+			txn_ids[i] = prepare.body.repair.entries[0].txn.raw;
+			new_admissions[i] = d2_store_admit(
+				store, &object, 130 + i,
+				D1_RIGHT_READ | D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+					D1_RIGHT_SINGLE_WRITER);
+			memset(&race.transition, 0, sizeof(race.transition));
+			race.transition.object = object;
+			race.transition.admission = old_admissions[i];
+			race.transition.incarnation = d2_store_incarnation(store);
+			fill(race.transition.key.origin.bytes,
+			     sizeof(race.transition.key.origin.bytes),
+			     (uint8_t)(0xd0 + i));
+			race.transition.key.sequence = 1;
+			race.transition.op = D1_OP_ABORT_REPAIR;
+			race.transition.body.repair.range_begin = 8 + i;
+			race.transition.body.repair.range_end = 9 + i;
+			race.transition.body.repair.count = 1;
+			race.transition.body.repair.cohort_present = true;
+			race.transition.body.repair.cohort = cohorts[i];
+			race.transition.body.repair.phase_present = true;
+			race.transition.body.repair.phase = D2_ADMITTED;
+			race.transition.body.repair.entries[0].index = 8 + i;
+			race.transition.body.repair.entries[0].owner =
+				prepare.body.repair.entries[0].owner;
+			race.transition.body.repair.entries[0].custody_present = true;
+			race.transition.body.repair.entries[0].custody = custody;
+			memset(&race.recovery, 0, sizeof(race.recovery));
+			race.recovery.object = object;
+			race.recovery.admission = recovery_actor;
+			race.recovery.incarnation = d2_store_incarnation(store);
+			fill(race.recovery.key.origin.bytes,
+			     sizeof(race.recovery.key.origin.bytes),
+			     (uint8_t)(0xe0 + i));
+			race.recovery.key.sequence = 1;
+			race.recovery.op = D1_OP_RECOVERY_ADMIT;
+			race.recovery.body.control.count = 1;
+			race.recovery.body.control.txns[0] =
+				d2_store_txn_handle(store, txn_ids[i]);
+			race.recovery.body.control.old_admission = old_admissions[i];
+			race.recovery.body.control.new_admission_present = true;
+			race.recovery.body.control.new_admission = new_admissions[i];
+			race.recovery.body.control.read_epoch_present = true;
+			atomic_init(&race.go, false);
+			begin = d2_store_wal_bytes(store);
+			abort_created = pthread_create(&abort_thread, NULL,
+					       race_rebind_transition, &race);
+			recovery_created = abort_created ? -1 :
+				pthread_create(&recovery_thread, NULL,
+					       race_recovery_admit, &race);
+			atomic_store_explicit(&race.go, true, memory_order_release);
+			if (!abort_created)
+				pthread_join(abort_thread, NULL);
+			if (!recovery_created)
+				pthread_join(recovery_thread, NULL);
+			end = d2_store_wal_bytes(store);
+			log_ok = repair_rebind_race_log(
+				dirfd, begin, end, &binding, cohorts[i].raw,
+				&rebind_first[i]);
+			repair_ok = d2_store_repair_state(
+				store, cohorts[i].raw, &repair_phase, &members);
+			txn_ok = d2_store_txn_state(store, txn_ids[i], &txn_phase,
+						     &admission_id);
+			run_ok = !abort_created && !recovery_created &&
+				race.transition_status == D1_OK &&
+				race.recovery_status == D1_OK &&
+				log_ok &&
+				race.transition_result.entries[0].status ==
+					(rebind_first[i] ? D1_STALE_AUTH : D1_OK) &&
+				race.recovery_result.entries[0].status ==
+					(rebind_first[i] ? D1_OK : D1_INVALID) &&
+				repair_ok &&
+					repair_phase == (rebind_first[i] ? D2_ADMITTED :
+								 D2_ABORTED) &&
+					members == 1 &&
+				(!rebind_first[i] ||
+				 (txn_ok && txn_phase == D2_ADMITTED &&
+				  admission_id == new_admissions[i].raw));
+			races_ok = races_ok && run_ok;
+			aborts[i] = race.transition;
+			recoveries[i] = race.recovery;
+		}
+		check(races_ok,
+		      "repair abort serializes with recovery admission");
+		memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
+		memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
+		reopen.files.expected_root_ino = binding.root_ino;
+		d2_store_crash(store);
+		store = NULL;
+		check(races_ok &&
+			      d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+				      D1_OK,
+		      "repair abort-rebind race log replays");
+		if (store && races_ok) {
+			wal_bytes = d2_store_wal_bytes(store);
+			for (i = 0; i < REPAIR_REBIND_RUNS; i++) {
+				uint32_t phase, members;
+				uint64_t admission_id;
+
+				aborts[i].admission = d2_store_admission_handle(
+					store, aborts[i].admission.raw);
+				aborts[i].body.repair.cohort = d2_store_repair_handle(
+					store, aborts[i].body.repair.cohort.raw);
+				aborts[i].body.repair.entries[0].custody =
+					d2_store_custody_handle(
+						store,
+						aborts[i].body.repair.entries[0].custody.raw);
+				recoveries[i].admission = d2_store_admission_handle(
+					store, recoveries[i].admission.raw);
+				recoveries[i].body.control.txns[0] =
+					d2_store_txn_handle(
+						store,
+						recoveries[i].body.control.txns[0].raw);
+				recoveries[i].body.control.old_admission =
+					d2_store_admission_handle(
+						store,
+						recoveries[i].body.control.old_admission.raw);
+				recoveries[i].body.control.new_admission =
+					d2_store_admission_handle(
+						store,
+						recoveries[i].body.control.new_admission.raw);
+				if (d2_store_apply(store, &aborts[i], &result) != D1_OK ||
+				    result.entries[0].status !=
+					    (rebind_first[i] ? D1_STALE_AUTH : D1_OK) ||
+				    d2_store_apply(store, &recoveries[i], &result) !=
+						    D1_OK ||
+				    result.entries[0].status !=
+					    (rebind_first[i] ? D1_OK : D1_INVALID) ||
+				    !d2_store_repair_state(store, cohorts[i].raw, &phase,
+							   &members) ||
+				    phase != (rebind_first[i] ? D2_ADMITTED :
+							     D2_ABORTED) ||
+				    members != 1 ||
+				    (rebind_first[i] &&
+				     (!d2_store_txn_state(store, txn_ids[i], &phase,
+							 &admission_id) ||
+				      phase != D2_ADMITTED ||
+				      admission_id != new_admissions[i].raw)) ||
+				    d2_store_wal_bytes(store) != wal_bytes)
+					replay_ok = false;
+			}
+		}
+		check(store && replay_ok,
+		      "repair abort-rebind race receipts replay exactly");
 	}
 
 done:
