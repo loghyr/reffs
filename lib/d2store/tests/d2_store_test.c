@@ -115,6 +115,7 @@ int main(void)
 	struct d2_store *store = NULL;
 	struct d1_objkey object = { 0 };
 	struct d1_envelope env = { 0 };
+	struct d1_envelope expired;
 	struct d1_envelope refused;
 	struct d1_envelope unsupported;
 	struct d1_result result = { 0 };
@@ -384,6 +385,64 @@ int main(void)
 					      D2_ROLLED_BACK &&
 				      d2_store_wal_bytes(store) == wal_bytes,
 			      "restart returns exact rollback receipt");
+		}
+	}
+	if (store) {
+		admission = d2_store_admit(store, &object, 17,
+					   D1_RIGHT_READ | D1_RIGHT_WRITE |
+						   D1_RIGHT_SINGLE_WRITER);
+		env.admission = admission;
+		env.incarnation = d2_store_incarnation(store);
+		env.op = D1_OP_WRITE_BATCH;
+		guard = (struct d1_guard){ .never_written = true };
+		write_request(&env, 11, 9, 8, &guard, payload, sizeof(payload));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "expiry fixture records its admission");
+		d2_store_expire(store, admission);
+		write_request(&env, 12, 10, 9, &guard, payload,
+			      sizeof(payload));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_STALE_AUTH,
+		      "durable lease expiry refuses later work");
+		expired = env;
+		admission = d2_store_admit(store, &object, 17,
+					   D1_RIGHT_READ | D1_RIGHT_WRITE |
+						   D1_RIGHT_SINGLE_WRITER);
+		env.admission = admission;
+		write_request(&env, 13, 11, 10, &guard, replacement,
+			      sizeof(replacement));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "revocation fixture records its admission");
+		d2_store_revoke(store, admission);
+		write_request(&env, 14, 12, 11, &guard, replacement,
+			      sizeof(replacement));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_STALE_AUTH,
+		      "durable stateid revocation refuses later work");
+		d2_store_crash(store);
+		store = NULL;
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+			      D1_OK,
+		      "liveness controls replay in LSN order");
+		if (store) {
+			env.admission =
+				d2_store_admission_handle(store, admission.raw);
+			wal_bytes = d2_store_wal_bytes(store);
+			check(d2_store_apply(store, &env, &result) == D1_OK &&
+				      result.entries[0].status ==
+					      D1_STALE_AUTH &&
+				      d2_store_wal_bytes(store) == wal_bytes,
+			      "restart returns receipt after stateid revocation");
+			expired.admission = d2_store_admission_handle(
+				store, expired.admission.raw);
+			check(d2_store_apply(store, &expired, &result) ==
+					      D1_OK &&
+				      result.entries[0].status ==
+					      D1_STALE_AUTH &&
+				      d2_store_wal_bytes(store) == wal_bytes,
+			      "restart returns receipt after lease expiry");
 		}
 	}
 	if (store) {
