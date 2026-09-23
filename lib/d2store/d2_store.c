@@ -2942,8 +2942,11 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 	if (status != D1_OK)
 		goto fail;
 	status = d2_files_scan(files, d2_replay_record, &replay, &scan, false);
-	if (status != D1_OK || replay.status != D1_OK)
+	if (status != D1_OK || replay.status != D1_OK) {
+		if (status != D1_NOSPC && replay.status != D1_NOSPC)
+			(void)d2_files_super_update(files, D2_SB_FENCED);
 		goto fail;
+	}
 	if (s->retired) {
 		if (d2_files_super(files)->state != D2_SB_RETIRED) {
 			status = d2_files_super_update(files, D2_SB_RETIRED);

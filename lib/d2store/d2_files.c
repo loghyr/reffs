@@ -515,10 +515,13 @@ uint32_t d2_files_rebind(int dirfd, const struct d2_rebind *r,
 		goto fail;
 	}
 	status = d2_files_scan(f, NULL, NULL, &scan, true);
-	if (status != 1)
+	if (status != 1) {
+		(void)d2_files_super_update(f, D2_SB_FENCED);
 		goto fail;
+	}
 	if (f->super.wal_durable_lsn > scan.last_lsn ||
 	    f->super.wal_durable_bytes > scan.valid_bytes) {
+		(void)d2_files_super_update(f, D2_SB_FENCED);
 		status = 11;
 		goto fail;
 	}

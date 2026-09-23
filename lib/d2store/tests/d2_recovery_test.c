@@ -144,6 +144,18 @@ int main(void)
 		      fdatasync(wal) == 0,
 	      "restore complete record");
 	close(wal);
+	check(d2_files_rebind(dirfd, &rebind, &binding, &files) != D1_OK &&
+		      !files,
+	      "persisted fence survives byte restoration");
+	clean_root(dirfd);
+	memset(&binding, 0, sizeof(binding));
+	check(d2_files_provision(dirfd, &provision, &binding, &files) == D1_OK,
+	      "reprovision after administrative fence");
+	if (!files)
+		goto done;
+	setup_rebind(&rebind, &binding, token, sizeof(token));
+	d2_files_crash(files);
+	files = NULL;
 	wal = openat(dirfd, "wal", O_RDWR | O_CLOEXEC);
 	check(wal >= 0 &&
 		      pread(wal, start, sizeof(start), 0) ==
