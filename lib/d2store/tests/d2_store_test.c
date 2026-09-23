@@ -163,12 +163,14 @@ int main(void)
 	struct d1_objkey object = { 0 };
 	struct d1_envelope env = { 0 };
 	struct d1_envelope committed_rollback;
+	struct d1_envelope conflict;
 	struct d1_envelope aborted_prepare;
 	struct d1_envelope expired;
 	struct d1_envelope error_unlock;
 	struct d1_envelope nopre;
 	struct d1_envelope marked;
 	struct d1_envelope repair_unlock;
+	struct d1_envelope stale_incarnation;
 	struct d1_envelope recovery;
 	struct d1_envelope refused;
 	struct d1_envelope refused_clear;
@@ -302,6 +304,26 @@ int main(void)
 	check(d2_store_apply(store, &env, &result) == D1_OK &&
 		      d2_store_wal_bytes(store) == wal_bytes,
 	      "exact replay appends nothing");
+	conflict = env;
+	conflict.body.write.activate = !conflict.body.write.activate;
+	check(d2_store_apply(store, &conflict, &result) == D1_OK &&
+		      result.entries[0].status == D1_REPLAY_CONFLICT &&
+		      d2_store_wal_bytes(store) == wal_bytes,
+	      "changed request under an operation key is refused");
+	stale_incarnation = env;
+	stale_incarnation.key.sequence = 98;
+	stale_incarnation.incarnation++;
+	check(d2_store_apply(store, &stale_incarnation, &result) == D1_OK &&
+		      result.entries[0].status == D1_STALE_AUTH,
+	      "wrong incarnation is durably refused");
+	wal_bytes = d2_store_wal_bytes(store);
+	memset(env.key.origin.bytes, 0, sizeof(env.key.origin.bytes));
+	env.key.sequence = 97;
+	check(d2_store_apply(store, &env, &result) == D1_INVALID &&
+		      d2_store_wal_bytes(store) == wal_bytes,
+	      "zero operation-key origin is rejected before recording");
+	env = conflict;
+	env.body.write.activate = !env.body.write.activate;
 	unsupported = env;
 	unsupported.key.sequence = 99;
 	unsupported.op = D1_OP_LEASE_REAP;
@@ -357,6 +379,19 @@ int main(void)
 			      result.entries[0].status == D1_GUARDED &&
 			      d2_store_wal_bytes(store) == wal_bytes,
 		      "restart returns exact refused receipt");
+		conflict.admission = d2_store_admission_handle(
+			store, conflict.admission.raw);
+		check(d2_store_apply(store, &conflict, &result) == D1_OK &&
+			      result.entries[0].status == D1_REPLAY_CONFLICT &&
+			      d2_store_wal_bytes(store) == wal_bytes,
+		      "restart preserves request-digest conflict");
+		stale_incarnation.admission = d2_store_admission_handle(
+			store, stale_incarnation.admission.raw);
+		check(d2_store_apply(store, &stale_incarnation, &result) ==
+			      D1_OK &&
+			      result.entries[0].status == D1_STALE_AUTH &&
+			      d2_store_wal_bytes(store) == wal_bytes,
+		      "restart returns wrong-incarnation refusal");
 	}
 	if (store) {
 		env.admission = d2_store_admission_handle(store, admission.raw);
