@@ -85,8 +85,11 @@ int main(void)
 	struct d2_rebind rebind = { 0 };
 	struct d2_binding binding = { 0 };
 	struct d2_scan_result scan;
+	struct d2_start start_body;
+	struct d2_wal_header header;
 	struct d2_files *files = NULL;
 	uint8_t token[16], tail[23], saved = 0, *overlong;
+	uint8_t start[D2_START_RECORD_BYTES], forged[D2_START_RECORD_BYTES];
 	uint32_t status;
 	int dirfd, wal;
 	ssize_t done;
@@ -141,11 +144,48 @@ int main(void)
 		      fdatasync(wal) == 0,
 	      "restore complete record");
 	close(wal);
+	wal = openat(dirfd, "wal", O_RDWR | O_CLOEXEC);
+	check(wal >= 0 &&
+		      pread(wal, start, sizeof(start), 0) ==
+			      (ssize_t)sizeof(start) &&
+		      d2_wal_header_decode(start, sizeof(start),
+				   binding.store_uuid, binding.wal_uuid,
+				   &header) &&
+		      d2_start_decode(start, sizeof(start), &header, &start_body),
+	      "decode START for identity fault");
+	header.wal_uuid[0] ^= 1;
+	check(d2_start_encode(&header, &start_body, forged) &&
+		      pwrite(wal, forged, sizeof(forged), 0) ==
+			      (ssize_t)sizeof(forged) &&
+		      fdatasync(wal) == 0,
+	      "inject CRC-valid WAL identity mismatch");
+	check(d2_files_rebind(dirfd, &rebind, &binding, &files) != D1_OK &&
+		      !files,
+	      "WAL identity mismatch refuses rebind");
+	check(pwrite(wal, start, sizeof(start), 0) == (ssize_t)sizeof(start) &&
+		      fdatasync(wal) == 0,
+	      "restore WAL identity");
+	close(wal);
 	rebind.expected_store_uuid[0] ^= 1;
 	check(d2_files_rebind(dirfd, &rebind, &binding, &files) != D1_OK &&
 		      !files,
 	      "store identity mismatch refuses rebind");
 	rebind.expected_store_uuid[0] ^= 1;
+	rebind.expected_export_uuid[0] ^= 1;
+	check(d2_files_rebind(dirfd, &rebind, &binding, &files) != D1_OK &&
+		      !files,
+	      "export identity mismatch refuses rebind");
+	rebind.expected_export_uuid[0] ^= 1;
+	rebind.expected_root_ino++;
+	check(d2_files_rebind(dirfd, &rebind, &binding, &files) != D1_OK &&
+		      !files,
+	      "root identity mismatch refuses rebind");
+	rebind.expected_root_ino--;
+	token[0] ^= 1;
+	check(d2_files_rebind(dirfd, &rebind, &binding, &files) != D1_OK &&
+		      !files,
+	      "binding-token mismatch refuses rebind");
+	token[0] ^= 1;
 	wal = openat(dirfd, "wal", O_WRONLY | O_APPEND | O_CLOEXEC);
 	overlong = calloc(1, D2_MAX_WAL_RECORD + 1u);
 	done = overlong && wal >= 0 ?
