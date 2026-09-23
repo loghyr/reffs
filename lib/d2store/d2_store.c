@@ -30,6 +30,9 @@ struct d2_store {
 	} registered[D1_MAX_OBJECTS];
 	struct {
 		bool used;
+		bool object_known;
+		bool model_bound;
+		bool authority_seen;
 		uint64_t id;
 		struct d1_objkey object;
 		struct d1_fixture_authority auth;
@@ -252,6 +255,17 @@ d2_admission_find(const struct d2_store *s, uint64_t id)
 	return NULL;
 }
 
+static typeof(((struct d2_store *)0)->admissions[0]) *
+d2_admission_slot(struct d2_store *s, uint64_t id)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_ADMISSIONS; i++)
+		if (s->admissions[i].used && s->admissions[i].id == id)
+			return &s->admissions[i];
+	return NULL;
+}
+
 static bool d2_admission_matches(const struct d2_store *s, uint64_t id,
 				 const struct d1_objkey *object)
 {
@@ -259,7 +273,8 @@ static bool d2_admission_matches(const struct d2_store *s, uint64_t id,
 
 	for (i = 0; i < D1_MAX_ADMISSIONS; i++)
 		if (s->admissions[i].used && s->admissions[i].id == id)
-			return d2_same_object(&s->admissions[i].object, object);
+			return s->admissions[i].object_known &&
+			       d2_same_object(&s->admissions[i].object, object);
 	return false;
 }
 
@@ -283,13 +298,21 @@ static bool d2_admission_remember(struct d2_store *s, uint64_t id,
 	uint32_t i;
 
 	for (i = 0; i < D1_MAX_ADMISSIONS; i++) {
-		if (s->admissions[i].used && s->admissions[i].id == id)
-			return d2_same_object(&s->admissions[i].object,
-					      object) &&
-			       !memcmp(&s->admissions[i].auth, auth,
-				       sizeof(*auth));
+		if (s->admissions[i].used && s->admissions[i].id == id) {
+			if (memcmp(&s->admissions[i].auth, auth,
+				   sizeof(*auth)) ||
+			    (s->admissions[i].object_known &&
+			     !d2_same_object(&s->admissions[i].object, object)))
+				return false;
+			s->admissions[i].object = *object;
+			s->admissions[i].object_known = true;
+			s->admissions[i].model_bound = true;
+			return true;
+		}
 		if (!s->admissions[i].used) {
 			s->admissions[i].used = true;
+			s->admissions[i].object_known = true;
+			s->admissions[i].model_bound = true;
 			s->admissions[i].id = id;
 			s->admissions[i].object = *object;
 			s->admissions[i].auth = *auth;
@@ -339,6 +362,94 @@ static bool d2_replay_registration(struct d2_replay *r,
 	i = r->store->registered_count++;
 	r->store->registered[i].object = object;
 	memcpy(r->store->registered[i].file_key, control->body, 32);
+	return true;
+}
+
+static bool d2_replay_trust(struct d2_replay *r,
+			    const struct d2_control *control)
+{
+	typeof(r->store->admissions[0]) *slot;
+	struct d1_fixture_authority auth = { 0 };
+	struct d1_cursor cursor;
+	uint8_t other[12], session[16], principal[16];
+	uint64_t lease_epoch, fence_sequence, client_id;
+	uint32_t seqid, expected_seqid, iomode, writer, rights;
+
+	if (control->subtype != D2_CTL_TRUST_STATEID)
+		return true;
+	client_id = control->admission_client_id;
+	d2_stateid(client_id, &expected_seqid, other);
+	d1_dec_init(&cursor, control->body, control->body_len);
+	if (!client_id || control->transition != D2_COMMITTED ||
+	    control->status != D1_OK || !d1_dec_u32(&cursor, &seqid) ||
+	    !d1_dec_raw(&cursor, auth.stateid + 4, 12) ||
+	    !d1_dec_u64(&cursor, &lease_epoch) ||
+	    !d1_dec_u64(&cursor, &fence_sequence) ||
+	    !d1_dec_u32(&cursor, &iomode) ||
+	    !d1_dec_raw(&cursor, session, sizeof(session)) ||
+	    !d1_dec_u64(&cursor, &client_id) ||
+	    !d1_dec_raw(&cursor, principal, sizeof(principal)) ||
+	    !d1_dec_u32(&cursor, &writer) || !d1_dec_u32(&cursor, &rights) ||
+	    !d1_dec_finished(&cursor) || seqid != expected_seqid ||
+	    memcmp(auth.stateid + 4, other, 12) ||
+	    client_id != control->admission_client_id ||
+	    iomode != (rights & (D1_RIGHT_READ | D1_RIGHT_WRITE)))
+		return false;
+	memset(auth.stateid, 0, sizeof(auth.stateid));
+	memcpy(auth.session, session, sizeof(auth.session));
+	memcpy(auth.principal.bytes, principal, sizeof(auth.principal.bytes));
+	memcpy(auth.issuer.bytes, control->admission_issuer,
+	       sizeof(auth.issuer.bytes));
+	auth.authority_epoch = control->admission_authority_epoch;
+	auth.fence_sequence = fence_sequence;
+	auth.lease_epoch = lease_epoch;
+	auth.writer = writer;
+	auth.rights = rights;
+	slot = d2_admission_slot(r->store, client_id);
+	if (slot)
+		return false;
+	for (uint32_t i = 0; i < D1_MAX_ADMISSIONS; i++) {
+		slot = &r->store->admissions[i];
+		if (slot->used)
+			continue;
+		slot->used = true;
+		slot->id = client_id;
+		slot->auth = auth;
+		return true;
+	}
+	return false;
+}
+
+static bool d2_replay_authority(struct d2_replay *r,
+				const struct d2_control *control)
+{
+	typeof(r->store->admissions[0]) *slot;
+	struct d1_cursor cursor;
+	uint8_t issuer[16], other[12];
+	uint64_t epoch;
+	uint32_t count, seqid, expected_seqid;
+
+	if (control->subtype != D2_CTL_AUTHORITY_ADMIT)
+		return true;
+	slot = d2_admission_slot(r->store, control->admission_client_id);
+	d2_stateid(control->admission_client_id, &expected_seqid, other);
+	d1_dec_init(&cursor, control->body, control->body_len);
+	if (!slot || slot->authority_seen ||
+	    control->transition != D2_COMMITTED || control->status != D1_OK ||
+	    !d1_dec_raw(&cursor, issuer, sizeof(issuer)) ||
+	    !d1_dec_u64(&cursor, &epoch) || !d1_dec_u32(&cursor, &count) ||
+	    count != 1 || !d1_dec_u32(&cursor, &seqid) ||
+	    !d1_dec_raw(&cursor, other, sizeof(other)) ||
+	    !d1_dec_finished(&cursor) || seqid != expected_seqid ||
+	    memcmp(issuer, control->admission_issuer, sizeof(issuer)) ||
+	    epoch != control->admission_authority_epoch ||
+	    memcmp(issuer, slot->auth.issuer.bytes, sizeof(issuer)) ||
+	    epoch != slot->auth.authority_epoch)
+		return false;
+	d2_stateid(control->admission_client_id, &expected_seqid, issuer);
+	if (memcmp(other, issuer, sizeof(other)))
+		return false;
+	slot->authority_seen = true;
 	return true;
 }
 
@@ -434,6 +545,7 @@ static bool d2_replay_custody(struct d2_replay *r,
 static bool d2_replay_admission(struct d2_replay *r,
 				const struct d2_entry *entry)
 {
+	typeof(r->store->admissions[0]) *slot;
 	struct d1_fixture_authority auth = { 0 };
 	struct d1_objkey *object = NULL;
 	uint8_t other[12];
@@ -461,12 +573,20 @@ static bool d2_replay_admission(struct d2_replay *r,
 	auth.lease_epoch = entry->admission.lease_epoch;
 	auth.writer = entry->admission.writer;
 	auth.rights = entry->admission.rights;
-	if (!d2_admission_find(r->store, entry->admission.client_id)) {
+	slot = d2_admission_slot(r->store, entry->admission.client_id);
+	if (!slot || !slot->authority_seen ||
+	    memcmp(&slot->auth, &auth, sizeof(auth)))
+		return false;
+	if (!slot->object_known) {
 		d1_admission_id id =
 			d1_fixture_admit_full(r->store->model, object, &auth);
 
 		if (id.raw != entry->admission.client_id)
 			return false;
+		slot->model_bound = true;
+	} else if (!slot->model_bound ||
+		   !d2_same_object(&slot->object, object)) {
+		return false;
 	}
 	return d2_admission_remember(r->store, entry->admission.client_id,
 				     object, &auth);
@@ -787,6 +907,8 @@ static bool d2_replay_record(const struct d2_wal_header *h,
 		if (!d2_control_decode(record, h->total_bytes, h, &control))
 			return false;
 		return d2_replay_registration(r, &control) &&
+		       d2_replay_trust(r, &control) &&
+		       d2_replay_authority(r, &control) &&
 		       d2_replay_liveness(r, &control) &&
 		       d2_replay_custody(r, &control);
 	}
@@ -1274,6 +1396,86 @@ out:
 	return status;
 }
 
+static uint32_t d2_client_control(struct d2_store *s, uint32_t subtype,
+				  uint64_t admission_id,
+				  const struct d1_fixture_authority *auth,
+				  const uint8_t *body, uint32_t body_len)
+{
+	struct d2_wal_header h = { 0 };
+	struct d2_control control = { 0 };
+	uint8_t record[D2_MAX_RECORD_BYTES];
+	size_t written;
+
+	if (!auth || !body ||
+	    !memcmp(auth->session, (uint8_t[D1_UUID_BYTES]){ 0 },
+		    D1_UUID_BYTES))
+		return D1_INVALID;
+	h.family = D2_REC_CONTROL;
+	memcpy(h.store_uuid, s->uuid.bytes, D1_UUID_BYTES);
+	memcpy(h.wal_uuid, d2_files_super(s->files)->wal_uuid, D1_UUID_BYTES);
+	h.lsn = d2_files_next_lsn(s->files);
+	h.ds_incarnation = d2_files_super(s->files)->ds_incarnation;
+	if (h.lsn > UINT32_MAX)
+		return D1_NOSPC;
+	control.subtype = subtype;
+	control.transition = D2_COMMITTED;
+	control.status = D1_OK;
+	memcpy(control.key.session, auth->session, D1_UUID_BYTES);
+	control.key.sequence = (uint32_t)h.lsn;
+	d2_operation_key(control.key.session, 0, control.key.sequence, 0,
+			 control.key.operation_key);
+	memcpy(control.admission_issuer, auth->issuer.bytes, D1_UUID_BYTES);
+	control.admission_authority_epoch = auth->authority_epoch;
+	control.admission_client_id = admission_id;
+	control.body_len = body_len;
+	if (body_len > sizeof(control.body))
+		return D1_INVALID;
+	memcpy(control.body, body, body_len);
+	d2_hash_domain("FFV2-D2B-CONTROL-v1", body, body_len,
+		       control.key.request_digest);
+	if (!d2_control_encode(&h, &control, record, sizeof(record), &written))
+		return D1_INVALID;
+	return d2_files_wal_append(s->files, record, written);
+}
+
+static uint32_t d2_admission_controls(struct d2_store *s, d1_admission_id id,
+				      const struct d1_fixture_authority *auth)
+{
+	struct d1_cursor cursor;
+	uint8_t body[84], other[12];
+	uint32_t seqid, status;
+
+	d2_stateid(id.raw, &seqid, other);
+	d1_enc_init(&cursor, body, sizeof(body));
+	d1_enc_u32(&cursor, seqid);
+	d1_enc_raw(&cursor, other, sizeof(other));
+	d1_enc_u64(&cursor, auth->lease_epoch);
+	d1_enc_u64(&cursor, auth->fence_sequence);
+	d1_enc_u32(&cursor, auth->rights & (D1_RIGHT_READ | D1_RIGHT_WRITE));
+	d1_enc_raw(&cursor, auth->session, sizeof(auth->session));
+	d1_enc_u64(&cursor, id.raw);
+	d1_enc_raw(&cursor, auth->principal.bytes,
+		   sizeof(auth->principal.bytes));
+	d1_enc_u32(&cursor, auth->writer);
+	d1_enc_u32(&cursor, auth->rights);
+	if (!d1_cursor_ok(&cursor))
+		return D1_INVALID;
+	status = d2_client_control(s, D2_CTL_TRUST_STATEID, id.raw, auth, body,
+				   sizeof(body));
+	if (status != D1_OK)
+		return status;
+	d1_enc_init(&cursor, body, 44);
+	d1_enc_raw(&cursor, auth->issuer.bytes, sizeof(auth->issuer.bytes));
+	d1_enc_u64(&cursor, auth->authority_epoch);
+	d1_enc_u32(&cursor, 1);
+	d1_enc_u32(&cursor, seqid);
+	d1_enc_raw(&cursor, other, sizeof(other));
+	if (!d1_cursor_ok(&cursor))
+		return D1_INVALID;
+	return d2_client_control(s, D2_CTL_AUTHORITY_ADMIT, id.raw, auth, body,
+				 44);
+}
+
 d1_admission_id d2_store_admit_full(struct d2_store *s,
 				    const struct d1_objkey *object,
 				    const struct d1_fixture_authority *auth)
@@ -1282,7 +1484,9 @@ d1_admission_id d2_store_admit_full(struct d2_store *s,
 	uint8_t file_key[32];
 	uint32_t status;
 
-	if (!s || !object || !auth)
+	if (!s || !object || !auth ||
+	    !memcmp(auth->session, (uint8_t[D1_UUID_BYTES]){ 0 },
+		    D1_UUID_BYTES))
 		return id;
 	pthread_mutex_lock(&s->lock);
 	status = s->fenced ? D1_IO : d2_register_file(s, object, file_key);
@@ -1292,9 +1496,15 @@ d1_admission_id d2_store_admit_full(struct d2_store *s,
 		if (status == D1_OK)
 			id = d1_fixture_admit_full(s->model, object, auth);
 	if (d1_admission_live(id) &&
-	    !d2_admission_remember(s, id.raw, object, auth)) {
+	    d2_admission_controls(s, id, auth) != D1_OK) {
 		s->fenced = true;
 		id = d1_admission_none();
+	} else if (d1_admission_live(id) &&
+		   !d2_admission_remember(s, id.raw, object, auth)) {
+		s->fenced = true;
+		id = d1_admission_none();
+	} else if (d1_admission_live(id)) {
+		d2_admission_slot(s, id.raw)->authority_seen = true;
 	}
 	pthread_mutex_unlock(&s->lock);
 	return id;

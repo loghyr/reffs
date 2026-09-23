@@ -106,6 +106,53 @@ out:
 	return found;
 }
 
+static bool authority_precedes_entry(int dirfd, uint64_t wal_bytes,
+				     const struct d2_binding *binding,
+				     uint64_t admission_id)
+{
+	struct d2_wal_header header;
+	struct d2_control control;
+	struct d2_entry entry;
+	uint8_t *wal;
+	uint64_t at = 0;
+	int fd = -1;
+	bool trust = false, authority = false, ok = false;
+
+	wal = malloc((size_t)wal_bytes);
+	if (!wal)
+		return false;
+	fd = openat(dirfd, "wal", O_RDONLY | O_CLOEXEC);
+	if (fd < 0 ||
+	    pread(fd, wal, (size_t)wal_bytes, 0) != (ssize_t)wal_bytes)
+		goto out;
+	while (at < wal_bytes &&
+	       d2_wal_header_decode(wal + at, (size_t)(wal_bytes - at),
+				    binding->store_uuid, binding->wal_uuid,
+				    &header)) {
+		if (header.family == D2_REC_CONTROL &&
+		    d2_control_decode(wal + at, header.total_bytes, &header,
+				      &control) &&
+		    control.admission_client_id == admission_id) {
+			if (control.subtype == D2_CTL_TRUST_STATEID)
+				trust = !authority;
+			else if (control.subtype == D2_CTL_AUTHORITY_ADMIT)
+				authority = trust;
+		} else if (header.family == D2_REC_ENTRY &&
+			   d2_entry_decode(wal + at, header.total_bytes,
+					   &header, &entry) &&
+			   entry.admission.client_id == admission_id) {
+			ok = trust && authority;
+			break;
+		}
+		at += header.total_bytes;
+	}
+out:
+	if (fd >= 0)
+		close(fd);
+	free(wal);
+	return ok;
+}
+
 int main(void)
 {
 	const char *root = getenv("D2_TEST_ROOT");
@@ -211,6 +258,9 @@ int main(void)
 	check(entry_has_admission(dirfd, d2_store_wal_bytes(store), &binding,
 				  admission.raw),
 	      "ENTRY carries injective admission surrogate");
+	check(authority_precedes_entry(dirfd, d2_store_wal_bytes(store),
+				       &binding, admission.raw),
+	      "trust and covering authority precede admitted work");
 	check(result.entries[0].status == D1_OK &&
 		      result.entries[0].disposition == D1_COMPLETED,
 	      "exact result recorded");
