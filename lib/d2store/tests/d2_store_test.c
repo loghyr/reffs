@@ -164,12 +164,15 @@ int main(void)
 	struct d1_envelope env = { 0 };
 	struct d1_envelope committed_rollback;
 	struct d1_envelope expired;
+	struct d1_envelope recovery;
 	struct d1_envelope refused;
 	struct d1_envelope unsupported;
 	struct d1_result result = { 0 };
 	struct d1_result durable_result = { 0 };
 	struct d1_result refused_result = { 0 };
 	d1_admission_id admission;
+	d1_admission_id control_admission, fresh_admission, next_control,
+		next_fresh;
 	d1_custody_id custody;
 	d1_txn_id staged_txn;
 	d1_version_id predecessor, successor, visible;
@@ -443,6 +446,116 @@ int main(void)
 		admission = d2_store_admit(store, &object, 17,
 					   D1_RIGHT_READ | D1_RIGHT_WRITE |
 						   D1_RIGHT_SINGLE_WRITER);
+		env.admission = admission;
+		env.incarnation = d2_store_incarnation(store);
+		env.op = D1_OP_WRITE_BATCH;
+		guard = (struct d1_guard){ .never_written = true };
+		write_request(&env, 30, 20, 30, &guard, payload,
+			      sizeof(payload));
+		env.body.write.activate = false;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].phase == D2_PREPARED,
+		      "recovery fixture leaves prepared work");
+		staged_txn = result.entries[0].txn;
+		d2_store_crash(store);
+		store = NULL;
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+			      D1_OK,
+		      "recovery fixture crosses an incarnation");
+	}
+	if (store) {
+		control_admission =
+			d2_store_admit(store, &object, 17, D1_RIGHT_CONTROL);
+		fresh_admission =
+			d2_store_admit(store, &object, 17,
+				       D1_RIGHT_READ | D1_RIGHT_WRITE |
+					       D1_RIGHT_SINGLE_WRITER);
+		memset(&recovery, 0, sizeof(recovery));
+		recovery.object = object;
+		recovery.admission = control_admission;
+		recovery.incarnation = d2_store_incarnation(store);
+		fill(recovery.key.origin.bytes, 16, 0xc0);
+		recovery.key.sequence = 1;
+		recovery.op = D1_OP_RECOVERY_ADMIT;
+		recovery.body.control.count = 1;
+		recovery.body.control.txns[0] =
+			d2_store_txn_handle(store, staged_txn.raw);
+		recovery.body.control.old_admission =
+			d2_store_admission_handle(store, admission.raw);
+		recovery.body.control.new_admission_present = true;
+		recovery.body.control.new_admission = fresh_admission;
+		recovery.body.control.read_epoch_present = true;
+		recovery.body.control.read_epoch = 0;
+		check(d2_store_apply(store, &recovery, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "recovery admission rebinds prepared work");
+		d2_store_crash(store);
+		store = NULL;
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+			      D1_OK,
+		      "recovery admission replays from portable controls");
+	}
+	if (store) {
+		recovery.admission =
+			d2_store_admission_handle(store, control_admission.raw);
+		recovery.body.control.txns[0] =
+			d2_store_txn_handle(store, staged_txn.raw);
+		recovery.body.control.old_admission =
+			d2_store_admission_handle(store, admission.raw);
+		recovery.body.control.new_admission =
+			d2_store_admission_handle(store, fresh_admission.raw);
+		wal_bytes = d2_store_wal_bytes(store);
+		check(d2_store_apply(store, &recovery, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK &&
+			      d2_store_wal_bytes(store) == wal_bytes,
+		      "restart returns exact recovery admission receipt");
+		next_control =
+			d2_store_admit(store, &object, 17, D1_RIGHT_CONTROL);
+		next_fresh = d2_store_admit(store, &object, 17,
+					    D1_RIGHT_READ | D1_RIGHT_WRITE |
+						    D1_RIGHT_SINGLE_WRITER);
+		recovery.admission = next_control;
+		recovery.incarnation = d2_store_incarnation(store);
+		recovery.key.sequence = 2;
+		recovery.body.control.old_admission =
+			d2_store_admission_handle(store, fresh_admission.raw);
+		recovery.body.control.new_admission = next_fresh;
+		check(d2_store_apply(store, &recovery, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "later recovery uses the transaction's current admission");
+		memset(&env, 0, sizeof(env));
+		env.object = object;
+		env.admission = next_fresh;
+		env.incarnation = d2_store_incarnation(store);
+		fill(env.key.origin.bytes, 16, 0xd0);
+		env.key.sequence = 1;
+		env.op = D1_OP_FINALIZE_BATCH;
+		env.body.lifecycle.range_begin = 20;
+		env.body.lifecycle.range_end = 21;
+		env.body.lifecycle.count = 1;
+		env.body.lifecycle.entries[0].index = 20;
+		env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+		env.body.lifecycle.entries[0].owner.writer = 17;
+		env.body.lifecycle.entries[0].owner.co_id = 30;
+		env.body.lifecycle.entries[0].txn =
+			d2_store_txn_handle(store, staged_txn.raw);
+		d2_store_verifier(store, verifier);
+		memcpy(env.body.lifecycle.prior_verifier, verifier,
+		       sizeof(verifier));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].phase == D2_FINALIZED,
+		      "recovered admission resumes prepared work");
+		recovery.key.sequence = 3;
+		recovery.body.control.old_admission =
+			d2_store_admission_handle(store, admission.raw);
+		check(d2_store_apply(store, &recovery, &result) == D1_OK &&
+			      result.entries[0].status == D1_OWNER_CONFLICT,
+		      "recovery refusal is recorded without rebinding work");
+	}
+	if (store) {
+		admission = d2_store_admit(store, &object, 17,
+					   D1_RIGHT_READ | D1_RIGHT_WRITE |
+						   D1_RIGHT_SINGLE_WRITER);
 		guard = (struct d1_guard){ .never_written = true };
 		env.admission = admission;
 		env.incarnation = d2_store_incarnation(store);
@@ -517,6 +630,23 @@ int main(void)
 		if (store) {
 			check(!d2_store_visible(store, &object, 8, &visible),
 			      "second restart replays private rollback");
+			recovery.admission = d2_store_admission_handle(
+				store, recovery.admission.raw);
+			recovery.body.control.txns[0] = d2_store_txn_handle(
+				store, recovery.body.control.txns[0].raw);
+			recovery.body.control
+				.old_admission = d2_store_admission_handle(
+				store, recovery.body.control.old_admission.raw);
+			recovery.body.control
+				.new_admission = d2_store_admission_handle(
+				store, recovery.body.control.new_admission.raw);
+			wal_bytes = d2_store_wal_bytes(store);
+			check(d2_store_apply(store, &recovery, &result) ==
+					      D1_OK &&
+				      result.entries[0].status ==
+					      D1_OWNER_CONFLICT &&
+				      d2_store_wal_bytes(store) == wal_bytes,
+			      "restart returns exact refused recovery receipt");
 			env.admission =
 				d2_store_admission_handle(store, admission.raw);
 			wal_bytes = d2_store_wal_bytes(store);
