@@ -344,6 +344,17 @@ static void d2_open_recovery_window(struct d2_store *s, uint64_t allowance)
 	s->recovery_allowance = any ? allowance : 0;
 }
 
+static void d2_close_recovery_window_if_complete(struct d2_store *s)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_TXNS; i++)
+		if (s->work[i].used && s->work[i].recovery_eligible &&
+		    !s->work[i].recovery_admitted)
+			return;
+	s->recovery_allowance = 0;
+}
+
 static int d2_receipt_lookup(const struct d2_store *s,
 			     const struct d1_envelope *env,
 			     const uint8_t digest[D1_DIGEST_BYTES],
@@ -2026,6 +2037,7 @@ static bool d2_replay_recovery(struct d2_replay *r,
 		r->store->recovery_allowance -= h->total_bytes;
 		for (i = 0; i < count; i++)
 			work[i]->recovery_admitted = true;
+		d2_close_recovery_window_if_complete(r->store);
 	}
 	return d2_receipt_remember(r->store, &work[0]->object.export_uuid,
 				   &env.key, control->key.request_digest,
@@ -3432,6 +3444,8 @@ static uint32_t d2_persist_recovery(struct d2_store *s,
 	if (status == D1_OK && funded)
 		for (i = 0; i < env->body.control.count; i++)
 			work[i]->recovery_admitted = true;
+	if (status == D1_OK && funded)
+		d2_close_recovery_window_if_complete(s);
 	return status;
 }
 
