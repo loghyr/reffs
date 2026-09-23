@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -19,6 +20,8 @@
 
 struct cut {
 	enum d2_io_point target;
+	unsigned int occurrence;
+	unsigned int seen;
 };
 
 static unsigned int checks;
@@ -35,9 +38,9 @@ static void check(bool value, const char *name)
 
 static void cut_hook(enum d2_io_point point, void *arg)
 {
-	const struct cut *cut = arg;
+	struct cut *cut = arg;
 
-	if (point == cut->target)
+	if (point == cut->target && ++cut->seen == cut->occurrence)
 		_exit(100 + point);
 }
 
@@ -61,6 +64,213 @@ static void fill_checksum(struct d1_write_entry *entry, const uint8_t *payload,
 	entry->checksum.digest[3] = (uint8_t)crc;
 }
 
+static bool repair_log_atomic(int dirfd, const struct d2_binding *binding)
+{
+	struct stat st;
+	struct d2_wal_header h;
+	struct d2_cohort cohort;
+	uint8_t *wal = NULL;
+	uint64_t at = 0;
+	unsigned int prepared = 0;
+	bool ok = false;
+	int fd = openat(dirfd, "wal", O_RDONLY | O_CLOEXEC);
+
+	if (fd < 0 || fstat(fd, &st) < 0 || st.st_size <= 0)
+		goto out;
+	wal = malloc((size_t)st.st_size);
+	if (!wal || pread(fd, wal, (size_t)st.st_size, 0) != st.st_size)
+		goto out;
+	while (at < (uint64_t)st.st_size &&
+	       d2_wal_header_decode(wal + at, (size_t)st.st_size - at,
+				    binding->store_uuid, binding->wal_uuid, &h)) {
+		if (h.family == D2_REC_COHORT &&
+		    d2_cohort_decode(wal + at, h.total_bytes, &h, &cohort) &&
+		    cohort.transition == D2_PREPARED) {
+			prepared++;
+			if (cohort.member_count != 2 || !cohort.members[0].staged ||
+			    !cohort.members[1].staged ||
+			    !cohort.members[0].payload_object_id ||
+			    !cohort.members[1].payload_object_id)
+				goto out;
+		}
+		at += h.total_bytes;
+	}
+	ok = at == (uint64_t)st.st_size && prepared <= 1;
+out:
+	if (fd >= 0)
+		close(fd);
+	free(wal);
+	return ok;
+}
+
+static void repair_cut(int dirfd, const uint8_t *token,
+		       enum d2_io_point point, unsigned int occurrence,
+		       const uint8_t *payload, const uint8_t *replacement)
+{
+	struct d2_store_config config = { 0 };
+	struct d2_store_rebind reopen = { 0 };
+	struct d2_binding binding = { 0 };
+	struct d2_store *store = NULL;
+	struct d1_objkey object = { 0 };
+	struct d1_envelope env = { 0 };
+	struct d1_result result;
+	struct d1_guard guard = { .never_written = true };
+	d1_admission_id admission;
+	d1_version_id first, second, visible;
+	d1_custody_id first_custody, second_custody;
+	d1_episode_id episode;
+	d1_repair_id repair;
+	d1_txn_id first_txn, second_txn;
+	struct cut cut = { .target = point, .occurrence = occurrence };
+	pid_t pid;
+	int child_status;
+
+	clean_root(dirfd);
+	memset(config.files.export_uuid, 0x21, 16);
+	config.files.binding_token = token;
+	config.files.binding_token_len = 16;
+	config.files.capacity_wal_bytes = D2_MIN_WAL_BYTES;
+	config.files.capacity_payload_bytes = 32u * 1024u * 1024u;
+	config.chunk_bytes = 4096;
+	config.max_file_bytes = 64u * 4096u;
+	check(d2_store_provision(dirfd, &config, &binding, &store) == D1_OK,
+	      "repair cut fixture provisions");
+	if (!store)
+		return;
+	memset(object.export_uuid.bytes, 0x21, 16);
+	memset(object.object_uuid.bytes, 0x66, 16);
+	admission = d2_store_admit(store, &object, 9,
+				   D1_RIGHT_READ | D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+					   D1_RIGHT_SINGLE_WRITER);
+	env.object = object;
+	env.admission = admission;
+	env.incarnation = d2_store_incarnation(store);
+	memset(env.key.origin.bytes, 0x74, 16);
+	env.op = D1_OP_WRITE_BATCH;
+	env.body.write.count = 1;
+	env.body.write.stability = D1_FILE_SYNC;
+	env.body.write.activate = true;
+	env.body.write.entries[0].owner.cohort.raw = 1;
+	env.body.write.entries[0].owner.writer = 9;
+	env.body.write.entries[0].owner.co_id = 1;
+	env.body.write.entries[0].guard_check = true;
+	env.body.write.entries[0].expected = guard;
+	env.body.write.entries[0].payload = payload;
+	env.body.write.entries[0].payload_len = 4096;
+	fill_checksum(&env.body.write.entries[0], payload, 4096);
+	env.key.sequence = 1;
+	check(d2_store_apply(store, &env, &result) == D1_OK &&
+		      result.entries[0].status == D1_OK,
+	      "repair cut publishes first member");
+	first = result.entries[0].version;
+	first_custody = d2_store_custody(store, first);
+	env.key.sequence = 2;
+	env.body.write.entries[0].index = 1;
+	env.body.write.entries[0].owner.co_id = 2;
+	env.body.write.entries[0].payload = replacement;
+	fill_checksum(&env.body.write.entries[0], replacement, 4096);
+	check(d2_store_apply(store, &env, &result) == D1_OK &&
+		      result.entries[0].status == D1_OK,
+	      "repair cut publishes second member");
+	second = result.entries[0].version;
+	second_custody = d2_store_custody(store, second);
+	memset(&env.body, 0, sizeof(env.body));
+	env.key.sequence = 3;
+	env.op = D1_OP_MARK_ERROR;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	for (unsigned int i = 0; i < 2; i++) {
+		env.body.repair.entries[i].index = i;
+		env.body.repair.entries[i].owner.cohort.raw = 2;
+		env.body.repair.entries[i].owner.writer = 9;
+		env.body.repair.entries[i].owner.co_id = 3 + i;
+		env.body.repair.entries[i].custody_present = true;
+		env.body.repair.entries[i].custody = i ? second_custody :
+							   first_custody;
+		env.body.repair.entries[i].successor_present = true;
+		env.body.repair.entries[i].successor = i ? second : first;
+	}
+	check(d2_store_apply(store, &env, &result) == D1_OK &&
+		      result.entries[0].status == D1_OK,
+	      "repair cut marks two-member episode");
+	episode = result.entries[0].episode;
+	memset(&env.body, 0, sizeof(env.body));
+	env.key.sequence = 4;
+	env.op = D1_OP_BEGIN_REPAIR;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	env.body.repair.episode_present = true;
+	env.body.repair.episode = episode;
+	for (unsigned int i = 0; i < 2; i++) {
+		env.body.repair.entries[i].index = i;
+		env.body.repair.entries[i].owner.cohort.raw = 3;
+		env.body.repair.entries[i].owner.writer = 9;
+		env.body.repair.entries[i].owner.co_id = 5 + i;
+		env.body.repair.entries[i].mode = D1_REPAIR_ERROR;
+		env.body.repair.entries[i].custody_present = true;
+		env.body.repair.entries[i].custody = i ? second_custody :
+							   first_custody;
+		env.body.repair.entries[i].successor_present = true;
+		env.body.repair.entries[i].successor = i ? second : first;
+	}
+	check(d2_store_apply(store, &env, &result) == D1_OK &&
+		      result.entries[0].status == D1_OK,
+	      "repair cut admits two-member cohort");
+	repair = result.entries[0].cohort;
+	first_txn = result.entries[0].member_txn[0];
+	second_txn = result.entries[0].member_txn[1];
+	memset(&env.body, 0, sizeof(env.body));
+	env.key.sequence = 5;
+	env.op = D1_OP_PREPARE_REPAIR;
+	env.body.repair.range_end = 2;
+	env.body.repair.count = 2;
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = repair;
+	for (unsigned int i = 0; i < 2; i++) {
+		env.body.repair.entries[i].index = i;
+		env.body.repair.entries[i].owner.cohort.raw = 3;
+		env.body.repair.entries[i].owner.writer = 9;
+		env.body.repair.entries[i].owner.co_id = 5 + i;
+		env.body.repair.entries[i].txn_present = true;
+		env.body.repair.entries[i].txn = i ? second_txn : first_txn;
+		env.body.repair.entries[i].payload_present = true;
+		env.body.repair.entries[i].payload = i ? payload : replacement;
+		env.body.repair.entries[i].payload_len = 4096;
+		d1_checksum_compute(D1_CKSUM_CRC32C,
+				    env.body.repair.entries[i].payload, 4096,
+				    &env.body.repair.entries[i].checksum);
+	}
+	pid = fork();
+	if (pid == 0) {
+		d2_store_set_io_hook(store, cut_hook, &cut);
+		(void)d2_store_apply(store, &env, &result);
+		_exit(2);
+	}
+	check(pid > 0 && waitpid(pid, &child_status, 0) == pid &&
+		      WIFEXITED(child_status) &&
+		      WEXITSTATUS(child_status) == 100 + point,
+	      "repair child exits at selected barrier");
+	d2_store_crash(store);
+	store = NULL;
+	memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
+	memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
+	reopen.files.expected_root_ino = binding.root_ino;
+	reopen.files.binding_token = token;
+	reopen.files.binding_token_len = 16;
+	reopen.chunk_bytes = 4096;
+	reopen.max_file_bytes = 64u * 4096u;
+	check(d2_store_rebind(dirfd, &reopen, &binding, &store) == D1_OK &&
+		      d2_store_visible(store, &object, 0, &visible) &&
+		      visible.raw == first.raw &&
+		      d2_store_visible(store, &object, 1, &visible) &&
+		      visible.raw == second.raw,
+	      "repair barrier recovery preserves both visible members");
+	check(repair_log_atomic(dirfd, &binding),
+	      "repair barrier log contains no partial vector");
+	if (store)
+		d2_store_close(store);
+}
+
 int main(void)
 {
 	const char *root = getenv("D2_TEST_ROOT");
@@ -70,7 +280,15 @@ int main(void)
 		D2_IO_WAL_WRITTEN,
 		D2_IO_WAL_DURABLE,
 	};
-	uint8_t token[16], payload[4096];
+	const struct cut repair_cuts[] = {
+		{ .target = D2_IO_PAYLOAD_WRITTEN, .occurrence = 1 },
+		{ .target = D2_IO_PAYLOAD_DURABLE, .occurrence = 1 },
+		{ .target = D2_IO_PAYLOAD_WRITTEN, .occurrence = 2 },
+		{ .target = D2_IO_PAYLOAD_DURABLE, .occurrence = 2 },
+		{ .target = D2_IO_WAL_WRITTEN, .occurrence = 1 },
+		{ .target = D2_IO_WAL_DURABLE, .occurrence = 1 },
+	};
+	uint8_t token[16], payload[4096], replacement[4096];
 	unsigned int i;
 	int dirfd;
 
@@ -81,6 +299,7 @@ int main(void)
 		return 77;
 	memset(token, 0x62, sizeof(token));
 	memset(payload, 0x93, sizeof(payload));
+	memset(replacement, 0xa4, sizeof(replacement));
 	for (i = 0; i < sizeof(points) / sizeof(points[0]); i++) {
 		struct d2_store_config config = { 0 };
 		struct d2_store_rebind reopen = { 0 };
@@ -91,7 +310,7 @@ int main(void)
 		struct d1_result result;
 		d1_admission_id admission;
 		d1_version_id visible;
-		struct cut cut = { .target = points[i] };
+		struct cut cut = { .target = points[i], .occurrence = 1 };
 		pid_t pid;
 		int child_status;
 
@@ -166,6 +385,9 @@ int main(void)
 		if (store)
 			d2_store_close(store);
 	}
+	for (i = 0; i < sizeof(repair_cuts) / sizeof(repair_cuts[0]); i++)
+		repair_cut(dirfd, token, repair_cuts[i].target,
+			   repair_cuts[i].occurrence, payload, replacement);
 	{
 		struct d2_store_config config = { 0 };
 		struct d2_store_rebind reopen = { 0 };
@@ -182,7 +404,8 @@ int main(void)
 		uint64_t restored_index;
 		bool consumed;
 		bool restored;
-		struct cut cut = { .target = D2_IO_WAL_DURABLE };
+		struct cut cut = { .target = D2_IO_WAL_DURABLE,
+				   .occurrence = 1 };
 		pid_t pid;
 		int child_status;
 
