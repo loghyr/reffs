@@ -1731,13 +1731,36 @@ int main(void)
 			      result.entries[0].status == D1_OK,
 		      "retirement fixture records exact receipt");
 		retired_exact = env;
+		wal_bytes = d2_store_wal_bytes(store);
+		check(d2_store_tombstone_file(store, &object, 1) == D1_OK &&
+			      d2_store_wal_bytes(store) == wal_bytes + 248u,
+		      "file tombstone publishes its terminal record");
+		wal_bytes = d2_store_wal_bytes(store);
+		write_request(&env, 2, 1, 2, &guard, payload, sizeof(payload));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_BAD_PHASE &&
+			      result.disposition == D1_UNRECORDED &&
+			      d2_store_wal_bytes(store) == wal_bytes,
+		      "tombstoned file rejects later mutation");
+		d2_store_crash(store);
+		store = NULL;
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+			      D1_OK,
+		      "file tombstone replays on restart");
+		if (!store)
+			goto done;
+		wal_bytes = d2_store_wal_bytes(store);
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_BAD_PHASE &&
+			      d2_store_wal_bytes(store) == wal_bytes,
+		      "replayed file tombstone remains terminal");
 		retired_incarnation = d2_store_incarnation(store);
 		wal_bytes = d2_store_wal_bytes(store);
 		check(d2_store_retire(store, 1) == D1_OK &&
 			      d2_store_wal_bytes(store) == wal_bytes + 224u,
 		      "export tombstone is the final record");
 		wal_bytes = d2_store_wal_bytes(store);
-		write_request(&env, 2, 1, 2, &guard, payload, sizeof(payload));
+		write_request(&env, 3, 2, 3, &guard, payload, sizeof(payload));
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].status == D1_BAD_PHASE &&
 			      result.disposition == D1_UNRECORDED &&
@@ -1767,6 +1790,35 @@ int main(void)
 					      retired_incarnation,
 			      "persisted retired restart writes no WAL");
 		}
+	}
+	if (store) {
+		d2_store_close(store);
+		store = NULL;
+	}
+	unlinkat(dirfd, "super", 0);
+	unlinkat(dirfd, "wal", 0);
+	unlinkat(dirfd, "payload", 0);
+	memset(&binding, 0, sizeof(binding));
+	check(d2_store_provision(dirfd, &config, &binding, &store) == D1_OK,
+	      "provision retired-super disagreement fixture");
+	if (store) {
+		struct d2_files *files = NULL;
+
+		memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
+		memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
+		reopen.files.expected_root_ino = binding.root_ino;
+		d2_store_crash(store);
+		store = NULL;
+		check(d2_files_rebind(dirfd, &reopen.files, &binding, &files) ==
+			      D1_OK &&
+			      d2_files_super_update(files, D2_SB_RETIRED) == D1_OK,
+		      "forge retired superblock without tombstone");
+		if (files)
+			d2_files_close(files);
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+			      D1_IO &&
+			      !store,
+		      "retired superblock disagreement fences");
 	}
 
 done:

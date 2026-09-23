@@ -27,6 +27,8 @@ struct d2_store {
 	uint64_t recovery_allowance;
 	bool recovery_spend;
 	bool retired;
+	uint32_t tombstone_count;
+	uint8_t tombstones[D1_MAX_OBJECTS][32];
 	uint32_t registered_count;
 	struct {
 		struct d1_objkey object;
@@ -147,6 +149,38 @@ static struct d1_objkey *d2_replay_object(struct d2_replay *r,
 static bool d2_same_object(const struct d1_objkey *a, const struct d1_objkey *b)
 {
 	return !memcmp(a, b, sizeof(*a));
+}
+
+static bool d2_file_tombstoned(const struct d2_store *s,
+			       const uint8_t file_key[32])
+{
+	uint32_t i;
+
+	for (i = 0; i < s->tombstone_count; i++)
+		if (!memcmp(s->tombstones[i], file_key, 32))
+			return true;
+	return false;
+}
+
+static bool d2_object_tombstoned(const struct d2_store *s,
+				 const struct d1_objkey *object)
+{
+	uint8_t handle[32], file_key[32];
+
+	memcpy(handle, object->export_uuid.bytes, 16);
+	memcpy(handle + 16, object->object_uuid.bytes, 16);
+	d2_file_key(handle, sizeof(handle), file_key);
+	return d2_file_tombstoned(s, file_key);
+}
+
+static bool d2_tombstone_remember(struct d2_store *s,
+				  const uint8_t file_key[32])
+{
+	if (d2_file_tombstoned(s, file_key) ||
+	    s->tombstone_count == D1_MAX_OBJECTS)
+		return false;
+	memcpy(s->tombstones[s->tombstone_count++], file_key, 32);
+	return true;
 }
 
 static bool d2_same_key(const struct d1_opkey *a, const struct d1_opkey *b)
@@ -1126,7 +1160,8 @@ static bool d2_replay_custody(struct d2_replay *r,
 	    control->transition != D2_COMMITTED || control->status != D1_OK)
 		return false;
 	work = d2_work_by_version(r->store, version_id);
-	if (!work || work->admission_id != control->admission_client_id)
+	if (!work || work->admission_id != control->admission_client_id ||
+	    d2_object_tombstoned(r->store, &work->object))
 		return false;
 	auth = d2_admission_find(r->store, work->admission_id);
 	if (!auth || memcmp(holder, auth->principal.bytes, sizeof(holder)) ||
@@ -1186,7 +1221,8 @@ static bool d2_replay_reap(struct d2_replay *r,
 		} else if (!d2_same_object(&env.object, &work->object)) {
 			return false;
 		}
-		if (!d2_replay_object(r, file_key) ||
+		if (d2_file_tombstoned(r->store, file_key) ||
+		    !d2_replay_object(r, file_key) ||
 		    !d2_same_object(d2_replay_object(r, file_key),
 				    &work->object))
 			return false;
@@ -1261,7 +1297,8 @@ static bool d2_replay_postcond(struct d2_replay *r,
 		}
 	custody = d2_custody_by_version(r->store, version_id);
 	work = d2_work_by_version(r->store, version_id);
-	if (!registered || !custody || custody->custody_id != custody_id ||
+	if (!registered || d2_file_tombstoned(r->store, file_key) ||
+	    !custody || custody->custody_id != custody_id ||
 	    !work || !d2_same_object(&work->object, object))
 		return false;
 	predecessor_retained = work->predecessor_present &&
@@ -1908,7 +1945,9 @@ static bool d2_replay_recovery(struct d2_replay *r,
 			return false;
 		work[i] = (typeof(r->store->work[0]) *)d2_work_by_txn(
 			r->store, txn_id);
-		if (!work[i] || (i && txn_id <= work[i - 1]->txn_id) ||
+		if (!work[i] ||
+		    d2_object_tombstoned(r->store, &work[i]->object) ||
+		    (i && txn_id <= work[i - 1]->txn_id) ||
 		    (i && !d2_same_object(&work[0]->object, &work[i]->object)) ||
 		    (i && work[0]->admission_id != work[i]->admission_id) ||
 		    (i && read_epoch != entry_read_epoch))
@@ -2025,7 +2064,8 @@ static bool d2_replay_episode_mark(struct d2_replay *r,
 	    !d2_episode_id(episode_uuid, &episode_id))
 		return false;
 	object = d2_replay_object(r, file_key);
-	if (!object || (committed && d2_episode_find(r->store, episode_id)))
+	if (!object || d2_file_tombstoned(r->store, file_key) ||
+	    (committed && d2_episode_find(r->store, episode_id)))
 		return false;
 	auth = d2_admission_find(r->store, control->admission_client_id);
 	if (!auth ||
@@ -2129,7 +2169,9 @@ static bool d2_replay_certificate(struct d2_replay *r,
 	    d2_certificate_find(r->store, episode_id, cohort_id))
 		return false;
 	cohort = d2_cohort_find(r->store, cohort_id);
-	if (!cohort || cohort->phase != D2_COMMITTED ||
+	if (!cohort || !cohort->count ||
+	    d2_object_tombstoned(r->store, &cohort->members[0].object) ||
+	    cohort->phase != D2_COMMITTED ||
 	    !cohort->episode_present || cohort->episode_id != episode_id ||
 	    cohort->admission_id != control->admission_client_id)
 		return false;
@@ -2206,7 +2248,7 @@ static bool d2_replay_episode_clear(struct d2_replay *r,
 		    (committed && (!member || index != member->index)))
 			return false;
 		object = d2_replay_object(r, file_key);
-		if (!object ||
+		if (!object || d2_file_tombstoned(r->store, file_key) ||
 		    (committed && !d2_same_object(object, &member->object)) ||
 		    (i && !d2_same_object(object, &env.object)))
 			return false;
@@ -2589,10 +2631,29 @@ static bool d2_replay_record(const struct d2_wal_header *h,
 		return d2_replay_start(r, h, record);
 	if (h->family == D2_REC_CONTROL) {
 		struct d1_cursor cursor;
+		uint8_t file_key[32];
 		uint64_t final_lsn;
 		uint32_t reason;
 
 		if (!d2_control_decode(record, h->total_bytes, h, &control))
+			return false;
+		if (control.subtype == D2_CTL_FILE_TOMBSTONE) {
+			d1_dec_init(&cursor, control.body, control.body_len);
+			if (control.transition != D2_COMMITTED ||
+			    control.status != D1_OK ||
+			    memcmp(control.admission_issuer,
+				   (uint8_t[D1_UUID_BYTES]){ 0 }, D1_UUID_BYTES) ||
+			    control.admission_authority_epoch ||
+			    control.admission_client_id ||
+			    !d1_dec_raw(&cursor, file_key, sizeof(file_key)) ||
+			    !d1_dec_u32(&cursor, &reason) || !reason ||
+			    !d1_dec_finished(&cursor) ||
+			    !d2_tombstone_remember(r->store, file_key))
+				return false;
+			return true;
+		}
+		if (control.subtype == D2_CTL_FILE_REGISTER &&
+		    d2_file_tombstoned(r->store, control.body))
 			return false;
 		if (control.subtype == D2_CTL_EXPORT_TOMBSTONE) {
 			d1_dec_init(&cursor, control.body, control.body_len);
@@ -2622,13 +2683,21 @@ static bool d2_replay_record(const struct d2_wal_header *h,
 		       d2_replay_postcond(r, &control);
 	}
 	if (h->family == D2_REC_COHORT) {
+		uint32_t i;
+
 		if (!d2_cohort_decode(record, h->total_bytes, h, &cohort))
 			return false;
+		for (i = 0; i < cohort.member_count; i++)
+			if (d2_file_tombstoned(r->store,
+					       cohort.members[i].file_key))
+				return false;
 		return d2_replay_cohort(r, h, &cohort);
 	}
 	if (h->family != D2_REC_ENTRY)
 		return true;
 	if (!d2_entry_decode(record, h->total_bytes, h, &e))
+		return false;
+	if (d2_file_tombstoned(r->store, e.file_key))
 		return false;
 	paired = e.status == D1_NO_PREDECESSOR && e.postcond_present &&
 		 e.postcond_id != 0;
@@ -3824,7 +3893,7 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 		pthread_mutex_unlock(&s->lock);
 		return D1_OK;
 	}
-	if (s->retired) {
+	if (s->retired || d2_object_tombstoned(s, &env->object)) {
 		memset(result, 0, sizeof(*result));
 		result->key = env->key;
 		result->disposition = D1_UNRECORDED;
@@ -4031,7 +4100,7 @@ d1_admission_id d2_store_admit_full(struct d2_store *s,
 		    D1_UUID_BYTES))
 		return id;
 	pthread_mutex_lock(&s->lock);
-	if (s->retired) {
+	if (s->retired || d2_object_tombstoned(s, object)) {
 		pthread_mutex_unlock(&s->lock);
 		return id;
 	}
@@ -4291,7 +4360,9 @@ d1_custody_id d2_store_custody(struct d2_store *s, d1_version_id version)
 		return id;
 	pthread_mutex_lock(&s->lock);
 	work = d2_work_by_version(s, version.raw);
-	if (!s->fenced && !s->retired && work && d2_wal_has_room(s, 248u))
+	if (!s->fenced && !s->retired && work &&
+	    !d2_object_tombstoned(s, &work->object) &&
+	    d2_wal_has_room(s, 248u))
 		id = d1_fixture_custody(s->model, version);
 	if (d1_custody_live(id) &&
 	    (d2_custody_control(s, id, version, work->admission_id) != D1_OK ||
@@ -4320,6 +4391,9 @@ uint32_t d2_store_certificate(
 	if (s->fenced)
 		status = D1_IO;
 	else if (s->retired)
+		status = D1_BAD_PHASE;
+	else if (cohort && cohort->count &&
+		 d2_object_tombstoned(s, &cohort->members[0].object))
 		status = D1_BAD_PHASE;
 	else if (!cohort || cohort->phase != D2_COMMITTED ||
 		 !cohort->episode_present || cohort->episode_id != episode.raw)
@@ -4378,6 +4452,70 @@ uint32_t d2_store_retire(struct d2_store *s, uint32_t reason)
 	d1_enc_init(&cursor, control.body, control.body_len);
 	d1_enc_u32(&cursor, reason);
 	d1_enc_u64(&cursor, h.lsn);
+	if (!d1_cursor_ok(&cursor) ||
+	    !d2_control_encode(&h, &control, record, sizeof(record), &written)) {
+		status = D1_INVALID;
+		goto out;
+	}
+	status = d2_wal_append(s, record, written);
+	if (status != D1_OK && status != D1_NOSPC)
+		s->fenced = true;
+out:
+	pthread_mutex_unlock(&s->lock);
+	return status;
+}
+
+uint32_t d2_store_tombstone_file(struct d2_store *s,
+				 const struct d1_objkey *object, uint32_t reason)
+{
+	struct d2_wal_header h = { 0 };
+	struct d2_control control = { 0 };
+	struct d1_cursor cursor;
+	uint8_t handle[32], file_key[32], record[248];
+	size_t written;
+	uint32_t i, status;
+	bool registered = false;
+
+	if (!s || !object || !reason)
+		return D1_INVALID;
+	memcpy(handle, object->export_uuid.bytes, 16);
+	memcpy(handle + 16, object->object_uuid.bytes, 16);
+	d2_file_key(handle, sizeof(handle), file_key);
+	pthread_mutex_lock(&s->lock);
+	if (s->fenced) {
+		status = D1_IO;
+		goto out;
+	}
+	if (s->retired || d2_file_tombstoned(s, file_key)) {
+		status = D1_BAD_PHASE;
+		goto out;
+	}
+	for (i = 0; i < s->registered_count; i++)
+		if (!memcmp(s->registered[i].file_key, file_key, 32)) {
+			registered = true;
+			break;
+		}
+	if (!registered) {
+		status = D1_INVALID;
+		goto out;
+	}
+	if (!d2_tombstone_remember(s, file_key)) {
+		status = D1_BAD_PHASE;
+		goto out;
+	}
+	h.family = D2_REC_CONTROL;
+	memcpy(h.store_uuid, s->uuid.bytes, 16);
+	memcpy(h.wal_uuid, d2_files_super(s->files)->wal_uuid, 16);
+	h.lsn = d2_files_next_lsn(s->files);
+	h.ds_incarnation = d2_files_super(s->files)->ds_incarnation;
+	control.subtype = D2_CTL_FILE_TOMBSTONE;
+	control.transition = D2_COMMITTED;
+	control.status = D1_OK;
+	d2_store_key(s, &control.key);
+	control.body_len = 36;
+	d1_enc_init(&cursor, control.body, control.body_len);
+	d1_enc_raw(&cursor, file_key, sizeof(file_key));
+	d1_enc_u32(&cursor, reason);
 	if (!d1_cursor_ok(&cursor) ||
 	    !d2_control_encode(&h, &control, record, sizeof(record), &written)) {
 		status = D1_INVALID;
