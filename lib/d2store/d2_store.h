@@ -64,6 +64,7 @@ bool d2_store_postcond(struct d2_store *store, uint64_t raw, uint64_t *index,
 uint64_t d2_store_eof(struct d2_store *store, const struct d1_objkey *object);
 uint64_t d2_store_wal_bytes(struct d2_store *store);
 uint64_t d2_store_wal_promised(struct d2_store *store);
+uint64_t d2_store_recovery_allowance(struct d2_store *store);
 uint32_t d2_store_view_open(struct d2_store *store,
 			    const struct d1_objkey *object,
 			    d1_admission_id admission,

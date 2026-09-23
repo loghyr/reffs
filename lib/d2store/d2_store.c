@@ -24,6 +24,8 @@ struct d2_store {
 	uint64_t next_payload_seq;
 	uint64_t synthetic_sequence;
 	uint64_t wal_promised;
+	uint64_t recovery_allowance;
+	bool recovery_spend;
 	uint32_t registered_count;
 	struct {
 		struct d1_objkey object;
@@ -56,6 +58,10 @@ struct d2_store {
 		struct d1_owner owner;
 		uint32_t phase;
 		uint64_t payload_bytes;
+		bool recovery_eligible;
+		bool recovery_trusted;
+		bool recovery_vouched;
+		bool recovery_admitted;
 		bool predecessor_present;
 		uint64_t predecessor_id;
 	} work[D1_MAX_TXNS];
@@ -146,18 +152,36 @@ static bool d2_same_key(const struct d1_opkey *a, const struct d1_opkey *b)
 	       a->sequence == b->sequence && a->ordinal == b->ordinal;
 }
 
+static uint32_t d2_wal_append_floor(struct d2_store *s,
+				    const uint8_t *record, size_t len,
+				    uint64_t promised);
+
 static uint32_t d2_wal_append(struct d2_store *s, const uint8_t *record,
 			      size_t len)
 {
-	return d2_files_wal_append_floor(s->files, record, len,
-					 s->wal_promised);
+	return d2_wal_append_floor(s, record, len, s->wal_promised);
 }
 
 static uint32_t d2_wal_append_floor(struct d2_store *s,
 				    const uint8_t *record, size_t len,
 				    uint64_t promised)
 {
-	return d2_files_wal_append_floor(s->files, record, len, promised);
+	uint64_t allowance = s->recovery_allowance;
+	uint64_t floor;
+	uint32_t status;
+
+	if (s->recovery_spend) {
+		if (len > allowance)
+			return D1_NOSPC;
+		allowance -= len;
+	}
+	if (allowance > UINT64_MAX - promised)
+		return D1_NOSPC;
+	floor = promised + allowance;
+	status = d2_files_wal_append_floor(s->files, record, len, floor);
+	if (status == D1_OK && s->recovery_spend)
+		s->recovery_allowance = allowance;
+	return status;
 }
 
 static uint64_t d2_cohort_promise(uint32_t phase, size_t record_bytes,
@@ -228,6 +252,9 @@ static bool d2_rebuild_promises(struct d2_store *s)
 	return true;
 }
 
+static typeof(((struct d2_store *)0)->admissions[0]) *
+d2_admission_slot(struct d2_store *s, uint64_t id);
+
 static bool d2_rebuild_payload_accounting(const struct d2_store *s,
 					  uint64_t *outstanding,
 					  uint64_t *staged)
@@ -245,6 +272,30 @@ static bool d2_rebuild_payload_accounting(const struct d2_store *s,
 	*outstanding = 0;
 	*staged = total;
 	return true;
+}
+
+static void d2_open_recovery_window(struct d2_store *s, uint64_t allowance)
+{
+	uint32_t i;
+	bool any = false;
+
+	for (i = 0; i < D1_MAX_TXNS; i++) {
+		typeof(s->work[0]) *work = &s->work[i];
+		typeof(s->admissions[0]) *admission;
+
+		work->recovery_eligible = false;
+		work->recovery_trusted = false;
+		work->recovery_vouched = false;
+		work->recovery_admitted = false;
+		if (!work->used || !d2_work_promise(work->phase))
+			continue;
+		any = true;
+		admission = d2_admission_slot(s, work->admission_id);
+		if (!admission || admission->expired)
+			continue;
+		work->recovery_eligible = true;
+	}
+	s->recovery_allowance = any ? allowance : 0;
 }
 
 static int d2_receipt_lookup(const struct d2_store *s,
@@ -397,6 +448,45 @@ static bool d2_work_set_phase(struct d2_store *s, uint64_t txn_id,
 	return false;
 }
 
+static const struct d1_fixture_authority *
+d2_admission_find(const struct d2_store *s, uint64_t id);
+
+static bool d2_recovery_matches(const struct d2_store *s,
+				const typeof(((struct d2_store *)0)->work[0]) *work,
+				const struct d1_objkey *object,
+				const struct d1_fixture_authority *fresh)
+{
+	const struct d1_fixture_authority *old;
+
+	if (!work->used || !work->recovery_eligible ||
+	    !(fresh->rights & (D1_RIGHT_READ | D1_RIGHT_WRITE)) ||
+	    (object && !d2_same_object(&work->object, object)))
+		return false;
+	old = d2_admission_find(s, work->admission_id);
+	return old && old->writer == fresh->writer &&
+	       !memcmp(old->issuer.bytes, fresh->issuer.bytes, D1_UUID_BYTES) &&
+	       !memcmp(old->principal.bytes, fresh->principal.bytes,
+		       D1_UUID_BYTES);
+}
+
+static typeof(((struct d2_store *)0)->work[0]) *
+d2_recovery_candidate(struct d2_store *s, const struct d1_objkey *object,
+			      const struct d1_fixture_authority *fresh)
+{
+	typeof(s->work[0]) *candidate = NULL;
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_TXNS; i++) {
+		if (s->work[i].recovery_trusted ||
+		    s->work[i].recovery_vouched ||
+		    !d2_recovery_matches(s, &s->work[i], object, fresh))
+			continue;
+		if (!candidate || s->work[i].txn_id < candidate->txn_id)
+			candidate = &s->work[i];
+	}
+	return candidate;
+}
+
 static bool d2_custody_remember(struct d2_store *s, uint64_t custody_id,
 				uint64_t version_id, uint64_t admission_id)
 {
@@ -439,6 +529,20 @@ d2_cohort_find(struct d2_store *s, uint64_t id)
 		if (s->cohorts[i].used && s->cohorts[i].id == id)
 			return &s->cohorts[i];
 	return NULL;
+}
+
+static bool d2_repair_member(const struct d2_store *s, uint64_t txn_id)
+{
+	uint32_t i, j;
+
+	for (i = 0; i < D1_MAX_REPAIRS; i++) {
+		if (!s->cohorts[i].used)
+			continue;
+		for (j = 0; j < s->cohorts[i].count; j++)
+			if (s->cohorts[i].members[j].txn_id == txn_id)
+				return true;
+	}
+	return false;
 }
 
 static typeof(((struct d2_store *)0)->cohorts[0]) *
@@ -755,6 +859,7 @@ static bool d2_replay_registration(struct d2_replay *r,
 }
 
 static bool d2_replay_trust(struct d2_replay *r,
+			    const struct d2_wal_header *h,
 			    const struct d2_control *control)
 {
 	typeof(r->store->admissions[0]) *slot;
@@ -798,25 +903,36 @@ static bool d2_replay_trust(struct d2_replay *r,
 	if (slot)
 		return false;
 	for (uint32_t i = 0; i < D1_MAX_ADMISSIONS; i++) {
+		typeof(r->store->work[0]) *candidate = NULL;
+
 		slot = &r->store->admissions[i];
 		if (slot->used)
 			continue;
 		slot->used = true;
 		slot->id = client_id;
 		slot->auth = auth;
+		candidate = d2_recovery_candidate(r->store, NULL, &auth);
+		if (candidate) {
+			if (h->total_bytes > r->store->recovery_allowance)
+				return false;
+			r->store->recovery_allowance -= h->total_bytes;
+			candidate->recovery_trusted = true;
+		}
 		return true;
 	}
 	return false;
 }
 
 static bool d2_replay_authority(struct d2_replay *r,
+				const struct d2_wal_header *h,
 				const struct d2_control *control)
 {
 	typeof(r->store->admissions[0]) *slot;
+	typeof(r->store->work[0]) *candidate = NULL;
 	struct d1_cursor cursor;
 	uint8_t issuer[16], other[12];
 	uint64_t epoch;
-	uint32_t count, seqid, expected_seqid;
+	uint32_t count, i, seqid, expected_seqid;
 
 	if (control->subtype != D2_CTL_AUTHORITY_ADMIT)
 		return true;
@@ -839,6 +955,20 @@ static bool d2_replay_authority(struct d2_replay *r,
 	if (memcmp(other, issuer, sizeof(other)))
 		return false;
 	slot->authority_seen = true;
+	for (i = 0; i < D1_MAX_TXNS; i++)
+		if (r->store->work[i].recovery_trusted &&
+		    !r->store->work[i].recovery_vouched &&
+		    d2_recovery_matches(r->store, &r->store->work[i], NULL,
+				&slot->auth)) {
+			candidate = &r->store->work[i];
+			break;
+		}
+	if (candidate) {
+		if (h->total_bytes > r->store->recovery_allowance)
+			return false;
+		r->store->recovery_allowance -= h->total_bytes;
+		candidate->recovery_vouched = true;
+	}
 	return true;
 }
 
@@ -1010,6 +1140,9 @@ static bool d2_replay_reap(struct d2_replay *r,
 		if (!d2_work_set_phase(r->store, items[i]->txn_id,
 				       D2_ROLLED_BACK))
 			return false;
+	if (h->total_bytes > r->store->recovery_allowance)
+		return false;
+	r->store->recovery_allowance -= h->total_bytes;
 	return d2_rebuild_promises(r->store);
 }
 
@@ -1580,6 +1713,7 @@ static bool d2_replay_start(struct d2_replay *r, const struct d2_wal_header *h,
 	    start.live_txn_payload_outstanding != outstanding ||
 	    start.live_txn_payload_staged != staged)
 		return false;
+	d2_open_recovery_window(r->store, D2_RESTART_SWEEP);
 	if (!r->last_incarnation) {
 		r->last_incarnation = h->ds_incarnation;
 		return h->ds_incarnation ==
@@ -1659,7 +1793,7 @@ static bool d2_replay_recovery(struct d2_replay *r,
 			       const struct d2_control *control)
 {
 	typeof(r->store->admissions[0]) *fresh;
-	const typeof(r->store->work[0]) *work;
+	typeof(r->store->work[0]) *work;
 	struct d1_envelope env = { 0 };
 	struct d1_result result;
 	struct d1_cursor cursor;
@@ -1677,7 +1811,7 @@ static bool d2_replay_recovery(struct d2_replay *r,
 	    !d1_dec_u64(&cursor, &lease_epoch) ||
 	    !d1_dec_u64(&cursor, &read_epoch) || !d1_dec_finished(&cursor))
 		return false;
-	work = d2_work_by_txn(r->store, txn_id);
+	work = (typeof(r->store->work[0]) *)d2_work_by_txn(r->store, txn_id);
 	fresh = d2_admission_slot(r->store, control->admission_client_id);
 	d2_stateid(control->admission_client_id, &expected_seqid, digest);
 	if (!work || !fresh || !fresh->authority_seen ||
@@ -1746,6 +1880,13 @@ static bool d2_replay_recovery(struct d2_replay *r,
 			    env.body.control.old_admission.raw,
 			    control->admission_client_id))
 		return false;
+	if (control->status == D1_OK && work->recovery_eligible &&
+	    work->recovery_vouched && !work->recovery_admitted) {
+		if (h->total_bytes > r->store->recovery_allowance)
+			return false;
+		r->store->recovery_allowance -= h->total_bytes;
+		work->recovery_admitted = true;
+	}
 	return d2_receipt_remember(r->store, &work->object.export_uuid,
 				   &env.key, control->key.request_digest,
 				   &result);
@@ -2341,8 +2482,8 @@ static bool d2_replay_record(const struct d2_wal_header *h,
 		if (!d2_control_decode(record, h->total_bytes, h, &control))
 			return false;
 		return d2_replay_registration(r, &control) &&
-		       d2_replay_trust(r, &control) &&
-		       d2_replay_authority(r, &control) &&
+		       d2_replay_trust(r, h, &control) &&
+		       d2_replay_authority(r, h, &control) &&
 		       d2_replay_recovery(r, h, &control) &&
 		       d2_replay_episode_mark(r, h, &control) &&
 		       d2_replay_certificate(r, &control) &&
@@ -2587,6 +2728,7 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 		status = D1_NOSPC;
 		goto fail;
 	}
+	s->recovery_allowance = 0;
 	status = d2_model_next_incarnation(s);
 	if (status != D1_OK)
 		goto fail;
@@ -2606,6 +2748,7 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 	status = d2_restart_reap(s);
 	if (status != D1_OK)
 		goto fail;
+	d2_open_recovery_window(s, D2_RESTART_SWEEP - reap_bytes);
 	*out = s;
 	return D1_OK;
 
@@ -2642,6 +2785,10 @@ static bool d2_wal_has_room(const struct d2_store *s, uint64_t add)
 {
 	const struct d2_superblock *super = d2_files_super(s->files);
 	uint64_t headroom, restarts, wal_need = s->wal_promised;
+
+	if (s->recovery_allowance > UINT64_MAX - wal_need)
+		return false;
+	wal_need += s->recovery_allowance;
 	if (add > UINT64_MAX - wal_need)
 		return false;
 	wal_need += add;
@@ -2697,7 +2844,13 @@ static uint32_t d2_preflight_ordinary(struct d2_store *s,
 			add = 280u + D2_ENTRY_RECORD_BYTES;
 		break;
 	case D1_OP_RECOVERY_ADMIT:
-		add = 216u + 40u * env->body.control.count;
+		work = d2_work_by_txn(s, env->body.control.txns[0].raw);
+		if (probe->entries[0].status != D1_OK || !work ||
+		    !work->recovery_eligible || !work->recovery_vouched ||
+		    work->recovery_admitted ||
+		    s->recovery_allowance <
+			    216u + 40u * env->body.control.count)
+			add = 216u + 40u * env->body.control.count;
 		break;
 	case D1_OP_MARK_ERROR:
 		add = 280u + 24u * env->body.repair.count;
@@ -2999,6 +3152,9 @@ static uint32_t d2_persist_recovery(struct d2_store *s,
 				    const struct d1_envelope *env,
 				    const struct d1_result *result)
 {
+	typeof(s->work[0]) *work =
+		(typeof(s->work[0]) *)d2_work_by_txn(
+			s, env->body.control.txns[0].raw);
 	const struct d1_fixture_authority *fresh =
 		d2_admission_find(s, env->body.control.new_admission.raw);
 	struct d2_wal_header h = { 0 };
@@ -3006,7 +3162,8 @@ static uint32_t d2_persist_recovery(struct d2_store *s,
 	struct d1_cursor cursor;
 	uint8_t record[D2_MAX_RECORD_BYTES], other[12];
 	size_t written;
-	uint32_t seqid;
+	uint32_t seqid, status;
+	bool funded;
 
 	if (!fresh || env->body.control.count != 1)
 		return D1_INVALID;
@@ -3037,7 +3194,16 @@ static uint32_t d2_persist_recovery(struct d2_store *s,
 	if (!d1_cursor_ok(&cursor) ||
 	    !d2_control_encode(&h, &control, record, sizeof(record), &written))
 		return D1_INVALID;
-	return d2_wal_append(s, record, written);
+	funded = result->entries[0].status == D1_OK && work &&
+		 work->recovery_eligible && work->recovery_vouched &&
+		 !work->recovery_admitted &&
+		 s->recovery_allowance >= written;
+	s->recovery_spend = funded;
+	status = d2_wal_append(s, record, written);
+	s->recovery_spend = false;
+	if (status == D1_OK && funded)
+		work->recovery_admitted = true;
+	return status;
 }
 
 static uint32_t d2_persist_episode_mark(struct d2_store *s,
@@ -3498,6 +3664,17 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 		pthread_mutex_unlock(&s->lock);
 		return D1_UNSUPPORTED;
 	}
+	if (env->op == D1_OP_RECOVERY_ADMIT &&
+	    d2_repair_member(s, env->body.control.txns[0].raw)) {
+		memset(result, 0, sizeof(*result));
+		result->key = env->key;
+		result->disposition = D1_UNRECORDED;
+		result->count = 1;
+		result->entries[0].status = D1_UNSUPPORTED;
+		result->entries[0].disposition = D1_UNRECORDED;
+		pthread_mutex_unlock(&s->lock);
+		return D1_UNSUPPORTED;
+	}
 	status = d2_register_file(s, &env->object, file_key);
 	if (status != D1_OK) {
 		if (status != D1_NOSPC)
@@ -3682,9 +3859,10 @@ d1_admission_id d2_store_admit_full(struct d2_store *s,
 				    const struct d1_fixture_authority *auth)
 {
 	d1_admission_id id = d1_admission_none();
+	typeof(s->work[0]) *candidate = NULL;
 	uint8_t file_key[32];
 	uint32_t i, status;
-	bool registered = false;
+	bool funded = false, registered = false;
 
 	if (!s || !object || !auth ||
 	    !memcmp(auth->session, (uint8_t[D1_UUID_BYTES]){ 0 },
@@ -3696,7 +3874,11 @@ d1_admission_id d2_store_admit_full(struct d2_store *s,
 			registered = true;
 			break;
 		}
-	if (!s->fenced &&
+	if (!s->fenced && registered) {
+		candidate = d2_recovery_candidate(s, object, auth);
+		funded = candidate && s->recovery_allowance >= 296u + 256u;
+	}
+	if (!s->fenced && !funded &&
 	    !d2_wal_has_room(s, 296u + 256u + (registered ? 0u : 396u))) {
 		pthread_mutex_unlock(&s->lock);
 		return id;
@@ -3707,8 +3889,10 @@ d1_admission_id d2_store_admit_full(struct d2_store *s,
 	if (!s->fenced)
 		if (status == D1_OK)
 			id = d1_fixture_admit_full(s->model, object, auth);
+	s->recovery_spend = funded;
 	if (d1_admission_live(id) &&
 	    d2_admission_controls(s, id, auth) != D1_OK) {
+		s->recovery_spend = false;
 		s->fenced = true;
 		id = d1_admission_none();
 	} else if (d1_admission_live(id) &&
@@ -3717,7 +3901,12 @@ d1_admission_id d2_store_admit_full(struct d2_store *s,
 		id = d1_admission_none();
 	} else if (d1_admission_live(id)) {
 		d2_admission_slot(s, id.raw)->authority_seen = true;
+		if (funded) {
+			candidate->recovery_trusted = true;
+			candidate->recovery_vouched = true;
+		}
 	}
+	s->recovery_spend = false;
 	pthread_mutex_unlock(&s->lock);
 	return id;
 }
@@ -4080,6 +4269,11 @@ uint64_t d2_store_wal_bytes(struct d2_store *s)
 uint64_t d2_store_wal_promised(struct d2_store *s)
 {
 	return s && !s->fenced ? s->wal_promised : 0;
+}
+
+uint64_t d2_store_recovery_allowance(struct d2_store *s)
+{
+	return s && !s->fenced ? s->recovery_allowance : 0;
 }
 
 uint32_t d2_store_view_open(struct d2_store *s, const struct d1_objkey *object,

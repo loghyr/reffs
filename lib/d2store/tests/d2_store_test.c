@@ -535,7 +535,7 @@ int main(void)
 		}
 	}
 	if (store) {
-		admission = d2_store_admit(store, &object, 17,
+		admission = d2_store_admit(store, &object, 18,
 					   D1_RIGHT_READ | D1_RIGHT_WRITE |
 						   D1_RIGHT_SINGLE_WRITER);
 		env.admission = admission;
@@ -544,6 +544,7 @@ int main(void)
 		guard = (struct d1_guard){ .never_written = true };
 		write_request(&env, 30, 20, 30, &guard, payload,
 			      sizeof(payload));
+		env.body.write.entries[0].owner.writer = 18;
 		env.body.write.activate = false;
 		promise_base = d2_store_wal_promised(store);
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
@@ -557,16 +558,23 @@ int main(void)
 		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
 			      D1_OK &&
 			      d2_store_wal_promised(store) ==
-				      promise_base + 2u * D2_ENTRY_RECORD_BYTES,
+				      promise_base + 2u * D2_ENTRY_RECORD_BYTES &&
+			      d2_store_recovery_allowance(store) ==
+				      D2_RESTART_SWEEP,
 		      "restart reconstructs prepared completion reserve");
 	}
 	if (store) {
 		control_admission =
 			d2_store_admit(store, &object, 17, D1_RIGHT_CONTROL);
+		check(d2_store_recovery_allowance(store) == D2_RESTART_SWEEP,
+		      "acting control admission uses ordinary capacity");
 		fresh_admission =
-			d2_store_admit(store, &object, 17,
-				       D1_RIGHT_READ | D1_RIGHT_WRITE |
-					       D1_RIGHT_SINGLE_WRITER);
+			d2_store_admit(store, &object, 18,
+					       D1_RIGHT_READ | D1_RIGHT_WRITE |
+						       D1_RIGHT_SINGLE_WRITER);
+		check(d2_store_recovery_allowance(store) ==
+			      D2_RESTART_SWEEP - 552u,
+		      "returning admission spends trust and vouch allowance");
 		memset(&recovery, 0, sizeof(recovery));
 		recovery.object = object;
 		recovery.admission = control_admission;
@@ -584,7 +592,9 @@ int main(void)
 		recovery.body.control.read_epoch_present = true;
 		recovery.body.control.read_epoch = 0;
 		check(d2_store_apply(store, &recovery, &result) == D1_OK &&
-			      result.entries[0].status == D1_OK,
+			      result.entries[0].status == D1_OK &&
+			      d2_store_recovery_allowance(store) ==
+				      D2_RESTART_SWEEP - 808u,
 		      "recovery admission rebinds prepared work");
 		d2_store_crash(store);
 		store = NULL;
@@ -608,7 +618,7 @@ int main(void)
 		      "restart returns exact recovery admission receipt");
 		next_control =
 			d2_store_admit(store, &object, 17, D1_RIGHT_CONTROL);
-		next_fresh = d2_store_admit(store, &object, 17,
+		next_fresh = d2_store_admit(store, &object, 18,
 					    D1_RIGHT_READ | D1_RIGHT_WRITE |
 						    D1_RIGHT_SINGLE_WRITER);
 		recovery.admission = next_control;
@@ -632,7 +642,7 @@ int main(void)
 		env.body.lifecycle.count = 1;
 		env.body.lifecycle.entries[0].index = 20;
 		env.body.lifecycle.entries[0].owner.cohort.raw = 1;
-		env.body.lifecycle.entries[0].owner.writer = 17;
+		env.body.lifecycle.entries[0].owner.writer = 18;
 		env.body.lifecycle.entries[0].owner.co_id = 30;
 		env.body.lifecycle.entries[0].txn =
 			d2_store_txn_handle(store, staged_txn.raw);
