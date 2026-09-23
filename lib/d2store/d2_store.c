@@ -3403,6 +3403,38 @@ static uint32_t d2_unrecorded_nospc(const struct d1_envelope *env,
 	return D1_NOSPC;
 }
 
+static bool d2_unrecorded_forward_refusal(
+	struct d2_store *s, const struct d1_envelope *env,
+	const struct d1_result *probe, struct d1_result *result)
+{
+	const typeof(s->work[0]) *work;
+	d1_txn_id txn;
+	uint32_t i;
+
+	if (probe->count != 1 || probe->entries[0].status == D1_OK ||
+	    probe->entries[0].status == D1_NO_PREDECESSOR)
+		return false;
+	switch (env->op) {
+	case D1_OP_FINALIZE_BATCH:
+	case D1_OP_COMMIT_BATCH:
+		txn = env->body.lifecycle.entries[0].txn;
+		break;
+	case D1_OP_ROLLBACK_BATCH:
+		txn = env->body.rollback.entries[0].txn;
+		break;
+	default:
+		return false;
+	}
+	work = d2_work_by_txn(s, txn.raw);
+	if (!work || d2_work_promise(work->phase) < D2_ENTRY_RECORD_BYTES)
+		return false;
+	*result = *probe;
+	result->disposition = D1_UNRECORDED;
+	for (i = 0; i < result->count; i++)
+		result->entries[i].disposition = D1_UNRECORDED;
+	return true;
+}
+
 static uint64_t d2_entry_index(const struct d1_envelope *env)
 {
 	switch (env->op) {
@@ -4213,7 +4245,10 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 	}
 	status = d2_preflight_ordinary(s, env, &probe);
 	if (status == D1_NOSPC) {
-		status = d2_unrecorded_nospc(env, result);
+		if (d2_unrecorded_forward_refusal(s, env, &probe, result))
+			status = D1_OK;
+		else
+			status = d2_unrecorded_nospc(env, result);
 		pthread_mutex_unlock(&s->lock);
 		return status;
 	}

@@ -2906,6 +2906,104 @@ int main(void)
 		check(store && replay_ok,
 		      "recovery-rebind race receipts replay exactly");
 	}
+	if (store) {
+		check(d2_store_close(store) == D1_OK,
+		      "close recovery-rebind race fixture");
+		store = NULL;
+	}
+	unlinkat(dirfd, "super", 0);
+	unlinkat(dirfd, "wal", 0);
+	unlinkat(dirfd, "payload", 0);
+	memset(&binding, 0, sizeof(binding));
+	check(d2_store_provision(dirfd, &config, &binding, &store) == D1_OK,
+	      "provision lost-revoke headroom fixture");
+	if (store) {
+		struct d1_fixture_authority mds = { 0 }, client = { 0 };
+		d1_admission_id mds_id, client_id;
+		d1_txn_id txn;
+		uint32_t phase, fill_status = D1_OK;
+		uint64_t admission_id;
+
+		fill(mds.issuer.bytes, sizeof(mds.issuer.bytes), 0x25);
+		fill(mds.principal.bytes, sizeof(mds.principal.bytes), 0x35);
+		fill(mds.session, sizeof(mds.session), 0x45);
+		mds.writer = 80;
+		mds.rights = D1_RIGHT_CONTROL;
+		mds.authority_epoch = 800;
+		client = mds;
+		fill(client.principal.bytes, sizeof(client.principal.bytes), 0x55);
+		fill(client.session, sizeof(client.session), 0x65);
+		client.writer = 81;
+		client.rights = D1_RIGHT_READ | D1_RIGHT_WRITE |
+				D1_RIGHT_SINGLE_WRITER;
+		client.lease_epoch = 801;
+		client.fence_sequence = 802;
+		mds_id = d2_store_admit_full(store, &object, &mds);
+		client_id = d2_store_admit_bare(store, &object, &client);
+		check(d1_admission_live(mds_id) &&
+			      d1_admission_live(client_id) &&
+			      d2_store_trust_admission(store, mds_id, client_id) ==
+				      D1_OK &&
+			      d2_store_admit_authority(store, mds_id, &client_id,
+						       1) == D1_OK,
+		      "admit lost-revoke authority and beneficiary");
+		memset(&env, 0, sizeof(env));
+		env.object = object;
+		env.admission = client_id;
+		env.incarnation = d2_store_incarnation(store);
+		fill(env.key.origin.bytes, sizeof(env.key.origin.bytes), 0x75);
+		env.op = D1_OP_WRITE_BATCH;
+		guard = (struct d1_guard){ .never_written = true };
+		write_request(&env, 1, 60, 300, &guard, payload,
+			      sizeof(payload));
+		env.body.write.activate = false;
+		env.body.write.entries[0].owner.writer = client.writer;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK &&
+			      result.entries[0].phase == D2_PREPARED,
+		      "prepare work before lost authority revoke");
+		txn = result.entries[0].txn;
+		while (fill_status == D1_OK)
+			fill_status = d2_store_admit_authority(store, mds_id, NULL, 0);
+		check(fill_status == D1_NOSPC,
+		      "drain ordinary WAL headroom with valid controls");
+		wal_bytes = d2_store_wal_bytes(store);
+		check(d2_store_revoke_authority(store, mds_id, &mds.issuer,
+						800, 1) == D1_NOSPC &&
+			      d2_store_wal_bytes(store) == wal_bytes,
+		      "unrecorded authority revoke still publishes restriction");
+		memset(&env.body, 0, sizeof(env.body));
+		env.key.sequence = 2;
+		env.op = D1_OP_FINALIZE_BATCH;
+		env.body.lifecycle.range_begin = 60;
+		env.body.lifecycle.range_end = 61;
+		env.body.lifecycle.count = 1;
+		env.body.lifecycle.entries[0].index = 60;
+		env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+		env.body.lifecycle.entries[0].owner.writer = client.writer;
+		env.body.lifecycle.entries[0].owner.co_id = 300;
+		env.body.lifecycle.entries[0].txn = txn;
+		d2_store_verifier(store, env.body.lifecycle.prior_verifier);
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_STALE_AUTH &&
+			      result.disposition == D1_UNRECORDED &&
+			      result.entries[0].disposition == D1_UNRECORDED &&
+			      d2_store_wal_bytes(store) == wal_bytes &&
+			      d2_store_txn_state(store, txn.raw, &phase,
+						 &admission_id) &&
+			      phase == D2_PREPARED && admission_id == client_id.raw,
+		      "forward-funded stale finalize leaves prepared work");
+		memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
+		memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
+		reopen.files.expected_root_ino = binding.root_ino;
+		d2_store_crash(store);
+		store = NULL;
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) == D1_OK &&
+			      d2_store_txn_state(store, txn.raw, &phase,
+						 &admission_id) &&
+			      phase == D2_PREPARED && admission_id == client_id.raw,
+		      "lost revoke restarts with prepared work fenced by incarnation");
+	}
 
 done:
 	if (store)
