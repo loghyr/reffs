@@ -94,12 +94,14 @@ static bool repair_log_atomic(int dirfd, const struct d2_binding *binding)
 		goto out;
 	while (at < (uint64_t)st.st_size &&
 	       d2_wal_header_decode(wal + at, (size_t)st.st_size - at,
-				    binding->store_uuid, binding->wal_uuid, &h)) {
+				    binding->store_uuid, binding->wal_uuid,
+				    &h)) {
 		if (h.family == D2_REC_COHORT &&
 		    d2_cohort_decode(wal + at, h.total_bytes, &h, &cohort) &&
 		    cohort.transition == D2_PREPARED) {
 			prepared++;
-			if (cohort.member_count != 2 || !cohort.members[0].staged ||
+			if (cohort.member_count != 2 ||
+			    !cohort.members[0].staged ||
 			    !cohort.members[1].staged ||
 			    !cohort.members[0].payload_object_id ||
 			    !cohort.members[1].payload_object_id)
@@ -115,9 +117,9 @@ out:
 	return ok;
 }
 
-static void repair_cut(int dirfd, const uint8_t *token,
-		       enum d2_io_point point, unsigned int occurrence,
-		       const uint8_t *payload, const uint8_t *replacement)
+static void repair_cut(int dirfd, const uint8_t *token, enum d2_io_point point,
+		       unsigned int occurrence, const uint8_t *payload,
+		       const uint8_t *replacement)
 {
 	struct d2_store_config config = { 0 };
 	struct d2_store_rebind reopen = { 0 };
@@ -155,7 +157,8 @@ static void repair_cut(int dirfd, const uint8_t *token,
 	memset(object.export_uuid.bytes, 0x21, 16);
 	memset(object.object_uuid.bytes, 0x66, 16);
 	admission = d2_store_admit(store, &object, 9,
-				   D1_RIGHT_READ | D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+				   D1_RIGHT_READ | D1_RIGHT_WRITE |
+					   D1_RIGHT_REPAIR |
 					   D1_RIGHT_SINGLE_WRITER);
 	env.object = object;
 	env.admission = admission;
@@ -201,7 +204,7 @@ static void repair_cut(int dirfd, const uint8_t *token,
 		env.body.repair.entries[i].owner.co_id = 3 + i;
 		env.body.repair.entries[i].custody_present = true;
 		env.body.repair.entries[i].custody = i ? second_custody :
-							   first_custody;
+							 first_custody;
 		env.body.repair.entries[i].successor_present = true;
 		env.body.repair.entries[i].successor = i ? second : first;
 	}
@@ -224,7 +227,7 @@ static void repair_cut(int dirfd, const uint8_t *token,
 		env.body.repair.entries[i].mode = D1_REPAIR_ERROR;
 		env.body.repair.entries[i].custody_present = true;
 		env.body.repair.entries[i].custody = i ? second_custody :
-							   first_custody;
+							 first_custody;
 		env.body.repair.entries[i].successor_present = true;
 		env.body.repair.entries[i].successor = i ? second : first;
 	}
@@ -311,8 +314,9 @@ static void repair_cut(int dirfd, const uint8_t *token,
 		      visible.raw == second.raw,
 	      "repair barrier recovery preserves both visible members");
 	if (fail_wal)
-		check(store && d2_store_wal_bytes(store) ==
-				       wal_before + D2_START_RECORD_BYTES &&
+		check(store &&
+			      d2_store_wal_bytes(store) ==
+				      wal_before + D2_START_RECORD_BYTES &&
 			      d2_store_repair_state(store, repair.raw, &phase,
 						    &member_count) &&
 			      phase == D2_ADMITTED && member_count == 2,
@@ -543,27 +547,34 @@ int main(void)
 			if (wal >= 0)
 				close(wal);
 		}
-		memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
-		memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
+		memcpy(reopen.files.expected_store_uuid, binding.store_uuid,
+		       16);
+		memcpy(reopen.files.expected_export_uuid, binding.export_uuid,
+		       16);
 		reopen.files.expected_root_ino = binding.root_ino;
 		reopen.files.binding_token = token;
 		reopen.files.binding_token_len = sizeof(token);
 		reopen.chunk_bytes = config.chunk_bytes;
 		reopen.max_file_bytes = config.max_file_bytes;
-		check(d2_store_rebind(dirfd, &reopen, &binding, &store) == D1_OK,
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+			      D1_OK,
 		      "orphan postcondition replays after crash");
-		restored = d2_store_postcond(store, postcond.raw, &restored_index,
+		restored = d2_store_postcond(store, postcond.raw,
+					     &restored_index,
 					     &restored_successor, &consumed);
-		check(restored &&
-			      restored_index == 0 &&
-			      restored_successor.raw == successor.raw && !consumed,
+		check(restored && restored_index == 0 &&
+			      restored_successor.raw == successor.raw &&
+			      !consumed,
 		      "orphan postcondition remains available after restart");
 		d2_store_crash(store);
 		store = NULL;
-		check(d2_store_rebind(dirfd, &reopen, &binding, &store) == D1_OK &&
-			      d2_store_postcond(store, postcond.raw, &restored_index,
-						&restored_successor, &consumed) &&
-			      restored_successor.raw == successor.raw && !consumed,
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+				      D1_OK &&
+			      d2_store_postcond(
+				      store, postcond.raw, &restored_index,
+				      &restored_successor, &consumed) &&
+			      restored_successor.raw == successor.raw &&
+			      !consumed,
 		      "orphan postcondition survives another incarnation");
 		if (store)
 			d2_store_close(store);

@@ -161,9 +161,10 @@ int main(void)
 		      pread(wal, start, sizeof(start), 0) ==
 			      (ssize_t)sizeof(start) &&
 		      d2_wal_header_decode(start, sizeof(start),
-				   binding.store_uuid, binding.wal_uuid,
-				   &header) &&
-		      d2_start_decode(start, sizeof(start), &header, &start_body),
+					   binding.store_uuid, binding.wal_uuid,
+					   &header) &&
+		      d2_start_decode(start, sizeof(start), &header,
+				      &start_body),
 	      "decode START for identity fault");
 	header.wal_uuid[0] ^= 1;
 	check(d2_start_encode(&header, &start_body, forged) &&
@@ -223,8 +224,8 @@ int main(void)
 				status = D1_INVALID;
 				break;
 			}
-			status = d2_files_wal_append_floor(files, record, written,
-							1184);
+			status = d2_files_wal_append_floor(files, record,
+							   written, 1184);
 		} while (status == D1_OK);
 		check(status == D1_NOSPC,
 		      "ordinary append preserves ERROR completion promise");
@@ -237,15 +238,16 @@ int main(void)
 		do {
 			control_record(files, D2_CTL_AUTHORITY_REVOKE, 28,
 				       record, sizeof(record), &written);
-			status = d2_files_wal_append_floor(files, record, written,
-							916);
+			status = d2_files_wal_append_floor(files, record,
+							   written, 916);
 		} while (status == D1_OK);
 		check(status == D1_NOSPC &&
 			      control_record(files, D2_CTL_EPISODE_CLEAR, 704,
-					     record, sizeof(record), &written) &&
+					     record, sizeof(record),
+					     &written) &&
 			      written == 916 &&
-			      d2_files_wal_append_floor(files, record, written, 0) ==
-				      D1_OK,
+			      d2_files_wal_append_floor(files, record, written,
+							0) == D1_OK,
 		      "episode clear spends its 916-byte promise");
 	}
 

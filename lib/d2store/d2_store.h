@@ -39,11 +39,9 @@ d2_store_admit_full(struct d2_store *store, const struct d1_objkey *object,
 d1_admission_id
 d2_store_admit_bare(struct d2_store *store, const struct d1_objkey *object,
 		    const struct d1_fixture_authority *authority);
-uint32_t d2_store_trust_admission(struct d2_store *store,
-				  d1_admission_id actor,
+uint32_t d2_store_trust_admission(struct d2_store *store, d1_admission_id actor,
 				  d1_admission_id beneficiary);
-uint32_t d2_store_admit_authority(struct d2_store *store,
-				  d1_admission_id actor,
+uint32_t d2_store_admit_authority(struct d2_store *store, d1_admission_id actor,
 				  const d1_admission_id *beneficiaries,
 				  uint32_t count);
 void d2_store_revoke(struct d2_store *store, d1_admission_id admission);
@@ -53,10 +51,10 @@ uint32_t d2_store_revoke_authority(struct d2_store *store,
 				   uint64_t authority_epoch, uint32_t reason);
 void d2_store_expire(struct d2_store *store, d1_admission_id admission);
 d1_custody_id d2_store_custody(struct d2_store *store, d1_version_id version);
-uint32_t d2_store_certificate(
-	struct d2_store *store, d1_admission_id actor,
-	const struct d1_opkey *key, d1_episode_id episode, d1_repair_id cohort,
-	const uint8_t certificate[D1_CERTIFICATE_BYTES]);
+uint32_t d2_store_certificate(struct d2_store *store, d1_admission_id actor,
+			      const struct d1_opkey *key, d1_episode_id episode,
+			      d1_repair_id cohort,
+			      const uint8_t certificate[D1_CERTIFICATE_BYTES]);
 uint32_t d2_store_retire(struct d2_store *store, uint32_t reason);
 uint32_t d2_store_tombstone_file(struct d2_store *store,
 				 const struct d1_objkey *object,

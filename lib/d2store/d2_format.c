@@ -492,7 +492,7 @@ bool d2_payload_decode_content(const uint8_t *in, size_t len,
 	o->object_bytes = object_bytes;
 	memcpy(o->store_uuid, store, 16);
 	*content_ok = stored_crc == d1_crc32c(o->content, o->content_len) &&
-	       d2_content_checksum_ok(o);
+		      d2_content_checksum_ok(o);
 	return true;
 }
 

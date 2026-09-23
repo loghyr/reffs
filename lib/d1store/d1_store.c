@@ -5914,8 +5914,8 @@ void d1_fixture_fail_next_index(struct d1_store *s)
 	pthread_mutex_unlock(&s->lock);
 }
 
-bool d1_fixture_stale_index(struct d1_store *s,
-			    const struct d1_objkey *object, uint64_t index)
+bool d1_fixture_stale_index(struct d1_store *s, const struct d1_objkey *object,
+			    uint64_t index)
 {
 	struct d1_object *o;
 	struct d1_version *v;
@@ -5924,7 +5924,8 @@ bool d1_fixture_stale_index(struct d1_store *s,
 	pthread_mutex_lock(&s->lock);
 	o = d1_store_serving(s) ? d1_object_find(s, object) : NULL;
 	if (o && index < D1_MAX_CHUNKS && o->chunks[index].visible_present) {
-		v = d1_version_find(s, d1_version_of(s, o->chunks[index].visible));
+		v = d1_version_find(s,
+				    d1_version_of(s, o->chunks[index].visible));
 		if (v) {
 			o->chunks[index].materialized_present =
 				v->predecessor_present;
@@ -6280,8 +6281,7 @@ bool d1_fixture_txn_state(struct d1_store *s, d1_txn_id txn, uint32_t *phase,
 }
 
 bool d1_fixture_version_predecessor(struct d1_store *s, d1_version_id version,
-				    bool *present,
-				    d1_version_id *predecessor)
+				    bool *present, d1_version_id *predecessor)
 {
 	struct d1_version *row;
 	bool found = false;
@@ -6293,8 +6293,8 @@ bool d1_fixture_version_predecessor(struct d1_store *s, d1_version_id version,
 	if (row) {
 		*present = row->predecessor_present;
 		*predecessor = row->predecessor_present ?
-				d1_version_of(s, row->predecessor) :
-				d1_version_none();
+				       d1_version_of(s, row->predecessor) :
+				       d1_version_none();
 		found = true;
 	}
 	pthread_mutex_unlock(&s->lock);
@@ -7119,8 +7119,8 @@ uint32_t d1_fixture_restore_journal(struct d1_store *s, const uint8_t *log,
 	status = d1_replay_locked(s, log, durable);
 	if (status == D1_OK && !d1_journal_init(&s->journal, &s->uuid))
 		status = D1_NOSPC;
-	if (status == D1_OK &&
-	    !d1_journal_adopt(&s->journal, log, durable, s->replayed_lsn + 1u)) {
+	if (status == D1_OK && !d1_journal_adopt(&s->journal, log, durable,
+						 s->replayed_lsn + 1u)) {
 		d1_journal_fini(&s->journal);
 		status = D1_NOSPC;
 	}

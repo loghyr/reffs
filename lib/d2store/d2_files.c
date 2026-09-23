@@ -650,7 +650,7 @@ static uint32_t d2_files_wal_append_internal(struct d2_files *f,
 					  f->super.wal_uuid, &h) ||
 		    h.total_bytes > len - at || h.lsn != expected_lsn ||
 		    h.ds_incarnation != f->super.ds_incarnation +
-					    (f->super.ds_incarnation == 0))
+						(f->super.ds_incarnation == 0))
 			return 2;
 		at += h.total_bytes;
 		expected_lsn++;
@@ -695,9 +695,8 @@ uint32_t d2_files_wal_append(struct d2_files *f, const uint8_t *record,
 	return d2_files_wal_append_internal(f, record, len, false, 0, false);
 }
 
-uint32_t d2_files_wal_append_floor(struct d2_files *f,
-				   const uint8_t *record, size_t len,
-				   uint64_t promised)
+uint32_t d2_files_wal_append_floor(struct d2_files *f, const uint8_t *record,
+				   size_t len, uint64_t promised)
 {
 	return d2_files_wal_append_internal(f, record, len, false, promised,
 					    false);
