@@ -1562,6 +1562,53 @@ int main(void)
 			      D1_IO,
 		      "scan fences a corrupt referenced payload object");
 	}
+	unlinkat(dirfd, "super", 0);
+	unlinkat(dirfd, "wal", 0);
+	unlinkat(dirfd, "payload", 0);
+	config.files.capacity_payload_bytes = 2u * D2_PAYLOAD_ALIGN;
+	memset(&binding, 0, sizeof(binding));
+	check(d2_store_provision(dirfd, &config, &binding, &store) == D1_OK,
+	      "provision payload-capacity fixture");
+	if (store) {
+		admission = d2_store_admit(store, &object, 17,
+					   D1_RIGHT_READ | D1_RIGHT_WRITE |
+						   D1_RIGHT_SINGLE_WRITER);
+		memset(&env, 0, sizeof(env));
+		env.object = object;
+		env.admission = admission;
+		env.incarnation = d2_store_incarnation(store);
+		fill(env.key.origin.bytes, 16, 0xb8);
+		env.op = D1_OP_WRITE_BATCH;
+		guard = (struct d1_guard){ .never_written = true };
+		write_request(&env, 1, 0, 1, &guard, payload,
+			      sizeof(payload));
+		wal_bytes = d2_store_wal_bytes(store);
+		check(d2_store_apply(store, &env, &result) == D1_NOSPC &&
+			      result.disposition == D1_UNRECORDED &&
+			      result.entries[0].disposition == D1_UNRECORDED &&
+			      d2_store_wal_bytes(store) == wal_bytes &&
+			      !d2_store_visible(store, &object, 0, &visible),
+		      "payload capacity refuses before model mutation");
+		write_request(&env, 2, 0, 2, &guard, payload, 1);
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK &&
+			      d2_store_visible(store, &object, 0, &visible),
+		      "store remains usable after capacity refusal");
+		guard = (struct d1_guard){ .never_written = true };
+		write_request(&env, 3, 0, 3, &guard, payload,
+			      sizeof(payload));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_GUARDED,
+		      "semantic refusal precedes payload capacity");
+		check(d2_store_guard(store, &object, 0, &guard),
+		      "capacity fixture reads committed guard");
+		write_request(&env, 4, 0, 4, &guard, payload,
+			      sizeof(payload));
+		check(d2_store_apply(store, &env, &result) == D1_NOSPC &&
+			      result.disposition == D1_UNRECORDED &&
+			      d2_store_visible(store, &object, 0, &visible),
+		      "valid replacement is refused when payload is full");
+	}
 
 done:
 	if (store)

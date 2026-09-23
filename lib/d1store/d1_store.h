@@ -469,6 +469,8 @@ bool d1_fixture_release_predecessor(struct d1_store *s, d1_version_id version);
  */
 uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 			struct d1_result *out);
+uint32_t d1_store_probe(struct d1_store *s, const struct d1_envelope *env,
+			struct d1_result *out);
 
 /* What the model currently makes visible, for the oracles to ask. */
 bool d1_store_visible(struct d1_store *s, const struct d1_objkey *object,

@@ -2638,6 +2638,142 @@ static uint32_t d2_transition(const struct d1_envelope *env,
 	return D2_COMMITTED;
 }
 
+static bool d2_wal_has_room(const struct d2_store *s, uint64_t add)
+{
+	const struct d2_superblock *super = d2_files_super(s->files);
+	uint64_t headroom, restarts, wal_need = s->wal_promised;
+	if (add > UINT64_MAX - wal_need)
+		return false;
+	wal_need += add;
+	restarts = super->ds_incarnation ? super->ds_incarnation - 1 : 0;
+	if (restarts > D2_MIN_RESTARTS)
+		restarts = D2_MIN_RESTARTS;
+	headroom = (D2_MIN_RESTARTS - restarts) * D2_RESTART_HEADROOM +
+		   (D2_RECOVERY_HEADROOM -
+		    D2_MIN_RESTARTS * D2_RESTART_HEADROOM);
+	if (headroom > UINT64_MAX - wal_need)
+		return false;
+	wal_need += headroom;
+	if (d2_files_wal_cursor(s->files) > super->capacity_wal_bytes ||
+	    wal_need > super->capacity_wal_bytes -
+			       d2_files_wal_cursor(s->files))
+		return false;
+	return true;
+}
+
+static uint32_t d2_preflight_ordinary(struct d2_store *s,
+				      const struct d1_envelope *env,
+				      const struct d1_result *probe)
+{
+	const struct d2_superblock *super = d2_files_super(s->files);
+	const typeof(s->work[0]) *work = NULL;
+	const typeof(s->cohorts[0]) *cohort = NULL;
+	uint64_t payload_need = 0, add = 0;
+	uint64_t record_bytes;
+	uint32_t i;
+
+	switch (env->op) {
+	case D1_OP_WRITE_BATCH:
+		add = D2_ENTRY_RECORD_BYTES;
+		if (probe->entries[0].status != D1_OK)
+			break;
+		payload_need = d2_payload_object_bytes(
+			env->body.write.entries[0].payload_len);
+		if (!env->body.write.activate)
+			add += 2u * D2_ENTRY_RECORD_BYTES;
+		break;
+	case D1_OP_FINALIZE_BATCH:
+	case D1_OP_COMMIT_BATCH:
+		if (probe->entries[0].status != D1_OK)
+			add = D2_ENTRY_RECORD_BYTES;
+		break;
+	case D1_OP_ROLLBACK_BATCH:
+		work = d2_work_by_txn(
+			s, env->body.rollback.entries[0].txn.raw);
+		if (probe->entries[0].status != D1_OK &&
+		    probe->entries[0].status != D1_NO_PREDECESSOR)
+			add = D2_ENTRY_RECORD_BYTES;
+		else if (!work || !d2_work_promise(work->phase))
+			add = 280u + D2_ENTRY_RECORD_BYTES;
+		break;
+	case D1_OP_RECOVERY_ADMIT:
+		add = 216u + 40u * env->body.control.count;
+		break;
+	case D1_OP_MARK_ERROR:
+		add = 280u + 24u * env->body.repair.count;
+		break;
+	case D1_OP_CLEAR_ERROR:
+		record_bytes = 276u + 40u * env->body.repair.count;
+		if (probe->entries[0].status != D1_OK) {
+			add = record_bytes;
+			break;
+		}
+		cohort = d2_cohort_find(s, env->body.repair.cohort.raw);
+		if (!cohort || d2_cohort_promise(
+				       cohort->phase,
+				       332u + 244u * cohort->count,
+				       cohort->episode_present,
+				       cohort->certificate_installed,
+				       cohort->episode_cleared) < record_bytes)
+			add = record_bytes;
+		break;
+	case D1_OP_BEGIN_REPAIR:
+		record_bytes = 332u + 244u * env->body.repair.count;
+		add = record_bytes;
+		if (probe->entries[0].status == D1_OK)
+			add += d2_cohort_promise(
+				D2_ADMITTED, record_bytes,
+				env->body.repair.episode_present, false, false);
+		break;
+	case D1_OP_PREPARE_REPAIR:
+		for (i = 0; probe->entries[0].status == D1_OK &&
+			    i < env->body.repair.count; i++)
+			if (env->body.repair.entries[i].payload_present) {
+				uint64_t extent = d2_payload_object_bytes(
+					env->body.repair.entries[i].payload_len);
+
+				if (extent > UINT64_MAX - payload_need)
+					return D1_NOSPC;
+				payload_need += extent;
+			}
+		/* fall through */
+	case D1_OP_FINALIZE_REPAIR:
+	case D1_OP_COMMIT_REPAIR:
+	case D1_OP_ABORT_REPAIR:
+	case D1_OP_UNLOCK:
+		if (probe->entries[0].status != D1_OK &&
+		    probe->entries[0].phase != D2_ABORTED) {
+			add = 332u + 244u * env->body.repair.count;
+			break;
+		}
+		cohort = d2_cohort_find(s, env->body.repair.cohort.raw);
+		if (!cohort)
+			add = 332u + 244u * env->body.repair.count;
+		break;
+	default:
+		return D1_OK;
+	}
+	if (!d2_wal_has_room(s, add) ||
+	    d2_files_payload_cursor(s->files) > super->capacity_payload_bytes ||
+	    payload_need > super->capacity_payload_bytes -
+				   d2_files_payload_cursor(s->files))
+		return D1_NOSPC;
+	return D1_OK;
+}
+
+static uint32_t d2_unrecorded_nospc(const struct d1_envelope *env,
+				    struct d1_result *result)
+{
+	memset(result, 0, sizeof(*result));
+	result->key = env->key;
+	result->disposition = D1_UNRECORDED;
+	result->count = 1;
+	result->entries[0].status = D1_NOSPC;
+	result->entries[0].stability = D1_FILE_SYNC;
+	result->entries[0].disposition = D1_UNRECORDED;
+	return D1_NOSPC;
+}
+
 static uint64_t d2_entry_index(const struct d1_envelope *env)
 {
 	switch (env->op) {
@@ -2780,8 +2916,9 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 	saved = d2_work_by_txn(s, entry.txn_id);
 	if (saved)
 		old_promise = d2_work_promise(saved->phase);
-	new_promise = result->entries[0].status == D1_OK ?
-			      d2_work_promise(entry.transition) : 0;
+	new_promise = result->entries[0].status == D1_OK ||
+			      result->entries[0].status == D1_NO_PREDECESSOR ?
+			      d2_work_promise(entry.transition) : old_promise;
 	if (old_promise > s->wal_promised ||
 	    new_promise > UINT64_MAX - (s->wal_promised - old_promise))
 		return D1_IO;
@@ -3298,6 +3435,7 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 			struct d1_result *result)
 {
+	struct d1_result probe;
 	uint8_t *before = NULL, *after = NULL;
 	uint8_t digest[D1_DIGEST_BYTES];
 	uint8_t file_key[32];
@@ -3371,6 +3509,19 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 	    d2_receipt_lookup(s, env, digest, result)) {
 		pthread_mutex_unlock(&s->lock);
 		return D1_OK;
+	}
+	status = d1_store_probe(s->model, env, &probe);
+	if (status != D1_OK) {
+		if (status == D1_NOSPC)
+			status = d2_unrecorded_nospc(env, result);
+		pthread_mutex_unlock(&s->lock);
+		return status;
+	}
+	status = d2_preflight_ordinary(s, env, &probe);
+	if (status == D1_NOSPC) {
+		status = d2_unrecorded_nospc(env, result);
+		pthread_mutex_unlock(&s->lock);
+		return status;
 	}
 	prior_eof = d1_store_eof(s->model, &env->object);
 	status = d1_store_journal_snapshot(s->model, &before, &before_len);
@@ -3532,13 +3683,24 @@ d1_admission_id d2_store_admit_full(struct d2_store *s,
 {
 	d1_admission_id id = d1_admission_none();
 	uint8_t file_key[32];
-	uint32_t status;
+	uint32_t i, status;
+	bool registered = false;
 
 	if (!s || !object || !auth ||
 	    !memcmp(auth->session, (uint8_t[D1_UUID_BYTES]){ 0 },
 		    D1_UUID_BYTES))
 		return id;
 	pthread_mutex_lock(&s->lock);
+	for (i = 0; i < s->registered_count; i++)
+		if (d2_same_object(&s->registered[i].object, object)) {
+			registered = true;
+			break;
+		}
+	if (!s->fenced &&
+	    !d2_wal_has_room(s, 296u + 256u + (registered ? 0u : 396u))) {
+		pthread_mutex_unlock(&s->lock);
+		return id;
+	}
 	status = s->fenced ? D1_IO : d2_register_file(s, object, file_key);
 	if (status != D1_OK && status != D1_NOSPC)
 		s->fenced = true;
@@ -3774,7 +3936,7 @@ d1_custody_id d2_store_custody(struct d2_store *s, d1_version_id version)
 		return id;
 	pthread_mutex_lock(&s->lock);
 	work = d2_work_by_version(s, version.raw);
-	if (!s->fenced && work)
+	if (!s->fenced && work && d2_wal_has_room(s, 248u))
 		id = d1_fixture_custody(s->model, version);
 	if (d1_custody_live(id) &&
 	    (d2_custody_control(s, id, version, work->admission_id) != D1_OK ||

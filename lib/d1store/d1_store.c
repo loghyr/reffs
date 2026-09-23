@@ -5243,6 +5243,41 @@ uint32_t d1_store_apply(struct d1_store *s, const struct d1_envelope *env,
 	return D1_OK;
 }
 
+static uint32_t d1_replay_locked(struct d1_store *s, const uint8_t *log,
+				 size_t durable);
+
+uint32_t d1_store_probe(struct d1_store *s, const struct d1_envelope *env,
+			struct d1_result *out)
+{
+	struct d1_envelope adopted;
+	struct d1_store *probe = NULL;
+	uint8_t *journal = NULL;
+	size_t journal_len = 0;
+	uint32_t status;
+
+	if (!s || !env || !out)
+		return D1_INVALID;
+	status = d1_store_journal_snapshot(s, &journal, &journal_len);
+	if (status != D1_OK)
+		return status;
+	probe = d1_store_open(&s->uuid, s->chunk_bytes, s->max_file_bytes);
+	if (!probe) {
+		free(journal);
+		return D1_NOSPC;
+	}
+	pthread_mutex_lock(&probe->lock);
+	status = d1_replay_locked(probe, journal, journal_len);
+	pthread_mutex_unlock(&probe->lock);
+	free(journal);
+	if (status == D1_OK) {
+		adopted = *env;
+		d1_envelope_adopt(probe, &adopted);
+		status = d1_store_apply(probe, &adopted, out);
+	}
+	d1_store_free(probe);
+	return status;
+}
+
 /*
  * Whether @a may read @object.  Reads are checked against the same
  * admission table as writes; a revoked or expired admission cannot open
