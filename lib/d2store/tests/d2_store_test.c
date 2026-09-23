@@ -468,15 +468,20 @@ int main(void)
 		write_request(&env, 30, 20, 30, &guard, payload,
 			      sizeof(payload));
 		env.body.write.activate = false;
+		promise_base = d2_store_wal_promised(store);
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
-			      result.entries[0].phase == D2_PREPARED,
-		      "recovery fixture leaves prepared work");
+			      result.entries[0].phase == D2_PREPARED &&
+			      d2_store_wal_promised(store) ==
+				      promise_base + 2u * D2_ENTRY_RECORD_BYTES,
+		      "prepared work reserves finalize and commit");
 		staged_txn = result.entries[0].txn;
 		d2_store_crash(store);
 		store = NULL;
 		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
-			      D1_OK,
-		      "recovery fixture crosses an incarnation");
+			      D1_OK &&
+			      d2_store_wal_promised(store) ==
+				      promise_base + 2u * D2_ENTRY_RECORD_BYTES,
+		      "restart reconstructs prepared completion reserve");
 	}
 	if (store) {
 		control_admission =
@@ -558,8 +563,10 @@ int main(void)
 		memcpy(env.body.lifecycle.prior_verifier, verifier,
 		       sizeof(verifier));
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
-			      result.entries[0].phase == D2_FINALIZED,
-		      "recovered admission resumes prepared work");
+			      result.entries[0].phase == D2_FINALIZED &&
+			      d2_store_wal_promised(store) ==
+				      promise_base + D2_ENTRY_RECORD_BYTES,
+		      "finalize consumes one ordinary reserve record");
 		recovery.key.sequence = 3;
 		recovery.body.control.old_admission =
 			d2_store_admission_handle(store, admission.raw);

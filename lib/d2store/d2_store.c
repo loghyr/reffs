@@ -52,6 +52,8 @@ struct d2_store {
 		uint64_t admission_id;
 		struct d1_objkey object;
 		struct d1_owner owner;
+		uint32_t phase;
+		uint64_t payload_bytes;
 		bool predecessor_present;
 		uint64_t predecessor_id;
 	} work[D1_MAX_TXNS];
@@ -183,6 +185,18 @@ static uint64_t d2_cohort_promise(uint32_t phase, size_t record_bytes,
 	       (episode_present && !cleared ? 916u : 0u);
 }
 
+static uint64_t d2_work_promise(uint32_t phase)
+{
+	switch (phase) {
+	case D2_PREPARED:
+		return 2u * D2_ENTRY_RECORD_BYTES;
+	case D2_FINALIZED:
+		return D2_ENTRY_RECORD_BYTES;
+	default:
+		return 0;
+	}
+}
+
 static bool d2_rebuild_promises(struct d2_store *s)
 {
 	uint64_t total = 0, add;
@@ -200,7 +214,34 @@ static bool d2_rebuild_promises(struct d2_store *s)
 			return false;
 		total += add;
 	}
+	for (i = 0; i < D1_MAX_TXNS; i++) {
+		if (!s->work[i].used)
+			continue;
+		add = d2_work_promise(s->work[i].phase);
+		if (add > UINT64_MAX - total)
+			return false;
+		total += add;
+	}
 	s->wal_promised = total;
+	return true;
+}
+
+static bool d2_rebuild_payload_accounting(const struct d2_store *s,
+					  uint64_t *outstanding,
+					  uint64_t *staged)
+{
+	uint64_t total = 0;
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_TXNS; i++) {
+		if (!s->work[i].used || !d2_work_promise(s->work[i].phase))
+			continue;
+		if (s->work[i].payload_bytes > UINT64_MAX - total)
+			return false;
+		total += s->work[i].payload_bytes;
+	}
+	*outstanding = 0;
+	*staged = total;
 	return true;
 }
 
@@ -265,6 +306,7 @@ static bool d2_work_remember(struct d2_store *s, uint64_t txn_id,
 			     uint64_t version_id, uint64_t admission_id,
 			     const struct d1_objkey *object,
 			     const struct d1_owner *owner,
+			     uint32_t phase, uint64_t payload_bytes,
 			     bool predecessor_present,
 			     uint64_t predecessor_id)
 {
@@ -276,6 +318,8 @@ static bool d2_work_remember(struct d2_store *s, uint64_t txn_id,
 		if (s->work[i].used && s->work[i].txn_id == txn_id)
 			return s->work[i].version_id == version_id &&
 			       s->work[i].admission_id == admission_id &&
+			       s->work[i].phase == phase &&
+			       s->work[i].payload_bytes == payload_bytes &&
 			       !memcmp(&s->work[i].owner, owner, sizeof(*owner)) &&
 			       s->work[i].predecessor_present ==
 				       predecessor_present &&
@@ -289,6 +333,8 @@ static bool d2_work_remember(struct d2_store *s, uint64_t txn_id,
 			s->work[i].admission_id = admission_id;
 			s->work[i].object = *object;
 			s->work[i].owner = *owner;
+			s->work[i].phase = phase;
+			s->work[i].payload_bytes = payload_bytes;
 			s->work[i].predecessor_present = predecessor_present;
 			s->work[i].predecessor_id = predecessor_id;
 			return true;
@@ -332,6 +378,19 @@ d2_work_by_txn(const struct d2_store *s, uint64_t txn_id)
 		if (s->work[i].used && s->work[i].txn_id == txn_id)
 			return &s->work[i];
 	return NULL;
+}
+
+static bool d2_work_set_phase(struct d2_store *s, uint64_t txn_id,
+			      uint32_t phase)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_TXNS; i++)
+		if (s->work[i].used && s->work[i].txn_id == txn_id) {
+			s->work[i].phase = phase;
+			return true;
+		}
+	return false;
 }
 
 static bool d2_custody_remember(struct d2_store *s, uint64_t custody_id,
@@ -1057,6 +1116,9 @@ static bool d2_replay_receipt(struct d2_replay *r,
 				 e->result_visible_object_id,
 				 e->admission.client_id, object,
 				 &result.entries[0].owner,
+				 e->transition,
+				 d2_payload_object_bytes(
+					 e->payload_content_len),
 				 e->predecessor_present,
 				 e->predecessor_object_id)) &&
 	       d2_receipt_remember(r->store, &object->export_uuid, &key,
@@ -1120,6 +1182,8 @@ static bool d2_replay_lifecycle(struct d2_replay *r,
 		    e->result_guard_never_written ||
 	    result.eof != e->extent_high_water)
 		return false;
+	if (!d2_work_set_phase(r->store, e->txn_id, e->transition))
+		return false;
 	return d2_replay_receipt(r, object, e);
 }
 
@@ -1179,6 +1243,8 @@ static bool d2_replay_rollback(struct d2_replay *r,
 	    result.entries[0].guard.never_written !=
 		    e->result_guard_never_written ||
 	    result.eof != e->extent_high_water)
+		return false;
+	if (!d2_work_set_phase(r->store, e->txn_id, D2_ROLLED_BACK))
 		return false;
 	return d2_replay_receipt(r, object, e);
 }
@@ -1278,10 +1344,14 @@ static bool d2_replay_start(struct d2_replay *r, const struct d2_wal_header *h,
 			    const uint8_t *record)
 {
 	struct d2_start start;
+	uint64_t outstanding, staged;
 
 	if (!d2_start_decode(record, h->total_bytes, h, &start) ||
 	    !d2_rebuild_promises(r->store) ||
-	    start.live_txn_wal_reserved != r->store->wal_promised)
+	    !d2_rebuild_payload_accounting(r->store, &outstanding, &staged) ||
+	    start.live_txn_wal_reserved != r->store->wal_promised ||
+	    start.live_txn_payload_outstanding != outstanding ||
+	    start.live_txn_payload_staged != staged)
 		return false;
 	if (!r->last_incarnation) {
 		r->last_incarnation = h->ds_incarnation;
@@ -2242,6 +2312,7 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 	struct d2_replay replay = { .status = D1_OK };
 	struct d2_files *files = NULL;
 	struct d2_store *s;
+	uint64_t payload_outstanding, payload_staged;
 	uint32_t decision, status;
 
 	if (!config || !binding || !out ||
@@ -2266,7 +2337,9 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 	status = d2_files_scan(files, d2_replay_record, &replay, &scan, false);
 	if (status != D1_OK || replay.status != D1_OK)
 		goto fail;
-	if (!d2_rebuild_promises(s)) {
+	if (!d2_rebuild_promises(s) ||
+	    !d2_rebuild_payload_accounting(s, &payload_outstanding,
+					  &payload_staged)) {
 		status = D1_IO;
 		goto fail;
 	}
@@ -2284,7 +2357,8 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 		decision |= D2_RD_TRUNCATED_NONZERO_TAIL;
 	status = d2_files_start(files, decision,
 				first ? first->truncated_bytes : 0,
-				d2_files_payload_cursor(files), s->wal_promised, 0, 0);
+				d2_files_payload_cursor(files), s->wal_promised,
+				payload_outstanding, payload_staged);
 	if (status != D1_OK)
 		goto fail;
 	*out = s;
@@ -2336,7 +2410,8 @@ static uint64_t d2_entry_index(const struct d1_envelope *env)
 
 static uint32_t d2_persist_postcond(struct d2_store *s,
 				    const struct d1_envelope *env,
-				    const struct d1_result *result)
+				    const struct d1_result *result,
+				    uint64_t promised)
 {
 	const struct d1_rollback_entry *rollback =
 		&env->body.rollback.entries[0];
@@ -2376,7 +2451,7 @@ static uint32_t d2_persist_postcond(struct d2_store *s,
 		return D1_INVALID;
 	if (!d2_control_encode(&h, &control, record, sizeof(record), &written))
 		return D1_INVALID;
-	return d2_wal_append(s, record, written);
+	return d2_wal_append_floor(s, record, written, promised);
 }
 
 static uint32_t d2_persist_entry(struct d2_store *s,
@@ -2391,7 +2466,9 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 	uint8_t record[D2_ENTRY_RECORD_BYTES];
 	uint8_t handle[32];
 	uint64_t eof, payload_id = 0, offset = 0;
+	uint64_t old_promise = 0, new_promise, promised, postcond_floor;
 	uint32_t status;
+	const typeof(s->work[0]) *saved;
 	bool predecessor_present = false;
 	d1_version_id predecessor = d1_version_none();
 	const struct d1_write_entry *write =
@@ -2455,6 +2532,15 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 	entry.txn_id = life	? life->txn.raw :
 		       rollback ? rollback->txn.raw :
 				  result->entries[0].txn.raw;
+	saved = d2_work_by_txn(s, entry.txn_id);
+	if (saved)
+		old_promise = d2_work_promise(saved->phase);
+	new_promise = result->entries[0].status == D1_OK ?
+			      d2_work_promise(entry.transition) : 0;
+	if (old_promise > s->wal_promised ||
+	    new_promise > UINT64_MAX - (s->wal_promised - old_promise))
+		return D1_IO;
+	promised = s->wal_promised - old_promise + new_promise;
 	entry.owner_cohort = result->entries[0].owner.cohort.raw;
 	entry.owner_client_id = result->entries[0].owner.writer;
 	entry.owner_co_id = result->entries[0].owner.co_id;
@@ -2502,16 +2588,28 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 	if (!d2_entry_encode(&h, &entry, record)) {
 		return D1_INVALID;
 	}
-	status = d2_persist_postcond(s, env, result);
+	postcond_floor = promised;
+	if (env->op == D1_OP_ROLLBACK_BATCH &&
+	    result->entries[0].status == D1_NO_PREDECESSOR &&
+	    result->entries[0].postcond_present && rollback->visible_present &&
+	    rollback->custody_present) {
+		if (D2_ENTRY_RECORD_BYTES > UINT64_MAX - postcond_floor)
+			return D1_IO;
+		postcond_floor += D2_ENTRY_RECORD_BYTES;
+	}
+	status = d2_persist_postcond(s, env, result, postcond_floor);
 	if (status == D1_OK) {
 		h.lsn = d2_files_next_lsn(s->files);
 		status = d2_entry_encode(&h, &entry, record) ?
-				 d2_wal_append(s, record,
-						     sizeof(record)) :
+				 d2_wal_append_floor(s, record, sizeof(record),
+						     promised) :
 				 D1_INVALID;
 	}
-	if (status == D1_OK && has_payload)
-		s->next_payload_seq++;
+	if (status == D1_OK) {
+		s->wal_promised = promised;
+		if (has_payload)
+			s->next_payload_seq++;
+	}
 	return status;
 }
 
@@ -3073,7 +3171,18 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 				     result->entries[0].version.raw,
 				     env->admission.raw, &env->object,
 				     &result->entries[0].owner,
+				     result->entries[0].phase,
+				     d2_payload_object_bytes(
+					     env->body.write.entries[0].payload_len),
 				     predecessor_present, predecessor.raw)) {
+		s->fenced = true;
+		status = D1_IO;
+	} else if ((env->op == D1_OP_FINALIZE_BATCH ||
+		    env->op == D1_OP_COMMIT_BATCH ||
+		    env->op == D1_OP_ROLLBACK_BATCH) &&
+		   result->entries[0].txn_present &&
+		   !d2_work_set_phase(s, result->entries[0].txn.raw,
+				      result->entries[0].phase)) {
 		s->fenced = true;
 		status = D1_IO;
 	} else if (env->op == D1_OP_RECOVERY_ADMIT &&
