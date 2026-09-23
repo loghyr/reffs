@@ -5231,6 +5231,31 @@ bool d2_store_postcond(struct d2_store *s, uint64_t raw, uint64_t *index,
 				   index, successor, consumed);
 }
 
+bool d2_store_txn_state(struct d2_store *s, uint64_t raw, uint32_t *phase,
+			uint64_t *admission_id)
+{
+	const typeof(s->work[0]) *work;
+	d1_version_id version;
+	uint32_t model_phase;
+	bool found = false;
+
+	if (!s || !phase || !admission_id)
+		return false;
+	pthread_mutex_lock(&s->lock);
+	work = d2_work_by_txn(s, raw);
+	if (work &&
+	    d1_fixture_txn_state(s->model,
+				 d1_fixture_txn_handle(s->model, raw),
+				 &model_phase, &version) &&
+	    model_phase == work->phase && version.raw == work->version_id) {
+		*phase = work->phase;
+		*admission_id = work->admission_id;
+		found = true;
+	}
+	pthread_mutex_unlock(&s->lock);
+	return found;
+}
+
 bool d2_store_repair_state(struct d2_store *s, uint64_t raw, uint32_t *phase,
 			   uint32_t *member_count)
 {

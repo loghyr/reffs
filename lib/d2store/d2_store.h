@@ -80,6 +80,8 @@ bool d2_store_guard(struct d2_store *store, const struct d1_objkey *object,
 		    uint64_t index, struct d1_guard *guard);
 bool d2_store_postcond(struct d2_store *store, uint64_t raw, uint64_t *index,
 		       d1_version_id *successor, bool *consumed);
+bool d2_store_txn_state(struct d2_store *store, uint64_t raw, uint32_t *phase,
+			uint64_t *admission_id);
 bool d2_store_repair_state(struct d2_store *store, uint64_t raw,
 			   uint32_t *phase, uint32_t *member_count);
 uint64_t d2_store_eof(struct d2_store *store, const struct d1_objkey *object);

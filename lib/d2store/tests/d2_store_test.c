@@ -6,6 +6,9 @@
 #endif
 
 #include <fcntl.h>
+#include <pthread.h>
+#include <sched.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -146,6 +149,109 @@ static bool authority_precedes_entry(int dirfd, uint64_t wal_bytes,
 		}
 		at += header.total_bytes;
 	}
+out:
+	if (fd >= 0)
+		close(fd);
+	free(wal);
+	return ok;
+}
+
+struct authority_race {
+	struct d2_store *store;
+	struct d1_envelope transition;
+	struct d1_result transition_result;
+	struct d1_uuid issuer;
+	d1_admission_id actor;
+	uint64_t epoch;
+	atomic_bool go;
+	uint32_t transition_status;
+	uint32_t revoke_status;
+};
+
+static void *race_transition(void *arg)
+{
+	struct authority_race *race = arg;
+
+	while (!atomic_load_explicit(&race->go, memory_order_acquire))
+		sched_yield();
+	race->transition_status = d2_store_apply(race->store,
+						 &race->transition,
+						 &race->transition_result);
+	return NULL;
+}
+
+static void *race_revoke(void *arg)
+{
+	struct authority_race *race = arg;
+
+	while (!atomic_load_explicit(&race->go, memory_order_acquire))
+		sched_yield();
+	race->revoke_status = d2_store_revoke_authority(
+		race->store, race->actor, &race->issuer, race->epoch, 1);
+	return NULL;
+}
+
+static bool authority_race_log(int dirfd, uint64_t begin, uint64_t end,
+			       const struct d2_binding *binding, uint64_t txn_id,
+			       uint64_t epoch, bool *revoke_first)
+{
+	struct d2_wal_header header;
+	struct d2_control control;
+	struct d2_entry entry;
+	struct d1_cursor cursor;
+	uint8_t *wal;
+	uint8_t issuer[D1_UUID_BYTES];
+	uint64_t at = begin, entry_lsn = 0, revoke_lsn = 0;
+	uint64_t target_epoch;
+	uint32_t entry_status = 0, entry_transition = 0;
+	uint32_t reason;
+	unsigned int entries = 0, revokes = 0;
+	int fd = -1;
+	bool ok = false;
+
+	wal = malloc((size_t)end);
+	if (!wal)
+		return false;
+	fd = openat(dirfd, "wal", O_RDONLY | O_CLOEXEC);
+	if (fd < 0 || pread(fd, wal, (size_t)end, 0) != (ssize_t)end)
+		goto out;
+	while (at < end &&
+	       d2_wal_header_decode(wal + at, (size_t)(end - at),
+				    binding->store_uuid, binding->wal_uuid,
+				    &header)) {
+		if (header.family == D2_REC_CONTROL &&
+		    d2_control_decode(wal + at, header.total_bytes, &header,
+				      &control) &&
+		    control.subtype == D2_CTL_AUTHORITY_REVOKE &&
+		    control.body_len == 28) {
+			d1_dec_init(&cursor, control.body, control.body_len);
+			if (d1_dec_raw(&cursor, issuer, sizeof(issuer)) &&
+			    d1_dec_u64(&cursor, &target_epoch) &&
+			    d1_dec_u32(&cursor, &reason) &&
+			    d1_dec_finished(&cursor) && target_epoch == epoch &&
+			    reason) {
+				revokes++;
+				revoke_lsn = header.lsn;
+			}
+		} else if (header.family == D2_REC_ENTRY &&
+			   d2_entry_decode(wal + at, header.total_bytes, &header,
+					   &entry) &&
+			   entry.txn_id == txn_id) {
+			entries++;
+			entry_lsn = header.lsn;
+			entry_status = entry.status;
+			entry_transition = entry.transition;
+		}
+		at += header.total_bytes;
+	}
+	if (at != end || entries != 1 || revokes != 1 ||
+	    entry_lsn == revoke_lsn)
+		goto out;
+	*revoke_first = revoke_lsn < entry_lsn;
+	ok = *revoke_first ?
+		     entry_transition == D2_REFUSED &&
+			     entry_status == D1_STALE_AUTH :
+		     entry_transition == D2_FINALIZED && entry_status == D1_OK;
 out:
 	if (fd >= 0)
 		close(fd);
@@ -2333,6 +2439,182 @@ int main(void)
 				      d2_store_wal_bytes(store) == wal_bytes,
 			      "revoked authority receipt replays after restart");
 		}
+	}
+	if (store) {
+		check(d2_store_close(store) == D1_OK,
+		      "close batched-authority fixture");
+		store = NULL;
+	}
+	unlinkat(dirfd, "super", 0);
+	unlinkat(dirfd, "wal", 0);
+	unlinkat(dirfd, "payload", 0);
+	memset(&binding, 0, sizeof(binding));
+	check(d2_store_provision(dirfd, &config, &binding, &store) == D1_OK,
+	      "provision authority-transition race fixture");
+	if (store) {
+		enum { AUTHORITY_RACE_RUNS = 8 };
+		struct d1_envelope retries[AUTHORITY_RACE_RUNS];
+		uint64_t txn_ids[AUTHORITY_RACE_RUNS];
+		uint64_t admission_ids[AUTHORITY_RACE_RUNS];
+		bool revoke_first[AUTHORITY_RACE_RUNS] = { 0 };
+		unsigned int i;
+		bool races_ok = true, retries_ok = true;
+
+		for (i = 0; i < AUTHORITY_RACE_RUNS; i++) {
+			struct d1_fixture_authority mds = { 0 }, client = { 0 };
+			struct authority_race race = { .store = store };
+			struct d1_result prepared;
+			d1_admission_id mds_id, client_id;
+			d1_txn_id txn;
+			pthread_t transition_thread, revoke_thread;
+			uint64_t begin, end;
+			uint32_t prepare_status;
+			int transition_created, revoke_created;
+			bool log_ok, run_ok;
+
+			fill(mds.issuer.bytes, sizeof(mds.issuer.bytes),
+			     (uint8_t)(0xa0 + i));
+			fill(mds.principal.bytes, sizeof(mds.principal.bytes),
+			     (uint8_t)(0x20 + i));
+			fill(mds.session, sizeof(mds.session),
+			     (uint8_t)(0x40 + i));
+			mds.writer = 100 + i;
+			mds.rights = D1_RIGHT_CONTROL;
+			mds.authority_epoch = 100 + i;
+			client = mds;
+			fill(client.principal.bytes, sizeof(client.principal.bytes),
+			     (uint8_t)(0x60 + i));
+			fill(client.session, sizeof(client.session),
+			     (uint8_t)(0x80 + i));
+			client.writer = 200 + i;
+			client.rights = D1_RIGHT_READ | D1_RIGHT_WRITE |
+					D1_RIGHT_SINGLE_WRITER;
+			client.lease_epoch = 200 + i;
+			client.fence_sequence = 300 + i;
+			mds_id = d2_store_admit_full(store, &object, &mds);
+			client_id = d2_store_admit_bare(store, &object, &client);
+			if (!d1_admission_live(mds_id) ||
+			    !d1_admission_live(client_id) ||
+			    d2_store_trust_admission(store, mds_id, client_id) !=
+				    D1_OK ||
+			    d2_store_admit_authority(store, mds_id, &client_id, 1) !=
+				    D1_OK) {
+				races_ok = false;
+				break;
+			}
+			memset(&env, 0, sizeof(env));
+			env.object = object;
+			env.admission = client_id;
+			env.incarnation = d2_store_incarnation(store);
+			fill(env.key.origin.bytes, sizeof(env.key.origin.bytes),
+			     (uint8_t)(0xc0 + i));
+			env.op = D1_OP_WRITE_BATCH;
+			guard = (struct d1_guard){ .never_written = true };
+			write_request(&env, 1, 32 + i, 100 + i, &guard, payload,
+				      sizeof(payload));
+			env.body.write.activate = false;
+			env.body.write.entries[0].owner.writer = client.writer;
+			prepare_status = d2_store_apply(store, &env, &prepared);
+			if (prepare_status != D1_OK ||
+			    prepared.entries[0].status != D1_OK ||
+			    prepared.entries[0].phase != D2_PREPARED) {
+				races_ok = false;
+				break;
+			}
+			txn = prepared.entries[0].txn;
+			race.actor = mds_id;
+			race.issuer = mds.issuer;
+			race.epoch = mds.authority_epoch;
+			race.transition.object = object;
+			race.transition.admission = client_id;
+			race.transition.incarnation = env.incarnation;
+			race.transition.key = env.key;
+			race.transition.key.sequence = 2;
+			race.transition.op = D1_OP_FINALIZE_BATCH;
+			race.transition.body.lifecycle.range_begin = 32 + i;
+			race.transition.body.lifecycle.range_end = 33 + i;
+			race.transition.body.lifecycle.count = 1;
+			race.transition.body.lifecycle.entries[0].index = 32 + i;
+			race.transition.body.lifecycle.entries[0].owner =
+				env.body.write.entries[0].owner;
+			race.transition.body.lifecycle.entries[0].txn = txn;
+			d2_store_verifier(store,
+					  race.transition.body.lifecycle.prior_verifier);
+			atomic_init(&race.go, false);
+			begin = d2_store_wal_bytes(store);
+			transition_created = pthread_create(&transition_thread, NULL,
+						    race_transition, &race);
+			revoke_created = transition_created ? -1 :
+				pthread_create(&revoke_thread, NULL, race_revoke, &race);
+			atomic_store_explicit(&race.go, true, memory_order_release);
+			if (!transition_created)
+				pthread_join(transition_thread, NULL);
+			if (!revoke_created)
+				pthread_join(revoke_thread, NULL);
+			end = d2_store_wal_bytes(store);
+			log_ok = authority_race_log(dirfd, begin, end, &binding,
+						    txn.raw, race.epoch,
+						    &revoke_first[i]);
+			run_ok = !transition_created && !revoke_created &&
+				race.transition_status == D1_OK &&
+				race.revoke_status == D1_OK &&
+				log_ok &&
+				(revoke_first[i] ?
+					 race.transition_result.entries[0].status ==
+						 D1_STALE_AUTH &&
+						 race.transition_result.entries[0].phase ==
+							 0 :
+					 race.transition_result.entries[0].status == D1_OK &&
+						 race.transition_result.entries[0].phase ==
+							 D2_FINALIZED);
+			{
+				uint32_t phase;
+				uint64_t admission_id;
+
+				run_ok = run_ok && d2_store_txn_state(
+					store, txn.raw, &phase, &admission_id) &&
+					phase == (revoke_first[i] ? D2_PREPARED :
+								 D2_FINALIZED) &&
+					admission_id == client_id.raw;
+			}
+			races_ok = races_ok && run_ok;
+			retries[i] = race.transition;
+			txn_ids[i] = txn.raw;
+			admission_ids[i] = client_id.raw;
+		}
+		check(races_ok, "authority revoke serializes with prepared finalize");
+		memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
+		memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
+		reopen.files.expected_root_ino = binding.root_ino;
+		d2_store_crash(store);
+		store = NULL;
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) == D1_OK,
+		      "authority-transition race log replays");
+		if (store && races_ok) {
+			wal_bytes = d2_store_wal_bytes(store);
+			for (i = 0; i < AUTHORITY_RACE_RUNS; i++) {
+				uint32_t phase;
+				uint64_t admission_id;
+
+				retries[i].admission = d2_store_admission_handle(
+					store, retries[i].admission.raw);
+				if (d2_store_apply(store, &retries[i], &result) != D1_OK ||
+				    result.entries[0].status !=
+					    (revoke_first[i] ? D1_STALE_AUTH : D1_OK) ||
+				    result.entries[0].phase !=
+					    (revoke_first[i] ? 0 :
+							       D2_FINALIZED) ||
+				    !d2_store_txn_state(store, txn_ids[i], &phase,
+							&admission_id) ||
+				    phase != (revoke_first[i] ? D2_PREPARED :
+							     D2_FINALIZED) ||
+				    admission_id != admission_ids[i] ||
+				    d2_store_wal_bytes(store) != wal_bytes)
+					retries_ok = false;
+			}
+		}
+		check(store && retries_ok,
+		      "authority-transition race receipts replay exactly");
 	}
 
 done:
