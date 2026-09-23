@@ -47,6 +47,10 @@ uint32_t d2_store_admit_authority(struct d2_store *store,
 				  const d1_admission_id *beneficiaries,
 				  uint32_t count);
 void d2_store_revoke(struct d2_store *store, d1_admission_id admission);
+uint32_t d2_store_revoke_authority(struct d2_store *store,
+				   d1_admission_id actor,
+				   const struct d1_uuid *issuer,
+				   uint64_t authority_epoch, uint32_t reason);
 void d2_store_expire(struct d2_store *store, d1_admission_id admission);
 d1_custody_id d2_store_custody(struct d2_store *store, d1_version_id version);
 uint32_t d2_store_certificate(

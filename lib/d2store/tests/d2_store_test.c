@@ -2221,6 +2221,7 @@ int main(void)
 	if (store) {
 		struct d1_fixture_authority mds = { 0 }, first = { 0 },
 					    second = { 0 };
+		struct d1_envelope authority_refused;
 		d1_admission_id mds_id, first_id, second_id;
 		d1_admission_id beneficiaries[2], repeated[2];
 
@@ -2299,6 +2300,19 @@ int main(void)
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].status == D1_OK,
 		      "second beneficiary mutates after batched authority");
+		check(d2_store_revoke_authority(store, mds_id, &mds.issuer,
+						7, 1) == D1_OK,
+		      "MDS revokes the admitted authority epoch");
+		wal_bytes = d2_store_wal_bytes(store);
+		env.admission = first_id;
+		write_request(&env, 3, 2, 52, &guard, payload, sizeof(payload));
+		env.body.write.entries[0].owner.writer = first.writer;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_STALE_AUTH &&
+			      d2_store_wal_bytes(store) ==
+				      wal_bytes + D2_ENTRY_RECORD_BYTES,
+		      "revoked authority records a stale mutation receipt");
+		authority_refused = env;
 		memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
 		memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
 		reopen.files.expected_root_ino = binding.root_ino;
@@ -2309,6 +2323,16 @@ int main(void)
 		check(store && d2_store_visible(store, &object, 0, &visible) &&
 			      d2_store_visible(store, &object, 1, &visible),
 		      "both beneficiaries' visible state replays");
+		if (store) {
+			authority_refused.admission = d2_store_admission_handle(
+				store, authority_refused.admission.raw);
+			wal_bytes = d2_store_wal_bytes(store);
+			check(d2_store_apply(store, &authority_refused, &result) ==
+				      D1_OK &&
+				      result.entries[0].status == D1_STALE_AUTH &&
+				      d2_store_wal_bytes(store) == wal_bytes,
+			      "revoked authority receipt replays after restart");
+		}
 	}
 
 done:

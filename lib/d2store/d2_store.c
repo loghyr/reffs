@@ -46,6 +46,7 @@ struct d2_store {
 		bool model_bound;
 		bool trust_seen;
 		bool authority_seen;
+		bool revoked;
 		bool expired;
 		uint64_t recovery_txn_id;
 		uint64_t id;
@@ -1193,24 +1194,48 @@ static bool d2_replay_authority(struct d2_replay *r,
 static bool d2_replay_liveness(struct d2_replay *r,
 			       const struct d2_control *control)
 {
+	typeof(r->store->admissions[0]) *slot;
 	const struct d1_fixture_authority *auth;
 	struct d1_cursor cursor;
-	uint8_t session[16], principal[16], other[12];
-	uint64_t client_id, lease_epoch;
+	uint8_t issuer[16], session[16], principal[16], other[12];
+	uint64_t client_id, epoch, lease_epoch;
 	uint32_t reason, seqid, expected_seqid;
 
-	if (control->subtype != D2_CTL_REVOKE_STATEID &&
+	if (control->subtype != D2_CTL_AUTHORITY_REVOKE &&
+	    control->subtype != D2_CTL_REVOKE_STATEID &&
 	    control->subtype != D2_CTL_LEASE_EXPIRE)
 		return true;
 	client_id = control->admission_client_id;
+	slot = d2_admission_slot(r->store, client_id);
 	auth = d2_admission_find(r->store, client_id);
-	if (!auth || control->transition != D2_COMMITTED ||
+	if (!slot || !auth || slot->revoked || slot->expired ||
+	    control->transition != D2_COMMITTED ||
 	    control->status != D1_OK ||
+	    memcmp(control->key.session, auth->session, sizeof(auth->session)) ||
 	    memcmp(control->admission_issuer, auth->issuer.bytes, 16) ||
 	    control->admission_authority_epoch != auth->authority_epoch)
 		return false;
 	d1_dec_init(&cursor, control->body, control->body_len);
-	if (control->subtype == D2_CTL_REVOKE_STATEID) {
+	if (control->subtype == D2_CTL_AUTHORITY_REVOKE) {
+		if (!d1_dec_raw(&cursor, issuer, sizeof(issuer)) ||
+		    !d1_dec_u64(&cursor, &epoch) ||
+		    !d1_dec_u32(&cursor, &reason) ||
+		    !d1_dec_finished(&cursor) || !epoch || !reason)
+			return false;
+		for (uint32_t i = 0; i < D1_MAX_ADMISSIONS; i++) {
+			slot = &r->store->admissions[i];
+			if (!slot->used || slot->auth.authority_epoch != epoch ||
+			    memcmp(slot->auth.issuer.bytes, issuer, sizeof(issuer)))
+				continue;
+			slot->revoked = true;
+			if (slot->model_bound)
+				d1_fixture_revoke(
+					r->store->model,
+					d1_fixture_admission_handle(
+						r->store->model, slot->id));
+		}
+		return true;
+	} else if (control->subtype == D2_CTL_REVOKE_STATEID) {
 		d2_stateid(client_id, &expected_seqid, other);
 		if (!d1_dec_u32(&cursor, &seqid) ||
 		    !d1_dec_raw(&cursor, session, 12) ||
@@ -1222,9 +1247,15 @@ static bool d2_replay_liveness(struct d2_replay *r,
 		    memcmp(control->body + 4, other, 12) ||
 		    client_id != control->admission_client_id || !reason)
 			return false;
-		d1_fixture_revoke(r->store->model,
-				  d1_fixture_admission_handle(r->store->model,
-							      client_id));
+		slot = d2_admission_slot(r->store, client_id);
+		if (!slot)
+			return false;
+		slot->revoked = true;
+		if (slot->model_bound)
+			d1_fixture_revoke(
+				r->store->model,
+				d1_fixture_admission_handle(r->store->model,
+							    client_id));
 	} else {
 		if (!d1_dec_raw(&cursor, session, 16) ||
 		    !d1_dec_u64(&cursor, &client_id) ||
@@ -1235,10 +1266,15 @@ static bool d2_replay_liveness(struct d2_replay *r,
 		    client_id != control->admission_client_id || !reason ||
 		    lease_epoch != auth->lease_epoch)
 			return false;
-		d1_fixture_expire(r->store->model,
-				  d1_fixture_admission_handle(r->store->model,
-							      client_id));
-		d2_admission_slot(r->store, client_id)->expired = true;
+		slot = d2_admission_slot(r->store, client_id);
+		if (!slot)
+			return false;
+		slot->expired = true;
+		if (slot->model_bound)
+			d1_fixture_expire(
+				r->store->model,
+				d1_fixture_admission_handle(r->store->model,
+							    client_id));
 	}
 	return !memcmp(session, auth->session, 16) &&
 	       !memcmp(principal, auth->principal.bytes, 16);
@@ -2061,6 +2097,10 @@ static bool d2_bind_pending_admissions(struct d2_replay *r,
 		next->object = *object;
 		next->object_known = true;
 		next->model_bound = true;
+		if (next->revoked)
+			d1_fixture_revoke(r->store->model, id);
+		if (next->expired)
+			d1_fixture_expire(r->store->model, id);
 	}
 }
 
@@ -4833,30 +4873,95 @@ static uint32_t d2_certificate_control(
 
 void d2_store_revoke(struct d2_store *s, d1_admission_id admission)
 {
+	uint32_t status;
+	typeof(s->admissions[0]) *slot;
+
 	if (!s)
 		return;
 	pthread_mutex_lock(&s->lock);
 	if (!s->fenced && !s->retired) {
+		slot = d2_admission_slot(s, admission.raw);
 		d1_fixture_revoke(s->model, admission);
-		if (d2_liveness_control(s, admission, D2_CTL_REVOKE_STATEID) !=
-		    D1_OK)
+		if (slot)
+			slot->revoked = true;
+		status = d2_liveness_control(s, admission,
+					     D2_CTL_REVOKE_STATEID);
+		if (status != D1_OK && status != D1_NOSPC)
 			s->fenced = true;
 	}
 	pthread_mutex_unlock(&s->lock);
 }
 
+uint32_t d2_store_revoke_authority(struct d2_store *s,
+				   d1_admission_id actor,
+				   const struct d1_uuid *issuer,
+				   uint64_t authority_epoch, uint32_t reason)
+{
+	const struct d1_fixture_authority *actor_auth;
+	typeof(s->admissions[0]) *actor_slot;
+	struct d1_cursor cursor;
+	uint8_t body[28];
+	uint32_t i, status = D1_INVALID;
+
+	if (!s || !issuer || !d1_admission_live(actor) || !authority_epoch ||
+	    !reason)
+		return D1_INVALID;
+	pthread_mutex_lock(&s->lock);
+	actor_slot = d2_admission_slot(s, actor.raw);
+	actor_auth = d2_admission_find(s, actor.raw);
+	if (s->fenced)
+		status = D1_IO;
+	else if (s->retired)
+		status = D1_BAD_PHASE;
+	else if (!actor_slot || !actor_auth || actor_slot->revoked ||
+		 actor_slot->expired)
+		status = D1_STALE_AUTH;
+	else {
+		for (i = 0; i < D1_MAX_ADMISSIONS; i++) {
+			typeof(s->admissions[0]) *slot = &s->admissions[i];
+
+			if (!slot->used ||
+			    slot->auth.authority_epoch != authority_epoch ||
+			    memcmp(slot->auth.issuer.bytes, issuer->bytes,
+				   D1_UUID_BYTES))
+				continue;
+			d1_fixture_revoke(
+				s->model,
+				d1_fixture_admission_handle(s->model, slot->id));
+			slot->revoked = true;
+		}
+		d1_enc_init(&cursor, body, sizeof(body));
+		d1_enc_raw(&cursor, issuer->bytes, D1_UUID_BYTES);
+		d1_enc_u64(&cursor, authority_epoch);
+		d1_enc_u32(&cursor, reason);
+		status = d1_cursor_ok(&cursor) ?
+				 d2_client_control(s, D2_CTL_AUTHORITY_REVOKE,
+						   actor.raw, actor_auth, body,
+						   sizeof(body)) :
+				 D1_INVALID;
+		if (status != D1_OK && status != D1_NOSPC)
+			s->fenced = true;
+	}
+	pthread_mutex_unlock(&s->lock);
+	return status;
+}
+
 void d2_store_expire(struct d2_store *s, d1_admission_id admission)
 {
+	uint32_t status;
+	typeof(s->admissions[0]) *slot;
+
 	if (!s)
 		return;
 	pthread_mutex_lock(&s->lock);
 	if (!s->fenced && !s->retired) {
+		slot = d2_admission_slot(s, admission.raw);
 		d1_fixture_expire(s->model, admission);
-		if (d2_liveness_control(s, admission, D2_CTL_LEASE_EXPIRE) !=
-		    D1_OK)
+		if (slot)
+			slot->expired = true;
+		status = d2_liveness_control(s, admission, D2_CTL_LEASE_EXPIRE);
+		if (status != D1_OK && status != D1_NOSPC)
 			s->fenced = true;
-		else
-			d2_admission_slot(s, admission.raw)->expired = true;
 	}
 	pthread_mutex_unlock(&s->lock);
 }
