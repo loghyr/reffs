@@ -349,6 +349,162 @@ out:
 	return ok;
 }
 
+static bool repair_revoke_race_log(int dirfd, uint64_t begin, uint64_t end,
+				   const struct d2_binding *binding,
+				   uint64_t cohort_id, bool *revoke_first)
+{
+	struct d2_wal_header header;
+	struct d2_control control;
+	struct d2_cohort cohort;
+	uint8_t *wal;
+	uint64_t at = begin, cohort_lsn = 0, revoke_lsn = 0;
+	uint32_t cohort_status = 0, cohort_transition = 0, cohort_flags = 0;
+	unsigned int cohorts = 0, revokes = 0;
+	int fd = -1;
+	bool ok = false;
+
+	wal = malloc((size_t)end);
+	if (!wal)
+		return false;
+	fd = openat(dirfd, "wal", O_RDONLY | O_CLOEXEC);
+	if (fd < 0 || pread(fd, wal, (size_t)end, 0) != (ssize_t)end)
+		goto out;
+	while (at < end &&
+	       d2_wal_header_decode(wal + at, (size_t)(end - at),
+				    binding->store_uuid, binding->wal_uuid,
+				    &header)) {
+		if (header.family == D2_REC_CONTROL &&
+		    d2_control_decode(wal + at, header.total_bytes, &header,
+				      &control) &&
+		    control.subtype == D2_CTL_AUTHORITY_REVOKE) {
+			revokes++;
+			revoke_lsn = header.lsn;
+		} else if (header.family == D2_REC_COHORT &&
+			   d2_cohort_decode(wal + at, header.total_bytes, &header,
+					    &cohort) &&
+			   cohort.cohort_id == cohort_id) {
+			cohorts++;
+			cohort_lsn = header.lsn;
+			cohort_status = cohort.status;
+			cohort_transition = cohort.transition;
+			cohort_flags = cohort.flags;
+		}
+		at += header.total_bytes;
+	}
+	if (at != end || cohorts != 1 || revokes != 1 ||
+	    cohort_lsn == revoke_lsn)
+		goto out;
+	*revoke_first = revoke_lsn < cohort_lsn;
+	ok = !(cohort_flags & 2u) &&
+	     (*revoke_first ?
+		      cohort_transition == D2_REFUSED &&
+			      cohort_status == D1_STALE_AUTH :
+		      cohort_transition == D2_PREPARED &&
+			      cohort_status == D1_OK);
+out:
+	if (fd >= 0)
+		close(fd);
+	free(wal);
+	return ok;
+}
+
+static bool admitted_error_repair(struct d2_store *store,
+				  const struct d1_objkey *object,
+				  d1_admission_id admission, uint32_t writer,
+				  uint64_t index, uint8_t origin_seed,
+				  const uint8_t *payload, uint32_t payload_len,
+				  struct d1_envelope *prepare,
+				  d1_repair_id *cohort_out)
+{
+	struct d1_envelope env = { 0 };
+	struct d1_result result;
+	struct d1_guard guard = { .never_written = true };
+	d1_custody_id custody;
+	d1_episode_id episode;
+	d1_txn_id txn;
+	d1_version_id version;
+
+	env.object = *object;
+	env.admission = admission;
+	env.incarnation = d2_store_incarnation(store);
+	fill(env.key.origin.bytes, sizeof(env.key.origin.bytes), origin_seed);
+	env.op = D1_OP_WRITE_BATCH;
+	write_request(&env, 1, index, 400 + (uint32_t)index, &guard, payload,
+		      payload_len);
+	env.body.write.entries[0].owner.writer = writer;
+	if (d2_store_apply(store, &env, &result) != D1_OK ||
+	    result.entries[0].status != D1_OK)
+		return false;
+	version = result.entries[0].version;
+	custody = d2_store_custody(store, version);
+	if (!d1_custody_live(custody))
+		return false;
+	memset(&env.body, 0, sizeof(env.body));
+	env.key.sequence = 2;
+	env.op = D1_OP_MARK_ERROR;
+	env.body.repair.range_begin = index;
+	env.body.repair.range_end = index + 1;
+	env.body.repair.count = 1;
+	env.body.repair.entries[0].index = index;
+	env.body.repair.entries[0].owner.cohort.raw = 2;
+	env.body.repair.entries[0].owner.writer = writer;
+	env.body.repair.entries[0].owner.co_id = 500 + (uint32_t)index;
+	env.body.repair.entries[0].custody_present = true;
+	env.body.repair.entries[0].custody = custody;
+	env.body.repair.entries[0].successor_present = true;
+	env.body.repair.entries[0].successor = version;
+	if (d2_store_apply(store, &env, &result) != D1_OK ||
+	    result.entries[0].status != D1_OK ||
+	    !result.entries[0].episode_present)
+		return false;
+	episode = result.entries[0].episode;
+	memset(&env.body, 0, sizeof(env.body));
+	env.key.sequence = 3;
+	env.op = D1_OP_BEGIN_REPAIR;
+	env.body.repair.range_begin = index;
+	env.body.repair.range_end = index + 1;
+	env.body.repair.count = 1;
+	env.body.repair.episode_present = true;
+	env.body.repair.episode = episode;
+	env.body.repair.entries[0].index = index;
+	env.body.repair.entries[0].owner.cohort.raw = 3;
+	env.body.repair.entries[0].owner.writer = writer;
+	env.body.repair.entries[0].owner.co_id = 600 + (uint32_t)index;
+	env.body.repair.entries[0].mode = D1_REPAIR_ERROR;
+	env.body.repair.entries[0].custody_present = true;
+	env.body.repair.entries[0].custody = custody;
+	env.body.repair.entries[0].successor_present = true;
+	env.body.repair.entries[0].successor = version;
+	if (d2_store_apply(store, &env, &result) != D1_OK ||
+	    result.entries[0].status != D1_OK ||
+	    result.entries[0].phase != D2_ADMITTED ||
+	    !result.entries[0].cohort_present ||
+	    result.entries[0].member_txn_count != 1)
+		return false;
+	*cohort_out = result.entries[0].cohort;
+	txn = result.entries[0].member_txn[0];
+	*prepare = env;
+	memset(&prepare->body, 0, sizeof(prepare->body));
+	prepare->key.sequence = 4;
+	prepare->op = D1_OP_PREPARE_REPAIR;
+	prepare->body.repair.range_begin = index;
+	prepare->body.repair.range_end = index + 1;
+	prepare->body.repair.count = 1;
+	prepare->body.repair.cohort_present = true;
+	prepare->body.repair.cohort = *cohort_out;
+	prepare->body.repair.entries[0].index = index;
+	prepare->body.repair.entries[0].owner.cohort.raw = 3;
+	prepare->body.repair.entries[0].owner.writer = writer;
+	prepare->body.repair.entries[0].owner.co_id = 600 + (uint32_t)index;
+	prepare->body.repair.entries[0].txn_present = true;
+	prepare->body.repair.entries[0].txn = txn;
+	prepare->body.repair.entries[0].payload_present = true;
+	prepare->body.repair.entries[0].payload = payload;
+	prepare->body.repair.entries[0].payload_len = payload_len;
+	return d1_checksum_compute(D1_CKSUM_CRC32C, payload, payload_len,
+				   &prepare->body.repair.entries[0].checksum);
+}
+
 int main(void)
 {
 	const char *root = getenv("D2_TEST_ROOT");
@@ -2683,12 +2839,15 @@ int main(void)
 		if (store && races_ok) {
 			wal_bytes = d2_store_wal_bytes(store);
 			for (i = 0; i < AUTHORITY_RACE_RUNS; i++) {
-				uint32_t phase;
+				uint32_t phase, retry_status;
 				uint64_t admission_id;
 
 				retries[i].admission = d2_store_admission_handle(
 					store, retries[i].admission.raw);
-				if (d2_store_apply(store, &retries[i], &result) != D1_OK ||
+				retry_status = d2_store_apply(store, &retries[i],
+							      &result);
+
+				if (retry_status != D1_OK ||
 				    result.entries[0].status !=
 					    (revoke_first[i] ? D1_STALE_AUTH : D1_OK) ||
 				    result.entries[0].phase !=
@@ -3003,6 +3162,147 @@ int main(void)
 						 &admission_id) &&
 			      phase == D2_PREPARED && admission_id == client_id.raw,
 		      "lost revoke restarts with prepared work fenced by incarnation");
+	}
+	if (store) {
+		check(d2_store_close(store) == D1_OK,
+		      "close lost-revoke headroom fixture");
+		store = NULL;
+	}
+	unlinkat(dirfd, "super", 0);
+	unlinkat(dirfd, "wal", 0);
+	unlinkat(dirfd, "payload", 0);
+	memset(&binding, 0, sizeof(binding));
+	check(d2_store_provision(dirfd, &config, &binding, &store) == D1_OK,
+	      "provision repair-revoke race fixture");
+	if (store) {
+		enum { REPAIR_REVOKE_RUNS = 4 };
+		struct d1_envelope retries[REPAIR_REVOKE_RUNS];
+		d1_repair_id cohorts[REPAIR_REVOKE_RUNS];
+		bool revoke_first[REPAIR_REVOKE_RUNS] = { 0 };
+		uint32_t expected_phase[REPAIR_REVOKE_RUNS] = { 0 };
+		unsigned int i;
+		bool races_ok = true, replay_ok = true;
+
+		for (i = 0; i < REPAIR_REVOKE_RUNS; i++) {
+			struct d1_fixture_authority mds = { 0 }, client = { 0 };
+			struct authority_race race = { .store = store };
+			d1_admission_id mds_id, client_id;
+			pthread_t prepare_thread, revoke_thread;
+			uint32_t phase, members;
+			uint64_t begin, end;
+			int prepare_created, revoke_created;
+			bool run_ok;
+
+			fill(mds.issuer.bytes, sizeof(mds.issuer.bytes),
+			     (uint8_t)(0x90 + i));
+			fill(mds.principal.bytes, sizeof(mds.principal.bytes),
+			     (uint8_t)(0x30 + i));
+			fill(mds.session, sizeof(mds.session),
+			     (uint8_t)(0x50 + i));
+			mds.writer = 90 + i;
+			mds.rights = D1_RIGHT_CONTROL;
+			mds.authority_epoch = 900 + i;
+			client = mds;
+			fill(client.principal.bytes, sizeof(client.principal.bytes),
+			     (uint8_t)(0x60 + i));
+			fill(client.session, sizeof(client.session),
+			     (uint8_t)(0x70 + i));
+			client.writer = 100 + i;
+			client.rights = D1_RIGHT_READ | D1_RIGHT_WRITE |
+					D1_RIGHT_REPAIR |
+					D1_RIGHT_SINGLE_WRITER;
+			client.lease_epoch = 910 + i;
+			client.fence_sequence = 920 + i;
+			mds_id = d2_store_admit_full(store, &object, &mds);
+			client_id = d2_store_admit_bare(store, &object, &client);
+			if (!d1_admission_live(mds_id) ||
+			    !d1_admission_live(client_id) ||
+			    d2_store_trust_admission(store, mds_id, client_id) !=
+				    D1_OK ||
+			    d2_store_admit_authority(store, mds_id, &client_id, 1) !=
+				    D1_OK ||
+			    !admitted_error_repair(
+				    store, &object, client_id, client.writer, i,
+				    (uint8_t)(0xa0 + i), payload, sizeof(payload),
+				    &race.transition, &cohorts[i])) {
+				races_ok = false;
+				break;
+			}
+			race.actor = mds_id;
+			race.issuer = mds.issuer;
+			race.epoch = mds.authority_epoch;
+			atomic_init(&race.go, false);
+			begin = d2_store_wal_bytes(store);
+			prepare_created = pthread_create(&prepare_thread, NULL,
+						 race_transition, &race);
+			revoke_created = prepare_created ? -1 :
+				pthread_create(&revoke_thread, NULL, race_revoke, &race);
+			atomic_store_explicit(&race.go, true, memory_order_release);
+			if (!prepare_created)
+				pthread_join(prepare_thread, NULL);
+			if (!revoke_created)
+				pthread_join(revoke_thread, NULL);
+			end = d2_store_wal_bytes(store);
+			expected_phase[i] = race.transition_result.entries[0].phase;
+			run_ok = !prepare_created && !revoke_created &&
+				race.transition_status == D1_OK &&
+				race.revoke_status == D1_OK &&
+				repair_revoke_race_log(dirfd, begin, end, &binding,
+						       cohorts[i].raw,
+						       &revoke_first[i]) &&
+				race.transition_result.entries[0].status ==
+					(revoke_first[i] ? D1_STALE_AUTH : D1_OK) &&
+				d2_store_repair_state(store, cohorts[i].raw, &phase,
+						      &members) &&
+					phase == (revoke_first[i] ? D2_ADMITTED :
+								 D2_PREPARED) &&
+					members == 1;
+			races_ok = races_ok && run_ok;
+			retries[i] = race.transition;
+		}
+		check(races_ok,
+		      "authority revoke serializes with admitted repair prepare");
+		memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
+		memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
+		reopen.files.expected_root_ino = binding.root_ino;
+		d2_store_crash(store);
+		store = NULL;
+		check(races_ok &&
+			      d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+				      D1_OK,
+		      "repair-revoke race log replays");
+		if (store && races_ok) {
+			wal_bytes = d2_store_wal_bytes(store);
+			for (i = 0; i < REPAIR_REVOKE_RUNS; i++) {
+				uint32_t phase = 0, members = 0, retry_status;
+
+				retries[i].admission = d2_store_admission_handle(
+					store, retries[i].admission.raw);
+				retries[i].body.repair.cohort =
+					d2_store_repair_handle(
+						store,
+						retries[i].body.repair.cohort.raw);
+				retries[i].body.repair.entries[0].txn =
+					d2_store_txn_handle(
+						store,
+						retries[i].body.repair.entries[0].txn.raw);
+				retry_status = d2_store_apply(store, &retries[i],
+							      &result);
+				if (retry_status != D1_OK ||
+				    result.entries[0].status !=
+					    (revoke_first[i] ? D1_STALE_AUTH : D1_OK) ||
+				    result.entries[0].phase != expected_phase[i] ||
+				    !d2_store_repair_state(store, cohorts[i].raw, &phase,
+							   &members) ||
+				    phase != (revoke_first[i] ? D2_ADMITTED :
+							     D2_PREPARED) ||
+				    members != 1 ||
+				    d2_store_wal_bytes(store) != wal_bytes)
+					replay_ok = false;
+			}
+		}
+		check(store && replay_ok,
+		      "repair-revoke race receipts replay exactly");
 	}
 
 done:

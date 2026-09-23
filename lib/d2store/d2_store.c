@@ -2549,7 +2549,7 @@ static bool d2_replay_cohort_refusal(struct d2_replay *r,
 	memcpy(result.entries[0].verifier, disk->result_verifier,
 	       D1_VERIFIER_BYTES);
 	cohort = d2_cohort_find(r->store, disk->cohort_id);
-	if (cohort) {
+	if (cohort && disk->status != D1_STALE_AUTH) {
 		result.entries[0].cohort_present = true;
 		result.entries[0].cohort = d1_fixture_repair_handle(
 			r->store->model, cohort->id);
