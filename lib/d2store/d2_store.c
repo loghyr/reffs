@@ -41,6 +41,18 @@ struct d2_store {
 		uint8_t digest[D1_DIGEST_BYTES];
 		struct d1_result result;
 	} receipts[D1_MAX_RECEIPTS];
+	struct {
+		bool used;
+		uint64_t txn_id;
+		uint64_t version_id;
+		uint64_t admission_id;
+	} work[D1_MAX_TXNS];
+	struct {
+		bool used;
+		uint64_t custody_id;
+		uint64_t version_id;
+		uint64_t admission_id;
+	} custodies[D1_MAX_CUSTODY];
 	bool fenced;
 };
 
@@ -118,6 +130,100 @@ static bool d2_receipt_remember(struct d2_store *s,
 		return true;
 	}
 	return false;
+}
+
+static bool d2_work_remember(struct d2_store *s, uint64_t txn_id,
+			     uint64_t version_id, uint64_t admission_id)
+{
+	uint32_t i;
+
+	if (!txn_id || !version_id || !admission_id)
+		return true;
+	for (i = 0; i < D1_MAX_TXNS; i++) {
+		if (s->work[i].used && s->work[i].txn_id == txn_id)
+			return s->work[i].version_id == version_id &&
+			       s->work[i].admission_id == admission_id;
+		if (!s->work[i].used) {
+			s->work[i].used = true;
+			s->work[i].txn_id = txn_id;
+			s->work[i].version_id = version_id;
+			s->work[i].admission_id = admission_id;
+			return true;
+		}
+	}
+	return false;
+}
+
+static const typeof(((struct d2_store *)0)->work[0]) *
+d2_work_by_version(const struct d2_store *s, uint64_t version_id)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_TXNS; i++)
+		if (s->work[i].used && s->work[i].version_id == version_id)
+			return &s->work[i];
+	return NULL;
+}
+
+static const typeof(((struct d2_store *)0)->work[0]) *
+d2_work_by_txn(const struct d2_store *s, uint64_t txn_id)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_TXNS; i++)
+		if (s->work[i].used && s->work[i].txn_id == txn_id)
+			return &s->work[i];
+	return NULL;
+}
+
+static bool d2_custody_remember(struct d2_store *s, uint64_t custody_id,
+				uint64_t version_id, uint64_t admission_id)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_CUSTODY; i++) {
+		if (s->custodies[i].used &&
+		    s->custodies[i].custody_id == custody_id)
+			return s->custodies[i].version_id == version_id &&
+			       s->custodies[i].admission_id == admission_id;
+		if (!s->custodies[i].used) {
+			s->custodies[i].used = true;
+			s->custodies[i].custody_id = custody_id;
+			s->custodies[i].version_id = version_id;
+			s->custodies[i].admission_id = admission_id;
+			return true;
+		}
+	}
+	return false;
+}
+
+static const typeof(((struct d2_store *)0)->custodies[0]) *
+d2_custody_by_version(const struct d2_store *s, uint64_t version_id)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_CUSTODY; i++)
+		if (s->custodies[i].used &&
+		    s->custodies[i].version_id == version_id)
+			return &s->custodies[i];
+	return NULL;
+}
+
+static bool d2_rollback_supported(const struct d2_store *s,
+				  const struct d1_envelope *env)
+{
+	const typeof(s->work[0]) *work;
+	const typeof(s->custodies[0]) *custody;
+	const struct d1_rollback_entry *entry = &env->body.rollback.entries[0];
+
+	if (!entry->custody_present)
+		return true;
+	work = d2_work_by_txn(s, entry->txn.raw);
+	if (!work)
+		return false;
+	custody = d2_custody_by_version(s, work->version_id);
+	return custody && custody->custody_id == entry->custody.raw &&
+	       custody->admission_id == env->admission.raw;
 }
 
 static void d2_stateid(uint64_t admission, uint32_t *seqid, uint8_t other[12])
@@ -289,6 +395,42 @@ static bool d2_replay_liveness(struct d2_replay *r,
 	       !memcmp(principal, auth->principal.bytes, 16);
 }
 
+static bool d2_replay_custody(struct d2_replay *r,
+			      const struct d2_control *control)
+{
+	const typeof(r->store->work[0]) *work;
+	const struct d1_fixture_authority *auth;
+	struct d1_cursor cursor;
+	d1_custody_id custody;
+	uint8_t holder[16];
+	uint64_t custody_id, version_id;
+	uint32_t op;
+
+	if (control->subtype != D2_CTL_CUSTODY)
+		return true;
+	d1_dec_init(&cursor, control->body, control->body_len);
+	if (!d1_dec_u64(&cursor, &custody_id) ||
+	    !d1_dec_u64(&cursor, &version_id) || !d1_dec_u32(&cursor, &op) ||
+	    !d1_dec_raw(&cursor, holder, sizeof(holder)) ||
+	    !d1_dec_finished(&cursor) || op != 1 ||
+	    control->transition != D2_COMMITTED || control->status != D1_OK)
+		return false;
+	work = d2_work_by_version(r->store, version_id);
+	if (!work || work->admission_id != control->admission_client_id)
+		return false;
+	auth = d2_admission_find(r->store, work->admission_id);
+	if (!auth || memcmp(holder, auth->principal.bytes, sizeof(holder)) ||
+	    memcmp(control->admission_issuer, auth->issuer.bytes, 16) ||
+	    control->admission_authority_epoch != auth->authority_epoch)
+		return false;
+	custody = d1_fixture_custody(r->store->model,
+				     d1_fixture_version_handle(r->store->model,
+							       version_id));
+	return custody.raw == custody_id &&
+	       d2_custody_remember(r->store, custody_id, version_id,
+				   work->admission_id);
+}
+
 static bool d2_replay_admission(struct d2_replay *r,
 				const struct d2_entry *entry)
 {
@@ -376,7 +518,11 @@ static bool d2_replay_receipt(struct d2_replay *r,
 	memcpy(result.entries[0].verifier, e->result_verifier,
 	       D1_VERIFIER_BYTES);
 	result.entries[0].disposition = D1_COMPLETED;
-	return d2_receipt_remember(r->store, &object->export_uuid, &key,
+	return (!e->payload_object_id ||
+		d2_work_remember(r->store, e->txn_id,
+				 e->result_visible_object_id,
+				 e->admission.client_id)) &&
+	       d2_receipt_remember(r->store, &object->export_uuid, &key,
 				   e->key.request_digest, &result);
 }
 
@@ -447,6 +593,8 @@ static bool d2_replay_rollback(struct d2_replay *r,
 {
 	struct d1_envelope env = { 0 };
 	struct d1_result result;
+	const typeof(r->store->work[0]) *work;
+	const typeof(r->store->custodies[0]) *custody;
 	d1_version_id visible = d1_version_none();
 	uint8_t digest[D1_DIGEST_BYTES];
 
@@ -468,6 +616,15 @@ static bool d2_replay_rollback(struct d2_replay *r,
 		e->predecessor_present;
 	env.body.rollback.entries[0].predecessor = d1_fixture_version_handle(
 		r->store->model, e->predecessor_object_id);
+	work = d2_work_by_txn(r->store, e->txn_id);
+	custody = work ? d2_custody_by_version(r->store, work->version_id) :
+			 NULL;
+	if (custody) {
+		env.body.rollback.entries[0].custody_present = true;
+		env.body.rollback.entries[0].custody =
+			d1_fixture_custody_handle(r->store->model,
+						  custody->custody_id);
+	}
 	if (!d2_env_digest(&env, digest) ||
 	    memcmp(digest, e->key.request_digest, D1_DIGEST_BYTES))
 		return false;
@@ -630,7 +787,8 @@ static bool d2_replay_record(const struct d2_wal_header *h,
 		if (!d2_control_decode(record, h->total_bytes, h, &control))
 			return false;
 		return d2_replay_registration(r, &control) &&
-		       d2_replay_liveness(r, &control);
+		       d2_replay_liveness(r, &control) &&
+		       d2_replay_custody(r, &control);
 	}
 	if (h->family != D2_REC_ENTRY)
 		return true;
@@ -1031,8 +1189,7 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 	     env->op != D1_OP_ROLLBACK_BATCH) ||
 	    d1_envelope_member_count(env) != 1 ||
 	    (env->op == D1_OP_ROLLBACK_BATCH &&
-	     (env->body.rollback.entries[0].custody_present ||
-	      env->body.rollback.range_begin !=
+	     (env->body.rollback.range_begin !=
 		      env->body.rollback.entries[0].index ||
 	      env->body.rollback.range_end !=
 		      env->body.rollback.entries[0].index + 1)) ||
@@ -1058,6 +1215,16 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 	if (!memcmp(env->key.origin.bytes, (uint8_t[16]){ 0 }, 16)) {
 		pthread_mutex_unlock(&s->lock);
 		return D1_INVALID;
+	}
+	if (env->op == D1_OP_ROLLBACK_BATCH && !d2_rollback_supported(s, env)) {
+		memset(result, 0, sizeof(*result));
+		result->key = env->key;
+		result->disposition = D1_UNRECORDED;
+		result->count = 1;
+		result->entries[0].status = D1_UNSUPPORTED;
+		result->entries[0].disposition = D1_UNRECORDED;
+		pthread_mutex_unlock(&s->lock);
+		return D1_UNSUPPORTED;
 	}
 	status = d2_register_file(s, &env->object, file_key);
 	if (status != D1_OK) {
@@ -1091,6 +1258,12 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 		result->disposition = D1_UNRECORDED;
 	} else if (!d2_receipt_remember(s, &env->object.export_uuid, &env->key,
 					digest, result)) {
+		s->fenced = true;
+		status = D1_IO;
+	} else if (env->op == D1_OP_WRITE_BATCH &&
+		   !d2_work_remember(s, result->entries[0].txn.raw,
+				     result->entries[0].version.raw,
+				     env->admission.raw)) {
 		s->fenced = true;
 		status = D1_IO;
 	}
@@ -1204,6 +1377,51 @@ static uint32_t d2_liveness_control(struct d2_store *s,
 	return d2_files_wal_append(s->files, record, written);
 }
 
+static uint32_t d2_custody_control(struct d2_store *s, d1_custody_id custody,
+				   d1_version_id version, uint64_t admission_id)
+{
+	const struct d1_fixture_authority *auth =
+		d2_admission_find(s, admission_id);
+	struct d2_wal_header h = { 0 };
+	struct d2_control control = { 0 };
+	struct d1_cursor cursor;
+	uint8_t record[256];
+	size_t written;
+
+	if (!auth || !memcmp(auth->session, (uint8_t[16]){ 0 }, 16))
+		return D1_INVALID;
+	h.family = D2_REC_CONTROL;
+	memcpy(h.store_uuid, s->uuid.bytes, 16);
+	memcpy(h.wal_uuid, d2_files_super(s->files)->wal_uuid, 16);
+	h.lsn = d2_files_next_lsn(s->files);
+	h.ds_incarnation = d2_files_super(s->files)->ds_incarnation;
+	if (h.lsn > UINT32_MAX)
+		return D1_NOSPC;
+	control.subtype = D2_CTL_CUSTODY;
+	control.transition = D2_COMMITTED;
+	control.status = D1_OK;
+	memcpy(control.key.session, auth->session, 16);
+	control.key.sequence = (uint32_t)h.lsn;
+	d2_operation_key(control.key.session, 0, control.key.sequence, 0,
+			 control.key.operation_key);
+	memcpy(control.admission_issuer, auth->issuer.bytes, 16);
+	control.admission_authority_epoch = auth->authority_epoch;
+	control.admission_client_id = admission_id;
+	control.body_len = 36;
+	d1_enc_init(&cursor, control.body, control.body_len);
+	d1_enc_u64(&cursor, custody.raw);
+	d1_enc_u64(&cursor, version.raw);
+	d1_enc_u32(&cursor, 1);
+	d1_enc_raw(&cursor, auth->principal.bytes, 16);
+	if (!d1_cursor_ok(&cursor))
+		return D1_INVALID;
+	d2_hash_domain("FFV2-D2B-CONTROL-v1", control.body, control.body_len,
+		       control.key.request_digest);
+	if (!d2_control_encode(&h, &control, record, sizeof(record), &written))
+		return D1_INVALID;
+	return d2_files_wal_append(s->files, record, written);
+}
+
 void d2_store_revoke(struct d2_store *s, d1_admission_id admission)
 {
 	if (!s)
@@ -1235,13 +1453,21 @@ void d2_store_expire(struct d2_store *s, d1_admission_id admission)
 d1_custody_id d2_store_custody(struct d2_store *s, d1_version_id version)
 {
 	d1_custody_id id = d1_custody_none();
+	const typeof(s->work[0]) *work;
 
-	(void)version;
 	if (!s)
 		return id;
 	pthread_mutex_lock(&s->lock);
-	if (!s->fenced)
+	work = d2_work_by_version(s, version.raw);
+	if (!s->fenced && work)
+		id = d1_fixture_custody(s->model, version);
+	if (d1_custody_live(id) &&
+	    (d2_custody_control(s, id, version, work->admission_id) != D1_OK ||
+	     !d2_custody_remember(s, id.raw, version.raw,
+				  work->admission_id))) {
 		s->fenced = true;
+		id = d1_custody_none();
+	}
 	pthread_mutex_unlock(&s->lock);
 	return id;
 }

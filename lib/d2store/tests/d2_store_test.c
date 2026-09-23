@@ -115,6 +115,7 @@ int main(void)
 	struct d2_store *store = NULL;
 	struct d1_objkey object = { 0 };
 	struct d1_envelope env = { 0 };
+	struct d1_envelope committed_rollback;
 	struct d1_envelope expired;
 	struct d1_envelope refused;
 	struct d1_envelope unsupported;
@@ -122,8 +123,9 @@ int main(void)
 	struct d1_result durable_result = { 0 };
 	struct d1_result refused_result = { 0 };
 	d1_admission_id admission;
+	d1_custody_id custody;
 	d1_txn_id staged_txn;
-	d1_version_id visible;
+	d1_version_id predecessor, successor, visible;
 	struct d2_wal_header wal_header;
 	struct d2_control control;
 	struct d1_selection_spec selection = { .selection =
@@ -301,12 +303,100 @@ int main(void)
 		      "restart returns exact durable receipt once");
 	}
 	if (store) {
+		check(d2_store_visible(store, &object, 5, &predecessor) &&
+			      d2_store_guard(store, &object, 5, &guard),
+		      "committed rollback captures predecessor");
+		admission = d2_store_admit(store, &object, 17,
+					   D1_RIGHT_READ | D1_RIGHT_WRITE |
+						   D1_RIGHT_REPAIR |
+						   D1_RIGHT_SINGLE_WRITER);
+		env.admission = admission;
+		env.incarnation = d2_store_incarnation(store);
+		env.op = D1_OP_WRITE_BATCH;
+		write_request(&env, 20, 5, 20, &guard, replacement,
+			      sizeof(replacement));
+		env.body.write.activate = false;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "committed rollback stages replacement");
+		staged_txn = result.entries[0].txn;
+		successor = result.entries[0].version;
+		memset(&env.body, 0, sizeof(env.body));
+		env.key.sequence = 21;
+		env.op = D1_OP_FINALIZE_BATCH;
+		env.body.lifecycle.range_begin = 5;
+		env.body.lifecycle.range_end = 6;
+		env.body.lifecycle.count = 1;
+		env.body.lifecycle.entries[0].index = 5;
+		env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+		env.body.lifecycle.entries[0].owner.writer = 17;
+		env.body.lifecycle.entries[0].owner.co_id = 20;
+		env.body.lifecycle.entries[0].txn = staged_txn;
+		env.body.lifecycle.entries[0].predecessor_present = true;
+		env.body.lifecycle.entries[0].predecessor = predecessor;
+		d2_store_verifier(store, verifier);
+		memcpy(env.body.lifecycle.prior_verifier, verifier,
+		       sizeof(verifier));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].phase == D2_FINALIZED,
+		      "replacement finalizes before custody rollback");
+		env.key.sequence = 22;
+		env.op = D1_OP_COMMIT_BATCH;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].phase == D2_COMMITTED,
+		      "replacement commits before custody rollback");
+		custody = d2_store_custody(store, successor);
+		check(d1_custody_live(custody), "custody issue is durable");
+		memset(&env.body, 0, sizeof(env.body));
+		env.key.sequence = 23;
+		env.op = D1_OP_ROLLBACK_BATCH;
+		env.body.rollback.range_begin = 5;
+		env.body.rollback.range_end = 6;
+		env.body.rollback.count = 1;
+		env.body.rollback.entries[0].index = 5;
+		env.body.rollback.entries[0].owner.cohort.raw = 1;
+		env.body.rollback.entries[0].owner.writer = 17;
+		env.body.rollback.entries[0].owner.co_id = 20;
+		env.body.rollback.entries[0].txn = staged_txn;
+		env.body.rollback.entries[0].visible_present = true;
+		env.body.rollback.entries[0].visible = successor;
+		env.body.rollback.entries[0].predecessor_present = true;
+		env.body.rollback.entries[0].predecessor = predecessor;
+		env.body.rollback.entries[0].custody_present = true;
+		env.body.rollback.entries[0].custody = custody;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].phase == D2_ROLLED_BACK &&
+			      d2_store_visible(store, &object, 5, &visible) &&
+			      visible.raw == predecessor.raw,
+		      "custody rollback restores predecessor");
+		committed_rollback = env;
+		d2_store_crash(store);
+		store = NULL;
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+				      D1_OK &&
+			      d2_store_visible(store, &object, 5, &visible) &&
+			      visible.raw == predecessor.raw,
+		      "restart replays custody rollback");
+		if (store) {
+			committed_rollback.admission = d2_store_admission_handle(
+				store, committed_rollback.admission.raw);
+			wal_bytes = d2_store_wal_bytes(store);
+			check(d2_store_apply(store, &committed_rollback,
+					     &result) == D1_OK &&
+				      result.entries[0].phase ==
+					      D2_ROLLED_BACK &&
+				      d2_store_wal_bytes(store) == wal_bytes,
+			      "restart returns committed rollback receipt");
+		}
+	}
+	if (store) {
 		admission = d2_store_admit(store, &object, 17,
 					   D1_RIGHT_READ | D1_RIGHT_WRITE |
 						   D1_RIGHT_SINGLE_WRITER);
 		guard = (struct d1_guard){ .never_written = true };
 		env.admission = admission;
 		env.incarnation = d2_store_incarnation(store);
+		env.op = D1_OP_WRITE_BATCH;
 		write_request(&env, 5, 6, 5, &guard, replacement,
 			      sizeof(replacement));
 		check(d2_store_apply(store, &env, &result) == D1_OK,
