@@ -1232,10 +1232,53 @@ int main(void)
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
 				      result.entries[0].status == D1_CHECKSUM &&
 				      result.entries[0].phase == D2_ABORTED,
-			      "failed two-member prepare aborts atomically");
-			aborted_prepare = env;
+				      "failed two-member prepare aborts atomically");
+				aborted_prepare = env;
+				d2_store_crash(store);
+				store = NULL;
+				check(d2_store_rebind(dirfd, &reopen, &binding,
+						      &store) == D1_OK,
+				      "kept repair abort replays before reuse");
+				if (!store)
+					goto done;
+				admission = d2_store_admission_handle(store,
+							       admission.raw);
+				episode = d2_store_episode_handle(store, episode.raw);
+				custody = d2_store_custody_handle(store, custody.raw);
+				custody2 = d2_store_custody_handle(store, custody2.raw);
+				broken = d2_store_version_handle(store, broken.raw);
+				broken2 = d2_store_version_handle(store, broken2.raw);
+				aborted_prepare.admission = admission;
+				aborted_prepare.body.repair.cohort =
+					d2_store_repair_handle(
+						store,
+						aborted_prepare.body.repair.cohort.raw);
+				aborted_prepare.body.repair.entries[0].txn =
+					d2_store_txn_handle(
+						store,
+						aborted_prepare.body.repair.entries[0]
+							.txn.raw);
+				aborted_prepare.body.repair.entries[1].txn =
+					d2_store_txn_handle(
+						store,
+						aborted_prepare.body.repair.entries[1]
+							.txn.raw);
+				wal_bytes = d2_store_wal_bytes(store);
+				check(d2_store_apply(store, &aborted_prepare,
+						     &result) == D1_OK &&
+					      result.entries[0].status == D1_CHECKSUM &&
+					      result.entries[0].phase == D2_ABORTED &&
+					      d2_store_wal_bytes(store) == wal_bytes,
+				      "restart returns kept abort before new cohort");
+				admission = d2_store_admit(
+					store, &object, 17,
+					D1_RIGHT_READ | D1_RIGHT_WRITE |
+						D1_RIGHT_REPAIR |
+						D1_RIGHT_SINGLE_WRITER);
 
-			memset(&env.body, 0, sizeof(env.body));
+				memset(&env.body, 0, sizeof(env.body));
+				env.admission = admission;
+				env.incarnation = d2_store_incarnation(store);
 			promise_base = d2_store_wal_promised(store);
 			env.key.sequence = 24;
 			env.op = D1_OP_BEGIN_REPAIR;
