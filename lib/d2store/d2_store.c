@@ -4426,7 +4426,8 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 			result->disposition = D1_COMPLETED;
 			result->entries[0].status = D1_CHECKSUM;
 			result->entries[0].disposition = D1_COMPLETED;
-			result->entries[0].phase = damaged_work->phase;
+			if (probe.entries[0].txn_present)
+				result->entries[0].phase = damaged_work->phase;
 			status = D1_OK;
 			persist = d2_persist_entry(s, env, result, prior_eof);
 			goto recorded;

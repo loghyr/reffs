@@ -952,6 +952,7 @@ int main(void)
 	struct d1_envelope recovery;
 	struct d1_envelope retired_exact;
 	struct d1_envelope refused;
+	struct d1_envelope unbound_refused;
 	struct d1_envelope refused_clear;
 	struct d1_envelope refused_mark;
 	struct d1_envelope refused_repair;
@@ -959,6 +960,8 @@ int main(void)
 	struct d1_result result = { 0 };
 	struct d1_result durable_result = { 0 };
 	struct d1_result refused_result = { 0 };
+	struct d1_result damaged_bound_result = { 0 };
+	struct d1_result damaged_unbound_result = { 0 };
 	struct d1_result nopre_result = { 0 }, unlock_result = { 0 };
 	struct d1_result refused_recovery_result = { 0 }, marked_result = { 0 };
 	struct d1_result refused_mark_result = { 0 }, refused_repair_result = { 0 };
@@ -2754,29 +2757,37 @@ int main(void)
 					  env.body.lifecycle.prior_verifier);
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
 				      result.entries[0].status == D1_CHECKSUM &&
+				      result.entries[0].txn_present &&
+				      result.entries[0].phase == D2_PREPARED &&
 				      result.entries[0].disposition ==
 					      D1_COMPLETED,
-			      "damaged prepared payload refuses finalize");
+			      "bound damaged payload refuses finalize reproducibly");
 			refused = env;
+			damaged_bound_result = result;
 			wal_bytes = d2_store_wal_bytes(store);
 			check(d2_store_apply(store, &refused, &result) ==
 					      D1_OK &&
-				      result.entries[0].status == D1_CHECKSUM &&
+				      same_result(&result, &damaged_bound_result) &&
 				      d2_store_wal_bytes(store) == wal_bytes,
-			      "checksum refusal replays exactly");
+			      "bound checksum refusal replays exactly");
 			env.key.sequence = 2;
 			env.op = D1_OP_COMMIT_BATCH;
 			env.body.lifecycle.range_begin = 1;
 			env.body.lifecycle.range_end = 2;
 			env.body.lifecycle.entries[0].index = 1;
 			env.body.lifecycle.entries[0].owner.co_id = 2;
+			env.body.lifecycle.entries[0].owner.writer = 99;
 			env.body.lifecycle.entries[0].txn =
 				d2_store_txn_handle(store, repair_txn.raw);
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
 				      result.entries[0].status == D1_CHECKSUM &&
+				      !result.entries[0].txn_present &&
+				      result.entries[0].phase == 0 &&
 				      result.entries[0].disposition ==
 					      D1_COMPLETED,
-			      "damaged finalized payload refuses commit");
+			      "unbound damaged payload omits unreplayable phase");
+			unbound_refused = env;
+			damaged_unbound_result = result;
 			d2_store_crash(store);
 			store = NULL;
 			check(d2_store_rebind(dirfd, &reopen, &binding,
@@ -2793,11 +2804,27 @@ int main(void)
 				wal_bytes = d2_store_wal_bytes(store);
 				check(d2_store_apply(store, &refused,
 						     &result) == D1_OK &&
-					      result.entries[0].status ==
-						      D1_CHECKSUM &&
+					      same_result(&result,
+							  &damaged_bound_result) &&
 					      d2_store_wal_bytes(store) ==
 						      wal_bytes,
-				      "restarted checksum refusal replays exactly");
+				      "restarted bound damage refusal replays exactly");
+				unbound_refused.admission =
+					d2_store_admission_handle(
+						store, unbound_refused.admission.raw);
+				unbound_refused.body.lifecycle.entries[0].txn =
+					d2_store_txn_handle(
+						store,
+						unbound_refused.body.lifecycle.entries[0]
+							.txn.raw);
+				wal_bytes = d2_store_wal_bytes(store);
+				check(d2_store_apply(store, &unbound_refused,
+						     &result) == D1_OK &&
+					      same_result(&result,
+							  &damaged_unbound_result) &&
+					      d2_store_wal_bytes(store) ==
+						      wal_bytes,
+				      "restarted unbound damage refusal replays exactly");
 				d2_store_close(store);
 				store = NULL;
 			}
