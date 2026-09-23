@@ -99,6 +99,12 @@ struct d2_store {
 			uint64_t custody_id;
 		} items[D1_BATCH_ENTRIES_MAX];
 	} episodes[D1_MAX_EPISODES];
+	struct {
+		bool used;
+		uint64_t episode_id;
+		uint64_t cohort_id;
+		uint8_t value[D1_CERTIFICATE_BYTES];
+	} certificates[D1_MAX_REPAIRS];
 	bool fenced;
 };
 
@@ -370,6 +376,40 @@ static bool d2_episode_remember(struct d2_store *s,
 			env->body.repair.entries[i].custody.raw;
 	}
 	return true;
+}
+
+static typeof(((struct d2_store *)0)->certificates[0]) *
+d2_certificate_find(struct d2_store *s, uint64_t episode_id,
+			    uint64_t cohort_id)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_REPAIRS; i++)
+		if (s->certificates[i].used &&
+		    s->certificates[i].episode_id == episode_id &&
+		    s->certificates[i].cohort_id == cohort_id)
+			return &s->certificates[i];
+	return NULL;
+}
+
+static bool d2_certificate_remember(
+	struct d2_store *s, uint64_t episode_id, uint64_t cohort_id,
+	const uint8_t certificate[D1_CERTIFICATE_BYTES])
+{
+	uint32_t i;
+
+	if (d2_certificate_find(s, episode_id, cohort_id))
+		return false;
+	for (i = 0; i < D1_MAX_REPAIRS; i++)
+		if (!s->certificates[i].used) {
+			s->certificates[i].used = true;
+			s->certificates[i].episode_id = episode_id;
+			s->certificates[i].cohort_id = cohort_id;
+			memcpy(s->certificates[i].value, certificate,
+			       D1_CERTIFICATE_BYTES);
+			return true;
+		}
+	return false;
 }
 
 static bool d2_cohort_remember_begin(struct d2_store *s,
@@ -1366,6 +1406,157 @@ static bool d2_replay_episode_mark(struct d2_replay *r,
 				   control->key.request_digest, &result);
 }
 
+static bool d2_replay_certificate(struct d2_replay *r,
+				  const struct d2_control *control)
+{
+	typeof(r->store->cohorts[0]) *cohort;
+	const struct d1_fixture_authority *auth;
+	struct d1_cursor cursor;
+	uint8_t episode_uuid[D1_UUID_BYTES];
+	uint8_t certificate[D1_CERTIFICATE_BYTES];
+	uint64_t episode_id, cohort_id;
+
+	if (control->subtype != D2_CTL_CERTIFICATE_INSTALL)
+		return true;
+	if (control->transition != D2_COMMITTED || control->status != D1_OK)
+		return false;
+	d1_dec_init(&cursor, control->body, control->body_len);
+	if (!d1_dec_raw(&cursor, episode_uuid, sizeof(episode_uuid)) ||
+	    !d1_dec_u64(&cursor, &cohort_id) ||
+	    !d1_dec_raw(&cursor, certificate, sizeof(certificate)) ||
+	    !d1_dec_finished(&cursor) ||
+	    !d2_episode_id(episode_uuid, &episode_id) ||
+	    d2_certificate_find(r->store, episode_id, cohort_id))
+		return false;
+	cohort = d2_cohort_find(r->store, cohort_id);
+	if (!cohort || cohort->phase != D2_COMMITTED ||
+	    !cohort->episode_present || cohort->episode_id != episode_id ||
+	    cohort->admission_id != control->admission_client_id)
+		return false;
+	auth = d2_admission_find(r->store, cohort->admission_id);
+	if (!auth ||
+	    memcmp(control->admission_issuer, auth->issuer.bytes,
+		   D1_UUID_BYTES) ||
+	    control->admission_authority_epoch != auth->authority_epoch)
+		return false;
+	d1_fixture_certificate(r->store->model, certificate);
+	return d2_certificate_remember(r->store, episode_id, cohort_id,
+				       certificate);
+}
+
+static bool d2_replay_episode_clear(struct d2_replay *r,
+				    const struct d2_wal_header *h,
+				    const struct d2_control *control)
+{
+	typeof(r->store->cohorts[0]) *cohort;
+	typeof(r->store->certificates[0]) *installed;
+	struct d2_entry admission_entry = { 0 };
+	struct d1_envelope env = { 0 };
+	struct d1_result result = { 0 };
+	struct d1_cursor cursor;
+	const struct d1_fixture_authority *auth;
+	uint8_t episode_uuid[D1_UUID_BYTES], file_key[32];
+	uint8_t certificate[D1_CERTIFICATE_BYTES];
+	uint64_t episode_id, cohort_id, index;
+	uint32_t reason, count, i;
+	bool committed;
+
+	if (control->subtype != D2_CTL_EPISODE_CLEAR)
+		return true;
+	committed = control->transition == D2_COMMITTED &&
+		    control->status == D1_OK;
+	if (!committed && (control->transition != D2_REFUSED ||
+			   control->status == D1_OK))
+		return false;
+	d1_dec_init(&cursor, control->body, control->body_len);
+	if (!d1_dec_raw(&cursor, episode_uuid, sizeof(episode_uuid)) ||
+	    !d1_dec_u64(&cursor, &cohort_id) ||
+	    !d1_dec_u32(&cursor, &reason) || !reason ||
+	    !d1_dec_u32(&cursor, &count) || count == 0 ||
+	    count > D1_BATCH_ENTRIES_MAX ||
+	    !d1_dec_raw(&cursor, certificate, sizeof(certificate)) ||
+	    !d2_episode_id(episode_uuid, &episode_id))
+		return false;
+	cohort = d2_cohort_find(r->store, cohort_id);
+	installed = d2_certificate_find(r->store, episode_id, cohort_id);
+	if (committed &&
+	    (!cohort || cohort->phase != D2_COMMITTED ||
+	     !cohort->episode_present || cohort->episode_id != episode_id ||
+	     cohort->count != count || !installed ||
+	     memcmp(installed->value, certificate, sizeof(certificate))))
+		return false;
+	auth = d2_admission_find(r->store, control->admission_client_id);
+	if (!auth ||
+	    memcmp(control->admission_issuer, auth->issuer.bytes,
+		   D1_UUID_BYTES) ||
+	    control->admission_authority_epoch != auth->authority_epoch)
+		return false;
+	env.body.repair.range_begin = UINT64_MAX;
+	for (i = 0; i < count; i++) {
+		struct d1_repair_entry *entry = &env.body.repair.entries[i];
+		const typeof(cohort->members[0]) *member =
+			cohort && i < cohort->count ? &cohort->members[i] : NULL;
+		struct d1_objkey *object;
+
+		if (!d1_dec_raw(&cursor, file_key, sizeof(file_key)) ||
+		    !d1_dec_u64(&cursor, &index) ||
+		    (committed && (!member || index != member->index)))
+			return false;
+		object = d2_replay_object(r, file_key);
+		if (!object ||
+		    (committed && !d2_same_object(object, &member->object)) ||
+		    (i && !d2_same_object(object, &env.object)))
+			return false;
+		if (!i)
+			env.object = *object;
+		if (index < env.body.repair.range_begin)
+			env.body.repair.range_begin = index;
+		if (index + 1 > env.body.repair.range_end)
+			env.body.repair.range_end = index + 1;
+		entry->index = index;
+		if (member)
+			entry->owner = member->owner;
+		else {
+			entry->owner.cohort.raw = cohort_id;
+			entry->owner.writer = auth->writer;
+			entry->owner.co_id = i + 1;
+		}
+		entry->custody_present = true;
+		entry->custody = d1_fixture_custody_handle(
+			r->store->model, member ? member->custody_id : 1);
+	}
+	if (!d1_dec_finished(&cursor))
+		return false;
+	d2_admission_encode(r->store, control->admission_client_id,
+			    &admission_entry.admission);
+	memcpy(admission_entry.file_key, file_key, sizeof(file_key));
+	if (!d2_replay_admission(r, &admission_entry))
+		return false;
+	env.admission = d1_fixture_admission_handle(
+		r->store->model, control->admission_client_id);
+	env.incarnation = h->ds_incarnation;
+	memcpy(env.key.origin.bytes, control->key.session, D1_UUID_BYTES);
+	env.key.sequence = ((uint64_t)control->key.slot << 32) |
+			   control->key.sequence;
+	env.key.ordinal = control->key.compound_ordinal;
+	env.op = D1_OP_CLEAR_ERROR;
+	env.body.repair.count = count;
+	env.body.repair.cohort_present = true;
+	env.body.repair.cohort = d1_fixture_repair_handle(r->store->model,
+							 cohort_id);
+	env.body.repair.episode_present = true;
+	env.body.repair.episode = d1_fixture_episode_handle(r->store->model,
+							 episode_id);
+	env.body.repair.certificate_present = true;
+	memcpy(env.body.repair.certificate, certificate, sizeof(certificate));
+	r->status = d1_store_apply(r->store->model, &env, &result);
+	if (r->status != D1_OK || result.count != 1 ||
+	    result.entries[0].status != control->status)
+		return false;
+	return d2_receipt_remember(r->store, &env.object.export_uuid, &env.key,
+				   control->key.request_digest, &result);
+}
+
 static bool d2_replay_cohort(struct d2_replay *r, const struct d2_wal_header *h,
 			     const struct d2_cohort *disk)
 {
@@ -1577,6 +1768,8 @@ static bool d2_replay_record(const struct d2_wal_header *h,
 		       d2_replay_authority(r, &control) &&
 		       d2_replay_recovery(r, h, &control) &&
 		       d2_replay_episode_mark(r, h, &control) &&
+		       d2_replay_certificate(r, &control) &&
+		       d2_replay_episode_clear(r, h, &control) &&
 		       d2_replay_liveness(r, &control) &&
 		       d2_replay_custody(r, &control) &&
 		       d2_replay_postcond(r, &control);
@@ -2136,6 +2329,65 @@ static uint32_t d2_persist_episode_mark(struct d2_store *s,
 	return status;
 }
 
+static uint32_t d2_persist_episode_clear(struct d2_store *s,
+					 const struct d1_envelope *env,
+					 const struct d1_result *result)
+{
+	const struct d1_fixture_authority *auth =
+		d2_admission_find(s, env->admission.raw);
+	struct d2_wal_header h = { 0 };
+	struct d2_control control = { 0 };
+	struct d1_cursor cursor;
+	uint8_t episode_uuid[D1_UUID_BYTES], handle[32], file_key[32];
+	uint8_t record[D2_MAX_RECORD_BYTES];
+	uint32_t i;
+	size_t written;
+
+	if (!auth || env->op != D1_OP_CLEAR_ERROR ||
+	    !env->body.repair.episode_present ||
+	    !env->body.repair.cohort_present ||
+	    env->body.repair.count == 0 ||
+	    env->body.repair.count > D2_MAX_BATCH_ENTRIES)
+		return D1_UNSUPPORTED;
+	h.family = D2_REC_CONTROL;
+	memcpy(h.store_uuid, s->uuid.bytes, D1_UUID_BYTES);
+	memcpy(h.wal_uuid, d2_files_super(s->files)->wal_uuid, D1_UUID_BYTES);
+	h.lsn = d2_files_next_lsn(s->files);
+	h.ds_incarnation = d2_files_super(s->files)->ds_incarnation;
+	control.subtype = D2_CTL_EPISODE_CLEAR;
+	control.transition = result->entries[0].status == D1_OK ?
+				     D2_COMMITTED : D2_REFUSED;
+	control.status = result->entries[0].status;
+	d2_key_from_env(env, &control.key);
+	if (!d2_env_digest(env, control.key.request_digest))
+		return D1_NOSPC;
+	memcpy(control.admission_issuer, auth->issuer.bytes, D1_UUID_BYTES);
+	control.admission_authority_epoch = auth->authority_epoch;
+	control.admission_client_id = env->admission.raw;
+	control.body_len = 64 + 40 * env->body.repair.count;
+	d1_enc_init(&cursor, control.body, control.body_len);
+	d2_episode_uuid(env->body.repair.episode.raw, episode_uuid);
+	d1_enc_raw(&cursor, episode_uuid, sizeof(episode_uuid));
+	d1_enc_u64(&cursor, env->body.repair.cohort.raw);
+	d1_enc_u32(&cursor, 1);
+	d1_enc_u32(&cursor, env->body.repair.count);
+	d1_enc_raw(&cursor, env->body.repair.certificate,
+		   D1_CERTIFICATE_BYTES);
+	for (i = 0; i < env->body.repair.count; i++) {
+		memcpy(handle, env->object.export_uuid.bytes,
+		       D1_UUID_BYTES);
+		memcpy(handle + D1_UUID_BYTES, env->object.object_uuid.bytes,
+		       D1_UUID_BYTES);
+		d2_file_key(handle, sizeof(handle), file_key);
+		d1_enc_raw(&cursor, file_key, sizeof(file_key));
+		d1_enc_u64(&cursor, env->body.repair.entries[i].index);
+	}
+	if (!d1_cursor_ok(&cursor) ||
+	    !d2_control_encode(&h, &control, record, sizeof(record), &written))
+		return D1_INVALID;
+	return d2_files_wal_append(s->files, record, written);
+}
+
 static bool d2_repair_operation(uint32_t op)
 {
 	return op == D1_OP_BEGIN_REPAIR || op == D1_OP_PREPARE_REPAIR ||
@@ -2357,8 +2609,10 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 	if ((env->op != D1_OP_WRITE_BATCH && env->op != D1_OP_FINALIZE_BATCH &&
 	     env->op != D1_OP_COMMIT_BATCH && env->op != D1_OP_ROLLBACK_BATCH &&
 	     env->op != D1_OP_RECOVERY_ADMIT && env->op != D1_OP_MARK_ERROR &&
+	     env->op != D1_OP_CLEAR_ERROR &&
 	     !d2_repair_operation(env->op)) ||
 	    (!d2_repair_operation(env->op) && env->op != D1_OP_MARK_ERROR &&
+	     env->op != D1_OP_CLEAR_ERROR &&
 	     d1_envelope_member_count(env) != 1) ||
 	    (env->op == D1_OP_RECOVERY_ADMIT && env->body.control.count != 1) ||
 	    (env->op == D1_OP_ROLLBACK_BATCH &&
@@ -2427,6 +2681,8 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 		persist = d2_persist_recovery(s, env, result);
 	else if (env->op == D1_OP_MARK_ERROR)
 		persist = d2_persist_episode_mark(s, env, result);
+	else if (env->op == D1_OP_CLEAR_ERROR)
+		persist = d2_persist_episode_clear(s, env, result);
 	else if (d2_repair_operation(env->op))
 		persist = d2_persist_cohort(s, env, result);
 	else
@@ -2697,6 +2953,52 @@ static uint32_t d2_custody_control(struct d2_store *s, d1_custody_id custody,
 	return d2_files_wal_append(s->files, record, written);
 }
 
+static uint32_t d2_certificate_control(
+	struct d2_store *s, const typeof(s->cohorts[0]) *cohort,
+	const uint8_t certificate[D1_CERTIFICATE_BYTES])
+{
+	const struct d1_fixture_authority *auth =
+		d2_admission_find(s, cohort->admission_id);
+	struct d2_wal_header h = { 0 };
+	struct d2_control control = { 0 };
+	struct d1_cursor cursor;
+	uint8_t episode_uuid[D1_UUID_BYTES], record[D2_MAX_RECORD_BYTES];
+	size_t written;
+
+	if (!auth)
+		return D1_STALE_AUTH;
+	h.family = D2_REC_CONTROL;
+	memcpy(h.store_uuid, s->uuid.bytes, D1_UUID_BYTES);
+	memcpy(h.wal_uuid, d2_files_super(s->files)->wal_uuid, D1_UUID_BYTES);
+	h.lsn = d2_files_next_lsn(s->files);
+	h.ds_incarnation = d2_files_super(s->files)->ds_incarnation;
+	if (h.lsn > UINT32_MAX)
+		return D1_NOSPC;
+	control.subtype = D2_CTL_CERTIFICATE_INSTALL;
+	control.transition = D2_COMMITTED;
+	control.status = D1_OK;
+	memcpy(control.key.session, auth->session, D1_UUID_BYTES);
+	control.key.sequence = (uint32_t)h.lsn;
+	d2_operation_key(control.key.session, 0, control.key.sequence, 0,
+			 control.key.operation_key);
+	memcpy(control.admission_issuer, auth->issuer.bytes, D1_UUID_BYTES);
+	control.admission_authority_epoch = auth->authority_epoch;
+	control.admission_client_id = cohort->admission_id;
+	control.body_len = 56;
+	d1_enc_init(&cursor, control.body, control.body_len);
+	d2_episode_uuid(cohort->episode_id, episode_uuid);
+	d1_enc_raw(&cursor, episode_uuid, sizeof(episode_uuid));
+	d1_enc_u64(&cursor, cohort->id);
+	d1_enc_raw(&cursor, certificate, D1_CERTIFICATE_BYTES);
+	if (!d1_cursor_ok(&cursor))
+		return D1_INVALID;
+	d2_hash_domain("FFV2-D2B-CONTROL-v1", control.body,
+		       control.body_len, control.key.request_digest);
+	if (!d2_control_encode(&h, &control, record, sizeof(record), &written))
+		return D1_INVALID;
+	return d2_files_wal_append(s->files, record, written);
+}
+
 void d2_store_revoke(struct d2_store *s, d1_admission_id admission)
 {
 	if (!s)
@@ -2747,16 +3049,39 @@ d1_custody_id d2_store_custody(struct d2_store *s, d1_version_id version)
 	return id;
 }
 
-void d2_store_certificate(struct d2_store *s,
-			  const uint8_t certificate[D1_CERTIFICATE_BYTES])
+uint32_t d2_store_certificate(
+	struct d2_store *s, d1_episode_id episode, d1_repair_id repair,
+	const uint8_t certificate[D1_CERTIFICATE_BYTES])
 {
-	(void)certificate;
-	if (!s)
-		return;
+	typeof(s->cohorts[0]) *cohort;
+	uint32_t status = D1_INVALID;
+
+	if (!s || !certificate ||
+	    !memcmp(certificate, (uint8_t[D1_CERTIFICATE_BYTES]){ 0 },
+		    D1_CERTIFICATE_BYTES))
+		return D1_INVALID;
 	pthread_mutex_lock(&s->lock);
-	if (!s->fenced)
-		s->fenced = true;
+	cohort = d2_cohort_find(s, repair.raw);
+	if (s->fenced)
+		status = D1_IO;
+	else if (!cohort || cohort->phase != D2_COMMITTED ||
+		 !cohort->episode_present || cohort->episode_id != episode.raw)
+		status = D1_STALE_AUTH;
+	else if (d2_certificate_find(s, episode.raw, repair.raw))
+		status = D1_BAD_PHASE;
+	else {
+		status = d2_certificate_control(s, cohort, certificate);
+		if (status == D1_OK) {
+			d1_fixture_certificate(s->model, certificate);
+			if (!d2_certificate_remember(s, episode.raw, repair.raw,
+						     certificate))
+				status = D1_IO;
+		}
+		if (status != D1_OK && status != D1_NOSPC)
+			s->fenced = true;
+	}
 	pthread_mutex_unlock(&s->lock);
+	return status;
 }
 
 d1_admission_id d2_store_admission_handle(struct d2_store *s, uint64_t raw)

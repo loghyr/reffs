@@ -39,8 +39,9 @@ d2_store_admit_full(struct d2_store *store, const struct d1_objkey *object,
 void d2_store_revoke(struct d2_store *store, d1_admission_id admission);
 void d2_store_expire(struct d2_store *store, d1_admission_id admission);
 d1_custody_id d2_store_custody(struct d2_store *store, d1_version_id version);
-void d2_store_certificate(struct d2_store *store,
-			  const uint8_t certificate[D1_CERTIFICATE_BYTES]);
+uint32_t d2_store_certificate(
+	struct d2_store *store, d1_episode_id episode, d1_repair_id cohort,
+	const uint8_t certificate[D1_CERTIFICATE_BYTES]);
 d1_admission_id d2_store_admission_handle(struct d2_store *store, uint64_t raw);
 d1_txn_id d2_store_txn_handle(struct d2_store *store, uint64_t raw);
 d1_version_id d2_store_version_handle(struct d2_store *store, uint64_t raw);

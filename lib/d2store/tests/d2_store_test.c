@@ -164,11 +164,13 @@ int main(void)
 	struct d1_envelope env = { 0 };
 	struct d1_envelope committed_rollback;
 	struct d1_envelope expired;
+	struct d1_envelope error_unlock;
 	struct d1_envelope nopre;
 	struct d1_envelope marked;
 	struct d1_envelope repair_unlock;
 	struct d1_envelope recovery;
 	struct d1_envelope refused;
+	struct d1_envelope refused_clear;
 	struct d1_envelope unsupported;
 	struct d1_result result = { 0 };
 	struct d1_result durable_result = { 0 };
@@ -188,6 +190,7 @@ int main(void)
 						       D1_SELECT_ORDINARY };
 	struct d1_guard guard = { .never_written = true };
 	struct d1_view *view = NULL;
+	uint8_t certificate[D1_CERTIFICATE_BYTES];
 	uint8_t payload[4096], replacement[4096], readback[4096], token[32];
 	uint8_t verifier[D1_VERIFIER_BYTES];
 	uint8_t registration[396];
@@ -1059,13 +1062,112 @@ int main(void)
 				      d2_store_visible(store, &object, 23, &visible) &&
 				      visible.raw != broken.raw,
 			      "error repair commit persists replacement");
+			fill(certificate, sizeof(certificate), 0xc0);
+			check(d2_store_certificate(store, episode, repair,
+						   certificate) == D1_OK,
+			      "completion certificate install persists");
+			wal_bytes = d2_store_wal_bytes(store);
+			check(d2_store_certificate(store, episode, repair,
+						   certificate) == D1_BAD_PHASE &&
+				      d2_store_wal_bytes(store) == wal_bytes,
+			      "duplicate completion certificate is refused");
+			memset(&env.body, 0, sizeof(env.body));
+			env.key.sequence = 24;
+			env.op = D1_OP_CLEAR_ERROR;
+			env.body.repair.range_begin = 23;
+			env.body.repair.range_end = 24;
+			env.body.repair.count = 1;
+			env.body.repair.cohort_present = true;
+			env.body.repair.cohort = repair;
+			env.body.repair.episode_present = true;
+			env.body.repair.episode = episode;
+			env.body.repair.certificate_present = true;
+			memcpy(env.body.repair.certificate, certificate,
+			       sizeof(certificate));
+			env.body.repair.entries[0].index = 23;
+			env.body.repair.entries[0].owner.cohort.raw = 4;
+			env.body.repair.entries[0].owner.writer = 17;
+			env.body.repair.entries[0].owner.co_id = 35;
+			env.body.repair.entries[0].custody_present = true;
+			env.body.repair.entries[0].custody = custody;
+			env.body.repair.certificate[0] ^= 0xff;
+			check(d2_store_apply(store, &env, &result) == D1_OK &&
+				      result.entries[0].status == D1_STALE_AUTH,
+			      "mismatched completion certificate is refused");
+			refused_clear = env;
+			env.key.sequence = 25;
+			memcpy(env.body.repair.certificate, certificate,
+			       sizeof(certificate));
+			check(d2_store_apply(store, &env, &result) == D1_OK &&
+				      result.entries[0].status == D1_OK,
+			      "completion certificate clears error episode");
+			memset(&env.body, 0, sizeof(env.body));
+			env.key.sequence = 26;
+			env.op = D1_OP_UNLOCK;
+			env.body.repair.range_begin = 23;
+			env.body.repair.range_end = 24;
+			env.body.repair.count = 1;
+			env.body.repair.cohort_present = true;
+			env.body.repair.cohort = repair;
+			env.body.repair.entries[0].index = 23;
+			env.body.repair.entries[0].owner.cohort.raw = 4;
+			env.body.repair.entries[0].owner.writer = 17;
+			env.body.repair.entries[0].owner.co_id = 35;
+			env.body.repair.entries[0].custody_present = true;
+			env.body.repair.entries[0].custody = custody;
+			check(d2_store_apply(store, &env, &result) == D1_OK &&
+				      result.entries[0].status == D1_OK,
+			      "cleared error repair unlock persists");
+			error_unlock = env;
 			d2_store_crash(store);
 			store = NULL;
 			check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
 				      D1_OK &&
 				      d2_store_visible(store, &object, 23, &visible) &&
 				      visible.raw != broken.raw,
-			      "committed error repair replays after restart");
+			      "completed error repair replays after restart");
+			if (store) {
+				error_unlock.admission = d2_store_admission_handle(
+					store, error_unlock.admission.raw);
+				error_unlock.body.repair.cohort =
+					d2_store_repair_handle(
+						store,
+						error_unlock.body.repair.cohort.raw);
+				error_unlock.body.repair.entries[0].custody =
+					d2_store_custody_handle(
+						store,
+						error_unlock.body.repair.entries[0]
+							.custody.raw);
+				wal_bytes = d2_store_wal_bytes(store);
+				check(d2_store_apply(store, &error_unlock,
+						     &result) == D1_OK &&
+					      result.entries[0].status == D1_OK &&
+					      d2_store_wal_bytes(store) == wal_bytes,
+				      "restart returns exact error unlock receipt");
+				refused_clear.admission =
+					d2_store_admission_handle(
+						store, refused_clear.admission.raw);
+				refused_clear.body.repair.cohort =
+					d2_store_repair_handle(
+						store,
+						refused_clear.body.repair.cohort.raw);
+				refused_clear.body.repair.episode =
+					d2_store_episode_handle(
+						store,
+						refused_clear.body.repair.episode.raw);
+				refused_clear.body.repair.entries[0].custody =
+					d2_store_custody_handle(
+						store,
+						refused_clear.body.repair.entries[0]
+							.custody.raw);
+				wal_bytes = d2_store_wal_bytes(store);
+				check(d2_store_apply(store, &refused_clear,
+						     &result) == D1_OK &&
+					      result.entries[0].status ==
+						      D1_STALE_AUTH &&
+					      d2_store_wal_bytes(store) == wal_bytes,
+				      "restart returns refused clear receipt");
+			}
 		}
 	}
 	if (store) {
