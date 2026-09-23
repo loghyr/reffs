@@ -6218,6 +6218,25 @@ bool d1_fixture_repair_member(struct d1_store *s, d1_repair_id cohort,
 	return found;
 }
 
+bool d1_fixture_repair_state(struct d1_store *s, d1_repair_id cohort,
+			     uint32_t *phase, uint32_t *member_count)
+{
+	const struct d1_repair *row;
+	bool found = false;
+
+	if (!s || !phase || !member_count)
+		return false;
+	pthread_mutex_lock(&s->lock);
+	row = d1_repair_find(s, cohort);
+	if (row) {
+		*phase = row->phase;
+		*member_count = row->count;
+		found = true;
+	}
+	pthread_mutex_unlock(&s->lock);
+	return found;
+}
+
 bool d1_fixture_txn_state(struct d1_store *s, d1_txn_id txn, uint32_t *phase,
 			  d1_version_id *version)
 {
@@ -7061,6 +7080,30 @@ uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log, size_t durable)
 	 */
 	s->fail_reopen_start = D1_REOPEN_START_OK;
 	status = d1_replay_locked(s, log, durable);
+	pthread_mutex_unlock(&s->lock);
+	return status;
+}
+
+uint32_t d1_fixture_restore_journal(struct d1_store *s, const uint8_t *log,
+				    size_t durable)
+{
+	uint32_t status;
+
+	if (!s || !log || !durable)
+		return D1_INVALID;
+	pthread_mutex_lock(&s->lock);
+	status = d1_replay_locked(s, log, durable);
+	if (status == D1_OK && !d1_journal_init(&s->journal, &s->uuid))
+		status = D1_NOSPC;
+	if (status == D1_OK &&
+	    !d1_journal_adopt(&s->journal, log, durable, s->replayed_lsn + 1u)) {
+		d1_journal_fini(&s->journal);
+		status = D1_NOSPC;
+	}
+	if (status == D1_OK)
+		s->journaling = true;
+	else
+		s->poisoned = true;
 	pthread_mutex_unlock(&s->lock);
 	return status;
 }

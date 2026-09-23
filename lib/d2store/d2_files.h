@@ -81,6 +81,7 @@ void d2_files_crash(struct d2_files *files);
 
 void d2_files_set_io_hook(struct d2_files *files, d2_io_hook_fn hook,
 			  void *arg);
+void d2_files_fail_next_wal_write(struct d2_files *files);
 const struct d2_superblock *d2_files_super(const struct d2_files *files);
 uint64_t d2_files_next_lsn(const struct d2_files *files);
 uint64_t d2_files_wal_cursor(const struct d2_files *files);
@@ -95,6 +96,9 @@ uint32_t d2_files_wal_append(struct d2_files *files, const uint8_t *record,
 uint32_t d2_files_wal_append_floor(struct d2_files *files,
 				   const uint8_t *record, size_t len,
 				   uint64_t promised);
+uint32_t d2_files_wal_append_group_floor(struct d2_files *files,
+					 const uint8_t *records, size_t len,
+					 uint64_t promised);
 uint32_t d2_files_super_update(struct d2_files *files, uint32_t state);
 uint32_t d2_files_start(struct d2_files *files, uint32_t recovery_decision,
 			uint64_t truncated_bytes, uint64_t payload_cursor,

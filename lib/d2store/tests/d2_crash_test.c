@@ -24,6 +24,10 @@ struct cut {
 	unsigned int seen;
 };
 
+struct io_counts {
+	unsigned int point[D2_IO_SUPER_DURABLE + 1];
+};
+
 static unsigned int checks;
 static unsigned int failures;
 
@@ -42,6 +46,14 @@ static void cut_hook(enum d2_io_point point, void *arg)
 
 	if (point == cut->target && ++cut->seen == cut->occurrence)
 		_exit(100 + point);
+}
+
+static void count_hook(enum d2_io_point point, void *arg)
+{
+	struct io_counts *counts = arg;
+
+	if ((unsigned int)point <= D2_IO_SUPER_DURABLE)
+		counts->point[point]++;
 }
 
 static void clean_root(int dirfd)
@@ -122,6 +134,9 @@ static void repair_cut(int dirfd, const uint8_t *token,
 	d1_repair_id repair;
 	d1_txn_id first_txn, second_txn;
 	struct cut cut = { .target = point, .occurrence = occurrence };
+	uint64_t wal_before;
+	uint32_t phase, member_count;
+	bool fail_wal = point == 0;
 	pid_t pid;
 	int child_status;
 
@@ -240,19 +255,32 @@ static void repair_cut(int dirfd, const uint8_t *token,
 				    env.body.repair.entries[i].payload, 4096,
 				    &env.body.repair.entries[i].checksum);
 	}
-	pid = fork();
-	if (pid == 0) {
-		d2_store_set_io_hook(store, cut_hook, &cut);
-		(void)d2_store_apply(store, &env, &result);
-		_exit(2);
+	if (fail_wal) {
+		env.body.repair.entries[0].checksum.digest[0] ^= 0xff;
+		wal_before = d2_store_wal_bytes(store);
+		d2_store_fail_next_wal_write(store);
+		check(d2_store_apply(store, &env, &result) == D1_IO &&
+			      result.disposition == D1_UNRECORDED,
+		      "kept abort WAL failure is unrecorded");
+		check(d2_store_repair_state(store, repair.raw, &phase,
+					    &member_count) &&
+			      phase == D2_ADMITTED && member_count == 2,
+		      "kept abort WAL failure restores the live cohort");
+	} else {
+		pid = fork();
+		if (pid == 0) {
+			d2_store_set_io_hook(store, cut_hook, &cut);
+			(void)d2_store_apply(store, &env, &result);
+			_exit(2);
+		}
+		check(pid > 0 && waitpid(pid, &child_status, 0) == pid &&
+			      WIFEXITED(child_status) &&
+			      WEXITSTATUS(child_status) == 100 + point,
+		      "repair child exits at selected barrier");
 	}
-	check(pid > 0 && waitpid(pid, &child_status, 0) == pid &&
-		      WIFEXITED(child_status) &&
-		      WEXITSTATUS(child_status) == 100 + point,
-	      "repair child exits at selected barrier");
 	d2_store_crash(store);
 	store = NULL;
-	if (point == D2_IO_WAL_DURABLE) {
+	if (!fail_wal && point == D2_IO_WAL_DURABLE) {
 		uint8_t byte;
 		int payload_fd = openat(dirfd, "payload", O_RDWR | O_CLOEXEC);
 
@@ -282,6 +310,13 @@ static void repair_cut(int dirfd, const uint8_t *token,
 		      d2_store_visible(store, &object, 1, &visible) &&
 		      visible.raw == second.raw,
 	      "repair barrier recovery preserves both visible members");
+	if (fail_wal)
+		check(store && d2_store_wal_bytes(store) ==
+				       wal_before + D2_START_RECORD_BYTES &&
+			      d2_store_repair_state(store, repair.raw, &phase,
+						    &member_count) &&
+			      phase == D2_ADMITTED && member_count == 2,
+		      "failed kept abort remains admitted across restart");
 	check(repair_log_atomic(dirfd, &binding),
 	      "repair barrier log contains no partial vector");
 	if (store)
@@ -405,6 +440,7 @@ int main(void)
 	for (i = 0; i < sizeof(repair_cuts) / sizeof(repair_cuts[0]); i++)
 		repair_cut(dirfd, token, repair_cuts[i].target,
 			   repair_cuts[i].occurrence, payload, replacement);
+	repair_cut(dirfd, token, 0, 0, payload, replacement);
 	{
 		struct d2_store_config config = { 0 };
 		struct d2_store_rebind reopen = { 0 };
@@ -418,13 +454,11 @@ int main(void)
 		d1_version_id successor;
 		d1_custody_id custody;
 		d1_version_id restored_successor;
-		uint64_t restored_index;
+		d1_postcond_id postcond;
+		uint64_t restored_index, wal_before;
 		bool consumed;
 		bool restored;
-		struct cut cut = { .target = D2_IO_WAL_DURABLE,
-				   .occurrence = 1 };
-		pid_t pid;
-		int child_status;
+		struct io_counts counts = { 0 };
 
 		clean_root(dirfd);
 		memset(config.files.export_uuid, 0x21, 16);
@@ -480,19 +514,35 @@ int main(void)
 		env.body.rollback.entries[0].visible = successor;
 		env.body.rollback.entries[0].custody_present = true;
 		env.body.rollback.entries[0].custody = custody;
-		pid = fork();
-		if (pid == 0) {
-			d2_store_set_io_hook(store, cut_hook, &cut);
-			(void)d2_store_apply(store, &env, &result);
-			_exit(2);
-		}
-		check(pid > 0 && waitpid(pid, &child_status, 0) == pid &&
-			      WIFEXITED(child_status) &&
-			      WEXITSTATUS(child_status) ==
-				      100 + D2_IO_WAL_DURABLE,
-		      "crash leaves durable orphan postcondition");
+		wal_before = d2_store_wal_bytes(store);
+		d2_store_set_io_hook(store, count_hook, &counts);
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_NO_PREDECESSOR &&
+			      result.entries[0].postcond_present &&
+			      d2_store_wal_bytes(store) ==
+				      wal_before + D2_POSTCOND_RECORD_BYTES +
+					      D2_ENTRY_RECORD_BYTES &&
+			      counts.point[D2_IO_WAL_WRITTEN] == 1 &&
+			      counts.point[D2_IO_WAL_DURABLE] == 1,
+		      "postcondition and receipt use one append and flush");
+		postcond = result.entries[0].postcond;
+		d2_store_set_io_hook(store, NULL, NULL);
 		d2_store_crash(store);
 		store = NULL;
+		{
+			uint8_t zeros[D2_ENTRY_RECORD_BYTES] = { 0 };
+			int wal = openat(dirfd, "wal", O_RDWR | O_CLOEXEC);
+
+			check(wal >= 0 &&
+				      pwrite(wal, zeros, sizeof(zeros),
+					     (off_t)(wal_before +
+						     D2_POSTCOND_RECORD_BYTES)) ==
+					      (ssize_t)sizeof(zeros) &&
+				      fdatasync(wal) == 0,
+			      "truncate grouped result to its orphan postcondition");
+			if (wal >= 0)
+				close(wal);
+		}
 		memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
 		memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
 		reopen.files.expected_root_ino = binding.root_ino;
@@ -502,7 +552,7 @@ int main(void)
 		reopen.max_file_bytes = config.max_file_bytes;
 		check(d2_store_rebind(dirfd, &reopen, &binding, &store) == D1_OK,
 		      "orphan postcondition replays after crash");
-		restored = d2_store_postcond(store, 1, &restored_index,
+		restored = d2_store_postcond(store, postcond.raw, &restored_index,
 					     &restored_successor, &consumed);
 		check(restored &&
 			      restored_index == 0 &&
@@ -511,7 +561,7 @@ int main(void)
 		d2_store_crash(store);
 		store = NULL;
 		check(d2_store_rebind(dirfd, &reopen, &binding, &store) == D1_OK &&
-			      d2_store_postcond(store, 1, &restored_index,
+			      d2_store_postcond(store, postcond.raw, &restored_index,
 						&restored_successor, &consumed) &&
 			      restored_successor.raw == successor.raw && !consumed,
 		      "orphan postcondition survives another incarnation");

@@ -37,6 +37,7 @@ struct d2_files {
 	struct d2_scan_result last_scan;
 	d2_io_hook_fn hook;
 	void *hook_arg;
+	bool fail_next_wal_write;
 };
 
 static uint32_t d2_errno_status(void)
@@ -315,7 +316,8 @@ static void d2_verifier(const uint8_t store_uuid[16], uint64_t epoch,
 
 static uint32_t d2_files_wal_append_internal(struct d2_files *f,
 					     const uint8_t *record, size_t len,
-					     bool reserved, uint64_t promised);
+					     bool reserved, uint64_t promised,
+					     bool group);
 
 static uint32_t d2_initial_start(struct d2_files *f)
 {
@@ -340,7 +342,8 @@ static uint32_t d2_initial_start(struct d2_files *f)
 	f->wal_cursor = 0;
 	f->payload_cursor = D2_PAYLOAD_ALIGN;
 	f->next_lsn = 1;
-	return d2_files_wal_append_internal(f, record, sizeof(record), true, 0);
+	return d2_files_wal_append_internal(f, record, sizeof(record), true, 0,
+					    false);
 }
 
 uint32_t d2_files_provision(int dirfd, const struct d2_provision *p,
@@ -561,6 +564,12 @@ void d2_files_set_io_hook(struct d2_files *files, d2_io_hook_fn hook, void *arg)
 	files->hook_arg = arg;
 }
 
+void d2_files_fail_next_wal_write(struct d2_files *files)
+{
+	if (files)
+		files->fail_next_wal_write = true;
+}
+
 const struct d2_superblock *d2_files_super(const struct d2_files *files)
 {
 	return files ? &files->super : NULL;
@@ -622,19 +631,34 @@ uint32_t d2_files_payload_append(struct d2_files *f,
 
 static uint32_t d2_files_wal_append_internal(struct d2_files *f,
 					     const uint8_t *record, size_t len,
-					     bool reserved, uint64_t promised)
+					     bool reserved, uint64_t promised,
+					     bool group)
 {
-	struct d2_wal_header h;
+	struct d2_wal_header h = { 0 };
 	uint64_t available, restarts, required;
+	uint64_t at = 0, expected_lsn;
+	uint32_t count = 0;
 
 	if (!f || !record || len > UINT32_MAX ||
 	    f->wal_cursor > f->super.capacity_wal_bytes ||
-	    len > f->super.capacity_wal_bytes - f->wal_cursor ||
-	    !d2_wal_header_decode(record, len, f->super.store_uuid,
-				  f->super.wal_uuid, &h) ||
-	    h.total_bytes != len || h.lsn != f->next_lsn ||
-	    h.ds_incarnation !=
-		    f->super.ds_incarnation + (f->super.ds_incarnation == 0))
+	    len > f->super.capacity_wal_bytes - f->wal_cursor)
+		return 2;
+	expected_lsn = f->next_lsn;
+	do {
+		if (!d2_wal_header_decode(record + at, len - (size_t)at,
+					  f->super.store_uuid,
+					  f->super.wal_uuid, &h) ||
+		    h.total_bytes > len - at || h.lsn != expected_lsn ||
+		    h.ds_incarnation != f->super.ds_incarnation +
+					    (f->super.ds_incarnation == 0))
+			return 2;
+		at += h.total_bytes;
+		expected_lsn++;
+		count++;
+		if (!group && at != len)
+			return 2;
+	} while (at < len);
+	if (at != len)
 		return 2;
 	available = f->super.capacity_wal_bytes - f->wal_cursor;
 	restarts = f->super.ds_incarnation > 0 ? f->super.ds_incarnation - 1 :
@@ -647,6 +671,10 @@ static uint32_t d2_files_wal_append_internal(struct d2_files *f,
 	if (promised > UINT64_MAX - required ||
 	    (!reserved && available - len < required + promised))
 		return D1_NOSPC;
+	if (f->fail_next_wal_write) {
+		f->fail_next_wal_write = false;
+		return D1_IO;
+	}
 	if (!d2_pwrite_all(f->wal_fd, record, len, f->wal_cursor))
 		return d2_errno_status();
 	d2_hook(f, D2_IO_WAL_WRITTEN);
@@ -654,7 +682,7 @@ static uint32_t d2_files_wal_append_internal(struct d2_files *f,
 		return d2_errno_status();
 	d2_hook(f, D2_IO_WAL_DURABLE);
 	f->wal_cursor += len;
-	f->next_lsn++;
+	f->next_lsn += count;
 	f->super.wal_durable_lsn = h.lsn;
 	f->super.wal_durable_bytes = f->wal_cursor;
 	f->super.payload_durable_bytes = f->payload_cursor;
@@ -664,14 +692,23 @@ static uint32_t d2_files_wal_append_internal(struct d2_files *f,
 uint32_t d2_files_wal_append(struct d2_files *f, const uint8_t *record,
 			     size_t len)
 {
-	return d2_files_wal_append_internal(f, record, len, false, 0);
+	return d2_files_wal_append_internal(f, record, len, false, 0, false);
 }
 
 uint32_t d2_files_wal_append_floor(struct d2_files *f,
 				   const uint8_t *record, size_t len,
 				   uint64_t promised)
 {
-	return d2_files_wal_append_internal(f, record, len, false, promised);
+	return d2_files_wal_append_internal(f, record, len, false, promised,
+					    false);
+}
+
+uint32_t d2_files_wal_append_group_floor(struct d2_files *f,
+					 const uint8_t *records, size_t len,
+					 uint64_t promised)
+{
+	return d2_files_wal_append_internal(f, records, len, false, promised,
+					    true);
 }
 
 uint32_t d2_files_start(struct d2_files *f, uint32_t recovery_decision,
@@ -719,7 +756,7 @@ uint32_t d2_files_start(struct d2_files *f, uint32_t recovery_decision,
 	/* START is the one record allowed to introduce the next incarnation. */
 	f->super.ds_incarnation = next;
 	status = d2_files_wal_append_internal(f, record, sizeof(record), true,
-					      0);
+					      0, false);
 	if (status != 1) {
 		f->super.ds_incarnation = prior;
 		return status;

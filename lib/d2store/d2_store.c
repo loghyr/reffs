@@ -200,6 +200,9 @@ static bool d2_same_key(const struct d1_opkey *a, const struct d1_opkey *b)
 static uint32_t d2_wal_append_floor(struct d2_store *s,
 				    const uint8_t *record, size_t len,
 				    uint64_t promised);
+static uint32_t d2_wal_append_group_floor(struct d2_store *s,
+					  const uint8_t *records, size_t len,
+					  uint64_t promised);
 
 static uint32_t d2_wal_append(struct d2_store *s, const uint8_t *record,
 			      size_t len)
@@ -224,6 +227,28 @@ static uint32_t d2_wal_append_floor(struct d2_store *s,
 		return D1_NOSPC;
 	floor = promised + allowance;
 	status = d2_files_wal_append_floor(s->files, record, len, floor);
+	if (status == D1_OK && s->recovery_spend)
+		s->recovery_allowance = allowance;
+	return status;
+}
+
+static uint32_t d2_wal_append_group_floor(struct d2_store *s,
+					  const uint8_t *records, size_t len,
+					  uint64_t promised)
+{
+	uint64_t allowance = s->recovery_allowance;
+	uint64_t floor;
+	uint32_t status;
+
+	if (s->recovery_spend) {
+		if (len > allowance)
+			return D1_NOSPC;
+		allowance -= len;
+	}
+	if (allowance > UINT64_MAX - promised)
+		return D1_NOSPC;
+	floor = promised + allowance;
+	status = d2_files_wal_append_group_floor(s->files, records, len, floor);
 	if (status == D1_OK && s->recovery_spend)
 		s->recovery_allowance = allowance;
 	return status;
@@ -1989,6 +2014,25 @@ static uint32_t d2_model_apply_damage(struct d2_store *s)
 	return D1_OK;
 }
 
+static uint32_t d2_model_restore(struct d2_store *s, const uint8_t *journal,
+				 size_t journal_len)
+{
+	struct d1_store *restored;
+	uint32_t status;
+
+	restored = d1_store_open(&s->uuid, s->chunk_bytes, s->max_file_bytes);
+	if (!restored)
+		return D1_NOSPC;
+	status = d1_fixture_restore_journal(restored, journal, journal_len);
+	if (status != D1_OK) {
+		d1_store_free(restored);
+		return status;
+	}
+	d1_store_free(s->model);
+	s->model = restored;
+	return D1_OK;
+}
+
 static bool d2_bind_pending_admissions(struct d2_replay *r,
 				       const struct d1_objkey *object)
 {
@@ -3236,7 +3280,7 @@ static uint32_t d2_preflight_ordinary(struct d2_store *s,
 		    probe->entries[0].status != D1_NO_PREDECESSOR)
 			add = D2_ENTRY_RECORD_BYTES;
 		else if (!work || !d2_work_promise(work->phase))
-			add = 280u + D2_ENTRY_RECORD_BYTES;
+			add = D2_POSTCOND_RECORD_BYTES + D2_ENTRY_RECORD_BYTES;
 		break;
 	case D1_OP_RECOVERY_ADMIT:
 		record_bytes = 216u + 40u * env->body.control.count;
@@ -3245,7 +3289,7 @@ static uint32_t d2_preflight_ordinary(struct d2_store *s,
 			add = record_bytes;
 		break;
 	case D1_OP_MARK_ERROR:
-		add = 280u + 24u * env->body.repair.count;
+		add = D2_POSTCOND_RECORD_BYTES + 24u * env->body.repair.count;
 		break;
 	case D1_OP_CLEAR_ERROR:
 		record_bytes = 276u + 40u * env->body.repair.count;
@@ -3334,18 +3378,18 @@ static uint64_t d2_entry_index(const struct d1_envelope *env)
 	}
 }
 
-static uint32_t d2_persist_postcond(struct d2_store *s,
-				    const struct d1_envelope *env,
-				    const struct d1_result *result,
-				    uint64_t promised)
+static uint32_t d2_encode_postcond(struct d2_store *s,
+				   const struct d1_envelope *env,
+				   const struct d1_result *result,
+				   uint8_t record[D2_POSTCOND_RECORD_BYTES],
+				   size_t *written)
 {
 	const struct d1_rollback_entry *rollback =
 		&env->body.rollback.entries[0];
 	struct d2_wal_header h = { 0 };
 	struct d2_control control = { 0 };
 	struct d1_cursor cursor;
-	uint8_t handle[32], file_key[32], record[280];
-	size_t written;
+	uint8_t handle[32], file_key[32];
 
 	if (env->op != D1_OP_ROLLBACK_BATCH ||
 	    result->entries[0].status != D1_NO_PREDECESSOR ||
@@ -3375,9 +3419,10 @@ static uint32_t d2_persist_postcond(struct d2_store *s,
 	d1_enc_u32(&cursor, rollback->predecessor_present ? 2 : 1);
 	if (!d1_cursor_ok(&cursor))
 		return D1_INVALID;
-	if (!d2_control_encode(&h, &control, record, sizeof(record), &written))
+	if (!d2_control_encode(&h, &control, record,
+			       D2_POSTCOND_RECORD_BYTES, written))
 		return D1_INVALID;
-	return d2_wal_append_floor(s, record, written, promised);
+	return D1_OK;
 }
 
 static uint32_t d2_persist_entry(struct d2_store *s,
@@ -3389,10 +3434,12 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 	struct d2_wal_header h = { 0 };
 	struct d2_entry entry = { 0 };
 	uint8_t *scratch = NULL;
+	uint8_t group[D2_POSTCOND_RECORD_BYTES + D2_ENTRY_RECORD_BYTES];
 	uint8_t record[D2_ENTRY_RECORD_BYTES];
 	uint8_t handle[32];
 	uint64_t eof, payload_id = 0, offset = 0;
-	uint64_t old_promise = 0, new_promise, promised, postcond_floor;
+	uint64_t old_promise = 0, new_promise, promised;
+	size_t postcond_written = 0;
 	uint32_t status;
 	const typeof(s->work[0]) *saved;
 	bool predecessor_present = false;
@@ -3515,18 +3562,21 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 	if (!d2_entry_encode(&h, &entry, record)) {
 		return D1_INVALID;
 	}
-	postcond_floor = promised;
 	if (env->op == D1_OP_ROLLBACK_BATCH &&
 	    result->entries[0].status == D1_NO_PREDECESSOR &&
 	    result->entries[0].postcond_present && rollback->visible_present &&
 	    rollback->custody_present) {
-		if (D2_ENTRY_RECORD_BYTES > UINT64_MAX - postcond_floor)
-			return D1_IO;
-		postcond_floor += D2_ENTRY_RECORD_BYTES;
-	}
-	status = d2_persist_postcond(s, env, result, postcond_floor);
-	if (status == D1_OK) {
-		h.lsn = d2_files_next_lsn(s->files);
+		status = d2_encode_postcond(s, env, result, group,
+					    &postcond_written);
+		if (status != D1_OK)
+			return status;
+		h.lsn = d2_files_next_lsn(s->files) + 1;
+		if (!d2_entry_encode(&h, &entry, record))
+			return D1_INVALID;
+		memcpy(group + postcond_written, record, sizeof(record));
+		status = d2_wal_append_group_floor(
+			s, group, postcond_written + sizeof(record), promised);
+	} else {
 		status = d2_entry_encode(&h, &entry, record) ?
 				 d2_wal_append_floor(s, record, sizeof(record),
 						     promised) :
@@ -4021,7 +4071,7 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 	size_t before_len = 0, after_len = 0;
 	uint64_t prior_eof;
 	uint32_t damaged_member, status, persist;
-	bool predecessor_present = false;
+	bool model_changed = false, predecessor_present = false;
 	d1_version_id predecessor = d1_version_none();
 
 	if (!s || !env || !result)
@@ -4195,6 +4245,7 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 	if (before_len == after_len &&
 	    (!before_len || !memcmp(before, after, before_len)))
 		goto out;
+	model_changed = true;
 	if (env->op == D1_OP_RECOVERY_ADMIT)
 		persist = d2_persist_recovery(s, env, result);
 	else if (env->op == D1_OP_MARK_ERROR)
@@ -4207,6 +4258,9 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 		persist = d2_persist_entry(s, env, result, prior_eof);
 recorded:
 	if (persist != D1_OK) {
+		if (model_changed &&
+		    d2_model_restore(s, before, before_len) != D1_OK)
+			persist = D1_IO;
 		s->fenced = true;
 		status = persist;
 		memset(result, 0, sizeof(*result));
@@ -5037,6 +5091,12 @@ void d2_store_fail_next_index(struct d2_store *s)
 		d1_fixture_fail_next_index(s->model);
 }
 
+void d2_store_fail_next_wal_write(struct d2_store *s)
+{
+	if (s && !s->fenced)
+		d2_files_fail_next_wal_write(s->files);
+}
+
 void d2_store_set_io_hook(struct d2_store *s, d2_io_hook_fn hook, void *arg)
 {
 	if (s)
@@ -5064,6 +5124,30 @@ bool d2_store_postcond(struct d2_store *s, uint64_t raw, uint64_t *index,
 	       d1_fixture_postcond(s->model,
 				   d1_fixture_postcond_handle(s->model, raw),
 				   index, successor, consumed);
+}
+
+bool d2_store_repair_state(struct d2_store *s, uint64_t raw, uint32_t *phase,
+			   uint32_t *member_count)
+{
+	typeof(s->cohorts[0]) *cohort;
+	uint32_t model_phase, model_count;
+
+	if (!s || !phase || !member_count)
+		return false;
+	pthread_mutex_lock(&s->lock);
+	cohort = d2_cohort_find(s, raw);
+	if (cohort &&
+	    d1_fixture_repair_state(
+		    s->model, d1_fixture_repair_handle(s->model, raw),
+		    &model_phase, &model_count) &&
+	    model_phase == cohort->phase && model_count == cohort->count) {
+		*phase = cohort->phase;
+		*member_count = cohort->count;
+	} else {
+		cohort = NULL;
+	}
+	pthread_mutex_unlock(&s->lock);
+	return cohort != NULL;
 }
 
 uint64_t d2_store_eof(struct d2_store *s, const struct d1_objkey *object)

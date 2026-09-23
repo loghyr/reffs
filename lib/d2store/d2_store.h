@@ -66,6 +66,7 @@ void d2_store_verifier(struct d2_store *store,
 		       uint8_t verifier[D1_VERIFIER_BYTES]);
 uint64_t d2_store_incarnation(struct d2_store *store);
 void d2_store_fail_next_index(struct d2_store *store);
+void d2_store_fail_next_wal_write(struct d2_store *store);
 void d2_store_set_io_hook(struct d2_store *store, d2_io_hook_fn hook,
 			  void *arg);
 
@@ -75,6 +76,8 @@ bool d2_store_guard(struct d2_store *store, const struct d1_objkey *object,
 		    uint64_t index, struct d1_guard *guard);
 bool d2_store_postcond(struct d2_store *store, uint64_t raw, uint64_t *index,
 		       d1_version_id *successor, bool *consumed);
+bool d2_store_repair_state(struct d2_store *store, uint64_t raw,
+			   uint32_t *phase, uint32_t *member_count);
 uint64_t d2_store_eof(struct d2_store *store, const struct d1_objkey *object);
 uint64_t d2_store_wal_bytes(struct d2_store *store);
 uint64_t d2_store_wal_promised(struct d2_store *store);

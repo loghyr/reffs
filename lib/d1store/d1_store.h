@@ -391,6 +391,8 @@ bool d1_fixture_postcond(struct d1_store *s, d1_postcond_id id, uint64_t *index,
 bool d1_fixture_repair_member(struct d1_store *s, d1_repair_id cohort,
 			      uint32_t index, d1_txn_id *txn,
 			      d1_version_id *version);
+bool d1_fixture_repair_state(struct d1_store *s, d1_repair_id cohort,
+			     uint32_t *phase, uint32_t *member_count);
 
 /*
  * A transaction's phase and the version it carries.
@@ -642,6 +644,10 @@ uint32_t d1_store_journal_snapshot(struct d1_store *s, uint8_t **out,
  */
 uint32_t d1_store_replay(struct d1_store *s, const uint8_t *log,
 			 size_t durable);
+
+/* Rebuild a pristine fixture and resume its existing journal incarnation. */
+uint32_t d1_fixture_restore_journal(struct d1_store *s, const uint8_t *log,
+				    size_t durable);
 
 /*
  * Actual reopen: rebuild, then open a new incarnation.
