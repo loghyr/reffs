@@ -163,6 +163,7 @@ int main(void)
 	struct d1_objkey object = { 0 };
 	struct d1_envelope env = { 0 };
 	struct d1_envelope committed_rollback;
+	struct d1_envelope aborted_prepare;
 	struct d1_envelope expired;
 	struct d1_envelope error_unlock;
 	struct d1_envelope nopre;
@@ -171,6 +172,8 @@ int main(void)
 	struct d1_envelope recovery;
 	struct d1_envelope refused;
 	struct d1_envelope refused_clear;
+	struct d1_envelope refused_mark;
+	struct d1_envelope refused_repair;
 	struct d1_envelope unsupported;
 	struct d1_result result = { 0 };
 	struct d1_result durable_result = { 0 };
@@ -1001,6 +1004,15 @@ int main(void)
 			broken = marked.body.repair.entries[0].successor;
 			custody2 = marked.body.repair.entries[1].custody;
 			broken2 = marked.body.repair.entries[1].successor;
+			refused_mark = marked;
+			refused_mark.admission = admission;
+			refused_mark.incarnation = d2_store_incarnation(store);
+			fill(refused_mark.key.origin.bytes, 16, 0xf1);
+			refused_mark.key.sequence = 1;
+			check(d2_store_apply(store, &refused_mark, &result) ==
+				      D1_OK &&
+				      result.entries[0].status == D1_BAD_PHASE,
+			      "repeated episode mark refusal persists");
 			memset(&env, 0, sizeof(env));
 			env.object = object;
 			env.admission = admission;
@@ -1031,6 +1043,15 @@ int main(void)
 			env.body.repair.entries[1].custody = custody2;
 			env.body.repair.entries[1].successor_present = true;
 			env.body.repair.entries[1].successor = broken2;
+			env.body.repair.entries[0].owner.writer = 18;
+			env.body.repair.entries[1].owner.writer = 18;
+			check(d2_store_apply(store, &env, &result) == D1_OK &&
+				      result.entries[0].status == D1_STALE_AUTH,
+			      "repair writer mismatch refusal persists");
+			refused_repair = env;
+			env.key.sequence = 22;
+			env.body.repair.entries[0].owner.writer = 17;
+			env.body.repair.entries[1].owner.writer = 17;
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
 				      result.entries[0].status == D1_OK &&
 				      result.entries[0].phase == D2_ADMITTED,
@@ -1039,34 +1060,47 @@ int main(void)
 			repair_txn = result.entries[0].member_txn[0];
 			repair_txn2 = result.entries[0].member_txn[1];
 			memset(&env.body, 0, sizeof(env.body));
-			env.key.sequence = 22;
-			env.op = D1_OP_ABORT_REPAIR;
+			env.key.sequence = 23;
+			env.op = D1_OP_PREPARE_REPAIR;
 			env.body.repair.range_begin = 23;
 			env.body.repair.range_end = 25;
 			env.body.repair.count = 2;
 			env.body.repair.cohort_present = true;
 			env.body.repair.cohort = repair;
-			env.body.repair.phase_present = true;
-			env.body.repair.phase = D2_ADMITTED;
 			env.body.repair.entries[0].index = 23;
 			env.body.repair.entries[0].owner.cohort.raw = 4;
 			env.body.repair.entries[0].owner.writer = 17;
 			env.body.repair.entries[0].owner.co_id = 35;
-			env.body.repair.entries[0].custody_present = true;
-			env.body.repair.entries[0].custody = custody;
+			env.body.repair.entries[0].txn_present = true;
+			env.body.repair.entries[0].txn = repair_txn;
+			env.body.repair.entries[0].payload_present = true;
+			env.body.repair.entries[0].payload = replacement;
+			env.body.repair.entries[0].payload_len =
+				sizeof(replacement);
+			d1_checksum_compute(
+				D1_CKSUM_CRC32C, replacement, sizeof(replacement),
+				&env.body.repair.entries[0].checksum);
+			env.body.repair.entries[0].checksum.digest[0] ^= 0xff;
 			env.body.repair.entries[1].index = 24;
 			env.body.repair.entries[1].owner.cohort.raw = 4;
 			env.body.repair.entries[1].owner.writer = 17;
 			env.body.repair.entries[1].owner.co_id = 36;
-			env.body.repair.entries[1].custody_present = true;
-			env.body.repair.entries[1].custody = custody2;
+			env.body.repair.entries[1].txn_present = true;
+			env.body.repair.entries[1].txn = repair_txn2;
+			env.body.repair.entries[1].payload_present = true;
+			env.body.repair.entries[1].payload = payload;
+			env.body.repair.entries[1].payload_len = sizeof(payload);
+			d1_checksum_compute(D1_CKSUM_CRC32C, payload,
+					    sizeof(payload),
+					    &env.body.repair.entries[1].checksum);
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
-				      result.entries[0].status == D1_OK &&
+				      result.entries[0].status == D1_CHECKSUM &&
 				      result.entries[0].phase == D2_ABORTED,
-			      "two-member repair abort persists atomically");
+			      "failed two-member prepare aborts atomically");
+			aborted_prepare = env;
 
 			memset(&env.body, 0, sizeof(env.body));
-			env.key.sequence = 23;
+			env.key.sequence = 24;
 			env.op = D1_OP_BEGIN_REPAIR;
 			env.body.repair.range_begin = 23;
 			env.body.repair.range_end = 25;
@@ -1100,7 +1134,7 @@ int main(void)
 			repair_txn2 = result.entries[0].member_txn[1];
 
 			memset(&env.body, 0, sizeof(env.body));
-			env.key.sequence = 24;
+			env.key.sequence = 25;
 			env.op = D1_OP_PREPARE_REPAIR;
 			env.body.repair.range_begin = 23;
 			env.body.repair.range_end = 25;
@@ -1138,7 +1172,7 @@ int main(void)
 			      "error repair payload persists");
 
 			memset(&env.body, 0, sizeof(env.body));
-			env.key.sequence = 25;
+			env.key.sequence = 26;
 			env.op = D1_OP_FINALIZE_REPAIR;
 			env.body.repair.range_begin = 23;
 			env.body.repair.range_end = 25;
@@ -1172,7 +1206,7 @@ int main(void)
 				      result.entries[0].status == D1_OK &&
 				      result.entries[0].phase == D2_FINALIZED,
 			      "error repair finalize persists");
-			env.key.sequence = 26;
+			env.key.sequence = 27;
 			env.op = D1_OP_COMMIT_REPAIR;
 			d2_store_verifier(store,
 					  env.body.repair.prior_verifier);
@@ -1194,7 +1228,7 @@ int main(void)
 				      d2_store_wal_bytes(store) == wal_bytes,
 			      "duplicate completion certificate is refused");
 			memset(&env.body, 0, sizeof(env.body));
-			env.key.sequence = 27;
+			env.key.sequence = 28;
 			env.op = D1_OP_CLEAR_ERROR;
 			env.body.repair.range_begin = 23;
 			env.body.repair.range_end = 25;
@@ -1223,14 +1257,14 @@ int main(void)
 				      result.entries[0].status == D1_STALE_AUTH,
 			      "mismatched completion certificate is refused");
 			refused_clear = env;
-			env.key.sequence = 28;
+			env.key.sequence = 29;
 			memcpy(env.body.repair.certificate, certificate,
 			       sizeof(certificate));
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
 				      result.entries[0].status == D1_OK,
 			      "completion certificate clears error episode");
 			memset(&env.body, 0, sizeof(env.body));
-			env.key.sequence = 29;
+			env.key.sequence = 30;
 			env.op = D1_OP_UNLOCK;
 			env.body.repair.range_begin = 23;
 			env.body.repair.range_end = 25;
@@ -1313,6 +1347,93 @@ int main(void)
 						      D1_STALE_AUTH &&
 					      d2_store_wal_bytes(store) == wal_bytes,
 				      "restart returns refused clear receipt");
+				refused_repair.admission =
+					d2_store_admission_handle(
+						store, refused_repair.admission.raw);
+				refused_repair.body.repair.episode =
+					d2_store_episode_handle(
+						store,
+						refused_repair.body.repair.episode.raw);
+				refused_repair.body.repair.entries[0].custody =
+					d2_store_custody_handle(
+						store,
+						refused_repair.body.repair.entries[0]
+							.custody.raw);
+				refused_repair.body.repair.entries[0].successor =
+					d2_store_version_handle(
+						store,
+						refused_repair.body.repair.entries[0]
+							.successor.raw);
+				refused_repair.body.repair.entries[1].custody =
+					d2_store_custody_handle(
+						store,
+						refused_repair.body.repair.entries[1]
+							.custody.raw);
+				refused_repair.body.repair.entries[1].successor =
+					d2_store_version_handle(
+						store,
+						refused_repair.body.repair.entries[1]
+							.successor.raw);
+				wal_bytes = d2_store_wal_bytes(store);
+				check(d2_store_apply(store, &refused_repair,
+						     &result) == D1_OK &&
+					      result.entries[0].status ==
+						      D1_STALE_AUTH &&
+					      d2_store_wal_bytes(store) == wal_bytes,
+				      "restart returns refused repair receipt");
+				refused_mark.admission = d2_store_admission_handle(
+					store, refused_mark.admission.raw);
+				refused_mark.body.repair.entries[0].custody =
+					d2_store_custody_handle(
+						store,
+						refused_mark.body.repair.entries[0]
+							.custody.raw);
+				refused_mark.body.repair.entries[0].successor =
+					d2_store_version_handle(
+						store,
+						refused_mark.body.repair.entries[0]
+							.successor.raw);
+				refused_mark.body.repair.entries[1].custody =
+					d2_store_custody_handle(
+						store,
+						refused_mark.body.repair.entries[1]
+							.custody.raw);
+				refused_mark.body.repair.entries[1].successor =
+					d2_store_version_handle(
+						store,
+						refused_mark.body.repair.entries[1]
+							.successor.raw);
+				wal_bytes = d2_store_wal_bytes(store);
+				check(d2_store_apply(store, &refused_mark,
+						     &result) == D1_OK &&
+					      result.entries[0].status ==
+						      D1_BAD_PHASE &&
+					      d2_store_wal_bytes(store) == wal_bytes,
+				      "restart returns refused mark receipt");
+				aborted_prepare.admission =
+					d2_store_admission_handle(
+						store, aborted_prepare.admission.raw);
+				aborted_prepare.body.repair.cohort =
+					d2_store_repair_handle(
+						store,
+						aborted_prepare.body.repair.cohort.raw);
+				aborted_prepare.body.repair.entries[0].txn =
+					d2_store_txn_handle(
+						store,
+						aborted_prepare.body.repair.entries[0]
+							.txn.raw);
+				aborted_prepare.body.repair.entries[1].txn =
+					d2_store_txn_handle(
+						store,
+						aborted_prepare.body.repair.entries[1]
+							.txn.raw);
+				wal_bytes = d2_store_wal_bytes(store);
+				check(d2_store_apply(store, &aborted_prepare,
+						     &result) == D1_OK &&
+					      result.entries[0].status == D1_CHECKSUM &&
+					      result.entries[0].phase == D2_ABORTED &&
+					      d2_store_wal_bytes(store) == wal_bytes,
+				      "restart returns kept-abort receipt");
 			}
 		}
 	}

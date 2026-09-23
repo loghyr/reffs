@@ -1328,10 +1328,14 @@ static bool d2_replay_episode_mark(struct d2_replay *r,
 	uint8_t episode_uuid[16], file_key[32];
 	uint64_t episode_id, index, version_id, custody_id;
 	uint32_t count, i;
+	bool committed;
 
 	if (control->subtype != D2_CTL_EPISODE_MARK)
 		return true;
-	if (control->transition != D2_COMMITTED || control->status != D1_OK)
+	committed = control->transition == D2_COMMITTED &&
+		    control->status == D1_OK;
+	if (!committed && (control->transition != D2_REFUSED ||
+			   control->status == D1_OK))
 		return false;
 	d1_dec_init(&cursor, control->body, control->body_len);
 	if (!d1_dec_raw(&cursor, episode_uuid, sizeof(episode_uuid)) ||
@@ -1343,7 +1347,7 @@ static bool d2_replay_episode_mark(struct d2_replay *r,
 	    !d2_episode_id(episode_uuid, &episode_id))
 		return false;
 	object = d2_replay_object(r, file_key);
-	if (!object || d2_episode_find(r->store, episode_id))
+	if (!object || (committed && d2_episode_find(r->store, episode_id)))
 		return false;
 	auth = d2_admission_find(r->store, control->admission_client_id);
 	if (!auth ||
@@ -1386,15 +1390,33 @@ static bool d2_replay_episode_mark(struct d2_replay *r,
 		entry->successor_present = true;
 		entry->successor = version = d1_fixture_version_handle(
 			r->store->model, version_id);
-		if (!d1_fixture_version_predecessor(r->store->model, version,
-						    &predecessor_present,
-						    &predecessor))
+		if (committed &&
+		    !d1_fixture_version_predecessor(r->store->model, version,
+						     &predecessor_present,
+						     &predecessor))
 			return false;
-		entry->predecessor_present = predecessor_present;
-		entry->predecessor = predecessor;
+		if (committed) {
+			entry->predecessor_present = predecessor_present;
+			entry->predecessor = predecessor;
+		}
 	}
 	if (!d1_dec_finished(&cursor))
 		return false;
+	if (!committed) {
+		memset(&result, 0, sizeof(result));
+		result.key = env.key;
+		result.count = 1;
+		result.disposition = D1_COMPLETED;
+		result.eof = d1_store_eof(r->store->model, &env.object);
+		result.entries[0].status = control->status;
+		result.entries[0].disposition = D1_COMPLETED;
+		result.entries[0].stability = D1_FILE_SYNC;
+		d1_store_verifier(r->store->model,
+				  result.entries[0].verifier);
+		return d2_receipt_remember(r->store,
+			&env.object.export_uuid, &env.key,
+			control->key.request_digest, &result);
+	}
 	r->status = d1_store_apply(r->store->model, &env, &result);
 	if (r->status != D1_OK || result.count != 1 ||
 	    result.entries[0].status != D1_OK ||
@@ -1557,6 +1579,73 @@ static bool d2_replay_episode_clear(struct d2_replay *r,
 				   control->key.request_digest, &result);
 }
 
+static bool d2_replay_cohort_refusal(struct d2_replay *r,
+				     const struct d2_cohort *disk)
+{
+	struct d2_entry admission_entry = { 0 };
+	struct d1_result result = { 0 };
+	struct d1_opkey key = { 0 };
+	struct d1_objkey *object = NULL;
+	typeof(r->store->cohorts[0]) *cohort;
+	uint32_t i;
+
+	if (disk->transition != D2_REFUSED || disk->status == D1_OK ||
+	    disk->member_count == 0)
+		return false;
+	for (i = 0; i < disk->member_count; i++) {
+		struct d1_objkey *member =
+			d2_replay_object(r, disk->members[i].file_key);
+
+		if (!member || (object && !d2_same_object(object, member)) ||
+		    disk->members[i].payload_object_id ||
+		    disk->members[i].staged)
+			return false;
+		object = member;
+	}
+	if (!object)
+		return false;
+	admission_entry.admission = disk->admission;
+	memcpy(admission_entry.file_key, disk->members[0].file_key,
+	       sizeof(admission_entry.file_key));
+	if (!d2_replay_admission(r, &admission_entry))
+		return false;
+	memcpy(key.origin.bytes, disk->key.session, D1_UUID_BYTES);
+	key.sequence = ((uint64_t)disk->key.slot << 32) |
+		       disk->key.sequence;
+	key.ordinal = disk->key.compound_ordinal;
+	result.key = key;
+	result.count = 1;
+	result.disposition = disk->disposition;
+	result.index_epoch = disk->index_generation;
+	result.entries[0].status = disk->status;
+	result.entries[0].disposition = disk->disposition;
+	result.entries[0].stability = D1_FILE_SYNC;
+	memcpy(result.entries[0].verifier, disk->result_verifier,
+	       D1_VERIFIER_BYTES);
+	cohort = d2_cohort_find(r->store, disk->cohort_id);
+	if (cohort) {
+		result.entries[0].cohort_present = true;
+		result.entries[0].cohort = d1_fixture_repair_handle(
+			r->store->model, cohort->id);
+		result.entries[0].phase = cohort->phase;
+	}
+	for (i = 0; i < disk->member_count; i++)
+		if (disk->members[i].member_status == disk->status) {
+			result.entries[0].member_present = true;
+			result.entries[0].member = i;
+			result.entries[0].guard.never_written =
+				disk->members[i].result_guard_never_written;
+			result.entries[0].guard.generation =
+				disk->members[i].result_guard_generation;
+			result.entries[0].guard.writer =
+				disk->members[i].result_guard_writer;
+			break;
+		}
+	result.eof = disk->members[0].extent_high_water;
+	return d2_receipt_remember(r->store, &object->export_uuid, &key,
+				   disk->key.request_digest, &result);
+}
+
 static bool d2_replay_cohort(struct d2_replay *r, const struct d2_wal_header *h,
 			     const struct d2_cohort *disk)
 {
@@ -1570,9 +1659,13 @@ static bool d2_replay_cohort(struct d2_replay *r, const struct d2_wal_header *h,
 	struct d1_objkey *first_object;
 	uint64_t prior_eof;
 	uint32_t expected_extent, i, op;
-	bool ok = false;
+	bool kept_abort, ok = false;
 
-	if (disk->status != D1_OK || disk->transition == D2_REFUSED ||
+	if (disk->transition == D2_REFUSED)
+		return d2_replay_cohort_refusal(r, disk);
+	kept_abort = disk->transition == D2_ABORTED &&
+		     disk->status != D1_OK && (disk->flags & 2u);
+	if ((!kept_abort && disk->status != D1_OK) ||
 	    disk->member_count == 0)
 		return false;
 	if (disk->transition == D2_ADMITTED)
@@ -1707,8 +1800,9 @@ static bool d2_replay_cohort(struct d2_replay *r, const struct d2_wal_header *h,
 		d1_store_verifier(r->store->model,
 				  env.body.repair.prior_verifier);
 	}
-	if (!d2_env_digest(&env, digest) ||
-	    memcmp(digest, disk->key.request_digest, D1_DIGEST_BYTES))
+	if (!kept_abort &&
+	    (!d2_env_digest(&env, digest) ||
+	     memcmp(digest, disk->key.request_digest, D1_DIGEST_BYTES)))
 		goto out;
 	r->status = d1_store_apply(r->store->model, &env, &result);
 	if (r->status != D1_OK || result.count != 1 ||
@@ -1735,6 +1829,24 @@ static bool d2_replay_cohort(struct d2_replay *r, const struct d2_wal_header *h,
 	if (op != D1_OP_BEGIN_REPAIR && op != D1_OP_UNLOCK &&
 	    result.entries[0].phase != disk->transition)
 		goto out;
+	if (kept_abort) {
+		result.entries[0].status = disk->status;
+		result.entries[0].disposition = disk->disposition;
+		for (i = 0; i < disk->member_count; i++)
+			if (disk->members[i].member_status == disk->status) {
+				result.entries[0].member_present = true;
+				result.entries[0].member = i;
+				result.entries[0].guard.never_written =
+					disk->members[i]
+						.result_guard_never_written;
+				result.entries[0].guard.generation =
+					disk->members[i]
+						.result_guard_generation;
+				result.entries[0].guard.writer =
+					disk->members[i].result_guard_writer;
+				break;
+			}
+	}
 	if (op == D1_OP_BEGIN_REPAIR) {
 		if (result.entries[0].cohort.raw != disk->cohort_id ||
 		    !d2_cohort_remember_begin(r->store, &env, &result))
@@ -2298,12 +2410,11 @@ static uint32_t d2_persist_episode_mark(struct d2_store *s,
 	struct d2_control control = { 0 };
 	struct d1_cursor cursor;
 	uint8_t handle[32], file_key[32], record[D2_MAX_RECORD_BYTES];
+	uint64_t episode_id;
 	uint32_t i, status;
 	size_t written;
 
 	if (!auth || env->op != D1_OP_MARK_ERROR ||
-	    result->entries[0].status != D1_OK ||
-	    !result->entries[0].episode_present ||
 	    env->body.repair.count == 0 ||
 	    env->body.repair.count > D2_MAX_BATCH_ENTRIES)
 		return D1_UNSUPPORTED;
@@ -2313,8 +2424,9 @@ static uint32_t d2_persist_episode_mark(struct d2_store *s,
 	h.lsn = d2_files_next_lsn(s->files);
 	h.ds_incarnation = d2_files_super(s->files)->ds_incarnation;
 	control.subtype = D2_CTL_EPISODE_MARK;
-	control.transition = D2_COMMITTED;
-	control.status = D1_OK;
+	control.transition = result->entries[0].status == D1_OK ?
+				     D2_COMMITTED : D2_REFUSED;
+	control.status = result->entries[0].status;
 	d2_key_from_env(env, &control.key);
 	if (!d2_env_digest(env, control.key.request_digest))
 		return D1_NOSPC;
@@ -2327,7 +2439,10 @@ static uint32_t d2_persist_episode_mark(struct d2_store *s,
 	d2_file_key(handle, sizeof(handle), file_key);
 	control.body_len = 68 + 24 * env->body.repair.count;
 	d1_enc_init(&cursor, control.body, control.body_len);
-	d2_episode_uuid(result->entries[0].episode.raw, handle);
+	episode_id = result->entries[0].episode_present ?
+			     result->entries[0].episode.raw :
+			     env->key.sequence | (UINT64_C(1) << 63);
+	d2_episode_uuid(episode_id, handle);
 	d1_enc_raw(&cursor, handle, D1_UUID_BYTES);
 	d1_enc_raw(&cursor, file_key, sizeof(file_key));
 	d1_enc_u64(&cursor, env->body.repair.range_begin);
@@ -2345,7 +2460,8 @@ static uint32_t d2_persist_episode_mark(struct d2_store *s,
 	    !d2_control_encode(&h, &control, record, sizeof(record), &written))
 		return D1_INVALID;
 	status = d2_files_wal_append(s->files, record, written);
-	if (status == D1_OK && !d2_episode_remember(s, env, result))
+	if (status == D1_OK && result->entries[0].status == D1_OK &&
+	    !d2_episode_remember(s, env, result))
 		return D1_IO;
 	return status;
 }
@@ -2431,17 +2547,20 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 	uint64_t payload_offsets[D1_BATCH_ENTRIES_MAX] = { 0 };
 	uint32_t i, payload_count = 0, status;
 	size_t written;
+	bool kept_abort, refused;
 
 	if (!d2_repair_operation(env->op) || repair->count == 0 ||
-	    repair->count > D2_MAX_BATCH_ENTRIES ||
-	    result->entries[0].status != D1_OK)
+	    repair->count > D2_MAX_BATCH_ENTRIES)
 		return D1_UNSUPPORTED;
+	refused = result->entries[0].status != D1_OK;
+	kept_abort = refused && result->entries[0].phase == D2_ABORTED;
 	if (env->op != D1_OP_BEGIN_REPAIR) {
 		saved = d2_cohort_find(s, repair->cohort.raw);
-		if (!saved || saved->count != repair->count)
+		if ((!refused || kept_abort) &&
+		    (!saved || saved->count != repair->count))
 			return D1_INVALID;
 	}
-	if (env->op == D1_OP_PREPARE_REPAIR) {
+	if (env->op == D1_OP_PREPARE_REPAIR && !refused) {
 		for (i = 0; i < repair->count; i++) {
 			const struct d1_repair_entry *entry =
 				&repair->entries[i];
@@ -2475,16 +2594,23 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 	memcpy(h.wal_uuid, d2_files_super(s->files)->wal_uuid, D1_UUID_BYTES);
 	h.lsn = d2_files_next_lsn(s->files);
 	h.ds_incarnation = d2_files_super(s->files)->ds_incarnation;
-	disk.transition = env->op == D1_OP_UNLOCK ? D2_UNLOCKED :
-						    result->entries[0].phase;
-	disk.status = D1_OK;
+	disk.transition = kept_abort ? D2_ABORTED :
+			  refused ? D2_REFUSED :
+			  env->op == D1_OP_UNLOCK ? D2_UNLOCKED :
+						       result->entries[0].phase;
+	disk.status = result->entries[0].status;
+	if (kept_abort)
+		disk.flags |= 2u;
 	disk.disposition = D1_COMPLETED;
-	disk.cohort_id = env->op == D1_OP_BEGIN_REPAIR ?
+	disk.cohort_id = env->op == D1_OP_BEGIN_REPAIR && !refused ?
 				 result->entries[0].cohort.raw :
-				 repair->cohort.raw;
-	if ((saved && saved->episode_present) || repair->episode_present) {
+				 repair->cohort_present ? repair->cohort.raw : 0;
+	if (((!refused || kept_abort) && saved && saved->episode_present) ||
+	    repair->episode_present) {
 		disk.flags |= 1u;
-		d2_episode_uuid(saved ? saved->episode_id : repair->episode.raw,
+		d2_episode_uuid((!refused || kept_abort) && saved ?
+						       saved->episode_id :
+						       repair->episode.raw,
 				disk.episode_uuid);
 	}
 	d2_key_from_env(env, &disk.key);
@@ -2500,7 +2626,8 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 		const struct d1_repair_entry *request = &repair->entries[i];
 		struct d2_cohort_member *member = &disk.members[i];
 		const typeof(s->cohorts[0].members[0]) *prior =
-			saved ? &saved->members[i] : NULL;
+			(!refused || kept_abort) && saved ? &saved->members[i] :
+							       NULL;
 		struct d1_guard guard;
 		d1_version_id visible = d1_version_none();
 		const struct d1_objkey *object = prior ? &prior->object :
@@ -2512,8 +2639,8 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 		       D1_UUID_BYTES);
 		d2_file_key(handle, sizeof(handle), member->file_key);
 		member->chunk_index = prior ? prior->index : request->index;
-		member->member_txn_id =
-			prior ? prior->txn_id :
+		member->member_txn_id = prior ? prior->txn_id :
+					request->txn_present ? request->txn.raw :
 				result->entries[0].member_txn[i].raw;
 		member->owner_cohort = prior ? prior->owner.cohort.raw :
 					       request->owner.cohort.raw;
@@ -2537,27 +2664,34 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 				request->predecessor.raw;
 		member->predecessor_generation =
 			prior ? prior->predecessor_generation : 0;
-		member->payload_object_id = env->op == D1_OP_ABORT_REPAIR ? 0 :
+		member->payload_object_id =
+			refused || env->op == D1_OP_ABORT_REPAIR ? 0 :
 					    payload_ids[i] ? payload_ids[i] :
 					    prior	   ? prior->payload_id :
 							     0;
-		member->payload_object_offset = env->op == D1_OP_ABORT_REPAIR ?
+		member->payload_object_offset =
+			refused || env->op == D1_OP_ABORT_REPAIR ?
 							0 :
 					      payload_offsets[i] ?
 							payload_offsets[i] :
 						prior ? prior->payload_offset :
 							0;
-		member->payload_content_len = env->op == D1_OP_ABORT_REPAIR ? 0 :
+		member->payload_content_len =
+			refused || env->op == D1_OP_ABORT_REPAIR ? 0 :
 					      request->payload_present ?
 						      request->payload_len :
 					      prior ? prior->payload_len :
 						      0;
-		member->staged = env->op == D1_OP_PREPARE_REPAIR ||
+		member->staged = !refused &&
+				 (env->op == D1_OP_PREPARE_REPAIR ||
 				 (prior && prior->payload_id &&
 				  env->op != D1_OP_COMMIT_REPAIR &&
 				  env->op != D1_OP_ABORT_REPAIR &&
-				  env->op != D1_OP_UNLOCK);
-		member->member_status = D1_OK;
+				  env->op != D1_OP_UNLOCK));
+		member->member_status =
+			result->entries[0].member_present &&
+				 result->entries[0].member == i ?
+					result->entries[0].status : D1_OK;
 		member->extent_high_water = eof;
 		member->extent_highest_index =
 			member->extent_high_water ? (member->extent_high_water -
@@ -2576,13 +2710,13 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 			member->result_guard_generation = guard.generation;
 			member->result_guard_writer = guard.writer;
 		}
-		if (request->payload_present) {
+		if (!refused && request->payload_present) {
 			member->result_effective_len = request->payload_len;
 			member->result_ck_alg = request->checksum.alg;
 			member->result_ck_len = request->checksum.len;
 			memcpy(member->result_ck, request->checksum.digest,
 			       request->checksum.len);
-		} else if (prior && prior->payload_id) {
+		} else if (!refused && prior && prior->payload_id) {
 			member->result_effective_len = prior->payload_len;
 			member->result_ck_alg = prior->payload_ck_alg;
 			member->result_ck_len = prior->payload_ck_len;
@@ -2596,10 +2730,10 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 	if (status != D1_OK)
 		return status;
 	s->next_payload_seq += payload_count;
-	if (env->op == D1_OP_BEGIN_REPAIR &&
+	if (!refused && env->op == D1_OP_BEGIN_REPAIR &&
 	    !d2_cohort_remember_begin(s, env, result))
 		return D1_IO;
-	if (env->op == D1_OP_PREPARE_REPAIR) {
+	if (!refused && env->op == D1_OP_PREPARE_REPAIR) {
 		for (i = 0; i < repair->count; i++) {
 			saved->members[i].payload_id = payload_ids[i];
 			saved->members[i].payload_offset = payload_offsets[i];
@@ -2614,9 +2748,9 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 			       repair->entries[i].checksum.len);
 		}
 	}
-	if (saved && env->op != D1_OP_UNLOCK)
+	if ((!refused || kept_abort) && saved && env->op != D1_OP_UNLOCK)
 		saved->phase = disk.transition;
-	if (saved && env->op == D1_OP_ABORT_REPAIR)
+	if (saved && (env->op == D1_OP_ABORT_REPAIR || kept_abort))
 		for (i = 0; i < saved->count; i++) {
 			saved->members[i].payload_id = 0;
 			saved->members[i].payload_offset = 0;
