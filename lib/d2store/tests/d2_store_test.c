@@ -165,6 +165,7 @@ int main(void)
 	struct d1_envelope committed_rollback;
 	struct d1_envelope expired;
 	struct d1_envelope nopre;
+	struct d1_envelope repair_unlock;
 	struct d1_envelope recovery;
 	struct d1_envelope refused;
 	struct d1_envelope unsupported;
@@ -176,7 +177,8 @@ int main(void)
 		next_fresh;
 	d1_custody_id custody;
 	d1_postcond_id postcond;
-	d1_txn_id staged_txn;
+	d1_repair_id repair;
+	d1_txn_id repair_txn, staged_txn;
 	d1_version_id predecessor, successor, visible;
 	struct d2_wal_header wal_header;
 	struct d2_control control;
@@ -593,6 +595,111 @@ int main(void)
 		      "no-predecessor rollback persists its postcondition group");
 		postcond = result.entries[0].postcond;
 		nopre = env;
+
+		memset(&env.body, 0, sizeof(env.body));
+		env.key.sequence = 3;
+		env.op = D1_OP_BEGIN_REPAIR;
+		env.body.repair.range_begin = 22;
+		env.body.repair.range_end = 23;
+		env.body.repair.count = 1;
+		env.body.repair.entries[0].index = 22;
+		env.body.repair.entries[0].owner.cohort.raw = 2;
+		env.body.repair.entries[0].owner.writer = 17;
+		env.body.repair.entries[0].owner.co_id = 32;
+		env.body.repair.entries[0].mode = D1_REPAIR_NOPRE;
+		env.body.repair.entries[0].custody_present = true;
+		env.body.repair.entries[0].custody = custody;
+		env.body.repair.entries[0].postcond_present = true;
+		env.body.repair.entries[0].postcond = postcond;
+		env.body.repair.entries[0].successor_present = true;
+		env.body.repair.entries[0].successor = successor;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK &&
+			      result.entries[0].phase == D2_ADMITTED &&
+			      result.entries[0].cohort_present &&
+			      result.entries[0].member_txn_count == 1,
+		      "no-predecessor repair admission persists");
+		repair = result.entries[0].cohort;
+		repair_txn = result.entries[0].member_txn[0];
+
+		memset(&env.body, 0, sizeof(env.body));
+		env.key.sequence = 4;
+		env.op = D1_OP_PREPARE_REPAIR;
+		env.body.repair.range_begin = 22;
+		env.body.repair.range_end = 23;
+		env.body.repair.count = 1;
+		env.body.repair.cohort_present = true;
+		env.body.repair.cohort = repair;
+		env.body.repair.entries[0].index = 22;
+		env.body.repair.entries[0].owner.cohort.raw = 2;
+		env.body.repair.entries[0].owner.writer = 17;
+		env.body.repair.entries[0].owner.co_id = 32;
+		env.body.repair.entries[0].txn_present = true;
+		env.body.repair.entries[0].txn = repair_txn;
+		env.body.repair.entries[0].payload_present = true;
+		env.body.repair.entries[0].payload = replacement;
+		env.body.repair.entries[0].payload_len = sizeof(replacement);
+		d1_checksum_compute(D1_CKSUM_CRC32C, replacement,
+				    sizeof(replacement),
+				    &env.body.repair.entries[0].checksum);
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK &&
+			      result.entries[0].phase == D2_PREPARED,
+		      "no-predecessor repair payload persists");
+
+		memset(&env.body, 0, sizeof(env.body));
+		env.key.sequence = 5;
+		env.op = D1_OP_FINALIZE_REPAIR;
+		env.body.repair.range_begin = 22;
+		env.body.repair.range_end = 23;
+		env.body.repair.count = 1;
+		env.body.repair.cohort_present = true;
+		env.body.repair.cohort = repair;
+		env.body.repair.verifier_present = true;
+		d2_store_verifier(store, env.body.repair.prior_verifier);
+		env.body.repair.entries[0].index = 22;
+		env.body.repair.entries[0].owner.cohort.raw = 2;
+		env.body.repair.entries[0].owner.writer = 17;
+		env.body.repair.entries[0].owner.co_id = 32;
+		env.body.repair.entries[0].custody_present = true;
+		env.body.repair.entries[0].custody = custody;
+		env.body.repair.entries[0].txn_present = true;
+		env.body.repair.entries[0].txn = repair_txn;
+		env.body.repair.entries[0].predecessor_present = true;
+		env.body.repair.entries[0].predecessor = successor;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK &&
+			      result.entries[0].phase == D2_FINALIZED,
+		      "no-predecessor repair finalize persists");
+
+		env.key.sequence = 6;
+		env.op = D1_OP_COMMIT_REPAIR;
+		d2_store_verifier(store, env.body.repair.prior_verifier);
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK &&
+			      result.entries[0].phase == D2_COMMITTED &&
+			      d2_store_visible(store, &object, 22, &visible) &&
+			      visible.raw != successor.raw,
+		      "no-predecessor repair commit persists replacement");
+
+		memset(&env.body, 0, sizeof(env.body));
+		env.key.sequence = 7;
+		env.op = D1_OP_UNLOCK;
+		env.body.repair.range_begin = 22;
+		env.body.repair.range_end = 23;
+		env.body.repair.count = 1;
+		env.body.repair.cohort_present = true;
+		env.body.repair.cohort = repair;
+		env.body.repair.entries[0].index = 22;
+		env.body.repair.entries[0].owner.cohort.raw = 2;
+		env.body.repair.entries[0].owner.writer = 17;
+		env.body.repair.entries[0].owner.co_id = 32;
+		env.body.repair.entries[0].custody_present = true;
+		env.body.repair.entries[0].custody = custody;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "no-predecessor repair unlock persists");
+		repair_unlock = env;
 	}
 	if (store) {
 		admission = d2_store_admit(store, &object, 17,
@@ -602,19 +709,19 @@ int main(void)
 		env.admission = admission;
 		env.incarnation = d2_store_incarnation(store);
 		env.op = D1_OP_WRITE_BATCH;
-		write_request(&env, 5, 6, 5, &guard, replacement,
+		write_request(&env, 8, 6, 5, &guard, replacement,
 			      sizeof(replacement));
 		check(d2_store_apply(store, &env, &result) == D1_OK,
 		      "post-restart write uses the next incarnation");
 		guard = (struct d1_guard){ .never_written = true };
-		write_request(&env, 6, 7, 6, &guard, payload, sizeof(payload));
+		write_request(&env, 9, 7, 6, &guard, payload, sizeof(payload));
 		env.body.write.activate = false;
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].phase == D2_PREPARED,
 		      "staged write persists as PREPARED");
 		staged_txn = result.entries[0].txn;
 		memset(&env.body, 0, sizeof(env.body));
-		env.key.sequence = 7;
+		env.key.sequence = 10;
 		env.op = D1_OP_FINALIZE_BATCH;
 		env.body.lifecycle.range_begin = 7;
 		env.body.lifecycle.range_end = 8;
@@ -630,7 +737,7 @@ int main(void)
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].phase == D2_FINALIZED,
 		      "single member finalize persists without payload");
-		env.key.sequence = 8;
+		env.key.sequence = 11;
 		env.op = D1_OP_COMMIT_BATCH;
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].phase == D2_COMMITTED &&
@@ -638,7 +745,7 @@ int main(void)
 		      "single member commit publishes staged payload");
 		guard = (struct d1_guard){ .never_written = true };
 		env.op = D1_OP_WRITE_BATCH;
-		write_request(&env, 9, 8, 7, &guard, replacement,
+		write_request(&env, 12, 8, 7, &guard, replacement,
 			      sizeof(replacement));
 		env.body.write.activate = false;
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
@@ -646,7 +753,7 @@ int main(void)
 		      "rollback fixture stages private work");
 		staged_txn = result.entries[0].txn;
 		memset(&env.body, 0, sizeof(env.body));
-		env.key.sequence = 10;
+		env.key.sequence = 13;
 		env.op = D1_OP_ROLLBACK_BATCH;
 		env.body.rollback.range_begin = 8;
 		env.body.rollback.range_end = 9;
@@ -670,6 +777,9 @@ int main(void)
 		check(store && d2_store_visible(store, &object, 7, &visible),
 		      "second restart replays finalize and commit");
 		if (store) {
+			check(d2_store_visible(store, &object, 22, &visible) &&
+				      visible.raw != successor.raw,
+			      "second restart replays no-predecessor repair");
 			check(!d2_store_visible(store, &object, 8, &visible),
 			      "second restart replays private rollback");
 			nopre.admission = d2_store_admission_handle(
@@ -688,6 +798,23 @@ int main(void)
 					      postcond.raw &&
 				      d2_store_wal_bytes(store) == wal_bytes,
 			      "restart returns exact no-predecessor receipt");
+			repair_unlock.admission = d2_store_admission_handle(
+				store, repair_unlock.admission.raw);
+			repair_unlock.body.repair.cohort =
+				d2_store_repair_handle(
+					store,
+					repair_unlock.body.repair.cohort.raw);
+			repair_unlock.body.repair.entries[0].custody =
+				d2_store_custody_handle(
+					store,
+					repair_unlock.body.repair.entries[0]
+						.custody.raw);
+			wal_bytes = d2_store_wal_bytes(store);
+			check(d2_store_apply(store, &repair_unlock, &result) ==
+					      D1_OK &&
+				      result.entries[0].status == D1_OK &&
+				      d2_store_wal_bytes(store) == wal_bytes,
+			      "restart returns exact repair unlock receipt");
 			recovery.admission = d2_store_admission_handle(
 				store, recovery.admission.raw);
 			recovery.body.control.txns[0] = d2_store_txn_handle(
@@ -723,12 +850,12 @@ int main(void)
 		env.incarnation = d2_store_incarnation(store);
 		env.op = D1_OP_WRITE_BATCH;
 		guard = (struct d1_guard){ .never_written = true };
-		write_request(&env, 11, 9, 8, &guard, payload, sizeof(payload));
+		write_request(&env, 14, 9, 8, &guard, payload, sizeof(payload));
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].status == D1_OK,
 		      "expiry fixture records its admission");
 		d2_store_expire(store, admission);
-		write_request(&env, 12, 10, 9, &guard, payload,
+		write_request(&env, 15, 10, 9, &guard, payload,
 			      sizeof(payload));
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].status == D1_STALE_AUTH,
@@ -738,13 +865,13 @@ int main(void)
 					   D1_RIGHT_READ | D1_RIGHT_WRITE |
 						   D1_RIGHT_SINGLE_WRITER);
 		env.admission = admission;
-		write_request(&env, 13, 11, 10, &guard, replacement,
+		write_request(&env, 16, 11, 10, &guard, replacement,
 			      sizeof(replacement));
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].status == D1_OK,
 		      "revocation fixture records its admission");
 		d2_store_revoke(store, admission);
-		write_request(&env, 14, 12, 11, &guard, replacement,
+		write_request(&env, 17, 12, 11, &guard, replacement,
 			      sizeof(replacement));
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].status == D1_STALE_AUTH,

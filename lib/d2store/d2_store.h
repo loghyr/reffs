@@ -44,6 +44,8 @@ void d2_store_certificate(struct d2_store *store,
 d1_admission_id d2_store_admission_handle(struct d2_store *store, uint64_t raw);
 d1_txn_id d2_store_txn_handle(struct d2_store *store, uint64_t raw);
 d1_version_id d2_store_version_handle(struct d2_store *store, uint64_t raw);
+d1_custody_id d2_store_custody_handle(struct d2_store *store, uint64_t raw);
+d1_repair_id d2_store_repair_handle(struct d2_store *store, uint64_t raw);
 void d2_store_verifier(struct d2_store *store,
 		       uint8_t verifier[D1_VERIFIER_BYTES]);
 uint64_t d2_store_incarnation(struct d2_store *store);
