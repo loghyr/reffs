@@ -121,6 +121,7 @@ int main(void)
 	struct d1_result durable_result = { 0 };
 	struct d1_result refused_result = { 0 };
 	d1_admission_id admission;
+	d1_txn_id staged_txn;
 	d1_version_id visible;
 	struct d2_wal_header wal_header;
 	struct d2_control control;
@@ -129,6 +130,7 @@ int main(void)
 	struct d1_guard guard = { .never_written = true };
 	struct d1_view *view = NULL;
 	uint8_t payload[4096], replacement[4096], readback[4096], token[32];
+	uint8_t verifier[D1_VERIFIER_BYTES];
 	uint8_t registration[396];
 	uint32_t read_len;
 	uint64_t wal_bytes;
@@ -308,6 +310,36 @@ int main(void)
 			      sizeof(replacement));
 		check(d2_store_apply(store, &env, &result) == D1_OK,
 		      "post-restart write uses the next incarnation");
+		guard = (struct d1_guard){ .never_written = true };
+		write_request(&env, 6, 7, 6, &guard, payload, sizeof(payload));
+		env.body.write.activate = false;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].phase == D2_PREPARED,
+		      "staged write persists as PREPARED");
+		staged_txn = result.entries[0].txn;
+		memset(&env.body, 0, sizeof(env.body));
+		env.key.sequence = 7;
+		env.op = D1_OP_FINALIZE_BATCH;
+		env.body.lifecycle.range_begin = 7;
+		env.body.lifecycle.range_end = 8;
+		env.body.lifecycle.count = 1;
+		env.body.lifecycle.entries[0].index = 7;
+		env.body.lifecycle.entries[0].owner.cohort.raw = 1;
+		env.body.lifecycle.entries[0].owner.writer = 17;
+		env.body.lifecycle.entries[0].owner.co_id = 6;
+		env.body.lifecycle.entries[0].txn = staged_txn;
+		d2_store_verifier(store, verifier);
+		memcpy(env.body.lifecycle.prior_verifier, verifier,
+		       sizeof(verifier));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].phase == D2_FINALIZED,
+		      "single member finalize persists without payload");
+		env.key.sequence = 8;
+		env.op = D1_OP_COMMIT_BATCH;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].phase == D2_COMMITTED &&
+			      d2_store_visible(store, &object, 7, &visible),
+		      "single member commit publishes staged payload");
 		d2_store_crash(store);
 		store = NULL;
 		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
@@ -315,6 +347,17 @@ int main(void)
 		      "second restart rebinds both incarnations");
 		check(store && d2_store_visible(store, &object, 6, &visible),
 		      "second restart publishes post-restart write");
+		check(store && d2_store_visible(store, &object, 7, &visible),
+		      "second restart replays finalize and commit");
+		if (store) {
+			env.admission =
+				d2_store_admission_handle(store, admission.raw);
+			wal_bytes = d2_store_wal_bytes(store);
+			check(d2_store_apply(store, &env, &result) == D1_OK &&
+				      result.entries[0].phase == D2_COMMITTED &&
+				      d2_store_wal_bytes(store) == wal_bytes,
+			      "restart returns exact lifecycle receipt");
+		}
 	}
 	if (store) {
 		uint8_t byte;

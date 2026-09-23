@@ -325,6 +325,66 @@ static bool d2_replay_receipt(struct d2_replay *r,
 				   e->key.request_digest, &result);
 }
 
+static void d2_replay_envelope_header(struct d2_replay *r,
+				      const struct d2_wal_header *h,
+				      const struct d2_entry *e,
+				      const struct d1_objkey *object,
+				      struct d1_envelope *env)
+{
+	env->object = *object;
+	env->admission = d1_fixture_admission_handle(r->store->model,
+						     e->admission.client_id);
+	env->incarnation = h->ds_incarnation;
+	memcpy(env->key.origin.bytes, e->key.session, D1_UUID_BYTES);
+	env->key.sequence = ((uint64_t)e->key.slot << 32) | e->key.sequence;
+	env->key.ordinal = e->key.compound_ordinal;
+}
+
+static bool d2_replay_lifecycle(struct d2_replay *r,
+				const struct d2_wal_header *h,
+				const struct d2_entry *e,
+				const struct d1_objkey *object)
+{
+	struct d1_envelope env = { 0 };
+	struct d1_result result;
+	uint8_t digest[D1_DIGEST_BYTES];
+
+	d2_replay_envelope_header(r, h, e, object, &env);
+	env.op = e->transition == D2_FINALIZED ? D1_OP_FINALIZE_BATCH :
+						 D1_OP_COMMIT_BATCH;
+	env.body.lifecycle.range_begin = e->chunk_index;
+	env.body.lifecycle.range_end = e->chunk_index + 1;
+	env.body.lifecycle.count = 1;
+	env.body.lifecycle.entries[0].index = e->chunk_index;
+	env.body.lifecycle.entries[0].owner.cohort.raw = e->owner_cohort;
+	env.body.lifecycle.entries[0].owner.writer = e->owner_client_id;
+	env.body.lifecycle.entries[0].owner.co_id = e->owner_co_id;
+	env.body.lifecycle.entries[0].txn =
+		d1_fixture_txn_handle(r->store->model, e->txn_id);
+	env.body.lifecycle.entries[0].predecessor_present =
+		e->predecessor_present;
+	env.body.lifecycle.entries[0].predecessor = d1_fixture_version_handle(
+		r->store->model, e->predecessor_object_id);
+	memcpy(env.body.lifecycle.prior_verifier, e->result_verifier,
+	       D1_VERIFIER_BYTES);
+	if (!d2_env_digest(&env, digest) ||
+	    memcmp(digest, e->key.request_digest, D1_DIGEST_BYTES))
+		return false;
+	r->status = d1_store_apply(r->store->model, &env, &result);
+	if (r->status != D1_OK || result.count != 1 ||
+	    result.entries[0].status != e->status ||
+	    result.entries[0].phase != e->transition ||
+	    result.entries[0].txn.raw != e->txn_id ||
+	    result.entries[0].version.raw != e->result_visible_object_id ||
+	    result.entries[0].guard.generation != e->result_guard_generation ||
+	    result.entries[0].guard.writer != e->result_guard_writer ||
+	    result.entries[0].guard.never_written !=
+		    e->result_guard_never_written ||
+	    result.eof != e->extent_high_water)
+		return false;
+	return d2_replay_receipt(r, object, e);
+}
+
 static bool d2_replay_entry(struct d2_replay *r, const struct d2_wal_header *h,
 			    const struct d2_entry *e)
 {
@@ -337,14 +397,19 @@ static bool d2_replay_entry(struct d2_replay *r, const struct d2_wal_header *h,
 	uint8_t digest[32];
 	bool ok = false;
 
-	if (e->transition != D2_PREPARED && e->transition != D2_COMMITTED &&
-	    e->transition != D2_REFUSED && e->transition != D2_ABORTED)
+	if (e->transition != D2_PREPARED && e->transition != D2_FINALIZED &&
+	    e->transition != D2_COMMITTED && e->transition != D2_REFUSED &&
+	    e->transition != D2_ABORTED)
 		return false;
 	key = d2_replay_object(r, e->file_key);
 	if (!key)
 		return false;
 	if (e->transition == D2_REFUSED || e->transition == D2_ABORTED)
 		return !e->payload_object_id && d2_replay_receipt(r, key, e);
+	if (!e->payload_object_id)
+		return (e->transition == D2_FINALIZED ||
+			e->transition == D2_COMMITTED) &&
+		       d2_replay_lifecycle(r, h, e, key);
 	if (e->status != D1_OK || !e->payload_object_id ||
 	    e->payload_object_id <= r->highest_payload_id)
 		return false;
@@ -354,13 +419,7 @@ static bool d2_replay_entry(struct d2_replay *r, const struct d2_wal_header *h,
 	    object.payload_object_id != e->payload_object_id ||
 	    object.content_len != e->payload_content_len)
 		goto out;
-	env.object = *key;
-	env.admission = d1_fixture_admission_handle(r->store->model,
-						    e->admission.client_id);
-	env.incarnation = h->ds_incarnation;
-	memcpy(env.key.origin.bytes, e->key.session, 16);
-	env.key.sequence = ((uint64_t)e->key.slot << 32) | e->key.sequence;
-	env.key.ordinal = e->key.compound_ordinal;
+	d2_replay_envelope_header(r, h, e, key, &env);
 	env.op = D1_OP_WRITE_BATCH;
 	env.body.write.count = 1;
 	env.body.write.stability = e->stability;
@@ -728,7 +787,7 @@ static uint64_t d2_entry_index(const struct d1_envelope *env)
 	}
 }
 
-static uint32_t d2_persist_write(struct d2_store *s,
+static uint32_t d2_persist_entry(struct d2_store *s,
 				 const struct d1_envelope *env,
 				 const struct d1_result *result,
 				 uint64_t prior_eof)
@@ -741,8 +800,15 @@ static uint32_t d2_persist_write(struct d2_store *s,
 	uint8_t handle[32];
 	uint64_t eof, payload_id = 0, offset = 0;
 	uint32_t status;
-	const struct d1_write_entry *write = &env->body.write.entries[0];
-	bool has_payload = result->entries[0].status == D1_OK;
+	const struct d1_write_entry *write =
+		env->op == D1_OP_WRITE_BATCH ? &env->body.write.entries[0] :
+					       NULL;
+	const struct d1_lifecycle_entry *life =
+		env->op == D1_OP_FINALIZE_BATCH ||
+				env->op == D1_OP_COMMIT_BATCH ?
+			&env->body.lifecycle.entries[0] :
+			NULL;
+	bool has_payload = write && result->entries[0].status == D1_OK;
 
 	if (has_payload && s->next_payload_seq >= (UINT64_C(1) << 40))
 		return D1_NOSPC;
@@ -788,11 +854,15 @@ static uint32_t d2_persist_write(struct d2_store *s,
 		return D1_INVALID;
 	}
 	free(scratch);
-	entry.txn_id = result->entries[0].txn.raw;
+	entry.txn_id = life ? life->txn.raw : result->entries[0].txn.raw;
 	entry.owner_cohort = result->entries[0].owner.cohort.raw;
 	entry.owner_client_id = result->entries[0].owner.writer;
 	entry.owner_co_id = result->entries[0].owner.co_id;
 	entry.generation = result->entries[0].guard.generation;
+	if (life) {
+		entry.predecessor_present = life->predecessor_present;
+		entry.predecessor_object_id = life->predecessor.raw;
+	}
 	entry.result_guard_generation = result->entries[0].guard.generation;
 	entry.result_guard_writer = result->entries[0].guard.writer;
 	entry.result_guard_never_written =
@@ -842,8 +912,14 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 		return D1_INVALID;
 	if (!d2_env_digest(env, digest))
 		return D1_NOSPC;
-	if (env->op != D1_OP_WRITE_BATCH ||
-	    d1_envelope_member_count(env) != 1) {
+	if ((env->op != D1_OP_WRITE_BATCH && env->op != D1_OP_FINALIZE_BATCH &&
+	     env->op != D1_OP_COMMIT_BATCH) ||
+	    d1_envelope_member_count(env) != 1 ||
+	    (env->op != D1_OP_WRITE_BATCH &&
+	     (env->body.lifecycle.range_begin !=
+		      env->body.lifecycle.entries[0].index ||
+	      env->body.lifecycle.range_end !=
+		      env->body.lifecycle.entries[0].index + 1))) {
 		memset(result, 0, sizeof(*result));
 		result->key = env->key;
 		result->disposition = D1_UNRECORDED;
@@ -885,7 +961,7 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 	if (before_len == after_len &&
 	    (!before_len || !memcmp(before, after, before_len)))
 		goto out;
-	persist = d2_persist_write(s, env, result, prior_eof);
+	persist = d2_persist_entry(s, env, result, prior_eof);
 	if (persist != D1_OK) {
 		s->fenced = true;
 		status = persist;
