@@ -2212,6 +2212,104 @@ int main(void)
 			      !store,
 		      "retired superblock disagreement fences");
 	}
+	unlinkat(dirfd, "super", 0);
+	unlinkat(dirfd, "wal", 0);
+	unlinkat(dirfd, "payload", 0);
+	memset(&binding, 0, sizeof(binding));
+	check(d2_store_provision(dirfd, &config, &binding, &store) == D1_OK,
+	      "provision batched-authority fixture");
+	if (store) {
+		struct d1_fixture_authority mds = { 0 }, first = { 0 },
+					    second = { 0 };
+		d1_admission_id mds_id, first_id, second_id;
+		d1_admission_id beneficiaries[2], repeated[2];
+
+		fill(mds.issuer.bytes, sizeof(mds.issuer.bytes), 0x31);
+		fill(mds.principal.bytes, sizeof(mds.principal.bytes), 0x41);
+		fill(mds.session, sizeof(mds.session), 0x51);
+		mds.writer = 90;
+		mds.rights = D1_RIGHT_CONTROL;
+		mds.authority_epoch = 7;
+		first = mds;
+		fill(first.principal.bytes, sizeof(first.principal.bytes), 0x61);
+		fill(first.session, sizeof(first.session), 0x71);
+		first.writer = 91;
+		first.rights = D1_RIGHT_READ | D1_RIGHT_WRITE |
+			       D1_RIGHT_SINGLE_WRITER;
+		first.lease_epoch = 11;
+		first.fence_sequence = 21;
+		second = first;
+		fill(second.principal.bytes, sizeof(second.principal.bytes), 0x81);
+		fill(second.session, sizeof(second.session), 0x91);
+		second.writer = 92;
+		second.lease_epoch = 12;
+		second.fence_sequence = 22;
+		mds_id = d2_store_admit_full(store, &object, &mds);
+		first_id = d2_store_admit_bare(store, &object, &first);
+		second_id = d2_store_admit_bare(store, &object, &second);
+		check(d1_admission_live(mds_id) && d1_admission_live(first_id) &&
+			      d1_admission_live(second_id) &&
+			      mds_id.raw != first_id.raw &&
+			      mds_id.raw != second_id.raw,
+		      "distinct MDS and beneficiary admissions are issued");
+		memset(&env, 0, sizeof(env));
+		env.object = object;
+		env.admission = first_id;
+		env.incarnation = d2_store_incarnation(store);
+		env.op = D1_OP_WRITE_BATCH;
+		fill(env.key.origin.bytes, sizeof(env.key.origin.bytes), 0xcc);
+		guard = (struct d1_guard){ .never_written = true };
+		write_request(&env, 1, 0, 50, &guard, payload, sizeof(payload));
+		env.body.write.entries[0].owner.writer = first.writer;
+		wal_bytes = d2_store_wal_bytes(store);
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_STALE_AUTH &&
+			      result.disposition == D1_UNRECORDED &&
+			      d2_store_wal_bytes(store) == wal_bytes,
+		      "beneficiary cannot mutate before authority is recorded");
+		check(d2_store_trust_admission(store, mds_id, first_id) == D1_OK &&
+			      d2_store_trust_admission(store, mds_id, second_id) ==
+				      D1_OK,
+		      "MDS records beneficiary trust before authority");
+		wal_bytes = d2_store_wal_bytes(store);
+		check(d2_store_trust_admission(store, mds_id, first_id) ==
+			      D1_STALE_AUTH &&
+			      d2_store_wal_bytes(store) == wal_bytes,
+		      "second trust request cannot retarget a stateid");
+		repeated[0] = first_id;
+		repeated[1] = first_id;
+		wal_bytes = d2_store_wal_bytes(store);
+		check(d2_store_admit_authority(store, mds_id, repeated, 2) ==
+			      D1_INVALID &&
+			      d2_store_wal_bytes(store) == wal_bytes,
+		      "duplicate authority vector is rejected before append");
+		beneficiaries[0] = first_id;
+		beneficiaries[1] = second_id;
+		check(d2_store_admit_authority(store, mds_id, beneficiaries, 2) ==
+			      D1_OK,
+		      "one MDS authority record covers two beneficiaries");
+		env.admission = first_id;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "first beneficiary mutates after batched authority");
+		env.admission = second_id;
+		write_request(&env, 2, 1, 51, &guard, replacement,
+			      sizeof(replacement));
+		env.body.write.entries[0].owner.writer = second.writer;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "second beneficiary mutates after batched authority");
+		memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
+		memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
+		reopen.files.expected_root_ino = binding.root_ino;
+		d2_store_crash(store);
+		store = NULL;
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) == D1_OK,
+		      "batched authority admissions replay");
+		check(store && d2_store_visible(store, &object, 0, &visible) &&
+			      d2_store_visible(store, &object, 1, &visible),
+		      "both beneficiaries' visible state replays");
+	}
 
 done:
 	if (store)

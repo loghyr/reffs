@@ -36,6 +36,16 @@ d1_admission_id d2_store_admit(struct d2_store *store,
 d1_admission_id
 d2_store_admit_full(struct d2_store *store, const struct d1_objkey *object,
 		    const struct d1_fixture_authority *authority);
+d1_admission_id
+d2_store_admit_bare(struct d2_store *store, const struct d1_objkey *object,
+		    const struct d1_fixture_authority *authority);
+uint32_t d2_store_trust_admission(struct d2_store *store,
+				  d1_admission_id actor,
+				  d1_admission_id beneficiary);
+uint32_t d2_store_admit_authority(struct d2_store *store,
+				  d1_admission_id actor,
+				  const d1_admission_id *beneficiaries,
+				  uint32_t count);
 void d2_store_revoke(struct d2_store *store, d1_admission_id admission);
 void d2_store_expire(struct d2_store *store, d1_admission_id admission);
 d1_custody_id d2_store_custody(struct d2_store *store, d1_version_id version);
