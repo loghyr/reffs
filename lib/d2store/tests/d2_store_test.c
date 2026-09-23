@@ -340,6 +340,30 @@ int main(void)
 			      result.entries[0].phase == D2_COMMITTED &&
 			      d2_store_visible(store, &object, 7, &visible),
 		      "single member commit publishes staged payload");
+		guard = (struct d1_guard){ .never_written = true };
+		env.op = D1_OP_WRITE_BATCH;
+		write_request(&env, 9, 8, 7, &guard, replacement,
+			      sizeof(replacement));
+		env.body.write.activate = false;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].phase == D2_PREPARED,
+		      "rollback fixture stages private work");
+		staged_txn = result.entries[0].txn;
+		memset(&env.body, 0, sizeof(env.body));
+		env.key.sequence = 10;
+		env.op = D1_OP_ROLLBACK_BATCH;
+		env.body.rollback.range_begin = 8;
+		env.body.rollback.range_end = 9;
+		env.body.rollback.count = 1;
+		env.body.rollback.entries[0].index = 8;
+		env.body.rollback.entries[0].owner.cohort.raw = 1;
+		env.body.rollback.entries[0].owner.writer = 17;
+		env.body.rollback.entries[0].owner.co_id = 7;
+		env.body.rollback.entries[0].txn = staged_txn;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].phase == D2_ROLLED_BACK &&
+			      !d2_store_visible(store, &object, 8, &visible),
+		      "private rollback persists without payload");
 		d2_store_crash(store);
 		store = NULL;
 		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
@@ -350,13 +374,16 @@ int main(void)
 		check(store && d2_store_visible(store, &object, 7, &visible),
 		      "second restart replays finalize and commit");
 		if (store) {
+			check(!d2_store_visible(store, &object, 8, &visible),
+			      "second restart replays private rollback");
 			env.admission =
 				d2_store_admission_handle(store, admission.raw);
 			wal_bytes = d2_store_wal_bytes(store);
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
-				      result.entries[0].phase == D2_COMMITTED &&
+				      result.entries[0].phase ==
+					      D2_ROLLED_BACK &&
 				      d2_store_wal_bytes(store) == wal_bytes,
-			      "restart returns exact lifecycle receipt");
+			      "restart returns exact rollback receipt");
 		}
 	}
 	if (store) {
