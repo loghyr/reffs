@@ -2922,6 +2922,13 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 	status = d2_files_rebind(dirfd, &config->files, binding, &files);
 	if (status != D1_OK)
 		return status;
+	if (d2_files_super(files)->state != D2_SB_RETIRED) {
+		status = d2_files_super_update(files, D2_SB_NEEDS_RECOVERY);
+		if (status != D1_OK) {
+			d2_files_close(files);
+			return status;
+		}
+	}
 	s = d2_store_alloc(binding->store_uuid, config->chunk_bytes,
 			   config->max_file_bytes);
 	if (!s) {
