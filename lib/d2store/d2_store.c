@@ -87,6 +87,18 @@ struct d2_store {
 				((struct d1_checksum *)0)->digest)];
 		} members[D1_BATCH_ENTRIES_MAX];
 	} cohorts[D1_MAX_REPAIRS];
+	struct {
+		bool used;
+		uint64_t id;
+		uint64_t admission_id;
+		struct d1_objkey object;
+		uint32_t count;
+		struct {
+			uint64_t index;
+			uint64_t version_id;
+			uint64_t custody_id;
+		} items[D1_BATCH_ENTRIES_MAX];
+	} episodes[D1_MAX_EPISODES];
 	bool fenced;
 };
 
@@ -299,6 +311,65 @@ static void d2_episode_uuid(uint64_t id, uint8_t uuid[16])
 	memcpy(uuid, prefix, sizeof(prefix));
 	for (i = 0; i < 8; i++)
 		uuid[8 + i] = (uint8_t)(id >> (56 - 8 * i));
+}
+
+static bool d2_episode_id(const uint8_t uuid[16], uint64_t *id)
+{
+	static const uint8_t prefix[8] = { 'D', '2', 'B', 'E',
+					   'P', 'I', 'S', 'O' };
+	unsigned int i;
+
+	if (memcmp(uuid, prefix, sizeof(prefix)))
+		return false;
+	*id = 0;
+	for (i = 0; i < 8; i++)
+		*id = (*id << 8) | uuid[8 + i];
+	return *id != 0;
+}
+
+static typeof(((struct d2_store *)0)->episodes[0]) *
+d2_episode_find(struct d2_store *s, uint64_t id)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_EPISODES; i++)
+		if (s->episodes[i].used && s->episodes[i].id == id)
+			return &s->episodes[i];
+	return NULL;
+}
+
+static bool d2_episode_remember(struct d2_store *s,
+				const struct d1_envelope *env,
+				const struct d1_result *result)
+{
+	typeof(s->episodes[0]) *episode = NULL;
+	uint32_t i;
+
+	if (!result->entries[0].episode_present)
+		return false;
+	if (d2_episode_find(s, result->entries[0].episode.raw))
+		return true;
+	for (i = 0; i < D1_MAX_EPISODES; i++)
+		if (!s->episodes[i].used) {
+			episode = &s->episodes[i];
+			break;
+		}
+	if (!episode)
+		return false;
+	memset(episode, 0, sizeof(*episode));
+	episode->used = true;
+	episode->id = result->entries[0].episode.raw;
+	episode->admission_id = env->admission.raw;
+	episode->object = env->object;
+	episode->count = env->body.repair.count;
+	for (i = 0; i < episode->count; i++) {
+		episode->items[i].index = env->body.repair.entries[i].index;
+		episode->items[i].version_id =
+			env->body.repair.entries[i].successor.raw;
+		episode->items[i].custody_id =
+			env->body.repair.entries[i].custody.raw;
+	}
+	return true;
 }
 
 static bool d2_cohort_remember_begin(struct d2_store *s,
@@ -1204,6 +1275,97 @@ static bool d2_replay_recovery(struct d2_replay *r,
 				   &result);
 }
 
+static bool d2_replay_episode_mark(struct d2_replay *r,
+				   const struct d2_wal_header *h,
+				   const struct d2_control *control)
+{
+	struct d2_entry admission_entry = { 0 };
+	struct d1_envelope env = { 0 };
+	struct d1_result result = { 0 };
+	struct d1_cursor cursor;
+	struct d1_objkey *object;
+	const struct d1_fixture_authority *auth;
+	uint8_t episode_uuid[16], file_key[32];
+	uint64_t episode_id, index, version_id, custody_id;
+	uint32_t count, i;
+
+	if (control->subtype != D2_CTL_EPISODE_MARK)
+		return true;
+	if (control->transition != D2_COMMITTED || control->status != D1_OK)
+		return false;
+	d1_dec_init(&cursor, control->body, control->body_len);
+	if (!d1_dec_raw(&cursor, episode_uuid, sizeof(episode_uuid)) ||
+	    !d1_dec_raw(&cursor, file_key, sizeof(file_key)) ||
+	    !d1_dec_u64(&cursor, &env.body.repair.range_begin) ||
+	    !d1_dec_u64(&cursor, &env.body.repair.range_end) ||
+	    !d1_dec_u32(&cursor, &count) || count == 0 ||
+	    count > D1_BATCH_ENTRIES_MAX ||
+	    !d2_episode_id(episode_uuid, &episode_id))
+		return false;
+	object = d2_replay_object(r, file_key);
+	if (!object || d2_episode_find(r->store, episode_id))
+		return false;
+	auth = d2_admission_find(r->store, control->admission_client_id);
+	if (!auth ||
+	    memcmp(control->admission_issuer, auth->issuer.bytes,
+		   D1_UUID_BYTES) ||
+	    control->admission_authority_epoch != auth->authority_epoch)
+		return false;
+	admission_entry.admission.client_id = control->admission_client_id;
+	d2_admission_encode(r->store, control->admission_client_id,
+			    &admission_entry.admission);
+	memcpy(admission_entry.file_key, file_key, sizeof(file_key));
+	if (!d2_replay_admission(r, &admission_entry))
+		return false;
+	env.object = *object;
+	env.admission = d1_fixture_admission_handle(
+		r->store->model, control->admission_client_id);
+	env.incarnation = h->ds_incarnation;
+	memcpy(env.key.origin.bytes, control->key.session, D1_UUID_BYTES);
+	env.key.sequence = ((uint64_t)control->key.slot << 32) |
+			   control->key.sequence;
+	env.key.ordinal = control->key.compound_ordinal;
+	env.op = D1_OP_MARK_ERROR;
+	env.body.repair.count = count;
+	for (i = 0; i < count; i++) {
+		struct d1_repair_entry *entry = &env.body.repair.entries[i];
+		bool predecessor_present;
+		d1_version_id version, predecessor;
+
+		if (!d1_dec_u64(&cursor, &index) ||
+		    !d1_dec_u64(&cursor, &version_id) ||
+		    !d1_dec_u64(&cursor, &custody_id))
+			return false;
+		entry->index = index;
+		entry->owner.cohort.raw = episode_id;
+		entry->owner.writer = auth->writer;
+		entry->owner.co_id = i + 1;
+		entry->custody_present = true;
+		entry->custody = d1_fixture_custody_handle(r->store->model,
+							 custody_id);
+		entry->successor_present = true;
+		entry->successor = version = d1_fixture_version_handle(
+			r->store->model, version_id);
+		if (!d1_fixture_version_predecessor(r->store->model, version,
+						    &predecessor_present,
+						    &predecessor))
+			return false;
+		entry->predecessor_present = predecessor_present;
+		entry->predecessor = predecessor;
+	}
+	if (!d1_dec_finished(&cursor))
+		return false;
+	r->status = d1_store_apply(r->store->model, &env, &result);
+	if (r->status != D1_OK || result.count != 1 ||
+	    result.entries[0].status != D1_OK ||
+	    !result.entries[0].episode_present ||
+	    result.entries[0].episode.raw != episode_id ||
+	    !d2_episode_remember(r->store, &env, &result))
+		return false;
+	return d2_receipt_remember(r->store, &env.object.export_uuid, &env.key,
+				   control->key.request_digest, &result);
+}
+
 static bool d2_replay_cohort(struct d2_replay *r, const struct d2_wal_header *h,
 			     const struct d2_cohort *disk)
 {
@@ -1254,6 +1416,16 @@ static bool d2_replay_cohort(struct d2_replay *r, const struct d2_wal_header *h,
 	env.op = op;
 	env.body.repair.count = disk->member_count;
 	env.body.repair.range_begin = UINT64_MAX;
+	if (op == D1_OP_BEGIN_REPAIR && (disk->flags & 1u)) {
+		uint64_t episode_id;
+
+		if (!d2_episode_id(disk->episode_uuid, &episode_id) ||
+		    !d2_episode_find(r->store, episode_id))
+			goto out;
+		env.body.repair.episode_present = true;
+		env.body.repair.episode = d1_fixture_episode_handle(
+			r->store->model, episode_id);
+	}
 	if (op != D1_OP_BEGIN_REPAIR) {
 		saved = d2_cohort_find(r->store, disk->cohort_id);
 		if (!saved || saved->count != disk->member_count)
@@ -1404,6 +1576,7 @@ static bool d2_replay_record(const struct d2_wal_header *h,
 		       d2_replay_trust(r, &control) &&
 		       d2_replay_authority(r, &control) &&
 		       d2_replay_recovery(r, h, &control) &&
+		       d2_replay_episode_mark(r, h, &control) &&
 		       d2_replay_liveness(r, &control) &&
 		       d2_replay_custody(r, &control) &&
 		       d2_replay_postcond(r, &control);
@@ -1901,6 +2074,68 @@ static uint32_t d2_persist_recovery(struct d2_store *s,
 	return d2_files_wal_append(s->files, record, written);
 }
 
+static uint32_t d2_persist_episode_mark(struct d2_store *s,
+					const struct d1_envelope *env,
+					const struct d1_result *result)
+{
+	const struct d1_fixture_authority *auth =
+		d2_admission_find(s, env->admission.raw);
+	struct d2_wal_header h = { 0 };
+	struct d2_control control = { 0 };
+	struct d1_cursor cursor;
+	uint8_t handle[32], file_key[32], record[D2_MAX_RECORD_BYTES];
+	uint32_t i, status;
+	size_t written;
+
+	if (!auth || env->op != D1_OP_MARK_ERROR ||
+	    result->entries[0].status != D1_OK ||
+	    !result->entries[0].episode_present ||
+	    env->body.repair.count == 0 ||
+	    env->body.repair.count > D2_MAX_BATCH_ENTRIES)
+		return D1_UNSUPPORTED;
+	h.family = D2_REC_CONTROL;
+	memcpy(h.store_uuid, s->uuid.bytes, D1_UUID_BYTES);
+	memcpy(h.wal_uuid, d2_files_super(s->files)->wal_uuid, D1_UUID_BYTES);
+	h.lsn = d2_files_next_lsn(s->files);
+	h.ds_incarnation = d2_files_super(s->files)->ds_incarnation;
+	control.subtype = D2_CTL_EPISODE_MARK;
+	control.transition = D2_COMMITTED;
+	control.status = D1_OK;
+	d2_key_from_env(env, &control.key);
+	if (!d2_env_digest(env, control.key.request_digest))
+		return D1_NOSPC;
+	memcpy(control.admission_issuer, auth->issuer.bytes, D1_UUID_BYTES);
+	control.admission_authority_epoch = auth->authority_epoch;
+	control.admission_client_id = env->admission.raw;
+	memcpy(handle, env->object.export_uuid.bytes, D1_UUID_BYTES);
+	memcpy(handle + D1_UUID_BYTES, env->object.object_uuid.bytes,
+	       D1_UUID_BYTES);
+	d2_file_key(handle, sizeof(handle), file_key);
+	control.body_len = 68 + 24 * env->body.repair.count;
+	d1_enc_init(&cursor, control.body, control.body_len);
+	d2_episode_uuid(result->entries[0].episode.raw, handle);
+	d1_enc_raw(&cursor, handle, D1_UUID_BYTES);
+	d1_enc_raw(&cursor, file_key, sizeof(file_key));
+	d1_enc_u64(&cursor, env->body.repair.range_begin);
+	d1_enc_u64(&cursor, env->body.repair.range_end);
+	d1_enc_u32(&cursor, env->body.repair.count);
+	for (i = 0; i < env->body.repair.count; i++) {
+		const struct d1_repair_entry *entry =
+			&env->body.repair.entries[i];
+
+		d1_enc_u64(&cursor, entry->index);
+		d1_enc_u64(&cursor, entry->successor.raw);
+		d1_enc_u64(&cursor, entry->custody.raw);
+	}
+	if (!d1_cursor_ok(&cursor) ||
+	    !d2_control_encode(&h, &control, record, sizeof(record), &written))
+		return D1_INVALID;
+	status = d2_files_wal_append(s->files, record, written);
+	if (status == D1_OK && !d2_episode_remember(s, env, result))
+		return D1_IO;
+	return status;
+}
+
 static bool d2_repair_operation(uint32_t op)
 {
 	return op == D1_OP_BEGIN_REPAIR || op == D1_OP_PREPARE_REPAIR ||
@@ -2121,9 +2356,9 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 		return D1_NOSPC;
 	if ((env->op != D1_OP_WRITE_BATCH && env->op != D1_OP_FINALIZE_BATCH &&
 	     env->op != D1_OP_COMMIT_BATCH && env->op != D1_OP_ROLLBACK_BATCH &&
-	     env->op != D1_OP_RECOVERY_ADMIT &&
+	     env->op != D1_OP_RECOVERY_ADMIT && env->op != D1_OP_MARK_ERROR &&
 	     !d2_repair_operation(env->op)) ||
-	    (!d2_repair_operation(env->op) &&
+	    (!d2_repair_operation(env->op) && env->op != D1_OP_MARK_ERROR &&
 	     d1_envelope_member_count(env) != 1) ||
 	    (env->op == D1_OP_RECOVERY_ADMIT && env->body.control.count != 1) ||
 	    (env->op == D1_OP_ROLLBACK_BATCH &&
@@ -2190,6 +2425,8 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 		goto out;
 	if (env->op == D1_OP_RECOVERY_ADMIT)
 		persist = d2_persist_recovery(s, env, result);
+	else if (env->op == D1_OP_MARK_ERROR)
+		persist = d2_persist_episode_mark(s, env, result);
 	else if (d2_repair_operation(env->op))
 		persist = d2_persist_cohort(s, env, result);
 	else
@@ -2546,6 +2783,11 @@ d1_custody_id d2_store_custody_handle(struct d2_store *s, uint64_t raw)
 d1_repair_id d2_store_repair_handle(struct d2_store *s, uint64_t raw)
 {
 	return s ? d1_fixture_repair_handle(s->model, raw) : d1_repair_none();
+}
+
+d1_episode_id d2_store_episode_handle(struct d2_store *s, uint64_t raw)
+{
+	return s ? d1_fixture_episode_handle(s->model, raw) : d1_episode_none();
 }
 
 void d2_store_verifier(struct d2_store *s, uint8_t verifier[8])

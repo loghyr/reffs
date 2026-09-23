@@ -6191,6 +6191,28 @@ bool d1_fixture_txn_state(struct d1_store *s, d1_txn_id txn, uint32_t *phase,
 	return found;
 }
 
+bool d1_fixture_version_predecessor(struct d1_store *s, d1_version_id version,
+				    bool *present,
+				    d1_version_id *predecessor)
+{
+	struct d1_version *row;
+	bool found = false;
+
+	if (!s || !present || !predecessor)
+		return false;
+	pthread_mutex_lock(&s->lock);
+	row = d1_version_find(s, version);
+	if (row) {
+		*present = row->predecessor_present;
+		*predecessor = row->predecessor_present ?
+				d1_version_of(s, row->predecessor) :
+				d1_version_none();
+		found = true;
+	}
+	pthread_mutex_unlock(&s->lock);
+	return found;
+}
+
 d1_custody_id d1_fixture_custody(struct d1_store *s, d1_version_id version)
 {
 	struct d1_control_request request;

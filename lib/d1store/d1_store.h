@@ -408,6 +408,11 @@ bool d1_fixture_repair_member(struct d1_store *s, d1_repair_id cohort,
 bool d1_fixture_txn_state(struct d1_store *s, d1_txn_id txn, uint32_t *phase,
 			  d1_version_id *version);
 
+/* The predecessor claim held by one retained version. */
+bool d1_fixture_version_predecessor(struct d1_store *s, d1_version_id version,
+				    bool *present,
+				    d1_version_id *predecessor);
+
 /*
  * Release the retention of one predecessor version.  Allowed only for a
  * version nothing makes visible and nothing else holds: it removes the
