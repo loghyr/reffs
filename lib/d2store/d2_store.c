@@ -66,6 +66,12 @@ struct d2_replay {
 	uint64_t highest_payload_id;
 	uint64_t last_incarnation;
 	uint32_t status;
+	bool postcond_pending;
+	uint64_t postcond_id;
+	uint8_t postcond_file_key[32];
+	uint64_t postcond_chunk_index;
+	uint64_t postcond_version_id;
+	uint64_t postcond_custody_id;
 };
 
 static bool d2_same_object(const struct d1_objkey *a, const struct d1_objkey *b)
@@ -562,6 +568,46 @@ static bool d2_replay_custody(struct d2_replay *r,
 				   work->admission_id);
 }
 
+static bool d2_replay_postcond(struct d2_replay *r,
+			       const struct d2_control *control)
+{
+	const typeof(r->store->custodies[0]) *custody;
+	struct d1_cursor cursor;
+	uint8_t file_key[32];
+	uint64_t id, index, version_id, custody_id;
+	uint32_t kind, i;
+	bool registered = false;
+
+	if (control->subtype != D2_CTL_POSTCOND)
+		return true;
+	if (r->postcond_pending || control->transition != D2_COMMITTED ||
+	    control->status != D1_OK)
+		return false;
+	d1_dec_init(&cursor, control->body, control->body_len);
+	if (!d1_dec_u64(&cursor, &id) ||
+	    !d1_dec_raw(&cursor, file_key, sizeof(file_key)) ||
+	    !d1_dec_u64(&cursor, &index) || !d1_dec_u64(&cursor, &version_id) ||
+	    !d1_dec_u64(&cursor, &custody_id) || !d1_dec_u32(&cursor, &kind) ||
+	    !d1_dec_finished(&cursor) || !id || kind < 1 || kind > 3)
+		return false;
+	for (i = 0; i < r->store->registered_count; i++)
+		if (!memcmp(r->store->registered[i].file_key, file_key,
+			    sizeof(file_key))) {
+			registered = true;
+			break;
+		}
+	custody = d2_custody_by_version(r->store, version_id);
+	if (!registered || !custody || custody->custody_id != custody_id)
+		return false;
+	r->postcond_pending = true;
+	r->postcond_id = id;
+	memcpy(r->postcond_file_key, file_key, sizeof(file_key));
+	r->postcond_chunk_index = index;
+	r->postcond_version_id = version_id;
+	r->postcond_custody_id = custody_id;
+	return true;
+}
+
 static bool d2_replay_admission(struct d2_replay *r,
 				const struct d2_entry *entry)
 {
@@ -1048,7 +1094,11 @@ static bool d2_replay_record(const struct d2_wal_header *h,
 	struct d2_replay *r = arg;
 	struct d2_control control;
 	struct d2_entry e;
+	const typeof(r->store->work[0]) *paired_work;
+	bool paired, replayed;
 
+	if (r->postcond_pending && h->family != D2_REC_ENTRY)
+		r->postcond_pending = false;
 	if (h->family == D2_REC_START)
 		return d2_replay_start(r, h);
 	if (h->family == D2_REC_CONTROL) {
@@ -1059,15 +1109,29 @@ static bool d2_replay_record(const struct d2_wal_header *h,
 		       d2_replay_authority(r, &control) &&
 		       d2_replay_recovery(r, h, &control) &&
 		       d2_replay_liveness(r, &control) &&
-		       d2_replay_custody(r, &control);
+		       d2_replay_custody(r, &control) &&
+		       d2_replay_postcond(r, &control);
 	}
 	if (h->family != D2_REC_ENTRY)
 		return true;
 	if (!d2_entry_decode(record, h->total_bytes, h, &e))
 		return false;
+	paired = e.status == D1_NO_PREDECESSOR && e.postcond_present &&
+		 e.postcond_id != 0;
+	paired_work = paired ? d2_work_by_txn(r->store, e.txn_id) : NULL;
+	if (paired != r->postcond_pending ||
+	    (paired &&
+	     (!paired_work || e.postcond_id != r->postcond_id ||
+	      memcmp(e.file_key, r->postcond_file_key, sizeof(e.file_key)) ||
+	      e.chunk_index != r->postcond_chunk_index ||
+	      paired_work->version_id != r->postcond_version_id)))
+		return false;
 	if (!d2_replay_admission(r, &e))
 		return false;
-	return d2_replay_entry(r, h, &e);
+	replayed = d2_replay_entry(r, h, &e);
+	if (replayed && paired)
+		r->postcond_pending = false;
+	return replayed;
 }
 
 static void d2_store_key(struct d2_store *s, struct d2_key_block *key)
@@ -1319,6 +1383,51 @@ static uint64_t d2_entry_index(const struct d1_envelope *env)
 	}
 }
 
+static uint32_t d2_persist_postcond(struct d2_store *s,
+				    const struct d1_envelope *env,
+				    const struct d1_result *result)
+{
+	const struct d1_rollback_entry *rollback =
+		&env->body.rollback.entries[0];
+	struct d2_wal_header h = { 0 };
+	struct d2_control control = { 0 };
+	struct d1_cursor cursor;
+	uint8_t handle[32], file_key[32], record[280];
+	size_t written;
+
+	if (env->op != D1_OP_ROLLBACK_BATCH ||
+	    result->entries[0].status != D1_NO_PREDECESSOR ||
+	    !result->entries[0].postcond_present ||
+	    !rollback->visible_present || !rollback->custody_present)
+		return D1_OK;
+	h.family = D2_REC_CONTROL;
+	memcpy(h.store_uuid, s->uuid.bytes, D1_UUID_BYTES);
+	memcpy(h.wal_uuid, d2_files_super(s->files)->wal_uuid, D1_UUID_BYTES);
+	h.lsn = d2_files_next_lsn(s->files);
+	h.ds_incarnation = d2_files_super(s->files)->ds_incarnation;
+	control.subtype = D2_CTL_POSTCOND;
+	control.transition = D2_COMMITTED;
+	control.status = D1_OK;
+	d2_store_key(s, &control.key);
+	memcpy(handle, env->object.export_uuid.bytes, D1_UUID_BYTES);
+	memcpy(handle + D1_UUID_BYTES, env->object.object_uuid.bytes,
+	       D1_UUID_BYTES);
+	d2_file_key(handle, sizeof(handle), file_key);
+	control.body_len = 68;
+	d1_enc_init(&cursor, control.body, control.body_len);
+	d1_enc_u64(&cursor, result->entries[0].postcond.raw);
+	d1_enc_raw(&cursor, file_key, sizeof(file_key));
+	d1_enc_u64(&cursor, rollback->index);
+	d1_enc_u64(&cursor, rollback->visible.raw);
+	d1_enc_u64(&cursor, rollback->custody.raw);
+	d1_enc_u32(&cursor, rollback->predecessor_present ? 2 : 1);
+	if (!d1_cursor_ok(&cursor))
+		return D1_INVALID;
+	if (!d2_control_encode(&h, &control, record, sizeof(record), &written))
+		return D1_INVALID;
+	return d2_files_wal_append(s->files, record, written);
+}
+
 static uint32_t d2_persist_entry(struct d2_store *s,
 				 const struct d1_envelope *env,
 				 const struct d1_result *result,
@@ -1433,7 +1542,14 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 	if (!d2_entry_encode(&h, &entry, record)) {
 		return D1_INVALID;
 	}
-	status = d2_files_wal_append(s->files, record, sizeof(record));
+	status = d2_persist_postcond(s, env, result);
+	if (status == D1_OK) {
+		h.lsn = d2_files_next_lsn(s->files);
+		status = d2_entry_encode(&h, &entry, record) ?
+				 d2_files_wal_append(s->files, record,
+						     sizeof(record)) :
+				 D1_INVALID;
+	}
 	if (status == D1_OK && has_payload)
 		s->next_payload_seq++;
 	return status;

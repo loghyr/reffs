@@ -164,6 +164,7 @@ int main(void)
 	struct d1_envelope env = { 0 };
 	struct d1_envelope committed_rollback;
 	struct d1_envelope expired;
+	struct d1_envelope nopre;
 	struct d1_envelope recovery;
 	struct d1_envelope refused;
 	struct d1_envelope unsupported;
@@ -174,6 +175,7 @@ int main(void)
 	d1_admission_id control_admission, fresh_admission, next_control,
 		next_fresh;
 	d1_custody_id custody;
+	d1_postcond_id postcond;
 	d1_txn_id staged_txn;
 	d1_version_id predecessor, successor, visible;
 	struct d2_wal_header wal_header;
@@ -551,6 +553,46 @@ int main(void)
 		check(d2_store_apply(store, &recovery, &result) == D1_OK &&
 			      result.entries[0].status == D1_OWNER_CONFLICT,
 		      "recovery refusal is recorded without rebinding work");
+		admission = d2_store_admit(store, &object, 17,
+					   D1_RIGHT_READ | D1_RIGHT_WRITE |
+						   D1_RIGHT_REPAIR |
+						   D1_RIGHT_SINGLE_WRITER);
+		memset(&env, 0, sizeof(env));
+		env.object = object;
+		env.admission = admission;
+		env.incarnation = d2_store_incarnation(store);
+		fill(env.key.origin.bytes, 16, 0xe0);
+		env.op = D1_OP_WRITE_BATCH;
+		guard = (struct d1_guard){ .never_written = true };
+		write_request(&env, 1, 22, 31, &guard, payload,
+			      sizeof(payload));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "postcondition fixture publishes a successor");
+		staged_txn = result.entries[0].txn;
+		successor = result.entries[0].version;
+		custody = d2_store_custody(store, successor);
+		memset(&env.body, 0, sizeof(env.body));
+		env.key.sequence = 2;
+		env.op = D1_OP_ROLLBACK_BATCH;
+		env.body.rollback.range_begin = 22;
+		env.body.rollback.range_end = 23;
+		env.body.rollback.count = 1;
+		env.body.rollback.entries[0].index = 22;
+		env.body.rollback.entries[0].owner.cohort.raw = 1;
+		env.body.rollback.entries[0].owner.writer = 17;
+		env.body.rollback.entries[0].owner.co_id = 31;
+		env.body.rollback.entries[0].txn = staged_txn;
+		env.body.rollback.entries[0].visible_present = true;
+		env.body.rollback.entries[0].visible = successor;
+		env.body.rollback.entries[0].custody_present = true;
+		env.body.rollback.entries[0].custody = custody;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_NO_PREDECESSOR &&
+			      result.entries[0].postcond_present,
+		      "no-predecessor rollback persists its postcondition group");
+		postcond = result.entries[0].postcond;
+		nopre = env;
 	}
 	if (store) {
 		admission = d2_store_admit(store, &object, 17,
@@ -630,6 +672,22 @@ int main(void)
 		if (store) {
 			check(!d2_store_visible(store, &object, 8, &visible),
 			      "second restart replays private rollback");
+			nopre.admission = d2_store_admission_handle(
+				store, nopre.admission.raw);
+			nopre.body.rollback.entries[0].txn = d2_store_txn_handle(
+				store, nopre.body.rollback.entries[0].txn.raw);
+			nopre.body.rollback.entries[0]
+				.visible = d2_store_version_handle(
+				store,
+				nopre.body.rollback.entries[0].visible.raw);
+			wal_bytes = d2_store_wal_bytes(store);
+			check(d2_store_apply(store, &nopre, &result) == D1_OK &&
+				      result.entries[0].status ==
+					      D1_NO_PREDECESSOR &&
+				      result.entries[0].postcond.raw ==
+					      postcond.raw &&
+				      d2_store_wal_bytes(store) == wal_bytes,
+			      "restart returns exact no-predecessor receipt");
 			recovery.admission = d2_store_admission_handle(
 				store, recovery.admission.raw);
 			recovery.body.control.txns[0] = d2_store_txn_handle(
