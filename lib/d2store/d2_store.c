@@ -26,6 +26,7 @@ struct d2_store {
 	uint64_t wal_promised;
 	uint64_t recovery_allowance;
 	bool recovery_spend;
+	bool retired;
 	uint32_t registered_count;
 	struct {
 		struct d1_objkey object;
@@ -2577,6 +2578,8 @@ static bool d2_replay_record(const struct d2_wal_header *h,
 	const typeof(r->store->work[0]) *paired_work;
 	bool paired, replayed;
 
+	if (r->store->retired)
+		return false;
 	if (r->postcond_pending && h->family == D2_REC_START) {
 		r->postcond_pending = false;
 	} else if (r->postcond_pending && h->family != D2_REC_ENTRY) {
@@ -2585,8 +2588,27 @@ static bool d2_replay_record(const struct d2_wal_header *h,
 	if (h->family == D2_REC_START)
 		return d2_replay_start(r, h, record);
 	if (h->family == D2_REC_CONTROL) {
+		struct d1_cursor cursor;
+		uint64_t final_lsn;
+		uint32_t reason;
+
 		if (!d2_control_decode(record, h->total_bytes, h, &control))
 			return false;
+		if (control.subtype == D2_CTL_EXPORT_TOMBSTONE) {
+			d1_dec_init(&cursor, control.body, control.body_len);
+			if (control.transition != D2_COMMITTED ||
+			    control.status != D1_OK ||
+			    memcmp(control.admission_issuer,
+				   (uint8_t[D1_UUID_BYTES]){ 0 }, D1_UUID_BYTES) ||
+			    control.admission_authority_epoch ||
+			    control.admission_client_id ||
+			    !d1_dec_u32(&cursor, &reason) || !reason ||
+			    !d1_dec_u64(&cursor, &final_lsn) ||
+			    !d1_dec_finished(&cursor) || final_lsn != h->lsn)
+				return false;
+			r->store->retired = true;
+			return true;
+		}
 		return d2_replay_registration(r, &control) &&
 		       d2_replay_trust(r, h, &control) &&
 		       d2_replay_authority(r, h, &control) &&
@@ -2812,6 +2834,19 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 	status = d2_files_scan(files, d2_replay_record, &replay, &scan, false);
 	if (status != D1_OK || replay.status != D1_OK)
 		goto fail;
+	if (s->retired) {
+		if (d2_files_super(files)->state != D2_SB_RETIRED) {
+			status = d2_files_super_update(files, D2_SB_RETIRED);
+			if (status != D1_OK)
+				goto fail;
+		}
+		*out = s;
+		return D1_OK;
+	}
+	if (d2_files_super(files)->state == D2_SB_RETIRED) {
+		status = D1_IO;
+		goto fail;
+	}
 	if (!d2_rebuild_promises(s) ||
 	    !d2_rebuild_payload_accounting(s, &payload_outstanding,
 					  &payload_staged)) {
@@ -3784,6 +3819,21 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 		pthread_mutex_unlock(&s->lock);
 		return D1_INVALID;
 	}
+	if (d2_admission_matches(s, env->admission.raw, &env->object) &&
+	    d2_receipt_lookup(s, env, digest, result)) {
+		pthread_mutex_unlock(&s->lock);
+		return D1_OK;
+	}
+	if (s->retired) {
+		memset(result, 0, sizeof(*result));
+		result->key = env->key;
+		result->disposition = D1_UNRECORDED;
+		result->count = 1;
+		result->entries[0].status = D1_BAD_PHASE;
+		result->entries[0].disposition = D1_UNRECORDED;
+		pthread_mutex_unlock(&s->lock);
+		return D1_OK;
+	}
 	if (env->op == D1_OP_ROLLBACK_BATCH && !d2_rollback_supported(s, env)) {
 		memset(result, 0, sizeof(*result));
 		result->key = env->key;
@@ -3800,11 +3850,6 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 			s->fenced = true;
 		pthread_mutex_unlock(&s->lock);
 		return status;
-	}
-	if (d2_admission_matches(s, env->admission.raw, &env->object) &&
-	    d2_receipt_lookup(s, env, digest, result)) {
-		pthread_mutex_unlock(&s->lock);
-		return D1_OK;
 	}
 	status = d1_store_probe(s->model, env, &probe);
 	if (status != D1_OK) {
@@ -3986,6 +4031,10 @@ d1_admission_id d2_store_admit_full(struct d2_store *s,
 		    D1_UUID_BYTES))
 		return id;
 	pthread_mutex_lock(&s->lock);
+	if (s->retired) {
+		pthread_mutex_unlock(&s->lock);
+		return id;
+	}
 	for (i = 0; i < s->registered_count; i++)
 		if (d2_same_object(&s->registered[i].object, object)) {
 			registered = true;
@@ -4208,7 +4257,7 @@ void d2_store_revoke(struct d2_store *s, d1_admission_id admission)
 	if (!s)
 		return;
 	pthread_mutex_lock(&s->lock);
-	if (!s->fenced) {
+	if (!s->fenced && !s->retired) {
 		d1_fixture_revoke(s->model, admission);
 		if (d2_liveness_control(s, admission, D2_CTL_REVOKE_STATEID) !=
 		    D1_OK)
@@ -4222,7 +4271,7 @@ void d2_store_expire(struct d2_store *s, d1_admission_id admission)
 	if (!s)
 		return;
 	pthread_mutex_lock(&s->lock);
-	if (!s->fenced) {
+	if (!s->fenced && !s->retired) {
 		d1_fixture_expire(s->model, admission);
 		if (d2_liveness_control(s, admission, D2_CTL_LEASE_EXPIRE) !=
 		    D1_OK)
@@ -4242,7 +4291,7 @@ d1_custody_id d2_store_custody(struct d2_store *s, d1_version_id version)
 		return id;
 	pthread_mutex_lock(&s->lock);
 	work = d2_work_by_version(s, version.raw);
-	if (!s->fenced && work && d2_wal_has_room(s, 248u))
+	if (!s->fenced && !s->retired && work && d2_wal_has_room(s, 248u))
 		id = d1_fixture_custody(s->model, version);
 	if (d1_custody_live(id) &&
 	    (d2_custody_control(s, id, version, work->admission_id) != D1_OK ||
@@ -4270,6 +4319,8 @@ uint32_t d2_store_certificate(
 	cohort = d2_cohort_find(s, repair.raw);
 	if (s->fenced)
 		status = D1_IO;
+	else if (s->retired)
+		status = D1_BAD_PHASE;
 	else if (!cohort || cohort->phase != D2_COMMITTED ||
 		 !cohort->episode_present || cohort->episode_id != episode.raw)
 		status = D1_STALE_AUTH;
@@ -4288,6 +4339,54 @@ uint32_t d2_store_certificate(
 		if (status != D1_OK && status != D1_NOSPC)
 			s->fenced = true;
 	}
+	pthread_mutex_unlock(&s->lock);
+	return status;
+}
+
+uint32_t d2_store_retire(struct d2_store *s, uint32_t reason)
+{
+	struct d2_wal_header h = { 0 };
+	struct d2_control control = { 0 };
+	struct d1_cursor cursor;
+	uint8_t record[224];
+	size_t written;
+	uint32_t status;
+
+	if (!s || !reason)
+		return D1_INVALID;
+	pthread_mutex_lock(&s->lock);
+	if (s->fenced) {
+		status = D1_IO;
+		goto out;
+	}
+	if (s->retired) {
+		status = D1_BAD_PHASE;
+		goto out;
+	}
+	/* The restriction publishes before this operation claims WAL bytes. */
+	s->retired = true;
+	h.family = D2_REC_CONTROL;
+	memcpy(h.store_uuid, s->uuid.bytes, D1_UUID_BYTES);
+	memcpy(h.wal_uuid, d2_files_super(s->files)->wal_uuid, D1_UUID_BYTES);
+	h.lsn = d2_files_next_lsn(s->files);
+	h.ds_incarnation = d2_files_super(s->files)->ds_incarnation;
+	control.subtype = D2_CTL_EXPORT_TOMBSTONE;
+	control.transition = D2_COMMITTED;
+	control.status = D1_OK;
+	d2_store_key(s, &control.key);
+	control.body_len = 12;
+	d1_enc_init(&cursor, control.body, control.body_len);
+	d1_enc_u32(&cursor, reason);
+	d1_enc_u64(&cursor, h.lsn);
+	if (!d1_cursor_ok(&cursor) ||
+	    !d2_control_encode(&h, &control, record, sizeof(record), &written)) {
+		status = D1_INVALID;
+		goto out;
+	}
+	status = d2_wal_append(s, record, written);
+	if (status != D1_OK && status != D1_NOSPC)
+		s->fenced = true;
+out:
 	pthread_mutex_unlock(&s->lock);
 	return status;
 }

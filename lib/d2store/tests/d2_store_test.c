@@ -172,6 +172,7 @@ int main(void)
 	struct d1_envelope repair_unlock;
 	struct d1_envelope stale_incarnation;
 	struct d1_envelope recovery;
+	struct d1_envelope retired_exact;
 	struct d1_envelope refused;
 	struct d1_envelope refused_clear;
 	struct d1_envelope refused_mark;
@@ -1697,6 +1698,75 @@ int main(void)
 			      result.disposition == D1_UNRECORDED &&
 			      d2_store_visible(store, &object, 0, &visible),
 		      "valid replacement is refused when payload is full");
+	}
+	if (store) {
+		d2_store_close(store);
+		store = NULL;
+	}
+	unlinkat(dirfd, "super", 0);
+	unlinkat(dirfd, "wal", 0);
+	unlinkat(dirfd, "payload", 0);
+	config.files.capacity_payload_bytes = 64u * 1024u * 1024u;
+	memset(&binding, 0, sizeof(binding));
+	check(d2_store_provision(dirfd, &config, &binding, &store) == D1_OK,
+	      "provision retirement fixture");
+	if (store) {
+		uint64_t retired_incarnation;
+
+		memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
+		memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
+		reopen.files.expected_root_ino = binding.root_ino;
+		admission = d2_store_admit(store, &object, 17,
+					   D1_RIGHT_READ | D1_RIGHT_WRITE |
+						   D1_RIGHT_SINGLE_WRITER);
+		memset(&env, 0, sizeof(env));
+		env.object = object;
+		env.admission = admission;
+		env.incarnation = d2_store_incarnation(store);
+		fill(env.key.origin.bytes, 16, 0xba);
+		env.op = D1_OP_WRITE_BATCH;
+		guard = (struct d1_guard){ .never_written = true };
+		write_request(&env, 1, 0, 1, &guard, payload, sizeof(payload));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "retirement fixture records exact receipt");
+		retired_exact = env;
+		retired_incarnation = d2_store_incarnation(store);
+		wal_bytes = d2_store_wal_bytes(store);
+		check(d2_store_retire(store, 1) == D1_OK &&
+			      d2_store_wal_bytes(store) == wal_bytes + 224u,
+		      "export tombstone is the final record");
+		wal_bytes = d2_store_wal_bytes(store);
+		write_request(&env, 2, 1, 2, &guard, payload, sizeof(payload));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_BAD_PHASE &&
+			      result.disposition == D1_UNRECORDED &&
+			      d2_store_wal_bytes(store) == wal_bytes,
+		      "retired store rejects mutation without a receipt");
+		d2_store_crash(store);
+		store = NULL;
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+			      D1_OK &&
+			      d2_store_wal_bytes(store) == wal_bytes &&
+			      d2_store_incarnation(store) == retired_incarnation,
+		      "retired restart appends no START");
+		if (store) {
+			retired_exact.admission = d2_store_admission_handle(
+				store, retired_exact.admission.raw);
+			check(d2_store_apply(store, &retired_exact, &result) ==
+				      D1_OK &&
+				      result.entries[0].status == D1_OK &&
+				      d2_store_wal_bytes(store) == wal_bytes,
+			      "retired store returns exact durable receipt");
+			d2_store_crash(store);
+			store = NULL;
+			check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+				      D1_OK &&
+				      d2_store_wal_bytes(store) == wal_bytes &&
+				      d2_store_incarnation(store) ==
+					      retired_incarnation,
+			      "persisted retired restart writes no WAL");
+		}
 	}
 
 done:
