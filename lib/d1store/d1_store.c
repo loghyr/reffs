@@ -4652,7 +4652,17 @@ static void d1_apply_control(struct d1_store *s, const struct d1_envelope *env,
 		return;
 	}
 
-	status = d1_admission_check(s, env, d1_op_rights(env->op), &a);
+	/*
+	 * A zero-origin LEASE_REAP is the store's restart sweep.  Its
+	 * admission is the expired subject rather than an acting grant;
+	 * d1_do_control() validates that subject and every named txn.
+	 */
+	if (env->op == D1_OP_LEASE_REAP &&
+	    !memcmp(env->key.origin.bytes, (uint8_t[D1_UUID_BYTES]){ 0 },
+		    D1_UUID_BYTES))
+		status = D1_OK;
+	else
+		status = d1_admission_check(s, env, d1_op_rights(env->op), &a);
 	if (status == D1_OK)
 		status = d1_do_control(s, env, a, res, &undo);
 	if (status == D1_NOSPC || status == D1_IO) {

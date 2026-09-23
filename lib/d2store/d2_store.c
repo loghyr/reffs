@@ -34,6 +34,7 @@ struct d2_store {
 		bool object_known;
 		bool model_bound;
 		bool authority_seen;
+		bool expired;
 		uint64_t id;
 		struct d1_objkey object;
 		struct d1_fixture_authority auth;
@@ -51,6 +52,7 @@ struct d2_store {
 		uint64_t version_id;
 		uint64_t admission_id;
 		struct d1_objkey object;
+		uint64_t index;
 		struct d1_owner owner;
 		uint32_t phase;
 		uint64_t payload_bytes;
@@ -304,7 +306,7 @@ static bool d2_receipt_remember(struct d2_store *s,
 
 static bool d2_work_remember(struct d2_store *s, uint64_t txn_id,
 			     uint64_t version_id, uint64_t admission_id,
-			     const struct d1_objkey *object,
+			     const struct d1_objkey *object, uint64_t index,
 			     const struct d1_owner *owner,
 			     uint32_t phase, uint64_t payload_bytes,
 			     bool predecessor_present,
@@ -320,6 +322,7 @@ static bool d2_work_remember(struct d2_store *s, uint64_t txn_id,
 			       s->work[i].admission_id == admission_id &&
 			       s->work[i].phase == phase &&
 			       s->work[i].payload_bytes == payload_bytes &&
+			       s->work[i].index == index &&
 			       !memcmp(&s->work[i].owner, owner, sizeof(*owner)) &&
 			       s->work[i].predecessor_present ==
 				       predecessor_present &&
@@ -332,6 +335,7 @@ static bool d2_work_remember(struct d2_store *s, uint64_t txn_id,
 			s->work[i].version_id = version_id;
 			s->work[i].admission_id = admission_id;
 			s->work[i].object = *object;
+			s->work[i].index = index;
 			s->work[i].owner = *owner;
 			s->work[i].phase = phase;
 			s->work[i].payload_bytes = payload_bytes;
@@ -886,6 +890,7 @@ static bool d2_replay_liveness(struct d2_replay *r,
 		d1_fixture_expire(r->store->model,
 				  d1_fixture_admission_handle(r->store->model,
 							      client_id));
+		d2_admission_slot(r->store, client_id)->expired = true;
 	}
 	return !memcmp(session, auth->session, 16) &&
 	       !memcmp(principal, auth->principal.bytes, 16);
@@ -925,6 +930,87 @@ static bool d2_replay_custody(struct d2_replay *r,
 	return custody.raw == custody_id &&
 	       d2_custody_remember(r->store, custody_id, version_id,
 				   work->admission_id);
+}
+
+static bool d2_replay_reap(struct d2_replay *r,
+			   const struct d2_wal_header *h,
+			   const struct d2_control *control)
+{
+	struct d1_envelope env = { 0 };
+	struct d1_result result;
+	struct d1_cursor cursor;
+	const typeof(r->store->admissions[0]) *admission;
+	const typeof(r->store->work[0]) *work, *items[D2_MAX_COUNTED_ENTRIES];
+	uint8_t file_key[32];
+	uint64_t txn_id, index;
+	uint32_t base, count, i, n;
+
+	if (control->subtype != D2_CTL_LEASE_REAP)
+		return true;
+	admission = d2_admission_slot(r->store,
+				       control->admission_client_id);
+	if (!admission || !admission->used || !admission->expired ||
+	    control->transition != D2_COMMITTED || control->status != D1_OK ||
+	    memcmp(control->admission_issuer, admission->auth.issuer.bytes,
+		   D1_UUID_BYTES) ||
+	    control->admission_authority_epoch !=
+		    admission->auth.authority_epoch)
+		return false;
+	d1_dec_init(&cursor, control->body, control->body_len);
+	if (!d1_dec_u32(&cursor, &count) || !count ||
+	    count > D2_MAX_COUNTED_ENTRIES)
+		return false;
+	for (i = 0; i < count; i++) {
+		if (!d1_dec_u64(&cursor, &txn_id) ||
+		    !d1_dec_raw(&cursor, file_key, sizeof(file_key)) ||
+		    !d1_dec_u64(&cursor, &index))
+			return false;
+		work = d2_work_by_txn(r->store, txn_id);
+		if (!work || work->admission_id != admission->id ||
+		    work->index != index ||
+		    (work->phase != D2_PREPARED &&
+		     work->phase != D2_FINALIZED))
+			return false;
+		items[i] = work;
+		if (!i) {
+			env.object = work->object;
+		} else if (!d2_same_object(&env.object, &work->object)) {
+			return false;
+		}
+		if (!d2_replay_object(r, file_key) ||
+		    !d2_same_object(d2_replay_object(r, file_key),
+				    &work->object))
+			return false;
+	}
+	if (!d1_dec_finished(&cursor))
+		return false;
+	env.admission = d1_fixture_admission_handle(r->store->model,
+						    admission->id);
+	env.incarnation = h->ds_incarnation;
+	env.op = D1_OP_LEASE_REAP;
+	env.body.control.old_admission = env.admission;
+	for (base = 0; base < count; base += D1_BATCH_ENTRIES_MAX) {
+		n = count - base;
+		if (n > D1_BATCH_ENTRIES_MAX)
+			n = D1_BATCH_ENTRIES_MAX;
+		env.key.sequence = (h->ds_incarnation << 32) |
+				   control->key.sequence;
+		env.key.ordinal = base / D1_BATCH_ENTRIES_MAX;
+		env.body.control.count = n;
+		for (i = 0; i < n; i++)
+			env.body.control.txns[i] = d1_fixture_txn_handle(
+				r->store->model, items[base + i]->txn_id);
+		r->status = d1_store_apply(r->store->model, &env, &result);
+		if (r->status != D1_OK || result.count != 1 ||
+		    result.entries[0].status != D1_OK ||
+		    result.entries[0].phase != D2_ROLLED_BACK)
+			return false;
+	}
+	for (i = 0; i < count; i++)
+		if (!d2_work_set_phase(r->store, items[i]->txn_id,
+				       D2_ROLLED_BACK))
+			return false;
+	return d2_rebuild_promises(r->store);
 }
 
 static bool d2_replay_postcond(struct d2_replay *r,
@@ -1114,7 +1200,7 @@ static bool d2_replay_receipt(struct d2_replay *r,
 	return (!e->payload_object_id ||
 		d2_work_remember(r->store, e->txn_id,
 				 e->result_visible_object_id,
-				 e->admission.client_id, object,
+				 e->admission.client_id, object, e->chunk_index,
 				 &result.entries[0].owner,
 				 e->transition,
 				 d2_payload_object_bytes(
@@ -1339,6 +1425,147 @@ out:
 }
 
 static uint32_t d2_model_next_incarnation(struct d2_store *s);
+static void d2_store_key(struct d2_store *s, struct d2_key_block *key);
+
+static uint64_t d2_restart_reap_bytes(const struct d2_store *s)
+{
+	uint64_t total = 0;
+	uint32_t a, i, count;
+
+	for (a = 0; a < D1_MAX_ADMISSIONS; a++) {
+		if (!s->admissions[a].used || !s->admissions[a].expired)
+			continue;
+		count = 0;
+		for (i = 0; i < D1_MAX_TXNS; i++)
+			if (s->work[i].used &&
+			    s->work[i].admission_id == s->admissions[a].id &&
+			    (s->work[i].phase == D2_PREPARED ||
+			     s->work[i].phase == D2_FINALIZED))
+				count++;
+		if (count > D2_MAX_COUNTED_ENTRIES)
+			return UINT64_MAX;
+		if (count) {
+			uint64_t add = 216u + 48u * count;
+
+			if (add > UINT64_MAX - total)
+				return UINT64_MAX;
+			total += add;
+		}
+	}
+	return total;
+}
+
+static uint32_t d2_restart_reap(struct d2_store *s)
+{
+	struct d1_envelope env;
+	struct d1_result result;
+	struct d2_wal_header h;
+	struct d2_control control;
+	struct d1_cursor cursor;
+	typeof(s->work[0]) *items[D2_MAX_COUNTED_ENTRIES], *swap;
+	const typeof(s->admissions[0]) *admission;
+	uint8_t handle[32], file_key[32], record[D2_MAX_RECORD_BYTES];
+	uint64_t released, promised;
+	size_t written;
+	uint32_t a, base, count, i, j, n, status;
+
+	for (a = 0; a < D1_MAX_ADMISSIONS; a++) {
+		admission = &s->admissions[a];
+		if (!admission->used || !admission->expired)
+			continue;
+		count = 0;
+		for (i = 0; i < D1_MAX_TXNS; i++) {
+			if (!s->work[i].used ||
+			    s->work[i].admission_id != admission->id ||
+			    (s->work[i].phase != D2_PREPARED &&
+			     s->work[i].phase != D2_FINALIZED))
+				continue;
+			if (count == D2_MAX_COUNTED_ENTRIES)
+				return D1_NOSPC;
+			items[count++] = &s->work[i];
+		}
+		if (!count)
+			continue;
+		for (i = 1; i < count; i++)
+			for (j = i; j && items[j - 1]->txn_id > items[j]->txn_id;
+			     j--) {
+				swap = items[j - 1];
+				items[j - 1] = items[j];
+				items[j] = swap;
+			}
+		memset(&env, 0, sizeof(env));
+		memset(&control, 0, sizeof(control));
+		memset(&h, 0, sizeof(h));
+		env.object = items[0]->object;
+		env.admission = d1_fixture_admission_handle(s->model,
+							 admission->id);
+		env.incarnation = d1_store_incarnation(s->model);
+		env.op = D1_OP_LEASE_REAP;
+		env.body.control.old_admission = env.admission;
+		h.family = D2_REC_CONTROL;
+		memcpy(h.store_uuid, s->uuid.bytes, D1_UUID_BYTES);
+		memcpy(h.wal_uuid, d2_files_super(s->files)->wal_uuid,
+		       D1_UUID_BYTES);
+		h.lsn = d2_files_next_lsn(s->files);
+		h.ds_incarnation = d2_files_super(s->files)->ds_incarnation;
+		control.subtype = D2_CTL_LEASE_REAP;
+		control.transition = D2_COMMITTED;
+		control.status = D1_OK;
+		d2_store_key(s, &control.key);
+		memcpy(control.admission_issuer, admission->auth.issuer.bytes,
+		       D1_UUID_BYTES);
+		control.admission_authority_epoch =
+			admission->auth.authority_epoch;
+		control.admission_client_id = admission->id;
+		control.body_len = 4u + 48u * count;
+		d1_enc_init(&cursor, control.body, control.body_len);
+		d1_enc_u32(&cursor, count);
+		released = 0;
+		for (i = 0; i < count; i++) {
+			if (!d2_same_object(&env.object, &items[i]->object))
+				return D1_INVALID;
+			memcpy(handle, items[i]->object.export_uuid.bytes,
+			       D1_UUID_BYTES);
+			memcpy(handle + D1_UUID_BYTES,
+			       items[i]->object.object_uuid.bytes, D1_UUID_BYTES);
+			d2_file_key(handle, sizeof(handle), file_key);
+			d1_enc_u64(&cursor, items[i]->txn_id);
+			d1_enc_raw(&cursor, file_key, sizeof(file_key));
+			d1_enc_u64(&cursor, items[i]->index);
+			released += d2_work_promise(items[i]->phase);
+		}
+		if (!d1_cursor_ok(&cursor) || released > s->wal_promised ||
+		    !d2_control_encode(&h, &control, record, sizeof(record),
+				       &written))
+			return D1_IO;
+		for (base = 0; base < count; base += D1_BATCH_ENTRIES_MAX) {
+			n = count - base;
+			if (n > D1_BATCH_ENTRIES_MAX)
+				n = D1_BATCH_ENTRIES_MAX;
+			env.key.sequence = (h.ds_incarnation << 32) |
+					   control.key.sequence;
+			env.key.ordinal = base / D1_BATCH_ENTRIES_MAX;
+			env.body.control.count = n;
+			for (i = 0; i < n; i++)
+				env.body.control.txns[i] =
+					d1_fixture_txn_handle(
+						s->model,
+						items[base + i]->txn_id);
+			status = d1_store_apply(s->model, &env, &result);
+			if (status != D1_OK || result.count != 1 ||
+			    result.entries[0].status != D1_OK)
+				return status == D1_OK ? D1_IO : status;
+		}
+		promised = s->wal_promised - released;
+		status = d2_wal_append_floor(s, record, written, promised);
+		if (status != D1_OK)
+			return status;
+		s->wal_promised = promised;
+		for (i = 0; i < count; i++)
+			items[i]->phase = D2_ROLLED_BACK;
+	}
+	return D1_OK;
+}
 
 static bool d2_replay_start(struct d2_replay *r, const struct d2_wal_header *h,
 			    const uint8_t *record)
@@ -2121,6 +2348,7 @@ static bool d2_replay_record(const struct d2_wal_header *h,
 		       d2_replay_certificate(r, &control) &&
 		       d2_replay_episode_clear(r, h, &control) &&
 		       d2_replay_liveness(r, &control) &&
+		       d2_replay_reap(r, h, &control) &&
 		       d2_replay_custody(r, &control) &&
 		       d2_replay_postcond(r, &control);
 	}
@@ -2312,7 +2540,7 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 	struct d2_replay replay = { .status = D1_OK };
 	struct d2_files *files = NULL;
 	struct d2_store *s;
-	uint64_t payload_outstanding, payload_staged;
+	uint64_t payload_outstanding, payload_staged, reap_bytes, required;
 	uint32_t decision, status;
 
 	if (!config || !binding || !out ||
@@ -2345,6 +2573,20 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 	}
 	s->next_payload_seq =
 		(replay.highest_payload_id & ((UINT64_C(1) << 40) - 1)) + 1;
+	reap_bytes = d2_restart_reap_bytes(s);
+	if (s->wal_promised > UINT64_MAX - D2_START_RECORD_BYTES ||
+	    reap_bytes > UINT64_MAX - D2_START_RECORD_BYTES - s->wal_promised) {
+		status = D1_NOSPC;
+		goto fail;
+	}
+	required = D2_START_RECORD_BYTES + reap_bytes + s->wal_promised;
+	if (d2_files_wal_cursor(files) >
+		    d2_files_super(files)->capacity_wal_bytes ||
+	    required > d2_files_super(files)->capacity_wal_bytes -
+			       d2_files_wal_cursor(files)) {
+		status = D1_NOSPC;
+		goto fail;
+	}
 	status = d2_model_next_incarnation(s);
 	if (status != D1_OK)
 		goto fail;
@@ -2359,6 +2601,9 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 				first ? first->truncated_bytes : 0,
 				d2_files_payload_cursor(files), s->wal_promised,
 				payload_outstanding, payload_staged);
+	if (status != D1_OK)
+		goto fail;
+	status = d2_restart_reap(s);
 	if (status != D1_OK)
 		goto fail;
 	*out = s;
@@ -3170,6 +3415,7 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 		   !d2_work_remember(s, result->entries[0].txn.raw,
 				     result->entries[0].version.raw,
 				     env->admission.raw, &env->object,
+				     env->body.write.entries[0].index,
 				     &result->entries[0].owner,
 				     result->entries[0].phase,
 				     d2_payload_object_bytes(
@@ -3513,6 +3759,8 @@ void d2_store_expire(struct d2_store *s, d1_admission_id admission)
 		if (d2_liveness_control(s, admission, D2_CTL_LEASE_EXPIRE) !=
 		    D1_OK)
 			s->fenced = true;
+		else
+			d2_admission_slot(s, admission.raw)->expired = true;
 	}
 	pthread_mutex_unlock(&s->lock);
 }

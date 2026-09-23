@@ -461,6 +461,48 @@ int main(void)
 		admission = d2_store_admit(store, &object, 17,
 					   D1_RIGHT_READ | D1_RIGHT_WRITE |
 						   D1_RIGHT_SINGLE_WRITER);
+		memset(&env, 0, sizeof(env));
+		env.object = object;
+		env.admission = admission;
+		env.incarnation = d2_store_incarnation(store);
+		fill(env.key.origin.bytes, 16, 0xb4);
+		env.op = D1_OP_WRITE_BATCH;
+		guard = (struct d1_guard){ .never_written = true };
+		write_request(&env, 1, 13, 41, &guard, payload,
+			      sizeof(payload));
+		env.body.write.activate = false;
+		promise_base = d2_store_wal_promised(store);
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].phase == D2_PREPARED &&
+			      d2_store_wal_promised(store) ==
+				      promise_base + 2u * D2_ENTRY_RECORD_BYTES,
+		      "lease reap fixture leaves prepared work");
+		d2_store_expire(store, admission);
+		wal_bytes = d2_store_wal_bytes(store);
+		d2_store_crash(store);
+		store = NULL;
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+			      D1_OK &&
+			      d2_store_wal_bytes(store) ==
+				      wal_bytes + D2_START_RECORD_BYTES + 264u &&
+			      d2_store_wal_promised(store) == promise_base &&
+			      !d2_store_visible(store, &object, 13, &visible),
+		      "restart reaps only explicitly expired prepared work");
+		if (store) {
+			wal_bytes = d2_store_wal_bytes(store);
+			d2_store_crash(store);
+			store = NULL;
+			check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+				      D1_OK &&
+				      d2_store_wal_bytes(store) ==
+					      wal_bytes + D2_START_RECORD_BYTES,
+			      "reap record rescans without repeating sweep");
+		}
+	}
+	if (store) {
+		admission = d2_store_admit(store, &object, 17,
+					   D1_RIGHT_READ | D1_RIGHT_WRITE |
+						   D1_RIGHT_SINGLE_WRITER);
 		env.admission = admission;
 		env.incarnation = d2_store_incarnation(store);
 		env.op = D1_OP_WRITE_BATCH;
