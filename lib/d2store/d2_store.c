@@ -1568,7 +1568,8 @@ static bool d2_replay_cohort(struct d2_replay *r, const struct d2_wal_header *h,
 	uint8_t *allocations[D1_BATCH_ENTRIES_MAX] = { 0 };
 	uint8_t digest[D1_DIGEST_BYTES];
 	struct d1_objkey *first_object;
-	uint32_t i, op;
+	uint64_t prior_eof;
+	uint32_t expected_extent, i, op;
 	bool ok = false;
 
 	if (disk->status != D1_OK || disk->transition == D2_REFUSED ||
@@ -1597,6 +1598,7 @@ static bool d2_replay_cohort(struct d2_replay *r, const struct d2_wal_header *h,
 	if (!first_object)
 		return false;
 	env.object = *first_object;
+	prior_eof = d1_store_eof(r->store->model, &env.object);
 	env.admission = d1_fixture_admission_handle(r->store->model,
 						    disk->admission.client_id);
 	env.incarnation = h->ds_incarnation;
@@ -1713,6 +1715,25 @@ static bool d2_replay_cohort(struct d2_replay *r, const struct d2_wal_header *h,
 	    result.entries[0].status != D1_OK ||
 	    memcmp(result.entries[0].verifier, disk->result_verifier,
 		   D1_VERIFIER_BYTES))
+		goto out;
+	expected_extent = result.eof > prior_eof ? D2_EXTENT_EXTEND :
+			  result.eof < prior_eof ? D2_EXTENT_SHRINK :
+						 D2_EXTENT_UNCHANGED;
+	for (i = 0; i < disk->member_count; i++)
+		if (disk->members[i].extent_kind != expected_extent ||
+		    disk->members[i].extent_high_water != result.eof ||
+		    disk->members[i].extent_highest_index !=
+			    (result.eof ? (result.eof - 1) /
+						 r->store->chunk_bytes :
+					  0))
+			goto out;
+	if (op == D1_OP_BEGIN_REPAIR &&
+	    (!result.entries[0].cohort_present ||
+	     result.entries[0].cohort.raw != disk->cohort_id ||
+	     result.entries[0].member_txn_count != disk->member_count))
+		goto out;
+	if (op != D1_OP_BEGIN_REPAIR && op != D1_OP_UNLOCK &&
+	    result.entries[0].phase != disk->transition)
 		goto out;
 	if (op == D1_OP_BEGIN_REPAIR) {
 		if (result.entries[0].cohort.raw != disk->cohort_id ||
@@ -2397,7 +2418,8 @@ static bool d2_repair_operation(uint32_t op)
 
 static uint32_t d2_persist_cohort(struct d2_store *s,
 				  const struct d1_envelope *env,
-				  const struct d1_result *result)
+				  const struct d1_result *result,
+				  uint64_t prior_eof)
 {
 	typeof(s->cohorts[0]) *saved = NULL;
 	struct d2_payload_object payload = { 0 };
@@ -2405,7 +2427,7 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 	struct d2_cohort disk = { 0 };
 	const struct d1_repair_batch *repair = &env->body.repair;
 	uint8_t record[D2_MAX_RECORD_BYTES], handle[32];
-	uint64_t payload_ids[D1_BATCH_ENTRIES_MAX] = { 0 };
+	uint64_t eof, payload_ids[D1_BATCH_ENTRIES_MAX] = { 0 };
 	uint64_t payload_offsets[D1_BATCH_ENTRIES_MAX] = { 0 };
 	uint32_t i, payload_count = 0, status;
 	size_t written;
@@ -2473,6 +2495,7 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 	memcpy(disk.result_verifier, result->entries[0].verifier,
 	       D1_VERIFIER_BYTES);
 	disk.member_count = repair->count;
+	eof = d1_store_eof(s->model, &env->object);
 	for (i = 0; i < disk.member_count; i++) {
 		const struct d1_repair_entry *request = &repair->entries[i];
 		struct d2_cohort_member *member = &disk.members[i];
@@ -2514,14 +2537,18 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 				request->predecessor.raw;
 		member->predecessor_generation =
 			prior ? prior->predecessor_generation : 0;
-		member->payload_object_id = payload_ids[i] ? payload_ids[i] :
+		member->payload_object_id = env->op == D1_OP_ABORT_REPAIR ? 0 :
+					    payload_ids[i] ? payload_ids[i] :
 					    prior	   ? prior->payload_id :
 							     0;
-		member->payload_object_offset = payload_offsets[i] ?
+		member->payload_object_offset = env->op == D1_OP_ABORT_REPAIR ?
+							0 :
+					      payload_offsets[i] ?
 							payload_offsets[i] :
 						prior ? prior->payload_offset :
 							0;
-		member->payload_content_len = request->payload_present ?
+		member->payload_content_len = env->op == D1_OP_ABORT_REPAIR ? 0 :
+					      request->payload_present ?
 						      request->payload_len :
 					      prior ? prior->payload_len :
 						      0;
@@ -2531,12 +2558,14 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 				  env->op != D1_OP_ABORT_REPAIR &&
 				  env->op != D1_OP_UNLOCK);
 		member->member_status = D1_OK;
-		member->extent_high_water = d1_store_eof(s->model, object);
+		member->extent_high_water = eof;
 		member->extent_highest_index =
 			member->extent_high_water ? (member->extent_high_water -
 						     1) / s->chunk_bytes :
 						    0;
-		member->extent_kind = D2_EXTENT_UNCHANGED;
+		member->extent_kind = eof > prior_eof ? D2_EXTENT_EXTEND :
+				      eof < prior_eof ? D2_EXTENT_SHRINK :
+							D2_EXTENT_UNCHANGED;
 		if (d1_store_visible(s->model, object, member->chunk_index,
 				     &visible))
 			member->result_visible_object_id = visible.raw;
@@ -2587,6 +2616,16 @@ static uint32_t d2_persist_cohort(struct d2_store *s,
 	}
 	if (saved && env->op != D1_OP_UNLOCK)
 		saved->phase = disk.transition;
+	if (saved && env->op == D1_OP_ABORT_REPAIR)
+		for (i = 0; i < saved->count; i++) {
+			saved->members[i].payload_id = 0;
+			saved->members[i].payload_offset = 0;
+			saved->members[i].payload_len = 0;
+			saved->members[i].payload_ck_alg = 0;
+			saved->members[i].payload_ck_len = 0;
+			memset(saved->members[i].payload_ck, 0,
+			       sizeof(saved->members[i].payload_ck));
+		}
 	return D1_OK;
 }
 
@@ -2684,7 +2723,7 @@ uint32_t d2_store_apply(struct d2_store *s, const struct d1_envelope *env,
 	else if (env->op == D1_OP_CLEAR_ERROR)
 		persist = d2_persist_episode_clear(s, env, result);
 	else if (d2_repair_operation(env->op))
-		persist = d2_persist_cohort(s, env, result);
+		persist = d2_persist_cohort(s, env, result, prior_eof);
 	else
 		persist = d2_persist_entry(s, env, result, prior_eof);
 	if (persist != D1_OK) {

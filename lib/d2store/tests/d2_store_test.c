@@ -178,12 +178,12 @@ int main(void)
 	d1_admission_id admission;
 	d1_admission_id control_admission, fresh_admission, next_control,
 		next_fresh;
-	d1_custody_id custody;
+	d1_custody_id custody, custody2;
 	d1_episode_id episode;
 	d1_postcond_id postcond;
 	d1_repair_id repair;
-	d1_txn_id repair_txn, staged_txn;
-	d1_version_id broken, predecessor, successor, visible;
+	d1_txn_id repair_txn, repair_txn2, staged_txn;
+	d1_version_id broken, broken2, predecessor, successor, visible;
 	struct d2_wal_header wal_header;
 	struct d2_control control;
 	struct d1_selection_spec selection = { .selection =
@@ -923,12 +923,22 @@ int main(void)
 		custody = d2_store_custody(store, broken);
 		check(d1_custody_live(custody),
 		      "error episode fixture persists custody");
+		guard = (struct d1_guard){ .never_written = true };
+		write_request(&env, 19, 24, 34, &guard, replacement,
+			      sizeof(replacement));
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "second error fixture publishes a version");
+		broken2 = result.entries[0].version;
+		custody2 = d2_store_custody(store, broken2);
+		check(d1_custody_live(custody2),
+		      "second error fixture persists custody");
 		memset(&env.body, 0, sizeof(env.body));
-		env.key.sequence = 19;
+		env.key.sequence = 20;
 		env.op = D1_OP_MARK_ERROR;
 		env.body.repair.range_begin = 23;
-		env.body.repair.range_end = 24;
-		env.body.repair.count = 1;
+		env.body.repair.range_end = 25;
+		env.body.repair.count = 2;
 		env.body.repair.entries[0].index = 23;
 		env.body.repair.entries[0].owner.cohort.raw = 3;
 		env.body.repair.entries[0].owner.writer = 17;
@@ -937,6 +947,14 @@ int main(void)
 		env.body.repair.entries[0].custody = custody;
 		env.body.repair.entries[0].successor_present = true;
 		env.body.repair.entries[0].successor = broken;
+		env.body.repair.entries[1].index = 24;
+		env.body.repair.entries[1].owner.cohort.raw = 3;
+		env.body.repair.entries[1].owner.writer = 17;
+		env.body.repair.entries[1].owner.co_id = 35;
+		env.body.repair.entries[1].custody_present = true;
+		env.body.repair.entries[1].custody = custody2;
+		env.body.repair.entries[1].successor_present = true;
+		env.body.repair.entries[1].successor = broken2;
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].status == D1_OK &&
 			      result.entries[0].episode_present,
@@ -959,6 +977,14 @@ int main(void)
 				d2_store_version_handle(
 					store,
 					marked.body.repair.entries[0].successor.raw);
+			marked.body.repair.entries[1].custody =
+				d2_store_custody_handle(
+					store,
+					marked.body.repair.entries[1].custody.raw);
+			marked.body.repair.entries[1].successor =
+				d2_store_version_handle(
+					store,
+					marked.body.repair.entries[1].successor.raw);
 			wal_bytes = d2_store_wal_bytes(store);
 			check(d2_store_apply(store, &marked, &result) == D1_OK &&
 				      result.entries[0].status == D1_OK &&
@@ -973,16 +999,18 @@ int main(void)
 			episode = d2_store_episode_handle(store, episode.raw);
 			custody = marked.body.repair.entries[0].custody;
 			broken = marked.body.repair.entries[0].successor;
+			custody2 = marked.body.repair.entries[1].custody;
+			broken2 = marked.body.repair.entries[1].successor;
 			memset(&env, 0, sizeof(env));
 			env.object = object;
 			env.admission = admission;
 			env.incarnation = d2_store_incarnation(store);
 			fill(env.key.origin.bytes, 16, 0xe0);
-			env.key.sequence = 20;
+			env.key.sequence = 21;
 			env.op = D1_OP_BEGIN_REPAIR;
 			env.body.repair.range_begin = 23;
-			env.body.repair.range_end = 24;
-			env.body.repair.count = 1;
+			env.body.repair.range_end = 25;
+			env.body.repair.count = 2;
 			env.body.repair.episode_present = true;
 			env.body.repair.episode = episode;
 			env.body.repair.entries[0].index = 23;
@@ -994,25 +1022,95 @@ int main(void)
 			env.body.repair.entries[0].custody = custody;
 			env.body.repair.entries[0].successor_present = true;
 			env.body.repair.entries[0].successor = broken;
+			env.body.repair.entries[1].index = 24;
+			env.body.repair.entries[1].owner.cohort.raw = 4;
+			env.body.repair.entries[1].owner.writer = 17;
+			env.body.repair.entries[1].owner.co_id = 36;
+			env.body.repair.entries[1].mode = D1_REPAIR_ERROR;
+			env.body.repair.entries[1].custody_present = true;
+			env.body.repair.entries[1].custody = custody2;
+			env.body.repair.entries[1].successor_present = true;
+			env.body.repair.entries[1].successor = broken2;
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
 				      result.entries[0].status == D1_OK &&
 				      result.entries[0].phase == D2_ADMITTED,
 			      "error repair admission persists");
 			repair = result.entries[0].cohort;
 			repair_txn = result.entries[0].member_txn[0];
-
+			repair_txn2 = result.entries[0].member_txn[1];
 			memset(&env.body, 0, sizeof(env.body));
-			env.key.sequence = 21;
-			env.op = D1_OP_PREPARE_REPAIR;
+			env.key.sequence = 22;
+			env.op = D1_OP_ABORT_REPAIR;
 			env.body.repair.range_begin = 23;
-			env.body.repair.range_end = 24;
-			env.body.repair.count = 1;
+			env.body.repair.range_end = 25;
+			env.body.repair.count = 2;
 			env.body.repair.cohort_present = true;
 			env.body.repair.cohort = repair;
+			env.body.repair.phase_present = true;
+			env.body.repair.phase = D2_ADMITTED;
 			env.body.repair.entries[0].index = 23;
 			env.body.repair.entries[0].owner.cohort.raw = 4;
 			env.body.repair.entries[0].owner.writer = 17;
 			env.body.repair.entries[0].owner.co_id = 35;
+			env.body.repair.entries[0].custody_present = true;
+			env.body.repair.entries[0].custody = custody;
+			env.body.repair.entries[1].index = 24;
+			env.body.repair.entries[1].owner.cohort.raw = 4;
+			env.body.repair.entries[1].owner.writer = 17;
+			env.body.repair.entries[1].owner.co_id = 36;
+			env.body.repair.entries[1].custody_present = true;
+			env.body.repair.entries[1].custody = custody2;
+			check(d2_store_apply(store, &env, &result) == D1_OK &&
+				      result.entries[0].status == D1_OK &&
+				      result.entries[0].phase == D2_ABORTED,
+			      "two-member repair abort persists atomically");
+
+			memset(&env.body, 0, sizeof(env.body));
+			env.key.sequence = 23;
+			env.op = D1_OP_BEGIN_REPAIR;
+			env.body.repair.range_begin = 23;
+			env.body.repair.range_end = 25;
+			env.body.repair.count = 2;
+			env.body.repair.episode_present = true;
+			env.body.repair.episode = episode;
+			env.body.repair.entries[0].index = 23;
+			env.body.repair.entries[0].owner.cohort.raw = 5;
+			env.body.repair.entries[0].owner.writer = 17;
+			env.body.repair.entries[0].owner.co_id = 37;
+			env.body.repair.entries[0].mode = D1_REPAIR_ERROR;
+			env.body.repair.entries[0].custody_present = true;
+			env.body.repair.entries[0].custody = custody;
+			env.body.repair.entries[0].successor_present = true;
+			env.body.repair.entries[0].successor = broken;
+			env.body.repair.entries[1].index = 24;
+			env.body.repair.entries[1].owner.cohort.raw = 5;
+			env.body.repair.entries[1].owner.writer = 17;
+			env.body.repair.entries[1].owner.co_id = 38;
+			env.body.repair.entries[1].mode = D1_REPAIR_ERROR;
+			env.body.repair.entries[1].custody_present = true;
+			env.body.repair.entries[1].custody = custody2;
+			env.body.repair.entries[1].successor_present = true;
+			env.body.repair.entries[1].successor = broken2;
+			check(d2_store_apply(store, &env, &result) == D1_OK &&
+				      result.entries[0].status == D1_OK &&
+				      result.entries[0].phase == D2_ADMITTED,
+			      "two-member repair reopens after abort");
+			repair = result.entries[0].cohort;
+			repair_txn = result.entries[0].member_txn[0];
+			repair_txn2 = result.entries[0].member_txn[1];
+
+			memset(&env.body, 0, sizeof(env.body));
+			env.key.sequence = 24;
+			env.op = D1_OP_PREPARE_REPAIR;
+			env.body.repair.range_begin = 23;
+			env.body.repair.range_end = 25;
+			env.body.repair.count = 2;
+			env.body.repair.cohort_present = true;
+			env.body.repair.cohort = repair;
+			env.body.repair.entries[0].index = 23;
+			env.body.repair.entries[0].owner.cohort.raw = 5;
+			env.body.repair.entries[0].owner.writer = 17;
+			env.body.repair.entries[0].owner.co_id = 37;
 			env.body.repair.entries[0].txn_present = true;
 			env.body.repair.entries[0].txn = repair_txn;
 			env.body.repair.entries[0].payload_present = true;
@@ -1022,37 +1120,59 @@ int main(void)
 			d1_checksum_compute(
 				D1_CKSUM_CRC32C, replacement, sizeof(replacement),
 				&env.body.repair.entries[0].checksum);
+			env.body.repair.entries[1].index = 24;
+			env.body.repair.entries[1].owner.cohort.raw = 5;
+			env.body.repair.entries[1].owner.writer = 17;
+			env.body.repair.entries[1].owner.co_id = 38;
+			env.body.repair.entries[1].txn_present = true;
+			env.body.repair.entries[1].txn = repair_txn2;
+			env.body.repair.entries[1].payload_present = true;
+			env.body.repair.entries[1].payload = payload;
+			env.body.repair.entries[1].payload_len = sizeof(payload);
+			d1_checksum_compute(D1_CKSUM_CRC32C, payload,
+					    sizeof(payload),
+					    &env.body.repair.entries[1].checksum);
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
 				      result.entries[0].status == D1_OK &&
 				      result.entries[0].phase == D2_PREPARED,
 			      "error repair payload persists");
 
 			memset(&env.body, 0, sizeof(env.body));
-			env.key.sequence = 22;
+			env.key.sequence = 25;
 			env.op = D1_OP_FINALIZE_REPAIR;
 			env.body.repair.range_begin = 23;
-			env.body.repair.range_end = 24;
-			env.body.repair.count = 1;
+			env.body.repair.range_end = 25;
+			env.body.repair.count = 2;
 			env.body.repair.cohort_present = true;
 			env.body.repair.cohort = repair;
 			env.body.repair.verifier_present = true;
 			d2_store_verifier(store,
 					  env.body.repair.prior_verifier);
 			env.body.repair.entries[0].index = 23;
-			env.body.repair.entries[0].owner.cohort.raw = 4;
+			env.body.repair.entries[0].owner.cohort.raw = 5;
 			env.body.repair.entries[0].owner.writer = 17;
-			env.body.repair.entries[0].owner.co_id = 35;
+			env.body.repair.entries[0].owner.co_id = 37;
 			env.body.repair.entries[0].custody_present = true;
 			env.body.repair.entries[0].custody = custody;
 			env.body.repair.entries[0].txn_present = true;
 			env.body.repair.entries[0].txn = repair_txn;
 			env.body.repair.entries[0].predecessor_present = true;
 			env.body.repair.entries[0].predecessor = broken;
+			env.body.repair.entries[1].index = 24;
+			env.body.repair.entries[1].owner.cohort.raw = 5;
+			env.body.repair.entries[1].owner.writer = 17;
+			env.body.repair.entries[1].owner.co_id = 38;
+			env.body.repair.entries[1].custody_present = true;
+			env.body.repair.entries[1].custody = custody2;
+			env.body.repair.entries[1].txn_present = true;
+			env.body.repair.entries[1].txn = repair_txn2;
+			env.body.repair.entries[1].predecessor_present = true;
+			env.body.repair.entries[1].predecessor = broken2;
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
 				      result.entries[0].status == D1_OK &&
 				      result.entries[0].phase == D2_FINALIZED,
 			      "error repair finalize persists");
-			env.key.sequence = 23;
+			env.key.sequence = 26;
 			env.op = D1_OP_COMMIT_REPAIR;
 			d2_store_verifier(store,
 					  env.body.repair.prior_verifier);
@@ -1060,7 +1180,9 @@ int main(void)
 				      result.entries[0].status == D1_OK &&
 				      result.entries[0].phase == D2_COMMITTED &&
 				      d2_store_visible(store, &object, 23, &visible) &&
-				      visible.raw != broken.raw,
+				      visible.raw != broken.raw &&
+				      d2_store_visible(store, &object, 24, &visible) &&
+				      visible.raw != broken2.raw,
 			      "error repair commit persists replacement");
 			fill(certificate, sizeof(certificate), 0xc0);
 			check(d2_store_certificate(store, episode, repair,
@@ -1072,11 +1194,11 @@ int main(void)
 				      d2_store_wal_bytes(store) == wal_bytes,
 			      "duplicate completion certificate is refused");
 			memset(&env.body, 0, sizeof(env.body));
-			env.key.sequence = 24;
+			env.key.sequence = 27;
 			env.op = D1_OP_CLEAR_ERROR;
 			env.body.repair.range_begin = 23;
-			env.body.repair.range_end = 24;
-			env.body.repair.count = 1;
+			env.body.repair.range_end = 25;
+			env.body.repair.count = 2;
 			env.body.repair.cohort_present = true;
 			env.body.repair.cohort = repair;
 			env.body.repair.episode_present = true;
@@ -1085,36 +1207,48 @@ int main(void)
 			memcpy(env.body.repair.certificate, certificate,
 			       sizeof(certificate));
 			env.body.repair.entries[0].index = 23;
-			env.body.repair.entries[0].owner.cohort.raw = 4;
+			env.body.repair.entries[0].owner.cohort.raw = 5;
 			env.body.repair.entries[0].owner.writer = 17;
-			env.body.repair.entries[0].owner.co_id = 35;
+			env.body.repair.entries[0].owner.co_id = 37;
 			env.body.repair.entries[0].custody_present = true;
 			env.body.repair.entries[0].custody = custody;
+			env.body.repair.entries[1].index = 24;
+			env.body.repair.entries[1].owner.cohort.raw = 5;
+			env.body.repair.entries[1].owner.writer = 17;
+			env.body.repair.entries[1].owner.co_id = 38;
+			env.body.repair.entries[1].custody_present = true;
+			env.body.repair.entries[1].custody = custody2;
 			env.body.repair.certificate[0] ^= 0xff;
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
 				      result.entries[0].status == D1_STALE_AUTH,
 			      "mismatched completion certificate is refused");
 			refused_clear = env;
-			env.key.sequence = 25;
+			env.key.sequence = 28;
 			memcpy(env.body.repair.certificate, certificate,
 			       sizeof(certificate));
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
 				      result.entries[0].status == D1_OK,
 			      "completion certificate clears error episode");
 			memset(&env.body, 0, sizeof(env.body));
-			env.key.sequence = 26;
+			env.key.sequence = 29;
 			env.op = D1_OP_UNLOCK;
 			env.body.repair.range_begin = 23;
-			env.body.repair.range_end = 24;
-			env.body.repair.count = 1;
+			env.body.repair.range_end = 25;
+			env.body.repair.count = 2;
 			env.body.repair.cohort_present = true;
 			env.body.repair.cohort = repair;
 			env.body.repair.entries[0].index = 23;
-			env.body.repair.entries[0].owner.cohort.raw = 4;
+			env.body.repair.entries[0].owner.cohort.raw = 5;
 			env.body.repair.entries[0].owner.writer = 17;
-			env.body.repair.entries[0].owner.co_id = 35;
+			env.body.repair.entries[0].owner.co_id = 37;
 			env.body.repair.entries[0].custody_present = true;
 			env.body.repair.entries[0].custody = custody;
+			env.body.repair.entries[1].index = 24;
+			env.body.repair.entries[1].owner.cohort.raw = 5;
+			env.body.repair.entries[1].owner.writer = 17;
+			env.body.repair.entries[1].owner.co_id = 38;
+			env.body.repair.entries[1].custody_present = true;
+			env.body.repair.entries[1].custody = custody2;
 			check(d2_store_apply(store, &env, &result) == D1_OK &&
 				      result.entries[0].status == D1_OK,
 			      "cleared error repair unlock persists");
@@ -1124,7 +1258,9 @@ int main(void)
 			check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
 				      D1_OK &&
 				      d2_store_visible(store, &object, 23, &visible) &&
-				      visible.raw != broken.raw,
+				      visible.raw != broken.raw &&
+				      d2_store_visible(store, &object, 24, &visible) &&
+				      visible.raw != broken2.raw,
 			      "completed error repair replays after restart");
 			if (store) {
 				error_unlock.admission = d2_store_admission_handle(
@@ -1137,6 +1273,11 @@ int main(void)
 					d2_store_custody_handle(
 						store,
 						error_unlock.body.repair.entries[0]
+							.custody.raw);
+				error_unlock.body.repair.entries[1].custody =
+					d2_store_custody_handle(
+						store,
+						error_unlock.body.repair.entries[1]
 							.custody.raw);
 				wal_bytes = d2_store_wal_bytes(store);
 				check(d2_store_apply(store, &error_unlock,
@@ -1159,6 +1300,11 @@ int main(void)
 					d2_store_custody_handle(
 						store,
 						refused_clear.body.repair.entries[0]
+							.custody.raw);
+				refused_clear.body.repair.entries[1].custody =
+					d2_store_custody_handle(
+						store,
+						refused_clear.body.repair.entries[1]
 							.custody.raw);
 				wal_bytes = d2_store_wal_bytes(store);
 				check(d2_store_apply(store, &refused_clear,
