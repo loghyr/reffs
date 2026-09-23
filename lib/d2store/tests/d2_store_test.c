@@ -301,7 +301,7 @@ int main(void)
 	d1_view_close(view);
 	view = NULL;
 	wal_bytes = d2_store_wal_bytes(store);
-	check(d2_store_apply(store, &env, &result) == D1_OK &&
+				check(d2_store_apply(store, &env, &result) == D1_OK &&
 		      d2_store_wal_bytes(store) == wal_bytes,
 	      "exact replay appends nothing");
 	conflict = env;
@@ -535,7 +535,7 @@ int main(void)
 		}
 	}
 	if (store) {
-		admission = d2_store_admit(store, &object, 18,
+		admission = d2_store_admit(store, &object, 17,
 					   D1_RIGHT_READ | D1_RIGHT_WRITE |
 						   D1_RIGHT_SINGLE_WRITER);
 		env.admission = admission;
@@ -544,7 +544,6 @@ int main(void)
 		guard = (struct d1_guard){ .never_written = true };
 		write_request(&env, 30, 20, 30, &guard, payload,
 			      sizeof(payload));
-		env.body.write.entries[0].owner.writer = 18;
 		env.body.write.activate = false;
 		promise_base = d2_store_wal_promised(store);
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
@@ -569,7 +568,7 @@ int main(void)
 		check(d2_store_recovery_allowance(store) == D2_RESTART_SWEEP,
 		      "acting control admission uses ordinary capacity");
 		fresh_admission =
-			d2_store_admit(store, &object, 18,
+			d2_store_admit(store, &object, 17,
 					       D1_RIGHT_READ | D1_RIGHT_WRITE |
 						       D1_RIGHT_SINGLE_WRITER);
 		check(d2_store_recovery_allowance(store) ==
@@ -618,7 +617,7 @@ int main(void)
 		      "restart returns exact recovery admission receipt");
 		next_control =
 			d2_store_admit(store, &object, 17, D1_RIGHT_CONTROL);
-		next_fresh = d2_store_admit(store, &object, 18,
+		next_fresh = d2_store_admit(store, &object, 17,
 					    D1_RIGHT_READ | D1_RIGHT_WRITE |
 						    D1_RIGHT_SINGLE_WRITER);
 		recovery.admission = next_control;
@@ -642,7 +641,7 @@ int main(void)
 		env.body.lifecycle.count = 1;
 		env.body.lifecycle.entries[0].index = 20;
 		env.body.lifecycle.entries[0].owner.cohort.raw = 1;
-		env.body.lifecycle.entries[0].owner.writer = 18;
+		env.body.lifecycle.entries[0].owner.writer = 17;
 		env.body.lifecycle.entries[0].owner.co_id = 30;
 		env.body.lifecycle.entries[0].txn =
 			d2_store_txn_handle(store, staged_txn.raw);
@@ -786,21 +785,60 @@ int main(void)
 			      d2_store_visible(store, &object, 22, &visible) &&
 			      visible.raw != successor.raw,
 		      "no-predecessor repair commit persists replacement");
+		d2_store_expire(store, admission);
+		d2_store_crash(store);
+		store = NULL;
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+			      D1_OK,
+		      "committed repair reopens with its lock held");
+		if (!store)
+			goto done;
+		control_admission =
+			d2_store_admit(store, &object, 17, D1_RIGHT_CONTROL);
+		fresh_admission = d2_store_admit(
+			store, &object, 17,
+			D1_RIGHT_READ | D1_RIGHT_WRITE | D1_RIGHT_REPAIR |
+				D1_RIGHT_SINGLE_WRITER);
+		memset(&env, 0, sizeof(env));
+		env.object = object;
+		env.admission = control_admission;
+		env.incarnation = d2_store_incarnation(store);
+		fill(env.key.origin.bytes, 16, 0xe8);
+		env.key.sequence = 1;
+		env.op = D1_OP_RECOVERY_ADMIT;
+		env.body.control.count = 1;
+		env.body.control.txns[0] =
+			d2_store_txn_handle(store, repair_txn.raw);
+		env.body.control.old_admission =
+			d2_store_admission_handle(store, admission.raw);
+		env.body.control.new_admission_present = true;
+		env.body.control.new_admission = fresh_admission;
+		env.body.control.read_epoch_present = true;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "restart rebinds committed repair member");
+		admission = fresh_admission;
 
-		memset(&env.body, 0, sizeof(env.body));
+		memset(&env, 0, sizeof(env));
+		env.object = object;
+		env.admission = admission;
+		env.incarnation = d2_store_incarnation(store);
+		fill(env.key.origin.bytes, 16, 0xe0);
 		env.key.sequence = 7;
 		env.op = D1_OP_UNLOCK;
 		env.body.repair.range_begin = 22;
 		env.body.repair.range_end = 23;
 		env.body.repair.count = 1;
 		env.body.repair.cohort_present = true;
-		env.body.repair.cohort = repair;
+		env.body.repair.cohort =
+			d2_store_repair_handle(store, repair.raw);
 		env.body.repair.entries[0].index = 22;
 		env.body.repair.entries[0].owner.cohort.raw = 2;
 		env.body.repair.entries[0].owner.writer = 17;
 		env.body.repair.entries[0].owner.co_id = 32;
 		env.body.repair.entries[0].custody_present = true;
-		env.body.repair.entries[0].custody = custody;
+		env.body.repair.entries[0].custody =
+			d2_store_custody_handle(store, custody.raw);
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].status == D1_OK,
 		      "no-predecessor repair unlock persists");
@@ -1323,8 +1361,48 @@ int main(void)
 				      visible.raw != broken2.raw &&
 				      d2_store_wal_promised(store) ==
 					      promise_base + 2004,
-			      "error repair commit persists replacement");
-			fill(certificate, sizeof(certificate), 0xc0);
+				      "error repair commit persists replacement");
+				d2_store_expire(store, admission);
+				d2_store_crash(store);
+				store = NULL;
+				check(d2_store_rebind(dirfd, &reopen, &binding,
+						      &store) == D1_OK,
+				      "two-member committed repair reopens locked");
+				if (!store)
+					goto done;
+				repair = d2_store_repair_handle(store, repair.raw);
+				episode = d2_store_episode_handle(store, episode.raw);
+				custody = d2_store_custody_handle(store, custody.raw);
+				custody2 = d2_store_custody_handle(store, custody2.raw);
+				control_admission = d2_store_admit(
+					store, &object, 17, D1_RIGHT_CONTROL);
+				fresh_admission = d2_store_admit(
+					store, &object, 17,
+					D1_RIGHT_READ | D1_RIGHT_WRITE |
+						D1_RIGHT_REPAIR |
+						D1_RIGHT_SINGLE_WRITER);
+				memset(&env, 0, sizeof(env));
+				env.object = object;
+				env.admission = control_admission;
+				env.incarnation = d2_store_incarnation(store);
+				fill(env.key.origin.bytes, 16, 0xe9);
+				env.key.sequence = 1;
+				env.op = D1_OP_RECOVERY_ADMIT;
+				env.body.control.count = 2;
+				env.body.control.txns[0] =
+					d2_store_txn_handle(store, repair_txn.raw);
+				env.body.control.txns[1] =
+					d2_store_txn_handle(store, repair_txn2.raw);
+				env.body.control.old_admission =
+					d2_store_admission_handle(store, admission.raw);
+				env.body.control.new_admission_present = true;
+				env.body.control.new_admission = fresh_admission;
+				env.body.control.read_epoch_present = true;
+				check(d2_store_apply(store, &env, &result) == D1_OK &&
+					      result.entries[0].status == D1_OK,
+				      "restart atomically rebinds repair vector");
+				admission = fresh_admission;
+				fill(certificate, sizeof(certificate), 0xc0);
 			check(d2_store_certificate(store, episode, repair,
 						   certificate) == D1_OK &&
 				      d2_store_wal_promised(store) ==
@@ -1335,8 +1413,9 @@ int main(void)
 						   certificate) == D1_BAD_PHASE &&
 				      d2_store_wal_bytes(store) == wal_bytes,
 			      "duplicate completion certificate is refused");
-			memset(&env.body, 0, sizeof(env.body));
-			env.key.sequence = 28;
+				memset(&env.body, 0, sizeof(env.body));
+				env.admission = admission;
+				env.key.sequence = 28;
 			env.op = D1_OP_CLEAR_ERROR;
 			env.body.repair.range_begin = 23;
 			env.body.repair.range_end = 25;
