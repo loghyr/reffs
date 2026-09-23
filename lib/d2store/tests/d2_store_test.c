@@ -468,6 +468,69 @@ out:
 	return ok;
 }
 
+static bool postcond_revoke_race_log(int dirfd, uint64_t begin, uint64_t end,
+				     const struct d2_binding *binding,
+				     uint64_t txn_id, bool *revoke_first)
+{
+	struct d2_wal_header header;
+	struct d2_control control;
+	struct d2_entry entry;
+	uint8_t *wal;
+	uint64_t at = begin, entry_lsn = 0, postcond_lsn = 0, revoke_lsn = 0;
+	uint32_t entry_status = 0, entry_transition = 0;
+	unsigned int entries = 0, postconds = 0, revokes = 0;
+	int fd = -1;
+	bool ok = false;
+
+	wal = malloc((size_t)end);
+	if (!wal)
+		return false;
+	fd = openat(dirfd, "wal", O_RDONLY | O_CLOEXEC);
+	if (fd < 0 || pread(fd, wal, (size_t)end, 0) != (ssize_t)end)
+		goto out;
+	while (at < end &&
+	       d2_wal_header_decode(wal + at, (size_t)(end - at),
+				    binding->store_uuid, binding->wal_uuid,
+				    &header)) {
+		if (header.family == D2_REC_CONTROL &&
+		    d2_control_decode(wal + at, header.total_bytes, &header,
+				      &control)) {
+			if (control.subtype == D2_CTL_AUTHORITY_REVOKE) {
+				revokes++;
+				revoke_lsn = header.lsn;
+			} else if (control.subtype == D2_CTL_POSTCOND) {
+				postconds++;
+				postcond_lsn = header.lsn;
+			}
+		} else if (header.family == D2_REC_ENTRY &&
+			   d2_entry_decode(wal + at, header.total_bytes, &header,
+					   &entry) &&
+			   entry.txn_id == txn_id) {
+			entries++;
+			entry_lsn = header.lsn;
+			entry_status = entry.status;
+			entry_transition = entry.transition;
+		}
+		at += header.total_bytes;
+	}
+	if (at != end || entries != 1 || revokes != 1 ||
+	    entry_lsn == revoke_lsn)
+		goto out;
+	*revoke_first = revoke_lsn < entry_lsn;
+	ok = *revoke_first ?
+		     postconds == 0 && entry_transition == D2_REFUSED &&
+			     entry_status == D1_STALE_AUTH :
+		     postconds == 1 && postcond_lsn + 1 == entry_lsn &&
+			     entry_lsn < revoke_lsn &&
+			     entry_transition == D2_REFUSED &&
+			     entry_status == D1_NO_PREDECESSOR;
+out:
+	if (fd >= 0)
+		close(fd);
+	free(wal);
+	return ok;
+}
+
 static bool repair_rebind_race_log(int dirfd, uint64_t begin, uint64_t end,
 				   const struct d2_binding *binding,
 				   uint64_t cohort_id, bool *rebind_first)
@@ -3581,6 +3644,193 @@ int main(void)
 	if (store) {
 		check(d2_store_close(store) == D1_OK,
 		      "close failed-prepare revoke race fixture");
+		store = NULL;
+	}
+	unlinkat(dirfd, "super", 0);
+	unlinkat(dirfd, "wal", 0);
+	unlinkat(dirfd, "payload", 0);
+	memset(&binding, 0, sizeof(binding));
+	check(d2_store_provision(dirfd, &config, &binding, &store) == D1_OK,
+	      "provision postcondition revoke race fixture");
+	if (store) {
+		enum { POSTCOND_REVOKE_RUNS = 4 };
+		struct d1_envelope retries[POSTCOND_REVOKE_RUNS];
+		d1_version_id successors[POSTCOND_REVOKE_RUNS];
+		uint64_t postconds[POSTCOND_REVOKE_RUNS] = { 0 };
+		bool revoke_first[POSTCOND_REVOKE_RUNS] = { 0 };
+		unsigned int i;
+		bool races_ok = true, replay_ok = true;
+
+		for (i = 0; i < POSTCOND_REVOKE_RUNS; i++) {
+			struct d1_fixture_authority mds = { 0 }, client = { 0 };
+			struct authority_race race = { .store = store };
+			struct d1_result written;
+			d1_admission_id mds_id, client_id;
+			d1_custody_id issued;
+			pthread_t rollback_thread, revoke_thread;
+			uint64_t begin, end;
+			int rollback_created, revoke_created;
+			bool run_ok;
+
+			fill(mds.issuer.bytes, sizeof(mds.issuer.bytes),
+			     (uint8_t)(0xd0 + i));
+			fill(mds.principal.bytes, sizeof(mds.principal.bytes),
+			     (uint8_t)(0x20 + i));
+			fill(mds.session, sizeof(mds.session),
+			     (uint8_t)(0x30 + i));
+			mds.writer = 160 + i;
+			mds.rights = D1_RIGHT_CONTROL;
+			mds.authority_epoch = 1100 + i;
+			client = mds;
+			fill(client.principal.bytes, sizeof(client.principal.bytes),
+			     (uint8_t)(0x40 + i));
+			fill(client.session, sizeof(client.session),
+			     (uint8_t)(0x50 + i));
+			client.writer = 170 + i;
+			client.rights = D1_RIGHT_READ | D1_RIGHT_WRITE |
+					D1_RIGHT_SINGLE_WRITER;
+			client.lease_epoch = 1110 + i;
+			client.fence_sequence = 1120 + i;
+			mds_id = d2_store_admit_full(store, &object, &mds);
+			client_id = d2_store_admit_bare(store, &object, &client);
+			if (!d1_admission_live(mds_id) ||
+			    !d1_admission_live(client_id) ||
+			    d2_store_trust_admission(store, mds_id, client_id) !=
+				    D1_OK ||
+			    d2_store_admit_authority(store, mds_id, &client_id, 1) !=
+				    D1_OK) {
+				races_ok = false;
+				break;
+			}
+			memset(&env, 0, sizeof(env));
+			env.object = object;
+			env.admission = client_id;
+			env.incarnation = d2_store_incarnation(store);
+			fill(env.key.origin.bytes, sizeof(env.key.origin.bytes),
+			     (uint8_t)(0xe0 + i));
+			env.op = D1_OP_WRITE_BATCH;
+			guard = (struct d1_guard){ .never_written = true };
+			write_request(&env, 1, 24 + i, 700 + i, &guard, payload,
+				      sizeof(payload));
+			env.body.write.entries[0].owner.writer = client.writer;
+			if (d2_store_apply(store, &env, &written) != D1_OK ||
+			    written.entries[0].status != D1_OK ||
+			    !written.entries[0].version_present) {
+				races_ok = false;
+				break;
+			}
+			successors[i] = written.entries[0].version;
+			issued = d2_store_custody(store, successors[i]);
+			if (!d1_custody_live(issued)) {
+				races_ok = false;
+				break;
+			}
+			race.transition = env;
+			memset(&race.transition.body, 0,
+			       sizeof(race.transition.body));
+			race.transition.key.sequence = 2;
+			race.transition.op = D1_OP_ROLLBACK_BATCH;
+			race.transition.body.rollback.range_begin = 24 + i;
+			race.transition.body.rollback.range_end = 25 + i;
+			race.transition.body.rollback.count = 1;
+			race.transition.body.rollback.entries[0].index = 24 + i;
+			race.transition.body.rollback.entries[0].owner =
+				env.body.write.entries[0].owner;
+			race.transition.body.rollback.entries[0].txn =
+				written.entries[0].txn;
+			race.transition.body.rollback.entries[0].visible_present = true;
+			race.transition.body.rollback.entries[0].visible = successors[i];
+			race.transition.body.rollback.entries[0].custody_present = true;
+			race.transition.body.rollback.entries[0].custody = issued;
+			race.actor = mds_id;
+			race.issuer = mds.issuer;
+			race.epoch = mds.authority_epoch;
+			atomic_init(&race.go, false);
+			begin = d2_store_wal_bytes(store);
+			rollback_created = pthread_create(&rollback_thread, NULL,
+						  race_transition, &race);
+			revoke_created = rollback_created ? -1 :
+				pthread_create(&revoke_thread, NULL, race_revoke, &race);
+			atomic_store_explicit(&race.go, true, memory_order_release);
+			if (!rollback_created)
+				pthread_join(rollback_thread, NULL);
+			if (!revoke_created)
+				pthread_join(revoke_thread, NULL);
+			end = d2_store_wal_bytes(store);
+			run_ok = !rollback_created && !revoke_created &&
+				race.transition_status == D1_OK &&
+				race.revoke_status == D1_OK &&
+				postcond_revoke_race_log(
+					dirfd, begin, end, &binding,
+					written.entries[0].txn.raw, &revoke_first[i]) &&
+				race.transition_result.entries[0].status ==
+					(revoke_first[i] ? D1_STALE_AUTH :
+							   D1_NO_PREDECESSOR) &&
+				race.transition_result.entries[0].postcond_present ==
+					!revoke_first[i];
+			if (!revoke_first[i])
+				postconds[i] =
+					race.transition_result.entries[0].postcond.raw;
+			races_ok = races_ok && run_ok;
+			retries[i] = race.transition;
+		}
+		check(races_ok,
+		      "postcondition rollback serializes with authority revoke");
+		memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
+		memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
+		reopen.files.expected_root_ino = binding.root_ino;
+		d2_store_crash(store);
+		store = NULL;
+		check(races_ok &&
+			      d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+				      D1_OK,
+		      "postcondition revoke race log replays");
+		if (store && races_ok) {
+			wal_bytes = d2_store_wal_bytes(store);
+			for (i = 0; i < POSTCOND_REVOKE_RUNS; i++) {
+				d1_version_id restored_version;
+				uint64_t restored_index;
+				bool consumed;
+
+				retries[i].admission = d2_store_admission_handle(
+					store, retries[i].admission.raw);
+				retries[i].body.rollback.entries[0].txn =
+					d2_store_txn_handle(
+						store,
+						retries[i].body.rollback.entries[0].txn.raw);
+				retries[i].body.rollback.entries[0].visible =
+					d2_store_version_handle(store, successors[i].raw);
+				retries[i].body.rollback.entries[0].custody =
+					d2_store_custody_handle(
+						store,
+						retries[i].body.rollback.entries[0]
+							.custody.raw);
+				if (d2_store_apply(store, &retries[i], &result) !=
+						D1_OK ||
+				    result.entries[0].status !=
+					    (revoke_first[i] ? D1_STALE_AUTH :
+							       D1_NO_PREDECESSOR) ||
+				    result.entries[0].postcond_present !=
+					    !revoke_first[i] ||
+				    (!revoke_first[i] &&
+				     (result.entries[0].postcond.raw != postconds[i] ||
+				      !d2_store_postcond(store, postconds[i],
+							 &restored_index,
+							 &restored_version,
+							 &consumed) ||
+				      restored_index != 24 + i ||
+				      restored_version.raw != successors[i].raw ||
+				      consumed)) ||
+				    d2_store_wal_bytes(store) != wal_bytes)
+					replay_ok = false;
+			}
+		}
+		check(store && replay_ok,
+		      "postcondition revoke receipts replay exactly");
+	}
+	if (store) {
+		check(d2_store_close(store) == D1_OK,
+		      "close postcondition revoke race fixture");
 		store = NULL;
 	}
 	unlinkat(dirfd, "super", 0);
