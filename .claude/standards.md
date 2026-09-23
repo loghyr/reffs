@@ -119,14 +119,7 @@ must be at 100% pass rate — CI gates on `make check`.
 
 **Never commit directly to `main` for feature work.** All development
 happens on a named branch.  `main` receives only clean, reviewed,
-squashed changesets, and only through the work queue: branch
-protection on `main` requires a pull request that passes the
-`verify-product-integration` gate, and that gate admits only what
-`tools/biq.py` has authorized (a queue control commit, or a landing
-merge of a sealed candidate).  A direct push to `main`, or a
-hand-made pull request of plain commits, is rejected for everyone,
-admins included.  `AGENTS.md` and `docs/LOCAL-AGENTS.md` are the
-queue's contract; this section is the short form for reffs.
+squashed changesets.
 
 ### Workflow
 
@@ -150,59 +143,23 @@ queue's contract; this section is the short form for reffs.
 4. **Run the reviewer before merging**
    Invoke `/review` on the cleaned branch.  Address BLOCKERs.
 
-5. **Author and register a work-queue packet**
-   Copy `docs/work-queue/TEMPLATE.md` to
-   `docs/work-queue/items/WI-CI-<CATEGORY>-<SUBJECT>.md`, fill every
-   field (`Baseline` is the exact `origin/main` commit you branched
-   from), and register it:
+5. **Merge to main (fast-forward only)**
    ```
-   python3 tools/biq.py workstream <ID> --join <WORKSTREAM> --owner <you> --apply
+   git checkout main
+   git merge --ff-only <topic>
    ```
-   The tool writes the packet through its own control clone, opens
-   the gated pull request, and follows it onto `main`.
+   If `--ff-only` fails, rebase topic onto main first.  No merge
+   commits on `main`.
 
-6. **Claim, commit, seal, submit**
-   From a checkout at the packet's `Baseline`:
-   ```
-   python3 tools/biq.py claim <ID> --owner <you>
-   ```
-   Commit the work on your branch with the trailer
-   `Work-Queue-Item: <ID>` on every commit.  Do not merge, rebase
-   onto, or track `main` after claiming; `main` moving is observation
-   only.  Publish the retrospective
-   (`docs/work-queue/retrospectives/<date>-<subject>.md`, indexed in
-   its `README.md`, committed on the branch), then:
-   ```
-   python3 tools/biq.py seal <ID> --owner <you> --candidate $(git rev-parse HEAD)
-   python3 tools/biq.py submit <ID> --owner <you> --apply
-   ```
-   `show <ID>` prints the next command at every state.
-
-7. **Land**
-   If a queue cares about the candidate's paths (the REFFS run's
-   `Cares about` table: build files, `src/`, `lib/`, `tools/`,
-   `scripts/`, `.github/`, ...), the candidate waits in that run.  The
-   integrator the accountable owner assigns reviews it, runs
-   `reffs-check` (`make -f Makefile.ci check`), completes the run, and
-   lands it.  If no queue cares (`.claude/`, `docs/` outside the
-   queue tree), `python3 tools/biq.py land <ID> --apply` merges it
-   directly.  Either way the merge commit on `main` is the tool's;
-   the topic commits land unchanged, so `git bisect` stays runnable.
-
-8. **`main` must stay clean**
+6. **Push `main` only when clean**
    `main` at origin must always build, pass tests, pass license.
-   The gate and `reffs-check` enforce this; a refusal there is a
-   stop, not a status to work around.
 
 ### Prohibited on `main`
 
 - Direct `git commit` for active development
-- Direct `git push` (rejected by branch protection, admins included)
-- `git push --force` and branch deletion (rejected by branch
-  protection)
-- Hand-made pull requests of plain commits (the gate refuses them;
-  only queue control commits and landings are admitted)
-- "WIP" or "debug" commit messages in a sealed candidate
+- `git push --force` (sole-developer exception only)
+- Merge commits (use `--ff-only`)
+- "WIP" or "debug" commit messages
 
 ### Syncing dev work across machines
 
