@@ -1164,6 +1164,8 @@ int main(void)
 				      promise_base + 2u * D2_ENTRY_RECORD_BYTES,
 		      "lease reap fixture leaves prepared work");
 		d2_store_expire(store, admission);
+		d2_store_expire(store, admission);
+		d2_store_revoke(store, admission);
 		wal_bytes = d2_store_wal_bytes(store);
 		d2_store_crash(store);
 		store = NULL;
@@ -1665,16 +1667,23 @@ int main(void)
 			      result.entries[0].status == D1_OK,
 		      "revocation fixture records its admission");
 		d2_store_revoke(store, admission);
+		d2_store_revoke(store, admission);
+		d2_store_expire(store, admission);
 		write_request(&env, 17, 12, 11, &guard, replacement,
 			      sizeof(replacement));
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].status == D1_STALE_AUTH,
 		      "durable stateid revocation refuses later work");
+		wal_bytes = d2_store_wal_bytes(store);
+		d2_store_revoke(store, (d1_admission_id){ .raw = UINT64_MAX });
+		d2_store_expire(store, (d1_admission_id){ .raw = UINT64_MAX });
+		check(d2_store_wal_bytes(store) == wal_bytes,
+		      "unknown liveness subjects are no-ops");
 		d2_store_crash(store);
 		store = NULL;
 		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
 			      D1_OK,
-		      "liveness controls replay in LSN order");
+		      "repeated and combined liveness controls replay");
 		if (store) {
 			env.admission =
 				d2_store_admission_handle(store, admission.raw);

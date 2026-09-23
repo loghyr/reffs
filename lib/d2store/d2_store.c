@@ -1208,7 +1208,7 @@ static bool d2_replay_liveness(struct d2_replay *r,
 	client_id = control->admission_client_id;
 	slot = d2_admission_slot(r->store, client_id);
 	auth = d2_admission_find(r->store, client_id);
-	if (!slot || !auth || slot->revoked || slot->expired ||
+	if (!slot || !auth ||
 	    control->transition != D2_COMMITTED ||
 	    control->status != D1_OK ||
 	    memcmp(control->key.session, auth->session, sizeof(auth->session)) ||
@@ -1217,6 +1217,9 @@ static bool d2_replay_liveness(struct d2_replay *r,
 		return false;
 	d1_dec_init(&cursor, control->body, control->body_len);
 	if (control->subtype == D2_CTL_AUTHORITY_REVOKE) {
+		/* The issuer must still be authoritative when it revokes an epoch. */
+		if (slot->revoked || slot->expired)
+			return false;
 		if (!d1_dec_raw(&cursor, issuer, sizeof(issuer)) ||
 		    !d1_dec_u64(&cursor, &epoch) ||
 		    !d1_dec_u32(&cursor, &reason) ||
@@ -4919,14 +4922,16 @@ void d2_store_revoke(struct d2_store *s, d1_admission_id admission)
 	pthread_mutex_lock(&s->lock);
 	if (!s->fenced && !s->retired) {
 		slot = d2_admission_slot(s, admission.raw);
+		if (!slot)
+			goto out;
 		d1_fixture_revoke(s->model, admission);
-		if (slot)
-			slot->revoked = true;
+		slot->revoked = true;
 		status = d2_liveness_control(s, admission,
 					     D2_CTL_REVOKE_STATEID);
 		if (status != D1_OK && status != D1_NOSPC)
 			s->fenced = true;
 	}
+out:
 	pthread_mutex_unlock(&s->lock);
 }
 
@@ -4994,13 +4999,15 @@ void d2_store_expire(struct d2_store *s, d1_admission_id admission)
 	pthread_mutex_lock(&s->lock);
 	if (!s->fenced && !s->retired) {
 		slot = d2_admission_slot(s, admission.raw);
+		if (!slot)
+			goto out;
 		d1_fixture_expire(s->model, admission);
-		if (slot)
-			slot->expired = true;
+		slot->expired = true;
 		status = d2_liveness_control(s, admission, D2_CTL_LEASE_EXPIRE);
 		if (status != D1_OK && status != D1_NOSPC)
 			s->fenced = true;
 	}
+out:
 	pthread_mutex_unlock(&s->lock);
 }
 
