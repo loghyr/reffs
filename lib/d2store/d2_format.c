@@ -1042,6 +1042,9 @@ bool d2_entry_encode(const struct d2_wal_header *h, const struct d2_entry *e,
 
 	if (!h || !e || !out || h->family != D2_REC_ENTRY ||
 	    !d2_entry_pair(e->transition, e->status) ||
+	    (!e->predecessor_present &&
+	     (e->predecessor_object_id || e->predecessor_generation)) ||
+	    (!e->postcond_present && e->postcond_id) ||
 	    !d2_result_ck_ok(e->result_ck_len, e->result_ck))
 		return false;
 	d1_enc_init(&c, out, D2_ENTRY_RECORD_BYTES);
@@ -1141,6 +1144,9 @@ bool d2_entry_decode(const uint8_t *record, size_t len,
 	       e->disposition == D1_COMPLETED && e->stability >= 1 &&
 	       e->stability <= 3 && e->extent_kind >= D2_EXTENT_UNCHANGED &&
 	       e->extent_kind <= D2_EXTENT_SHRINK &&
+	       (e->predecessor_present ||
+		(!e->predecessor_object_id && !e->predecessor_generation)) &&
+	       (e->postcond_present || !e->postcond_id) &&
 	       d2_payload_ref_ok(e->payload_object_id, e->payload_object_offset,
 				 h->ds_incarnation) &&
 	       d2_result_ck_ok(e->result_ck_len, e->result_ck);

@@ -1638,6 +1638,8 @@ static bool d2_replay_receipt(struct d2_replay *r,
 {
 	struct d1_result result = { 0 };
 	struct d1_opkey key = { 0 };
+	d1_version_id version;
+	uint32_t phase;
 
 	memcpy(key.origin.bytes, e->key.session, D1_UUID_BYTES);
 	key.sequence = ((uint64_t)e->key.slot << 32) | e->key.sequence;
@@ -1648,7 +1650,9 @@ static bool d2_replay_receipt(struct d2_replay *r,
 	result.disposition = D1_COMPLETED;
 	result.count = 1;
 	result.entries[0].status = e->status;
-	result.entries[0].txn_present = (e->predecessor_generation & 1u) != 0;
+	result.entries[0].txn_present = e->txn_id &&
+		(e->transition != D2_REFUSED || e->result_visible_object_id ||
+		 e->owner_client_id || e->postcond_present);
 	result.entries[0].txn.raw = result.entries[0].txn_present ? e->txn_id : 0;
 	result.entries[0].version_present = e->result_visible_object_id != 0;
 	result.entries[0].version.raw = e->result_visible_object_id;
@@ -1662,7 +1666,18 @@ static bool d2_replay_receipt(struct d2_replay *r,
 	result.entries[0].owner.co_id = e->owner_co_id;
 	result.entries[0].stability = e->stability;
 	result.entries[0].activated = e->result_activated;
-	result.entries[0].phase = e->generation;
+	result.entries[0].phase = e->transition <= D2_ROLLED_BACK ?
+					  e->transition : 0;
+	if (result.entries[0].txn_present &&
+	    (e->postcond_present ||
+	     (e->status == D1_CHECKSUM && e->result_visible_object_id))) {
+		if (!d1_fixture_txn_state(
+			    r->store->model,
+			    d1_fixture_txn_handle(r->store->model, e->txn_id),
+			    &phase, &version))
+			return false;
+		result.entries[0].phase = phase;
+	}
 	memcpy(result.entries[0].verifier, e->result_verifier,
 	       D1_VERIFIER_BYTES);
 	result.entries[0].disposition = D1_COMPLETED;
@@ -3717,7 +3732,6 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 			 rollback ? rollback->txn.raw :
 				    result->entries[0].txn.raw;
 	entry.txn_id = request_txn_id;
-	entry.predecessor_generation = result->entries[0].txn_present ? 1u : 0u;
 	saved = d2_work_by_txn(s, request_txn_id);
 	if (saved)
 		old_promise = d2_work_promise(saved->phase);
@@ -3731,7 +3745,7 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 	entry.owner_cohort = result->entries[0].owner.cohort.raw;
 	entry.owner_client_id = result->entries[0].owner.writer;
 	entry.owner_co_id = result->entries[0].owner.co_id;
-	entry.generation = result->entries[0].phase;
+	entry.generation = result->entries[0].guard.generation;
 	if (write && result->entries[0].version_present) {
 		if (!d1_fixture_version_predecessor(
 			    s->model, result->entries[0].version,
@@ -4693,6 +4707,10 @@ uint32_t d2_store_trust_admission(struct d2_store *s, d1_admission_id actor,
 		status = D1_IO;
 		goto out;
 	}
+	if (s->retired) {
+		status = D1_BAD_PHASE;
+		goto out;
+	}
 	if (!actor_auth || !beneficiary_auth)
 		goto out;
 	if (!d2_admission_slot(s, actor.raw)->authority_seen ||
@@ -4768,6 +4786,10 @@ uint32_t d2_store_admit_authority(struct d2_store *s,
 	actor_auth = d2_admission_find(s, actor.raw);
 	if (s->fenced) {
 		status = D1_IO;
+		goto out;
+	}
+	if (s->retired) {
+		status = D1_BAD_PHASE;
 		goto out;
 	}
 	if (!actor_auth)
@@ -5261,7 +5283,8 @@ uint32_t d2_store_certificate(
 		status = D1_BAD_PHASE;
 	else
 		status = D1_OK;
-	if (status != D1_IO && actor_auth) {
+	if (status != D1_IO && !s->retired && actor_slot && actor_auth &&
+	    actor_slot->authority_seen) {
 		uint32_t append = d2_certificate_control(
 			s, actor, actor_auth, key, status, episode.raw, repair.raw,
 			certificate);

@@ -201,6 +201,51 @@ out:
 	return ok;
 }
 
+static bool entry_wal_semantics_valid(int dirfd, uint64_t wal_bytes,
+				      const struct d2_binding *binding)
+{
+	struct d2_wal_header header;
+	struct d2_entry entry;
+	uint8_t *wal;
+	uint64_t at = 0;
+	uint32_t entries = 0;
+	int fd = -1;
+	bool ok = false;
+
+	wal = malloc((size_t)wal_bytes);
+	if (!wal)
+		return false;
+	fd = openat(dirfd, "wal", O_RDONLY | O_CLOEXEC);
+	if (fd < 0 ||
+	    pread(fd, wal, (size_t)wal_bytes, 0) != (ssize_t)wal_bytes)
+		goto out;
+	while (at < wal_bytes) {
+		if (!d2_wal_header_decode(wal + at,
+					  (size_t)(wal_bytes - at),
+					  binding->store_uuid, binding->wal_uuid,
+					  &header))
+			goto out;
+		if (header.family == D2_REC_ENTRY) {
+			if (!d2_entry_decode(wal + at, header.total_bytes,
+					     &header, &entry) ||
+			    entry.generation != entry.result_guard_generation ||
+			    (!entry.predecessor_present &&
+			     (entry.predecessor_object_id ||
+			      entry.predecessor_generation)) ||
+			    (!entry.postcond_present && entry.postcond_id))
+				goto out;
+			entries++;
+		}
+		at += header.total_bytes;
+	}
+	ok = entries != 0;
+out:
+	if (fd >= 0)
+		close(fd);
+	free(wal);
+	return ok;
+}
+
 struct authority_race {
 	struct d2_store *store;
 	struct d1_envelope transition;
@@ -921,10 +966,12 @@ int main(void)
 	struct d1_result error_unlock_result = { 0 };
 	struct d1_opkey certificate_key = { 0 };
 	struct d1_opkey stale_certificate_key = { 0 };
+	struct d1_opkey bare_certificate_key = { 0 };
 	d1_admission_id admission;
 	d1_admission_id control_admission, fresh_admission, next_control,
 		next_fresh;
 	d1_admission_id stale_certificate_actor = { 0 };
+	d1_admission_id bare_certificate_actor = { 0 };
 	d1_admission_id second_error_admission = { 0 };
 	d1_custody_id custody, custody2;
 	d1_episode_id episode;
@@ -2266,6 +2313,31 @@ int main(void)
 				      D1_OK &&
 				      result.entries[0].status == D1_OK,
 			      "second certificate subject unlocks independently");
+				{
+					struct d1_fixture_authority bare = { 0 };
+
+					fill(bare.issuer.bytes, D1_UUID_BYTES, 0xcc);
+					fill(bare.principal.bytes, D1_UUID_BYTES, 0xcd);
+					fill(bare.session, D1_UUID_BYTES, 0xce);
+					bare.authority_epoch = 1;
+					bare.fence_sequence = 1;
+					bare.lease_epoch = 1;
+					bare.writer = 19;
+					bare.rights = D1_RIGHT_CONTROL;
+					bare_certificate_actor = d2_store_admit_bare(
+						store, &object, &bare);
+				}
+				fill(bare_certificate_key.origin.bytes,
+				     D1_UUID_BYTES, 0xcf);
+				bare_certificate_key.sequence = 1;
+				wal_bytes = d2_store_wal_bytes(store);
+				check(d1_admission_live(bare_certificate_actor) &&
+					      d2_store_certificate(
+						      store, bare_certificate_actor,
+						      &bare_certificate_key, episode, repair,
+						      certificate) == D1_STALE_AUTH &&
+					      d2_store_wal_bytes(store) == wal_bytes,
+				      "bare actor certificate refusal is not recorded");
 				memset(&env.body, 0, sizeof(env.body));
 				env.admission = admission;
 				env.key.sequence = 28;
@@ -2333,6 +2405,9 @@ int main(void)
 			      "cleared error repair unlock persists");
 			error_unlock = env;
 			error_unlock_result = result;
+			check(entry_wal_semantics_valid(
+				      dirfd, d2_store_wal_bytes(store), &binding),
+			      "pre-restart ENTRY WAL obeys frozen semantics");
 			d2_store_crash(store);
 			store = NULL;
 			check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
@@ -2344,6 +2419,17 @@ int main(void)
 				      visible.raw != broken2.raw,
 			      "completed error repair replays after restart");
 			if (store) {
+				bare_certificate_actor = d2_store_admission_handle(
+					store, bare_certificate_actor.raw);
+				wal_bytes = d2_store_wal_bytes(store);
+				check(d2_store_certificate(
+					      store, bare_certificate_actor,
+					      &bare_certificate_key,
+					      d2_store_episode_handle(store, episode.raw),
+					      d2_store_repair_handle(store, repair.raw),
+					      certificate) == D1_STALE_AUTH &&
+					      d2_store_wal_bytes(store) == wal_bytes,
+				      "bare actor refusal stays unrecorded after restart");
 				stale_certificate_actor = d2_store_admission_handle(
 					store, stale_certificate_actor.raw);
 				wal_bytes = d2_store_wal_bytes(store);
@@ -2495,6 +2581,10 @@ int main(void)
 			}
 		}
 	}
+	check(store &&
+		      entry_wal_semantics_valid(dirfd, d2_store_wal_bytes(store),
+						&binding),
+	      "oracle ENTRY WAL obeys frozen generation and presence cells");
 	if (store) {
 		uint8_t byte;
 		int payload_fd;
@@ -2928,6 +3018,9 @@ int main(void)
 	      "provision retirement fixture");
 	if (store) {
 		uint64_t retired_incarnation;
+		d1_admission_id retired_control;
+		struct d1_opkey retired_certificate_key = { 0 };
+		uint8_t retired_certificate[D1_CERTIFICATE_BYTES];
 
 		memcpy(reopen.files.expected_store_uuid, binding.store_uuid, 16);
 		memcpy(reopen.files.expected_export_uuid, binding.export_uuid, 16);
@@ -2935,6 +3028,8 @@ int main(void)
 		admission = d2_store_admit(store, &object, 17,
 					   D1_RIGHT_READ | D1_RIGHT_WRITE |
 						   D1_RIGHT_SINGLE_WRITER);
+		retired_control = d2_store_admit(store, &object, 19,
+						   D1_RIGHT_CONTROL);
 		memset(&env, 0, sizeof(env));
 		env.object = object;
 		env.admission = admission;
@@ -2976,6 +3071,20 @@ int main(void)
 			      d2_store_wal_bytes(store) == wal_bytes + 224u,
 		      "export tombstone is the final record");
 		wal_bytes = d2_store_wal_bytes(store);
+		fill(retired_certificate_key.origin.bytes, D1_UUID_BYTES, 0xd0);
+		retired_certificate_key.sequence = 1;
+		fill(retired_certificate, sizeof(retired_certificate), 0xd1);
+		check(d2_store_certificate(
+			      store, retired_control, &retired_certificate_key,
+			      (d1_episode_id){ .raw = 1 },
+			      (d1_repair_id){ .raw = 1 },
+			      retired_certificate) == D1_BAD_PHASE &&
+		      d2_store_trust_admission(store, retired_control,
+					       admission) == D1_BAD_PHASE &&
+		      d2_store_admit_authority(store, retired_control,
+					       &admission, 1) == D1_BAD_PHASE &&
+		      d2_store_wal_bytes(store) == wal_bytes,
+		      "retired controls refuse without appending records");
 		write_request(&env, 3, 2, 3, &guard, payload, sizeof(payload));
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].status == D1_BAD_PHASE &&
@@ -2990,6 +3099,21 @@ int main(void)
 			      d2_store_incarnation(store) == retired_incarnation,
 		      "retired restart appends no START");
 		if (store) {
+			retired_control = d2_store_admission_handle(
+				store, retired_control.raw);
+			admission = d2_store_admission_handle(store, admission.raw);
+			check(d2_store_certificate(
+				      store, retired_control,
+				      &retired_certificate_key,
+				      (d1_episode_id){ .raw = 1 },
+				      (d1_repair_id){ .raw = 1 },
+				      retired_certificate) == D1_BAD_PHASE &&
+			      d2_store_trust_admission(store, retired_control,
+						       admission) == D1_BAD_PHASE &&
+			      d2_store_admit_authority(store, retired_control,
+						       &admission, 1) == D1_BAD_PHASE &&
+			      d2_store_wal_bytes(store) == wal_bytes,
+			      "retired controls remain unrecorded after restart");
 			retired_exact.admission = d2_store_admission_handle(
 				store, retired_exact.admission.raw);
 			check(d2_store_apply(store, &retired_exact, &result) ==

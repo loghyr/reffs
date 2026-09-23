@@ -12,6 +12,8 @@
 #include "d1_digest.h"
 #include "d2_format.h"
 
+#define D2_ENTRY_PREDECESSOR_PRESENT_OFFSET 360u
+
 static int failures;
 
 static void check(bool ok, const char *what)
@@ -28,6 +30,14 @@ static void fill(uint8_t *p, size_t len, uint8_t first)
 
 	for (i = 0; i < len; i++)
 		p[i] = (uint8_t)(first + i);
+}
+
+static void put_u32(uint8_t out[4], uint32_t value)
+{
+	out[0] = (uint8_t)(value >> 24);
+	out[1] = (uint8_t)(value >> 16);
+	out[2] = (uint8_t)(value >> 8);
+	out[3] = (uint8_t)value;
 }
 
 static void key_init(struct d2_key_block *k, uint8_t first)
@@ -223,6 +233,29 @@ static void test_entry(void)
 	      "ENTRY decodes");
 	check(b.extent_high_water == 8 && b.result_ck_len == 4,
 	      "ENTRY values round trip");
+	a.predecessor_object_id = 1;
+	check(!d2_entry_encode(&h, &a, bytes),
+	      "ENTRY rejects absent predecessor with governed state");
+	a.predecessor_object_id = 0;
+	a.postcond_id = 1;
+	check(!d2_entry_encode(&h, &a, bytes),
+	      "ENTRY rejects absent postcondition with governed state");
+	a.postcond_id = 0;
+	a.predecessor_present = true;
+	a.predecessor_object_id = 1;
+	a.predecessor_generation = 2;
+	check(d2_entry_encode(&h, &a, bytes),
+	      "ENTRY with governed predecessor encodes");
+	bytes[D2_ENTRY_PREDECESSOR_PRESENT_OFFSET] = 0;
+	put_u32(bytes + sizeof(bytes) - 4,
+		d2_crc32c_domain("FFV2-D2-WAL-v1", bytes, sizeof(bytes) - 4));
+	check(d2_wal_header_decode(bytes, sizeof(bytes), h.store_uuid,
+				   h.wal_uuid, &got_h) &&
+		      !d2_entry_decode(bytes, sizeof(bytes), &got_h, &b),
+	      "ENTRY decoder rejects clear predecessor presence cell");
+	a.predecessor_present = false;
+	a.predecessor_object_id = 0;
+	a.predecessor_generation = 0;
 	a.transition = D2_ADMITTED;
 	check(!d2_entry_encode(&h, &a, bytes),
 	      "ENTRY rejects inadmissible transition and status pair");
@@ -364,6 +397,6 @@ int main(void)
 	if (failures)
 		fprintf(stderr, "%d d2 format checks failed\n", failures);
 	else
-		printf("D2 FORMAT: 35 checks pass\n");
+		printf("D2 FORMAT: 39 checks pass\n");
 	return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }
