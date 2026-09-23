@@ -24,6 +24,23 @@
 #include "d1_codec.h"
 #include "d2_files.h"
 
+/* Keep building against libc headers that predate these stable UAPI calls. */
+#ifndef FS_IOC_GETFSUUID
+struct fsuuid2 {
+	uint8_t len;
+	uint8_t uuid[16];
+};
+#define FS_IOC_GETFSUUID _IOR(0x15, 0, struct fsuuid2)
+#endif
+
+#ifndef FS_IOC_GETFSSYSFSPATH
+struct fs_sysfs_path {
+	uint8_t len;
+	uint8_t name[128];
+};
+#define FS_IOC_GETFSSYSFSPATH _IOR(0x15, 1, struct fs_sysfs_path)
+#endif
+
 struct d2_files {
 	int dirfd;
 	int super_fd;
