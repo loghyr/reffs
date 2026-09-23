@@ -4329,7 +4329,10 @@ recorded:
 				     predecessor_present, predecessor.raw)) {
 		s->fenced = true;
 		status = D1_IO;
-	} else if ((env->op == D1_OP_FINALIZE_BATCH ||
+	} else if ((result->entries[0].status == D1_OK ||
+		    (env->op == D1_OP_ROLLBACK_BATCH &&
+		     result->entries[0].status == D1_NO_PREDECESSOR)) &&
+		   (env->op == D1_OP_FINALIZE_BATCH ||
 		    env->op == D1_OP_COMMIT_BATCH ||
 		    env->op == D1_OP_ROLLBACK_BATCH) &&
 		   result->entries[0].txn_present &&
