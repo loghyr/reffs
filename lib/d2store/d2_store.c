@@ -158,6 +158,16 @@ struct d2_replay {
 	uint64_t postcond_chunk_index;
 	uint64_t postcond_version_id;
 	uint64_t postcond_custody_id;
+	struct {
+		bool used;
+		uint64_t admission_id;
+		uint8_t file_key[32];
+	} admission_objects[D1_MAX_ADMISSIONS];
+	struct {
+		bool used;
+		uint64_t txn_id;
+		uint8_t file_key[32];
+	} txn_objects[D1_MAX_TXNS];
 };
 
 static struct d1_objkey *d2_replay_object(struct d2_replay *r,
@@ -1575,6 +1585,23 @@ static bool d2_bind_pending_admissions(struct d2_replay *r,
 				       const struct d1_objkey *object,
 				       uint64_t through);
 
+static bool d2_discovered_admission_object(struct d2_replay *r,
+					   uint64_t admission_id,
+					   const struct d1_objkey **object)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_ADMISSIONS; i++)
+		if (r->admission_objects[i].used &&
+		    r->admission_objects[i].admission_id == admission_id) {
+			*object = d2_replay_object(
+				r, r->admission_objects[i].file_key);
+			return true;
+		}
+	*object = NULL;
+	return false;
+}
+
 static bool d2_replay_admission(struct d2_replay *r,
 				const struct d2_entry *entry)
 {
@@ -2171,6 +2198,7 @@ static bool d2_bind_pending_admissions(struct d2_replay *r,
 				       uint64_t through)
 {
 	typeof(r->store->admissions[0]) *next;
+	const struct d1_objkey *admission_object;
 	d1_admission_id id;
 	uint32_t i;
 
@@ -2188,11 +2216,18 @@ static bool d2_bind_pending_admissions(struct d2_replay *r,
 		}
 		if (!next || next->id > through)
 			return true;
-		id = d1_fixture_admit_full(r->store->model, object,
+		if (d2_discovered_admission_object(r, next->id,
+						   &admission_object)) {
+			if (!admission_object)
+				return false;
+		} else {
+			admission_object = object;
+		}
+		id = d1_fixture_admit_full(r->store->model, admission_object,
 					   &next->auth);
 		if (id.raw != next->id)
 			return false;
-		next->object = *object;
+		next->object = *admission_object;
 		next->object_known = true;
 		next->model_bound = true;
 		if (next->revoked)
@@ -2200,6 +2235,138 @@ static bool d2_bind_pending_admissions(struct d2_replay *r,
 		if (next->expired)
 			d1_fixture_expire(r->store->model, id);
 	}
+}
+
+static bool d2_discover_admission_remember(struct d2_replay *r, uint64_t id,
+					   const uint8_t file_key[32])
+{
+	uint32_t i;
+
+	if (!id)
+		return true;
+	for (i = 0; i < D1_MAX_ADMISSIONS; i++) {
+		if (r->admission_objects[i].used &&
+		    r->admission_objects[i].admission_id == id)
+			return !memcmp(
+				r->admission_objects[i].file_key, file_key,
+				sizeof(r->admission_objects[i].file_key));
+		if (!r->admission_objects[i].used) {
+			r->admission_objects[i].used = true;
+			r->admission_objects[i].admission_id = id;
+			memcpy(r->admission_objects[i].file_key, file_key,
+			       sizeof(r->admission_objects[i].file_key));
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool d2_discover_txn_remember(struct d2_replay *r, uint64_t id,
+				     const uint8_t file_key[32])
+{
+	uint32_t i;
+
+	if (!id)
+		return true;
+	for (i = 0; i < D1_MAX_TXNS; i++) {
+		if (r->txn_objects[i].used && r->txn_objects[i].txn_id == id)
+			return !memcmp(r->txn_objects[i].file_key, file_key,
+				       sizeof(r->txn_objects[i].file_key));
+		if (!r->txn_objects[i].used) {
+			r->txn_objects[i].used = true;
+			r->txn_objects[i].txn_id = id;
+			memcpy(r->txn_objects[i].file_key, file_key,
+			       sizeof(r->txn_objects[i].file_key));
+			return true;
+		}
+	}
+	return false;
+}
+
+static const uint8_t *d2_discovered_txn_object(struct d2_replay *r, uint64_t id)
+{
+	uint32_t i;
+
+	for (i = 0; i < D1_MAX_TXNS; i++)
+		if (r->txn_objects[i].used && r->txn_objects[i].txn_id == id)
+			return r->txn_objects[i].file_key;
+	return NULL;
+}
+
+static bool d2_discover_admission_object(const struct d2_wal_header *h,
+					 const uint8_t *record, void *arg)
+{
+	struct d2_replay *r = arg;
+	struct d2_control control;
+	struct d2_cohort cohort;
+	struct d2_entry entry;
+	struct d1_cursor cursor;
+	const uint8_t *file_key;
+	uint8_t ignored[32];
+	uint64_t txn_id;
+	uint32_t count;
+	uint32_t i;
+
+	if (h->family == D2_REC_ENTRY) {
+		if (!d2_entry_decode(record, h->total_bytes, h, &entry))
+			return false;
+		if (entry.transition == D2_REFUSED ||
+		    entry.transition == D2_ABORTED)
+			return true;
+		return d2_discover_admission_remember(
+			       r, entry.admission.client_id, entry.file_key) &&
+		       d2_discover_txn_remember(r, entry.txn_id,
+						entry.file_key);
+	}
+	if (h->family == D2_REC_COHORT) {
+		if (!d2_cohort_decode(record, h->total_bytes, h, &cohort))
+			return false;
+		if (cohort.transition == D2_REFUSED ||
+		    cohort.transition == D2_ABORTED || !cohort.member_count)
+			return true;
+		if (!d2_discover_admission_remember(r,
+						    cohort.admission.client_id,
+						    cohort.members[0].file_key))
+			return false;
+		for (i = 0; i < cohort.member_count; i++)
+			if (!d2_discover_txn_remember(
+				    r, cohort.members[i].txn_id,
+				    cohort.members[i].file_key))
+				return false;
+		return true;
+	}
+	if (h->family != D2_REC_CONTROL)
+		return true;
+	if (!d2_control_decode(record, h->total_bytes, h, &control))
+		return false;
+	if (control.transition != D2_COMMITTED || control.status != D1_OK)
+		return true;
+	d1_dec_init(&cursor, control.body, control.body_len);
+	if (control.subtype == D2_CTL_EPISODE_MARK) {
+		if (!d1_dec_raw(&cursor, ignored, 16) ||
+		    !d1_dec_raw(&cursor, ignored, sizeof(ignored)))
+			return false;
+		return d2_discover_admission_remember(
+			r, control.admission_client_id, ignored);
+	}
+	if (control.subtype == D2_CTL_EPISODE_CLEAR) {
+		if (!d1_dec_raw(&cursor, ignored, 16) ||
+		    !d1_dec_u64(&cursor, &txn_id) ||
+		    !d1_dec_u32(&cursor, &count) ||
+		    !d1_dec_u32(&cursor, &count) ||
+		    !d1_dec_raw(&cursor, ignored, sizeof(ignored)) ||
+		    !d1_dec_raw(&cursor, ignored, sizeof(ignored)))
+			return false;
+		return d2_discover_admission_remember(
+			r, control.admission_client_id, ignored);
+	}
+	if (control.subtype != D2_CTL_RECOVERY_ADMIT ||
+	    !d1_dec_u32(&cursor, &count) || !count ||
+	    !d1_dec_u64(&cursor, &txn_id))
+		return control.subtype != D2_CTL_RECOVERY_ADMIT;
+	file_key = d2_discovered_txn_object(r, txn_id);
+	return file_key && d2_discover_admission_remember(
+				   r, control.admission_client_id, file_key);
 }
 
 static bool d2_recovery_fundable(const struct d2_store *s,
@@ -3284,6 +3451,10 @@ uint32_t d2_store_rebind(int dirfd, const struct d2_store_rebind *config,
 	replay.files = files;
 	replay.store = s;
 	status = d1_store_journal_enable(s->model);
+	if (status != D1_OK)
+		goto fail;
+	status = d2_files_scan(files, d2_discover_admission_object, &replay,
+			       &scan, false);
 	if (status != D1_OK)
 		goto fail;
 	status = d2_files_scan(files, d2_replay_record, &replay, &scan, false);

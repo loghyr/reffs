@@ -3483,6 +3483,98 @@ int main(void)
 	unlinkat(dirfd, "payload", 0);
 	memset(&binding, 0, sizeof(binding));
 	check(d2_store_provision(dirfd, &config, &binding, &store) == D1_OK,
+	      "provision reverse authority-order fixture");
+	if (store) {
+		struct d1_fixture_authority mds = { 0 }, first = { 0 },
+					    second = { 0 };
+		struct d1_objkey second_object = object;
+		d1_admission_id mds_id, first_id, second_id;
+		d1_admission_id beneficiaries[2];
+
+		fill(mds.issuer.bytes, sizeof(mds.issuer.bytes), 0x32);
+		fill(mds.principal.bytes, sizeof(mds.principal.bytes), 0x42);
+		fill(mds.session, sizeof(mds.session), 0x52);
+		mds.writer = 94;
+		mds.rights = D1_RIGHT_CONTROL;
+		mds.authority_epoch = 8;
+		first = mds;
+		fill(first.principal.bytes, sizeof(first.principal.bytes),
+		     0x62);
+		fill(first.session, sizeof(first.session), 0x72);
+		first.writer = 95;
+		first.rights = D1_RIGHT_READ | D1_RIGHT_WRITE |
+			       D1_RIGHT_SINGLE_WRITER;
+		first.lease_epoch = 13;
+		first.fence_sequence = 23;
+		second = first;
+		fill(second.principal.bytes, sizeof(second.principal.bytes),
+		     0x82);
+		fill(second.session, sizeof(second.session), 0x92);
+		second.writer = 96;
+		second.lease_epoch = 14;
+		second.fence_sequence = 24;
+		fill(second_object.object_uuid.bytes,
+		     sizeof(second_object.object_uuid.bytes), 0x71);
+		mds_id = d2_store_admit_full(store, &object, &mds);
+		first_id = d2_store_admit_bare(store, &object, &first);
+		second_id = d2_store_admit_bare(store, &second_object, &second);
+		beneficiaries[0] = first_id;
+		beneficiaries[1] = second_id;
+		check(d1_admission_live(mds_id) &&
+			      d1_admission_live(first_id) &&
+			      d1_admission_live(second_id) &&
+			      first_id.raw < second_id.raw &&
+			      d2_store_trust_admission(store, mds_id,
+						       first_id) == D1_OK &&
+			      d2_store_trust_admission(store, mds_id,
+						       second_id) == D1_OK &&
+			      d2_store_admit_authority(
+				      store, mds_id, beneficiaries, 2) == D1_OK,
+		      "two ordered admissions receive authority");
+		memset(&env, 0, sizeof(env));
+		env.object = second_object;
+		env.admission = second_id;
+		env.incarnation = d2_store_incarnation(store);
+		env.op = D1_OP_WRITE_BATCH;
+		fill(env.key.origin.bytes, sizeof(env.key.origin.bytes), 0xcd);
+		write_request(&env, 1, 1, 54, &guard, replacement,
+			      sizeof(replacement));
+		env.body.write.entries[0].owner.writer = second.writer;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "higher admission mutates its object first");
+		env.object = object;
+		env.admission = first_id;
+		write_request(&env, 2, 0, 53, &guard, payload, sizeof(payload));
+		env.body.write.entries[0].owner.writer = first.writer;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_OK,
+		      "lower admission mutates its object second");
+		memcpy(reopen.files.expected_store_uuid, binding.store_uuid,
+		       16);
+		memcpy(reopen.files.expected_export_uuid, binding.export_uuid,
+		       16);
+		reopen.files.expected_root_ino = binding.root_ino;
+		d2_store_crash(store);
+		store = NULL;
+		check(d2_store_rebind(dirfd, &reopen, &binding, &store) ==
+			      D1_OK,
+		      "reverse first-use authority admissions replay");
+		check(store && d2_store_visible(store, &object, 0, &visible) &&
+			      d2_store_visible(store, &second_object, 1,
+					       &visible),
+		      "reverse first-use admissions retain their objects");
+	}
+	if (store) {
+		check(d2_store_close(store) == D1_OK,
+		      "close reverse authority-order fixture");
+		store = NULL;
+	}
+	unlinkat(dirfd, "super", 0);
+	unlinkat(dirfd, "wal", 0);
+	unlinkat(dirfd, "payload", 0);
+	memset(&binding, 0, sizeof(binding));
+	check(d2_store_provision(dirfd, &config, &binding, &store) == D1_OK,
 	      "provision authority-transition race fixture");
 	if (store) {
 		enum { AUTHORITY_RACE_RUNS = 8 };
