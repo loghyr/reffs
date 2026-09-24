@@ -2330,7 +2330,7 @@ static bool d2_discover_admission_object(const struct d2_wal_header *h,
 			return false;
 		for (i = 0; i < cohort.member_count; i++)
 			if (!d2_discover_txn_remember(
-				    r, cohort.members[i].txn_id,
+				    r, cohort.members[i].member_txn_id,
 				    cohort.members[i].file_key))
 				return false;
 		return true;
