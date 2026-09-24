@@ -155,6 +155,59 @@ out:
 	return found;
 }
 
+static bool retarget_refused_entry(int dirfd, uint64_t wal_bytes,
+				   const struct d2_binding *binding,
+				   uint64_t id, const uint8_t file_key[32])
+{
+	struct d2_wal_header header;
+	struct d2_entry entry;
+	uint8_t *record;
+	uint64_t at = 0;
+	int fd;
+	bool changed = false;
+
+	record = malloc(D2_MAX_RECORD_BYTES);
+	if (!record)
+		return false;
+	fd = openat(dirfd, "wal", O_RDWR | O_CLOEXEC);
+	if (fd < 0) {
+		free(record);
+		return false;
+	}
+	while (at < wal_bytes) {
+		size_t want = wal_bytes - at > D2_MAX_RECORD_BYTES ?
+				      D2_MAX_RECORD_BYTES :
+				      (size_t)(wal_bytes - at);
+		ssize_t got = pread(fd, record, want, at);
+
+		if (got < (ssize_t)D2_WAL_HEADER_BYTES ||
+		    !d2_wal_header_decode(record, (size_t)got,
+					  binding->store_uuid,
+					  binding->wal_uuid, &header) ||
+		    header.total_bytes > wal_bytes - at)
+			break;
+		if (header.family == D2_REC_ENTRY &&
+		    header.total_bytes == D2_ENTRY_RECORD_BYTES &&
+		    d2_entry_decode(record, D2_ENTRY_RECORD_BYTES, &header,
+				    &entry) &&
+		    entry.transition == D2_REFUSED &&
+		    entry.admission.client_id == id) {
+			memcpy(entry.file_key, file_key,
+			       sizeof(entry.file_key));
+			if (!d2_entry_encode(&header, &entry, record) ||
+			    pwrite(fd, record, D2_ENTRY_RECORD_BYTES, at) !=
+				    (ssize_t)D2_ENTRY_RECORD_BYTES)
+				break;
+			changed = true;
+			break;
+		}
+		at += header.total_bytes;
+	}
+	close(fd);
+	free(record);
+	return changed;
+}
+
 static bool authority_precedes_entry(int dirfd, uint64_t wal_bytes,
 				     const struct d2_binding *binding,
 				     uint64_t admission_id)
@@ -3249,6 +3302,7 @@ int main(void)
 	if (store) {
 		struct d1_fixture_authority mds = { 0 }, first = { 0 },
 					    second = { 0 }, third = { 0 };
+		struct d1_objkey second_object = object;
 		struct d1_envelope authority_refused;
 		d1_admission_id mds_id, first_id, second_id, third_id;
 		d1_admission_id beneficiaries[2], repeated[2];
@@ -3276,9 +3330,11 @@ int main(void)
 		second.writer = 92;
 		second.lease_epoch = 12;
 		second.fence_sequence = 22;
+		fill(second_object.object_uuid.bytes,
+		     sizeof(second_object.object_uuid.bytes), 0x70);
 		mds_id = d2_store_admit_full(store, &object, &mds);
 		first_id = d2_store_admit_bare(store, &object, &first);
-		second_id = d2_store_admit_bare(store, &object, &second);
+		second_id = d2_store_admit_bare(store, &second_object, &second);
 		check(d1_admission_live(mds_id) &&
 			      d1_admission_live(first_id) &&
 			      d1_admission_live(second_id) &&
@@ -3328,6 +3384,19 @@ int main(void)
 		      "first beneficiary mutates after batched authority");
 		first_version = result.entries[0].version;
 		env.admission = second_id;
+		env.object = second_object;
+		write_request(&env, 3, 1, 51, &guard, replacement,
+			      sizeof(replacement));
+		env.body.write.entries[0].owner.writer = second.writer;
+		wal_bytes = d2_store_wal_bytes(store);
+		env.body.write.entries[0].expected.never_written = false;
+		env.body.write.entries[0].expected.generation = 1;
+		check(d2_store_apply(store, &env, &result) == D1_OK &&
+			      result.entries[0].status == D1_GUARDED &&
+			      d2_store_wal_bytes(store) ==
+				      wal_bytes + D2_ENTRY_RECORD_BYTES,
+		      "refused entry does not bind admission to object");
+		env.body.write.entries[0].expected = guard;
 		write_request(&env, 2, 1, 51, &guard, replacement,
 			      sizeof(replacement));
 		env.body.write.entries[0].owner.writer = second.writer;
@@ -3356,7 +3425,8 @@ int main(void)
 		      "revoked authority cannot issue trust, authority or custody");
 		wal_bytes = d2_store_wal_bytes(store);
 		env.admission = first_id;
-		write_request(&env, 3, 2, 52, &guard, payload, sizeof(payload));
+		env.object = object;
+		write_request(&env, 4, 2, 52, &guard, payload, sizeof(payload));
 		env.body.write.entries[0].owner.writer = first.writer;
 		check(d2_store_apply(store, &env, &result) == D1_OK &&
 			      result.entries[0].status == D1_STALE_AUTH &&
@@ -3364,6 +3434,19 @@ int main(void)
 				      wal_bytes + D2_ENTRY_RECORD_BYTES,
 		      "revoked authority records a stale mutation receipt");
 		authority_refused = env;
+		{
+			uint8_t first_handle[32];
+			uint8_t first_file_key[32];
+
+			memcpy(first_handle, object.export_uuid.bytes, 16);
+			memcpy(first_handle + 16, object.object_uuid.bytes, 16);
+			d2_file_key(first_handle, sizeof(first_handle),
+				    first_file_key);
+			check(retarget_refused_entry(
+				      dirfd, d2_store_wal_bytes(store),
+				      &binding, second_id.raw, first_file_key),
+			      "refused entry is retargeted for replay coverage");
+		}
 		memcpy(reopen.files.expected_store_uuid, binding.store_uuid,
 		       16);
 		memcpy(reopen.files.expected_export_uuid, binding.export_uuid,
@@ -3375,8 +3458,9 @@ int main(void)
 			      D1_OK,
 		      "batched authority admissions replay");
 		check(store && d2_store_visible(store, &object, 0, &visible) &&
-			      d2_store_visible(store, &object, 1, &visible),
-		      "both beneficiaries' visible state replays");
+			      d2_store_visible(store, &second_object, 1,
+					       &visible),
+		      "pending admissions bind to their used objects");
 		if (store) {
 			authority_refused.admission = d2_store_admission_handle(
 				store, authority_refused.admission.raw);
