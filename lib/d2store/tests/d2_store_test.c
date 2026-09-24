@@ -156,8 +156,8 @@ out:
 }
 
 static bool retarget_refused_entry(int dirfd, uint64_t wal_bytes,
-				   const struct d2_binding *binding, uint64_t id,
-				   const uint8_t file_key[32])
+				   const struct d2_binding *binding,
+				   uint64_t id, const uint8_t file_key[32])
 {
 	struct d2_wal_header header;
 	struct d2_entry entry;
@@ -176,13 +176,14 @@ static bool retarget_refused_entry(int dirfd, uint64_t wal_bytes,
 	}
 	while (at < wal_bytes) {
 		size_t want = wal_bytes - at > D2_MAX_RECORD_BYTES ?
-			      D2_MAX_RECORD_BYTES : (size_t)(wal_bytes - at);
+				      D2_MAX_RECORD_BYTES :
+				      (size_t)(wal_bytes - at);
 		ssize_t got = pread(fd, record, want, at);
 
 		if (got < (ssize_t)D2_WAL_HEADER_BYTES ||
 		    !d2_wal_header_decode(record, (size_t)got,
-					 binding->store_uuid, binding->wal_uuid,
-					 &header) ||
+					  binding->store_uuid,
+					  binding->wal_uuid, &header) ||
 		    header.total_bytes > wal_bytes - at)
 			break;
 		if (header.family == D2_REC_ENTRY &&
@@ -191,7 +192,8 @@ static bool retarget_refused_entry(int dirfd, uint64_t wal_bytes,
 				    &entry) &&
 		    entry.transition == D2_REFUSED &&
 		    entry.admission.client_id == id) {
-			memcpy(entry.file_key, file_key, sizeof(entry.file_key));
+			memcpy(entry.file_key, file_key,
+			       sizeof(entry.file_key));
 			if (!d2_entry_encode(&header, &entry, record) ||
 			    pwrite(fd, record, D2_ENTRY_RECORD_BYTES, at) !=
 				    (ssize_t)D2_ENTRY_RECORD_BYTES)
@@ -3438,10 +3440,11 @@ int main(void)
 
 			memcpy(first_handle, object.export_uuid.bytes, 16);
 			memcpy(first_handle + 16, object.object_uuid.bytes, 16);
-			d2_file_key(first_handle, sizeof(first_handle), first_file_key);
-			check(retarget_refused_entry(dirfd,
-					      d2_store_wal_bytes(store), &binding,
-					      second_id.raw, first_file_key),
+			d2_file_key(first_handle, sizeof(first_handle),
+				    first_file_key);
+			check(retarget_refused_entry(
+				      dirfd, d2_store_wal_bytes(store),
+				      &binding, second_id.raw, first_file_key),
 			      "refused entry is retargeted for replay coverage");
 		}
 		memcpy(reopen.files.expected_store_uuid, binding.store_uuid,
@@ -3455,7 +3458,8 @@ int main(void)
 			      D1_OK,
 		      "batched authority admissions replay");
 		check(store && d2_store_visible(store, &object, 0, &visible) &&
-			      d2_store_visible(store, &second_object, 1, &visible),
+			      d2_store_visible(store, &second_object, 1,
+					       &visible),
 		      "pending admissions bind to their used objects");
 		if (store) {
 			authority_refused.admission = d2_store_admission_handle(

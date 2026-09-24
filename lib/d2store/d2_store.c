@@ -1612,8 +1612,7 @@ static bool d2_replay_admission(struct d2_replay *r,
 		return false;
 	if (entry->transition == D2_REFUSED || entry->transition == D2_ABORTED)
 		return true;
-	if (!d2_bind_pending_admissions(r, object,
-					entry->admission.client_id))
+	if (!d2_bind_pending_admissions(r, object, entry->admission.client_id))
 		return false;
 	if (!slot->object_known) {
 		d1_admission_id id =
