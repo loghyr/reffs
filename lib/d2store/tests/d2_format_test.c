@@ -40,6 +40,12 @@ static void put_u32(uint8_t out[4], uint32_t value)
 	out[3] = (uint8_t)value;
 }
 
+static uint32_t get_u32(const uint8_t in[4])
+{
+	return ((uint32_t)in[0] << 24) | ((uint32_t)in[1] << 16) |
+	       ((uint32_t)in[2] << 8) | in[3];
+}
+
 static void key_init(struct d2_key_block *k, uint8_t first)
 {
 	fill(k->session, sizeof(k->session), first);
@@ -98,6 +104,8 @@ static void test_super(void)
 	a.state = D2_SB_CLEAN;
 	a.format_floor = D2_FORMAT_VERSION;
 	check(d2_super_encode(&a, bytes), "superblock encodes");
+	check(get_u32(bytes + 356) == 0x2c4063b3u,
+	      "kernel super vector CRC is pinned");
 	check(d2_super_decode(bytes, a.store_uuid, &b), "superblock decodes");
 	check(b.generation == a.generation && b.state == a.state,
 	      "superblock values round trip");
@@ -119,6 +127,8 @@ static void test_payload(void)
 	fill(a.payload_uuid, 16, 0x20);
 	fill(a.wal_uuid, 16, 0x30);
 	check(d2_payload_header_encode(&a, header), "payload header encodes");
+	check(get_u32(header + 80) == 0x51fff7ddu,
+	      "kernel payload-header vector CRC is pinned");
 	check(d2_payload_header_decode(header, a.store_uuid, &b),
 	      "payload header decodes");
 	fill(content, sizeof(content), 0x40);
@@ -176,6 +186,61 @@ static void test_payload(void)
 	free(bytes);
 }
 
+static void test_kernel_payload_vectors(void)
+{
+	static const struct {
+		uint32_t algorithm;
+		uint32_t len;
+		uint8_t checksum[32];
+	} vectors[] = {
+		{ 1, 4, { 0xe6, 0x92, 0x5d, 0x7b } },
+		{ 3,
+		  32,
+		  {
+			  0, 0, 0, 0, 0x43, 0x42, 0x41, 0x40,
+			  0, 0, 0, 0, 0x43, 0x42, 0x41, 0x40,
+			  0, 0, 0, 0, 0x43, 0x42, 0x41, 0x40,
+			  0, 0, 0, 0, 0x43, 0x42, 0x41, 0x40,
+		  } },
+		{ 4,
+		  32,
+		  {
+			  0xae, 0xd5, 0xd0, 0xd7, 0xbf, 0x85, 0xa4, 0x04,
+			  0x2c, 0x67, 0xfc, 0xc7, 0x3f, 0xba, 0xd1, 0x8a,
+			  0x1c, 0xc4, 0x04, 0xc4, 0x7f, 0x41, 0x7b, 0x40,
+			  0x8d, 0xc4, 0x75, 0x13, 0x86, 0x22, 0xe3, 0x90,
+		  } },
+	};
+	struct d2_payload_object object = { 0 };
+	uint8_t content[] = { 0x40, 0x41, 0x42, 0x43 };
+	uint8_t bytes[D2_PAYLOAD_ALIGN];
+	size_t written;
+	unsigned int i;
+
+	fill(object.store_uuid, 16, 0x10);
+	object.payload_object_id = ((uint64_t)1 << 40) | 7;
+	object.content_len = sizeof(content);
+	object.content = content;
+	for (i = 0; i < sizeof(vectors) / sizeof(vectors[0]); i++) {
+		object.content_alg = vectors[i].algorithm;
+		object.content_ck_len = vectors[i].len;
+		memset(object.content_ck, 0, sizeof(object.content_ck));
+		memcpy(object.content_ck, vectors[i].checksum, vectors[i].len);
+		check(d2_payload_encode(&object, bytes, sizeof(bytes),
+					&written),
+		      "kernel payload checksum vector encodes");
+	}
+	object.content_alg = 2;
+	object.content_ck_len = 4;
+	memset(object.content_ck, 0, sizeof(object.content_ck));
+	put_u32(object.content_ck, 0x0b9c1e25u);
+	check(d2_payload_encode(&object, bytes, sizeof(bytes), &written),
+	      "kernel CRC32C payload vector encodes");
+	check(get_u32(bytes + 44) == 0x0b9c1e25u &&
+		      get_u32(bytes + 140) == 0xc58be5c5u,
+	      "kernel payload vector CRCs are pinned");
+}
+
 static void test_start(void)
 {
 	struct d2_wal_header h, got_h;
@@ -192,6 +257,8 @@ static void test_start(void)
 	a.capacity_payload_bytes = 1u << 20;
 	fill(a.export_uuid, 16, 0x70);
 	check(d2_start_encode(&h, &a, bytes), "START encodes");
+	check(get_u32(bytes + 193) == 0x42dba834u,
+	      "kernel START vector CRC is pinned");
 	check(d2_wal_header_decode(bytes, sizeof(bytes), h.store_uuid,
 				   h.wal_uuid, &got_h),
 	      "START WAL header decodes");
@@ -390,6 +457,7 @@ int main(void)
 {
 	test_super();
 	test_payload();
+	test_kernel_payload_vectors();
 	test_start();
 	test_entry();
 	test_cohort();
