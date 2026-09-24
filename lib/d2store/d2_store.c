@@ -1572,7 +1572,8 @@ static bool d2_replay_postcond(struct d2_replay *r,
 }
 
 static bool d2_bind_pending_admissions(struct d2_replay *r,
-				       const struct d1_objkey *object);
+				       const struct d1_objkey *object,
+				       uint64_t through);
 
 static bool d2_replay_admission(struct d2_replay *r,
 				const struct d2_entry *entry)
@@ -1593,8 +1594,6 @@ static bool d2_replay_admission(struct d2_replay *r,
 		}
 	if (!object)
 		return false;
-	if (!d2_bind_pending_admissions(r, object))
-		return false;
 	d2_stateid(entry->admission.client_id, &seqid, other);
 	if (seqid != entry->admission.stateid_seqid ||
 	    memcmp(other, entry->admission.stateid_other, sizeof(other)))
@@ -1610,6 +1609,11 @@ static bool d2_replay_admission(struct d2_replay *r,
 	slot = d2_admission_slot(r->store, entry->admission.client_id);
 	if (!slot || !slot->authority_seen ||
 	    memcmp(&slot->auth, &auth, sizeof(auth)))
+		return false;
+	if (entry->transition == D2_REFUSED || entry->transition == D2_ABORTED)
+		return true;
+	if (!d2_bind_pending_admissions(r, object,
+					entry->admission.client_id))
 		return false;
 	if (!slot->object_known) {
 		d1_admission_id id =
@@ -2164,7 +2168,8 @@ static uint32_t d2_model_restore(struct d2_store *s, const uint8_t *journal,
 }
 
 static bool d2_bind_pending_admissions(struct d2_replay *r,
-				       const struct d1_objkey *object)
+				       const struct d1_objkey *object,
+				       uint64_t through)
 {
 	typeof(r->store->admissions[0]) *next;
 	d1_admission_id id;
@@ -2182,7 +2187,7 @@ static bool d2_bind_pending_admissions(struct d2_replay *r,
 			if (!next || slot->id < next->id)
 				next = slot;
 		}
-		if (!next)
+		if (!next || next->id > through)
 			return true;
 		id = d1_fixture_admit_full(r->store->model, object,
 					   &next->auth);
@@ -2252,7 +2257,8 @@ static bool d2_replay_recovery(struct d2_replay *r,
 	    memcmp(control->admission_issuer, fresh->auth.issuer.bytes,
 		   D1_UUID_BYTES) ||
 	    control->admission_authority_epoch != fresh->auth.authority_epoch ||
-	    !d2_bind_pending_admissions(r, &work[0]->object))
+	    !d2_bind_pending_admissions(r, &work[0]->object,
+					control->admission_client_id))
 		return false;
 	env.object = work[0]->object;
 	env.incarnation = h->ds_incarnation;
