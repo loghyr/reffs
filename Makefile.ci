@@ -50,6 +50,7 @@ endef
 check: image
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		$(CI_IMAGE_NAME) \
 		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
@@ -71,6 +72,7 @@ check: image
 full: image
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		$(CI_IMAGE_NAME) \
 		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
@@ -96,6 +98,7 @@ sec: full
 soak: image $(LOGS_DIR)
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(LOGS_DIR):/logs:Z \
 		$(CI_IMAGE_NAME) \
@@ -113,6 +116,7 @@ soak: image $(LOGS_DIR)
 soak-noopt: image $(LOGS_DIR)
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(LOGS_DIR):/logs:Z \
 		$(CI_IMAGE_NAME) \
@@ -126,6 +130,7 @@ soak-noopt: image $(LOGS_DIR)
 soak-tsan: image $(LOGS_DIR)
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(LOGS_DIR):/logs:Z \
 		$(CI_IMAGE_NAME) \
@@ -140,6 +145,7 @@ soak-tsan: image $(LOGS_DIR)
 soak-rocksdb: image $(LOGS_DIR)
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(LOGS_DIR):/logs:Z \
 		$(CI_IMAGE_NAME) \
@@ -153,6 +159,7 @@ soak-rocksdb: image $(LOGS_DIR)
 soak-core: image $(LOGS_DIR)
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		--ulimit core=-1:-1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(LOGS_DIR):/logs:Z \
@@ -173,6 +180,7 @@ soak-core: image $(LOGS_DIR)
 test: image
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		$(CI_IMAGE_NAME) \
 		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
@@ -186,6 +194,7 @@ cthon04: image $(LOGS_DIR)
 	@mkdir -p $(ROOT_DIR)/external
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(ROOT_DIR)/external:/external:Z \
 		-v $(LOGS_DIR):/logs:Z \
@@ -204,6 +213,7 @@ cthon04: image $(LOGS_DIR)
 tls-stress: image $(LOGS_DIR)
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(LOGS_DIR):/logs:Z \
 		$(CI_IMAGE_NAME) \
@@ -224,6 +234,7 @@ pynfs: image $(LOGS_DIR)
 	@mkdir -p $(ROOT_DIR)/external
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(ROOT_DIR)/external:/external:Z \
 		-v $(LOGS_DIR):/logs:Z \
@@ -244,6 +255,7 @@ pjdfstest: image $(LOGS_DIR)
 	@mkdir -p $(ROOT_DIR)/external
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(ROOT_DIR)/external:/external:Z \
 		-v $(LOGS_DIR):/logs:Z \
@@ -265,6 +277,7 @@ nfstest: image $(LOGS_DIR)
 	@mkdir -p $(ROOT_DIR)/external
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(ROOT_DIR)/external:/external:Z \
 		-v $(LOGS_DIR):/logs:Z \
@@ -292,6 +305,7 @@ nfstest: image $(LOGS_DIR)
 krb5: image
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		$(CI_IMAGE_NAME) \
 		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
@@ -318,6 +332,7 @@ krb5: image
 ffv1-stress: image
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		$(CI_IMAGE_NAME) \
 		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
@@ -342,6 +357,7 @@ ffv1-stress: image
 mirror: image
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		$(CI_IMAGE_NAME) \
 		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
@@ -356,6 +372,7 @@ sigmund: image $(LOGS_DIR)
 	@mkdir -p $(ROOT_DIR)/external
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(ROOT_DIR)/external:/external:Z \
 		-v $(LOGS_DIR):/logs:Z \
@@ -376,6 +393,7 @@ libnfs: image $(LOGS_DIR)
 	@mkdir -p $(ROOT_DIR)/external
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(ROOT_DIR)/external:/external:Z \
 		-v $(LOGS_DIR):/logs:Z \
@@ -396,6 +414,7 @@ xfstests: image $(LOGS_DIR)
 	@mkdir -p $(ROOT_DIR)/external
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(ROOT_DIR)/external:/external:Z \
 		-v $(LOGS_DIR):/logs:Z \
@@ -416,6 +435,7 @@ ltp: image $(LOGS_DIR)
 	@mkdir -p $(ROOT_DIR)/external
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
+		--dns-option timeout:1 --dns-option attempts:1 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(ROOT_DIR)/external:/external:Z \
 		-v $(LOGS_DIR):/logs:Z \
