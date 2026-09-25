@@ -67,6 +67,7 @@ static void make_write(struct d1_envelope *env)
 
 	e = &env->body.write.entries[0];
 	e->index = 0;
+	e->payload_id = 0x4242;
 	e->owner.cohort.raw = 42;
 	e->owner.writer = 11;
 	e->owner.co_id = 1;
@@ -189,6 +190,11 @@ static void test_golden_write_envelope(void)
 		0x00,
 		0x00,
 		0x00,
+		/* writer payload ID 0x4242 */
+		0x00,
+		0x00,
+		0x42,
+		0x42,
 		/* owner: cohort 42, writer 11, co_id 1 */
 		0x00,
 		0x00,
@@ -623,8 +629,9 @@ static void test_the_round_trip_keeps_every_field(void)
 		const struct d1_write_entry *a = &env.body.write.entries[i];
 		const struct d1_write_entry *b = &back.body.write.entries[i];
 
-		check(a->index == b->index && owner_same(&a->owner, &b->owner),
-		      "each entry keeps its index and owner");
+		check(a->index == b->index && a->payload_id == b->payload_id &&
+			      owner_same(&a->owner, &b->owner),
+		      "each entry keeps its index, payload ID and owner");
 		check(a->guard_check == b->guard_check &&
 			      a->expected.never_written ==
 				      b->expected.never_written &&
@@ -782,7 +789,7 @@ static void test_digest_binds_every_field(void)
 	check(d1_envelope_digest(&env, scratch, D1_ENVELOPE_MAX, base),
 	      "digest computes");
 
-	for (i = 0; i < 10; i++) {
+	for (i = 0; i < 11; i++) {
 		struct d1_envelope v;
 		const char *what;
 
@@ -809,18 +816,22 @@ static void test_digest_binds_every_field(void)
 			what = "chunk index";
 			break;
 		case 5:
+			v.body.write.entries[0].payload_id++;
+			what = "payload ID";
+			break;
+		case 6:
 			v.body.write.entries[0].owner.co_id++;
 			what = "owner";
 			break;
-		case 6:
+		case 7:
 			v.body.write.entries[0].expected.generation++;
 			what = "expected guard";
 			break;
-		case 7:
+		case 8:
 			v.body.write.entries[0].checksum.digest[3] ^= 0xffu;
 			what = "checksum";
 			break;
-		case 8:
+		case 9:
 			v.body.write.activate = false;
 			what = "activation flag";
 			break;

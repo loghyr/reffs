@@ -1042,6 +1042,7 @@ bool d2_entry_encode(const struct d2_wal_header *h, const struct d2_entry *e,
 
 	if (!h || !e || !out || h->family != D2_REC_ENTRY ||
 	    !d2_entry_pair(e->transition, e->status) ||
+	    (!e->payload_object_id && e->writer_payload_id) ||
 	    (!e->predecessor_present &&
 	     (e->predecessor_object_id || e->predecessor_generation)) ||
 	    (!e->postcond_present && e->postcond_id) ||
@@ -1070,6 +1071,7 @@ bool d2_entry_encode(const struct d2_wal_header *h, const struct d2_entry *e,
 	d1_enc_bool(&c, e->postcond_present);
 	d1_enc_u64(&c, e->postcond_id);
 	d1_enc_u64(&c, e->payload_object_id);
+	d1_enc_u32(&c, e->writer_payload_id);
 	d1_enc_u64(&c, e->payload_object_offset);
 	d1_enc_u32(&c, e->payload_content_len);
 	d1_enc_u32(&c, e->extent_kind);
@@ -1120,6 +1122,7 @@ bool d2_entry_decode(const uint8_t *record, size_t len,
 	    !d1_dec_bool(&c, &e->postcond_present) ||
 	    !d1_dec_u64(&c, &e->postcond_id) ||
 	    !d1_dec_u64(&c, &e->payload_object_id) ||
+	    !d1_dec_u32(&c, &e->writer_payload_id) ||
 	    !d1_dec_u64(&c, &e->payload_object_offset) ||
 	    !d1_dec_u32(&c, &e->payload_content_len) ||
 	    !d1_dec_u32(&c, &e->extent_kind) ||
@@ -1147,6 +1150,7 @@ bool d2_entry_decode(const uint8_t *record, size_t len,
 	       (e->predecessor_present ||
 		(!e->predecessor_object_id && !e->predecessor_generation)) &&
 	       (e->postcond_present || !e->postcond_id) &&
+	       (e->payload_object_id || !e->writer_payload_id) &&
 	       d2_payload_ref_ok(e->payload_object_id, e->payload_object_offset,
 				 h->ds_incarnation) &&
 	       d2_result_ck_ok(e->result_ck_len, e->result_ck);

@@ -23,6 +23,8 @@
 /* One entry of a write batch. */
 struct d1_write_entry {
 	uint64_t index;
+	/* Opaque writer identifier returned by CHUNK_READ. */
+	uint32_t payload_id;
 	struct d1_owner owner;
 	/*
 	 * The guard predicate this write accepts.  Absent is only legal for

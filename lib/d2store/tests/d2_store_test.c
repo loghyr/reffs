@@ -98,6 +98,7 @@ static void write_request(struct d1_envelope *env, uint64_t sequence,
 	env->body.write.stability = D1_FILE_SYNC;
 	env->body.write.activate = true;
 	env->body.write.entries[0].index = index;
+	env->body.write.entries[0].payload_id = co_id;
 	env->body.write.entries[0].owner.cohort.raw = 1;
 	env->body.write.entries[0].owner.writer = 17;
 	env->body.write.entries[0].owner.co_id = co_id;
