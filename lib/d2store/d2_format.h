@@ -8,7 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define D2_FORMAT_VERSION 1u
+#define D2_FORMAT_VERSION 2u
 #define D2_PROLOGUE_BYTES 36u
 #define D2_WAL_HEADER_BYTES 72u
 #define D2_SB_BODY_BYTES 320u
@@ -21,8 +21,8 @@
 #define D2_START_BODY_BYTES 121u
 #define D2_START_RECORD_BYTES 197u
 #define D2_CONTROL_PREFIX_BYTES 136u
-#define D2_ENTRY_BODY_BYTES 460u
-#define D2_ENTRY_RECORD_BYTES 536u
+#define D2_ENTRY_BODY_BYTES 464u
+#define D2_ENTRY_RECORD_BYTES 540u
 #define D2_POSTCOND_RECORD_BYTES 280u
 #define D2_CERTIFICATE_RECORD_BYTES \
 	(D2_WAL_HEADER_BYTES + D2_CONTROL_PREFIX_BYTES + 56u + 4u)
@@ -40,7 +40,7 @@
 #define D2_MAX_AUTHORITY_STATEIDS 64u
 #define D2_MAX_COUNTED_ENTRIES 64u
 #define D2_MAX_LIVE_TXNS 64u
-#define D2_MIN_WAL_BYTES 3352780u
+#define D2_MIN_WAL_BYTES 3352972u
 #define D2_RESTART_HEADROOM 51909u
 #define D2_RESTART_SWEEP 51712u
 #define D2_RECOVERY_HEADROOM 3322572u
@@ -239,6 +239,7 @@ struct d2_entry {
 	bool postcond_present;
 	uint64_t postcond_id;
 	uint64_t payload_object_id;
+	uint32_t writer_payload_id;
 	uint64_t payload_object_offset;
 	uint32_t payload_content_len;
 	uint32_t extent_kind;

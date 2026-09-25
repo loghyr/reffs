@@ -56,6 +56,7 @@ static void d1_enc_write(struct d1_cursor *c, const struct d1_write_batch *w)
 		const struct d1_write_entry *e = &w->entries[i];
 
 		d1_enc_u64(c, e->index);
+		d1_enc_u32(c, e->payload_id);
 		d1_enc_owner(c, &e->owner);
 		d1_enc_opt_guard(c, e->guard_check, &e->expected);
 		d1_enc_bytes(c, e->payload, e->payload_len);
@@ -80,7 +81,9 @@ static bool d1_dec_write(struct d1_cursor *c, struct d1_write_batch *w)
 	for (i = 0; i < w->count; i++) {
 		struct d1_write_entry *e = &w->entries[i];
 
-		if (!d1_dec_u64(c, &e->index) || !d1_dec_owner(c, &e->owner) ||
+		if (!d1_dec_u64(c, &e->index) ||
+		    !d1_dec_u32(c, &e->payload_id) ||
+		    !d1_dec_owner(c, &e->owner) ||
 		    !d1_dec_opt_guard(c, &e->guard_check, &e->expected) ||
 		    !d1_dec_bytes_ref(c, &e->payload, &e->payload_len,
 				      D1_CHUNK_BYTES_MAX) ||

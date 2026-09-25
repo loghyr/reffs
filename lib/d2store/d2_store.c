@@ -1901,6 +1901,7 @@ static bool d2_replay_entry(struct d2_replay *r, const struct d2_wal_header *h,
 	env.body.write.stability = e->stability;
 	env.body.write.activate = e->result_activated;
 	env.body.write.entries[0].index = e->chunk_index;
+	env.body.write.entries[0].payload_id = e->writer_payload_id;
 	env.body.write.entries[0].owner.cohort.raw = e->owner_cohort;
 	env.body.write.entries[0].owner.writer = e->owner_client_id;
 	env.body.write.entries[0].owner.co_id = e->owner_co_id;
@@ -3957,6 +3958,7 @@ static uint32_t d2_persist_entry(struct d2_store *s,
 	entry.result_activated = result->entries[0].activated;
 	entry.result_visible_object_id = result->entries[0].version.raw;
 	entry.payload_object_id = payload_id;
+	entry.writer_payload_id = has_payload ? write->payload_id : 0;
 	entry.payload_object_offset = offset;
 	entry.payload_content_len = has_payload ? write->payload_len : 0;
 	eof = result->eof;

@@ -104,7 +104,7 @@ static void test_super(void)
 	a.state = D2_SB_CLEAN;
 	a.format_floor = D2_FORMAT_VERSION;
 	check(d2_super_encode(&a, bytes), "superblock encodes");
-	check(get_u32(bytes + 356) == 0x2c4063b3u,
+	check(get_u32(bytes + 356) == 0xb8821966u,
 	      "kernel super vector CRC is pinned");
 	check(d2_super_decode(bytes, a.store_uuid, &b), "superblock decodes");
 	check(b.generation == a.generation && b.state == a.state,
@@ -127,7 +127,7 @@ static void test_payload(void)
 	fill(a.payload_uuid, 16, 0x20);
 	fill(a.wal_uuid, 16, 0x30);
 	check(d2_payload_header_encode(&a, header), "payload header encodes");
-	check(get_u32(header + 80) == 0x51fff7ddu,
+	check(get_u32(header + 80) == 0xcb7eada9u,
 	      "kernel payload-header vector CRC is pinned");
 	check(d2_payload_header_decode(header, a.store_uuid, &b),
 	      "payload header decodes");
@@ -237,7 +237,7 @@ static void test_kernel_payload_vectors(void)
 	check(d2_payload_encode(&object, bytes, sizeof(bytes), &written),
 	      "kernel CRC32C payload vector encodes");
 	check(get_u32(bytes + 44) == 0x0b9c1e25u &&
-		      get_u32(bytes + 140) == 0xc58be5c5u,
+		      get_u32(bytes + 140) == 0x2bd696d8u,
 	      "kernel payload vector CRCs are pinned");
 }
 
@@ -257,7 +257,7 @@ static void test_start(void)
 	a.capacity_payload_bytes = 1u << 20;
 	fill(a.export_uuid, 16, 0x70);
 	check(d2_start_encode(&h, &a, bytes), "START encodes");
-	check(get_u32(bytes + 193) == 0x42dba834u,
+	check(get_u32(bytes + 193) == 0x31544e4eu,
 	      "kernel START vector CRC is pinned");
 	check(d2_wal_header_decode(bytes, sizeof(bytes), h.store_uuid,
 				   h.wal_uuid, &got_h),
@@ -284,21 +284,37 @@ static void test_entry(void)
 	a.stability = 3;
 	a.batch_count = 1;
 	fill(a.file_key, 32, 0x10);
-	a.txn_id = 1;
+	a.chunk_index = 1;
+	a.txn_id = 3;
 	key_init(&a.key, 0x20);
 	admission_init(&a.admission, 0x40);
+	a.owner_cohort = 7;
+	a.owner_client_id = a.admission.writer;
+	a.owner_co_id = 12;
+	a.generation = 1;
 	a.extent_kind = 2;
-	a.extent_high_water = 8;
-	a.result_effective_len = 8;
+	a.extent_high_water = 8192;
+	a.extent_highest_index = 1;
+	a.index_generation = 1;
+	a.payload_object_id = ((uint64_t)1 << 40) | 7;
+	a.payload_object_offset = D2_PAYLOAD_ALIGN;
+	a.payload_content_len = 4096;
+	a.result_activated = true;
+	a.result_visible_object_id = 1;
+	a.result_effective_len = 4096;
+	a.writer_payload_id = 0x4242;
 	a.result_ck_alg = 2;
 	a.result_ck_len = 4;
 	fill(a.result_ck, 4, 0x80);
+	a.result_guard_generation = 1;
+	a.result_guard_writer = a.admission.writer;
 	check(d2_entry_encode(&h, &a, bytes), "ENTRY encodes");
 	check(d2_wal_header_decode(bytes, sizeof(bytes), h.store_uuid,
 				   h.wal_uuid, &got_h) &&
 		      d2_entry_decode(bytes, sizeof(bytes), &got_h, &b),
 	      "ENTRY decodes");
-	check(b.extent_high_water == 8 && b.result_ck_len == 4,
+	check(b.extent_high_water == 8192 && b.result_ck_len == 4 &&
+		      b.writer_payload_id == 0x4242,
 	      "ENTRY values round trip");
 	a.predecessor_object_id = 1;
 	check(!d2_entry_encode(&h, &a, bytes),
