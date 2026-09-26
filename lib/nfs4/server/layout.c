@@ -25,6 +25,7 @@
 #include "reffs/dstore.h"
 #include "dstore_fanout.h"
 #include "reffs/dstore_ops.h"
+#include "reffs/ffv2_prototype.h"
 #include "reffs/inode.h"
 #include "reffs/layout_segment.h"
 #include "reffs/log.h"
@@ -1068,13 +1069,21 @@ int default_coding_resolve_segment(const struct reffs_coding_spec *coding,
 	return 0;
 }
 
-static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
-				   uint32_t ffv2m_coding_type,
-				   uint32_t writer_id,
-				   const stateid4 *layout_stateid,
-				   char **out_body, u_long *out_size)
+nfsstat4 layoutget_build_v2(struct layout_segment *seg,
+			    uint32_t ffv2m_coding_type, uint32_t writer_id,
+			    uint64_t pnfs_clientid,
+			    const stateid4 *layout_stateid, char **out_body,
+			    u_long *out_size)
 {
 	ffv2_layout4 ffl;
+	struct dstore *prototype_ds = NULL;
+	const struct ffv2_prototype_snapshot *prototype = NULL;
+	int prototype_selected;
+
+	prototype_selected = ffv2_prototype_snapshot_select(
+		seg, writer_id, pnfs_clientid, &prototype_ds, &prototype);
+	if (prototype_selected < 0)
+		return NFS4ERR_LAYOUTUNAVAILABLE;
 
 	memset(&ffl, 0, sizeof(ffl));
 	ffl.ffv2l_flags = FFV2_FLAGS_NO_LAYOUTCOMMIT |
@@ -1083,8 +1092,13 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 
 	ffl.ffv2l_mirrors.ffv2l_mirrors_len = 1;
 	ffl.ffv2l_mirrors.ffv2l_mirrors_val = calloc(1, sizeof(ffv2_mirror4));
-	if (!ffl.ffv2l_mirrors.ffv2l_mirrors_val)
+	if (!ffl.ffv2l_mirrors.ffv2l_mirrors_val) {
+		if (prototype_selected > 0) {
+			ffv2_prototype_snapshot_release(prototype_ds);
+			dstore_put(prototype_ds);
+		}
 		return NFS4ERR_DELAY;
+	}
 
 	nfsstat4 ret = NFS4_OK;
 	ffv2_mirror4 *mirror = &ffl.ffv2l_mirrors.ffv2l_mirrors_val[0];
@@ -1209,19 +1223,32 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 		 * draft-haynes-nfsv4-flexfiles-v2 that combination is
 		 * confined to PASSTHROUGH.
 		 */
-		if (ds_tight && layout_stateid)
+		if (prototype_selected > 0)
+			memcpy(&fi->ffv2fi_stateid,
+			       prototype->members[i].stateid,
+			       sizeof(fi->ffv2fi_stateid));
+		else if (ds_tight && layout_stateid)
 			fi->ffv2fi_stateid = *layout_stateid;
 		else
 			memset(&fi->ffv2fi_stateid, 0,
 			       sizeof(fi->ffv2fi_stateid));
-		fi->ffv2fi_fh_vers.nfs_fh4_len = ldf->ldf_fh_len;
-		fi->ffv2fi_fh_vers.nfs_fh4_val = calloc(1, ldf->ldf_fh_len);
+		fi->ffv2fi_fh_vers.nfs_fh4_len =
+			prototype_selected > 0 ?
+				prototype->members[i].mapped_handle_len :
+				ldf->ldf_fh_len;
+		fi->ffv2fi_fh_vers.nfs_fh4_val =
+			calloc(1, fi->ffv2fi_fh_vers.nfs_fh4_len);
 		if (!fi->ffv2fi_fh_vers.nfs_fh4_val) {
 			ret = NFS4ERR_DELAY;
 			goto out_v2;
 		}
-		memcpy(fi->ffv2fi_fh_vers.nfs_fh4_val, ldf->ldf_fh,
-		       ldf->ldf_fh_len);
+		if (prototype_selected > 0)
+			memcpy(fi->ffv2fi_fh_vers.nfs_fh4_val,
+			       prototype->members[i].mapped_handle,
+			       prototype->members[i].mapped_handle_len);
+		else
+			memcpy(fi->ffv2fi_fh_vers.nfs_fh4_val, ldf->ldf_fh,
+			       ldf->ldf_fh_len);
 
 		char uid_str[16], gid_str[16];
 
@@ -1295,6 +1322,10 @@ out_v2:
 			free(m0->ffv2m_stripes.ffv2m_stripes_val);
 		}
 		free(ffl.ffv2l_mirrors.ffv2l_mirrors_val);
+	}
+	if (prototype_selected > 0) {
+		ffv2_prototype_snapshot_release(prototype_ds);
+		dstore_put(prototype_ds);
 	}
 	return ret;
 }
@@ -2110,14 +2141,19 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		} else {
 			coding_type = (uint32_t)FFV2_ENCODING_RS_VANDERMONDE;
 		}
+		clientid4 layout_clientid =
+			compound->c_nfs4_client ?
+				(clientid4)nfs4_client_to_client(
+					compound->c_nfs4_client)
+					->c_id :
+				0;
+
 		*status = layoutget_build_v2(
 			build_seg, coding_type,
-			compound->c_nfs4_client ?
-				ffv2_writer_id((clientid4)nfs4_client_to_client(
-						       compound->c_nfs4_client)
-						       ->c_id) :
-				CHUNK_GUARD_CLIENT_ID_NONE,
-			&layout_stid, &body, &xdr_size);
+			layout_clientid ? ffv2_writer_id(layout_clientid) :
+					  CHUNK_GUARD_CLIENT_ID_NONE,
+			(uint64_t)layout_clientid, &layout_stid, &body,
+			&xdr_size);
 	} else {
 		*status = layoutget_build_v1(
 			build_seg, compound->c_server_state->ss_stripe_width,
