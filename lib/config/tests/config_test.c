@@ -916,6 +916,215 @@ START_TEST(test_load_data_server_mount_port)
 }
 END_TEST
 
+static const char prototype_config_prefix[] =
+	"[[data_server]]\n"
+	"id = 7\n"
+	"address = \"192.0.2.7\"\n"
+	"path = \"/kernel-ds\"\n"
+	"[data_server.prototype_registration]\n"
+	"auth_domain = \"client.example\"\n"
+	"store_uuid = \"00112233445566778899aabbccddeeff\"\n"
+	"binding_token = \"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\"\n"
+	"chunk_size = 4096\n"
+	"data_count = 1\n"
+	"parity_count = 1\n"
+	"writer_id = 17\n"
+	"pnfs_clientid = 23\n"
+	"[[data_server.prototype_registration.objects]]\n"
+	"ordinary_handle = \"01020304\"\n"
+	"persisted_handle = \"101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f\"\n"
+	"[[data_server.prototype_registration.objects]]\n"
+	"ordinary_handle = \"05060708\"\n"
+	"persisted_handle = \"303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f\"\n";
+
+START_TEST(test_load_prototype_registration)
+{
+	struct reffs_config cfg;
+	char *path;
+
+	reffs_config_defaults(&cfg);
+	path = write_toml(prototype_config_prefix);
+	ck_assert_ptr_nonnull(path);
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert(cfg.data_servers[0].prototype_registration.enabled);
+	ck_assert_str_eq(cfg.data_servers[0].prototype_registration.auth_domain,
+			 "client.example");
+	ck_assert_uint_eq(
+		cfg.data_servers[0].prototype_registration.object_count, 2);
+	ck_assert_uint_eq(cfg.data_servers[0]
+				  .prototype_registration.objects[1]
+				  .ordinary_handle_len,
+			  4);
+	ck_assert_uint_eq(
+		cfg.data_servers[0].prototype_registration.binding_token[31],
+		0x1f);
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_prototype_full_width_pnfs_clientid)
+{
+	static const char old_value[] = "pnfs_clientid = 23";
+	const char *position = strstr(prototype_config_prefix, old_value);
+	struct reffs_config cfg;
+	char text[4096];
+	char *path;
+
+	ck_assert_ptr_nonnull(position);
+	snprintf(text, sizeof(text),
+		 "%.*spnfs_clientid = \"0xffffffffffffffff\"%s",
+		 (int)(position - prototype_config_prefix),
+		 prototype_config_prefix, position + strlen(old_value));
+	reffs_config_defaults(&cfg);
+	path = write_toml(text);
+	ck_assert_ptr_nonnull(path);
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(
+		cfg.data_servers[0].prototype_registration.pnfs_clientid,
+		UINT64_MAX);
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+static void assert_bad_prototype_config(const char *text)
+{
+	struct reffs_config cfg;
+	char *path;
+
+	reffs_config_defaults(&cfg);
+	path = write_toml(text);
+	ck_assert_ptr_nonnull(path);
+	ck_assert_int_eq(reffs_config_load(&cfg, path), -EINVAL);
+	unlink(path);
+	free(path);
+}
+
+static void assert_bad_prototype_identity(const char *auth_domain,
+					  const char *store_uuid,
+					  const char *binding_token)
+{
+	char auth_line[512] = "";
+	char store_line[256] = "";
+	char token_line[256] = "";
+	char text[4096];
+
+	if (auth_domain)
+		snprintf(auth_line, sizeof(auth_line), "auth_domain=\"%s\"\n",
+			 auth_domain);
+	if (store_uuid)
+		snprintf(store_line, sizeof(store_line), "store_uuid=\"%s\"\n",
+			 store_uuid);
+	if (binding_token)
+		snprintf(token_line, sizeof(token_line),
+			 "binding_token=\"%s\"\n", binding_token);
+	snprintf(
+		text, sizeof(text),
+		"[[data_server]]\nid=7\naddress=\"192.0.2.7\"\npath=\"/ds\"\n"
+		"[data_server.prototype_registration]\n%s%s%s"
+		"chunk_size=4096\ndata_count=1\nparity_count=0\nwriter_id=1\npnfs_clientid=2\n"
+		"[[data_server.prototype_registration.objects]]\nordinary_handle=\"01\"\n"
+		"persisted_handle=\"101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f\"\n",
+		auth_line, store_line, token_line);
+	assert_bad_prototype_config(text);
+}
+
+START_TEST(test_load_prototype_rejects_missing_identity)
+{
+	assert_bad_prototype_config(
+		"[[data_server]]\nid=7\naddress=\"192.0.2.7\"\npath=\"/ds\"\n"
+		"[data_server.prototype_registration]\n"
+		"store_uuid=\"00112233445566778899aabbccddeeff\"\n"
+		"binding_token=\"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\"\n"
+		"chunk_size=4096\ndata_count=1\nparity_count=0\nwriter_id=1\npnfs_clientid=2\n"
+		"[[data_server.prototype_registration.objects]]\nordinary_handle=\"01\"\n"
+		"persisted_handle=\"101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f\"\n");
+}
+END_TEST
+
+START_TEST(test_load_prototype_rejects_bad_hex_lengths_and_digits)
+{
+	const char *bad_values[] = {
+		"00",
+		"00112233445566778899aabbccddeef",
+		"00112233445566778899aabbccddeeff00",
+		"00112233445566778899aabbccddeefg",
+	};
+
+	for (size_t i = 0; i < sizeof(bad_values) / sizeof(bad_values[0]);
+	     i++) {
+		char text[2048];
+
+		snprintf(
+			text, sizeof(text),
+			"[[data_server]]\nid=7\naddress=\"192.0.2.7\"\npath=\"/ds\"\n"
+			"[data_server.prototype_registration]\nauth_domain=\"domain\"\n"
+			"store_uuid=\"%s\"\n"
+			"binding_token=\"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\"\n"
+			"chunk_size=4096\ndata_count=1\nparity_count=0\nwriter_id=1\npnfs_clientid=2\n"
+			"[[data_server.prototype_registration.objects]]\nordinary_handle=\"01\"\n"
+			"persisted_handle=\"101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f\"\n",
+			bad_values[i]);
+		assert_bad_prototype_config(text);
+	}
+}
+END_TEST
+
+START_TEST(test_load_prototype_rejects_bad_auth_domain)
+{
+	char overlong[REFFS_CONFIG_MAX_AUTH_DOMAIN + 1];
+	const char *store = "00112233445566778899aabbccddeeff";
+	const char *token =
+		"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+
+	memset(overlong, 'a', sizeof(overlong) - 1);
+	overlong[sizeof(overlong) - 1] = '\0';
+	assert_bad_prototype_identity(NULL, store, token);
+	assert_bad_prototype_identity("", store, token);
+	assert_bad_prototype_identity(overlong, store, token);
+}
+END_TEST
+
+START_TEST(test_load_prototype_rejects_bad_binding_token)
+{
+	const char *bad_values[] = {
+		NULL,
+		"",
+		"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e",
+		"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
+		"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1g",
+	};
+	const char *store = "00112233445566778899aabbccddeeff";
+
+	for (size_t i = 0; i < sizeof(bad_values) / sizeof(bad_values[0]); i++)
+		assert_bad_prototype_identity("client.example", store,
+					      bad_values[i]);
+}
+END_TEST
+
+START_TEST(test_load_prototype_rejects_absent_store_uuid)
+{
+	assert_bad_prototype_identity(
+		"client.example", NULL,
+		"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+}
+END_TEST
+
+START_TEST(test_load_prototype_rejects_second_data_server)
+{
+	char text[8192];
+	char *second;
+
+	snprintf(text, sizeof(text), "%s\n%s", prototype_config_prefix,
+		 prototype_config_prefix);
+	second = strstr(text + strlen(prototype_config_prefix), "id = 7");
+	ck_assert_ptr_nonnull(second);
+	second[5] = '8';
+	assert_bad_prototype_config(text);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* load -- [[proxy_mds]] entries                                        */
 /* ------------------------------------------------------------------ */
@@ -1446,6 +1655,15 @@ Suite *config_suite(void)
 	tcase_add_test(tc_load, test_load_data_server_multiple);
 	tcase_add_test(tc_load, test_load_data_server_none);
 	tcase_add_test(tc_load, test_load_data_server_mount_port);
+	tcase_add_test(tc_load, test_load_prototype_registration);
+	tcase_add_test(tc_load, test_load_prototype_full_width_pnfs_clientid);
+	tcase_add_test(tc_load, test_load_prototype_rejects_missing_identity);
+	tcase_add_test(tc_load,
+		       test_load_prototype_rejects_bad_hex_lengths_and_digits);
+	tcase_add_test(tc_load, test_load_prototype_rejects_bad_auth_domain);
+	tcase_add_test(tc_load, test_load_prototype_rejects_bad_binding_token);
+	tcase_add_test(tc_load, test_load_prototype_rejects_absent_store_uuid);
+	tcase_add_test(tc_load, test_load_prototype_rejects_second_data_server);
 	tcase_add_test(tc_load, test_load_proxy_mds_single);
 	tcase_add_test(tc_load, test_load_proxy_mds_multiple);
 	tcase_add_test(tc_load, test_load_proxy_mds_none);

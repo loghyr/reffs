@@ -25,6 +25,13 @@
 #define REFFS_CONFIG_MAX_DSTORES 1024
 #define REFFS_CONFIG_MAX_HOST 256
 #define REFFS_CONFIG_MAX_PROXY_MDS 8
+#define REFFS_CONFIG_MAX_PROTOTYPE_OBJECTS 4
+#define REFFS_CONFIG_MAX_AUTH_DOMAIN 256
+#define REFFS_CONFIG_MAX_PROTOTYPE_FH 128
+#define REFFS_CONFIG_PROTOTYPE_STORE_UUID_SIZE 16
+#define REFFS_CONFIG_PROTOTYPE_BINDING_TOKEN_SIZE 32
+#define REFFS_CONFIG_PROTOTYPE_PERSISTED_HANDLE_SIZE 32
+#define REFFS_CONFIG_PROTOTYPE_MAX_CHUNK_SIZE (4U * 1024U * 1024U)
 #define REFFS_CONFIG_MAX_ALLOWED_PS 8
 #define REFFS_CONFIG_MAX_PRINCIPAL 256
 /*
@@ -140,6 +147,27 @@ enum reffs_ds_protocol {
 	REFFS_DS_PROTO_NFSV4 = 1, /* file layouts */
 };
 
+struct reffs_prototype_object_config {
+	uint8_t ordinary_handle[REFFS_CONFIG_MAX_PROTOTYPE_FH];
+	uint32_t ordinary_handle_len;
+	uint8_t persisted_handle[REFFS_CONFIG_PROTOTYPE_PERSISTED_HANDLE_SIZE];
+};
+
+struct reffs_prototype_registration_config {
+	bool enabled;
+	char auth_domain[REFFS_CONFIG_MAX_AUTH_DOMAIN];
+	uint8_t store_uuid[REFFS_CONFIG_PROTOTYPE_STORE_UUID_SIZE];
+	uint8_t binding_token[REFFS_CONFIG_PROTOTYPE_BINDING_TOKEN_SIZE];
+	uint32_t chunk_size;
+	uint32_t data_count;
+	uint32_t parity_count;
+	uint32_t writer_id;
+	uint64_t pnfs_clientid;
+	uint32_t object_count;
+	struct reffs_prototype_object_config
+		objects[REFFS_CONFIG_MAX_PROTOTYPE_OBJECTS];
+};
+
 struct reffs_data_server_config {
 	uint32_t id; /* unique dstore ID */
 	char address[REFFS_CONFIG_MAX_HOST]; /* IPv4 or IPv6 address */
@@ -161,6 +189,8 @@ struct reffs_data_server_config {
 	 * Default: false (preserves the existing behaviour).
 	 */
 	bool tight_coupling;
+	/* Optional kernel-DS prototype registration for this exact export. */
+	struct reffs_prototype_registration_config prototype_registration;
 };
 
 /*

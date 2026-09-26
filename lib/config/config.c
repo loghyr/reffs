@@ -7,10 +7,12 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <limits.h>
 #include <unistd.h>
 
 #include "reffs/trace/types.h"
@@ -89,6 +91,200 @@ static enum reffs_auth_flavor parse_flavor(const char *s)
 
 	TRACE("config: unknown auth flavor '%s', ignoring", s);
 	return 0;
+}
+
+static int hex_nibble(char c)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	return -1;
+}
+
+static int parse_hex(const char *text, uint8_t *out, size_t min_len,
+		     size_t max_len, size_t *out_len)
+{
+	size_t chars;
+	size_t len;
+
+	if (!text)
+		return -EINVAL;
+	chars = strlen(text);
+	if (!chars || (chars & 1))
+		return -EINVAL;
+	len = chars / 2;
+	if (len < min_len || len > max_len)
+		return -EINVAL;
+	for (size_t i = 0; i < len; i++) {
+		int hi = hex_nibble(text[2 * i]);
+		int lo = hex_nibble(text[2 * i + 1]);
+
+		if (hi < 0 || lo < 0)
+			return -EINVAL;
+		out[i] = (uint8_t)((hi << 4) | lo);
+	}
+	if (out_len)
+		*out_len = len;
+	return 0;
+}
+
+static int parse_u64_text(const char *text, uint64_t *value)
+{
+	char *end;
+	int base = 10;
+	unsigned long long parsed;
+
+	if (!text || !text[0] || text[0] == '-')
+		return -EINVAL;
+	if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
+		base = 16;
+	errno = 0;
+	parsed = strtoull(text, &end, base);
+	if (errno || *end || !parsed)
+		return -EINVAL;
+	*value = (uint64_t)parsed;
+	return 0;
+}
+
+static int
+parse_prototype_registration(struct reffs_prototype_registration_config *proto,
+			     toml_table_t *tbl, unsigned int ds_index)
+{
+	toml_array_t *objects;
+	toml_datum_t d;
+	bool have_auth = false, have_store = false, have_token = false;
+	bool have_chunk = false, have_data = false, have_parity = false;
+	bool have_writer = false, have_clientid = false;
+	bool persisted_valid[REFFS_CONFIG_MAX_PROTOTYPE_OBJECTS] = { false };
+	uint64_t total;
+
+	memset(proto, 0, sizeof(*proto));
+	proto->enabled = true;
+
+	d = toml_string_in(tbl, "auth_domain");
+	if (d.ok) {
+		size_t len = strlen(d.u.s);
+
+		if (len && len < sizeof(proto->auth_domain)) {
+			memcpy(proto->auth_domain, d.u.s, len + 1);
+			have_auth = true;
+		}
+		free(d.u.s);
+	}
+	d = toml_string_in(tbl, "store_uuid");
+	if (d.ok) {
+		have_store = parse_hex(d.u.s, proto->store_uuid,
+				       sizeof(proto->store_uuid),
+				       sizeof(proto->store_uuid), NULL) == 0;
+		free(d.u.s);
+	}
+	d = toml_string_in(tbl, "binding_token");
+	if (d.ok) {
+		have_token = parse_hex(d.u.s, proto->binding_token,
+				       sizeof(proto->binding_token),
+				       sizeof(proto->binding_token), NULL) == 0;
+		free(d.u.s);
+	}
+
+#define PARSE_PROTO_U32(_key, _field, _have)                       \
+	d = toml_int_in(tbl, _key);                                \
+	if (d.ok && d.u.i >= 0 && (uint64_t)d.u.i <= UINT32_MAX) { \
+		proto->_field = (uint32_t)d.u.i;                   \
+		_have = true;                                      \
+	}
+	PARSE_PROTO_U32("chunk_size", chunk_size, have_chunk);
+	PARSE_PROTO_U32("data_count", data_count, have_data);
+	PARSE_PROTO_U32("parity_count", parity_count, have_parity);
+	PARSE_PROTO_U32("writer_id", writer_id, have_writer);
+#undef PARSE_PROTO_U32
+	d = toml_int_in(tbl, "pnfs_clientid");
+	if (d.ok && d.u.i > 0) {
+		proto->pnfs_clientid = (uint64_t)d.u.i;
+		have_clientid = true;
+	} else {
+		d = toml_string_in(tbl, "pnfs_clientid");
+		if (d.ok) {
+			have_clientid =
+				!parse_u64_text(d.u.s, &proto->pnfs_clientid);
+			free(d.u.s);
+		}
+	}
+
+	objects = toml_array_in(tbl, "objects");
+	if (objects) {
+		int count = toml_array_nelem(objects);
+
+		if (count > 0 && count <= REFFS_CONFIG_MAX_PROTOTYPE_OBJECTS)
+			proto->object_count = (uint32_t)count;
+		for (int i = 0;
+		     i < count && i < REFFS_CONFIG_MAX_PROTOTYPE_OBJECTS; i++) {
+			toml_table_t *object = toml_table_at(objects, i);
+			struct reffs_prototype_object_config *dst =
+				&proto->objects[i];
+			toml_datum_t value;
+			size_t len = 0;
+
+			if (!object)
+				continue;
+			value = toml_string_in(object, "ordinary_handle");
+			if (value.ok) {
+				if (!parse_hex(value.u.s, dst->ordinary_handle,
+					       1, sizeof(dst->ordinary_handle),
+					       &len))
+					dst->ordinary_handle_len =
+						(uint32_t)len;
+				free(value.u.s);
+			}
+			value = toml_string_in(object, "persisted_handle");
+			if (value.ok) {
+				if (!parse_hex(value.u.s, dst->persisted_handle,
+					       sizeof(dst->persisted_handle),
+					       sizeof(dst->persisted_handle),
+					       NULL))
+					persisted_valid[i] = true;
+				free(value.u.s);
+			}
+		}
+	}
+
+	total = (uint64_t)proto->data_count + proto->parity_count;
+	if (!have_auth || !have_store || !have_token || !have_chunk ||
+	    !have_data || !have_parity || !have_writer || !have_clientid ||
+	    !proto->chunk_size ||
+	    proto->chunk_size > REFFS_CONFIG_PROTOTYPE_MAX_CHUNK_SIZE ||
+	    !proto->data_count || !proto->writer_id ||
+	    proto->writer_id == UINT32_MAX || !proto->object_count ||
+	    total != proto->object_count ||
+	    proto->object_count > REFFS_CONFIG_MAX_PROTOTYPE_OBJECTS ||
+	    (!proto->parity_count && proto->object_count != 1))
+		goto invalid;
+	for (uint32_t i = 0; i < proto->object_count; i++) {
+		if (!proto->objects[i].ordinary_handle_len ||
+		    !persisted_valid[i])
+			goto invalid;
+		for (uint32_t j = 0; j < i; j++) {
+			if (proto->objects[i].ordinary_handle_len ==
+				    proto->objects[j].ordinary_handle_len &&
+			    !memcmp(proto->objects[i].ordinary_handle,
+				    proto->objects[j].ordinary_handle,
+				    proto->objects[i].ordinary_handle_len))
+				goto invalid;
+			if (!memcmp(proto->objects[i].persisted_handle,
+				    proto->objects[j].persisted_handle,
+				    sizeof(proto->objects[i].persisted_handle)))
+				goto invalid;
+		}
+	}
+	return 0;
+
+invalid:
+	LOG("config: [[data_server]] %u has invalid prototype_registration",
+	    ds_index);
+	memset(proto, 0, sizeof(*proto));
+	return -EINVAL;
 }
 
 /* ------------------------------------------------------------------ */
@@ -773,6 +969,42 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 			d = toml_bool_in(ds_tbl, "tight_coupling");
 			if (d.ok)
 				dsc->tight_coupling = (bool)d.u.b;
+
+			toml_table_t *proto_tbl =
+				toml_table_in(ds_tbl, "prototype_registration");
+
+			if (proto_tbl && parse_prototype_registration(
+						 &dsc->prototype_registration,
+						 proto_tbl, (unsigned int)i)) {
+				toml_free(root);
+				return -EINVAL;
+			}
+		}
+		for (int i = 0; i < nds; i++) {
+			const struct reffs_prototype_registration_config *left =
+				&cfg->data_servers[i].prototype_registration;
+
+			if (!left->enabled)
+				continue;
+			if (!cfg->data_servers[i].id ||
+			    !cfg->data_servers[i].address[0] ||
+			    !cfg->data_servers[i].path[0]) {
+				LOG("config: prototype_registration requires one exact data-server ID/address/export");
+				toml_free(root);
+				return -EINVAL;
+			}
+			for (int j = i + 1; j < nds; j++) {
+				const struct reffs_prototype_registration_config
+					*right =
+						&cfg->data_servers[j]
+							 .prototype_registration;
+
+				if (!right->enabled)
+					continue;
+				LOG("config: only one prototype_registration is supported per network namespace");
+				toml_free(root);
+				return -EINVAL;
+			}
 		}
 	}
 
