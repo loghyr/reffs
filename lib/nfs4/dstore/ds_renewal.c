@@ -61,6 +61,7 @@
 #include "nfsv42_xdr.h"
 #include "ec_client.h"
 #include "reffs/dstore.h"
+#include "reffs/ffv2_prototype.h"
 #include "reffs/runway.h"
 #include "reffs/dstore_ops.h"
 #include "reffs/log.h"
@@ -347,6 +348,10 @@ static void renewal_tick_one_body(struct dstore *ds,
 		int rret = ds_renewal_reconnect(ds);
 
 		if (rret == 0) {
+			if (ds->ds_prototype_config.enabled &&
+			    ffv2_prototype_register_dstore(ds) < 0)
+				LOG("ds_renewal: dstore[%u] prototype rebind failed; layouts fail closed",
+				    ds->ds_id);
 			ctx->reconnect_succeeded++;
 			atomic_store_explicit(&ds->ds_reconnect_backoff_sec, 0,
 					      memory_order_release);
@@ -425,6 +430,10 @@ static void renewal_tick_one_body(struct dstore *ds,
 	int rret = ds_renewal_reconnect(ds);
 
 	if (rret == 0) {
+		if (ds->ds_prototype_config.enabled &&
+		    ffv2_prototype_register_dstore(ds) < 0)
+			LOG("ds_renewal: dstore[%u] prototype rebind failed; layouts fail closed",
+			    ds->ds_id);
 		ctx->reconnect_succeeded++;
 		atomic_store_explicit(&ds->ds_reconnect_backoff_sec, 0,
 				      memory_order_release);

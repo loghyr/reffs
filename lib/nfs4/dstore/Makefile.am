@@ -7,6 +7,7 @@ AM_CFLAGS = -I$(top_srcdir)/lib/include \
 	-I$(top_srcdir)/lib/nfs4/include \
 	-I$(top_srcdir)/lib/nfs4/client \
 	$(TIRPC_CFLAGS) \
+	$(OPENSSL_CFLAGS) \
 	-I$(top_builddir)/lib/xdr
 
 # libreffs_dstore as a proper installed shared library.  Previously
@@ -19,4 +20,5 @@ AM_CFLAGS = -I$(top_srcdir)/lib/include \
 # &dstore_ops_local` address comparisons that would silently fail
 # across copies.  Single shared-lib instance fixes both.
 lib_LTLIBRARIES = libreffs_dstore.la
-libreffs_dstore_la_SOURCES = dstore.c dstore_fanout.c dstore_ops_nfsv3.c dstore_ops_nfsv4.c dstore_ops_local.c dstore_wcc.c runway.c ds_session.c ds_renewal.c
+libreffs_dstore_la_SOURCES = dstore.c dstore_fanout.c dstore_ops_nfsv3.c dstore_ops_nfsv4.c dstore_ops_local.c dstore_wcc.c runway.c ds_session.c ds_renewal.c ffv2_prototype.c
+libreffs_dstore_la_LIBADD = $(OPENSSL_LIBS)

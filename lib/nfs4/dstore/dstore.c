@@ -36,6 +36,7 @@
 #include "reffs/dstore.h"
 #include "reffs/dstore_ops.h"
 #include "reffs/filehandle.h"
+#include "reffs/ffv2_prototype.h"
 #include "reffs/inode.h"
 #include "reffs/super_block.h"
 #include "reffs/log.h"
@@ -97,6 +98,8 @@ static void dstore_free_rcu(struct rcu_head *rcu)
 	 * teardown remains here.
 	 */
 	pthread_rwlock_destroy(&ds->ds_v4_session_rwlock);
+	pthread_mutex_destroy(&ds->ds_prototype_mutex);
+	pthread_rwlock_destroy(&ds->ds_prototype_lock);
 	free(ds);
 }
 
@@ -481,6 +484,8 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
 	 * semantics change.  See struct dstore in lib/include/reffs/dstore.h.
 	 */
 	pthread_rwlock_init(&ds->ds_v4_session_rwlock, NULL);
+	pthread_mutex_init(&ds->ds_prototype_mutex, NULL);
+	pthread_rwlock_init(&ds->ds_prototype_lock, NULL);
 	atomic_store_explicit(&ds->ds_reconnect_backoff_sec, 0,
 			      memory_order_relaxed);
 	atomic_store_explicit(&ds->ds_reconnect_next_attempt_ns, 0,
@@ -582,6 +587,8 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
 			clnt_destroy(ds->ds_clnt);
 		pthread_mutex_destroy(&ds->ds_clnt_mutex);
 		pthread_rwlock_destroy(&ds->ds_v4_session_rwlock);
+		pthread_mutex_destroy(&ds->ds_prototype_mutex);
+		pthread_rwlock_destroy(&ds->ds_prototype_lock);
 		free(ds);
 		return NULL;
 	}
@@ -656,6 +663,10 @@ int dstore_reconnect(struct dstore *ds)
 	if (ret < 0)
 		LOG("dstore[%u]: reconnect failed: %s", ds->ds_id,
 		    strerror(-ret));
+	else if (ds->ds_prototype_config.enabled &&
+		 ffv2_prototype_register_dstore(ds) < 0)
+		LOG("dstore[%u]: prototype rebind failed; layouts fail closed",
+		    ds->ds_id);
 
 	__atomic_and_fetch(&ds->ds_state, ~DSTORE_IS_RECONNECTING,
 			   __ATOMIC_RELEASE);
@@ -699,6 +710,11 @@ int dstore_load_config(const struct reffs_config *cfg)
 		 * reachable at startup; it has no access to the config.
 		 */
 		ds->ds_runway_size = cfg->runway_size;
+		ds->ds_prototype_config = dsc->prototype_registration;
+		if (ds->ds_prototype_config.enabled &&
+		    ffv2_prototype_register_dstore(ds) < 0)
+			LOG("dstore[%u]: prototype registration failed; layouts fail closed",
+			    ds->ds_id);
 		/* Drop the caller ref -- hash table holds the dstore alive. */
 		dstore_put(ds);
 	}
@@ -807,6 +823,7 @@ void dstore_unload_all(void)
 		 * shutdown.
 		 */
 		ds_session_destroy(ds);
+		ffv2_prototype_unregister_dstore(ds);
 
 		if (dstore_unhash(ds))
 			dstore_put(ds); /* drop hash ref */

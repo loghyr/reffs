@@ -37,6 +37,7 @@
 
 struct dstore_ops;
 struct runway;
+struct ffv2_prototype_snapshot;
 
 struct dstore {
 	uint32_t ds_id; /* unique ID (from config) */
@@ -136,6 +137,12 @@ struct dstore {
 	 * Read-only after that; no synchronization needed.
 	 */
 	bool ds_tight_coupled;
+
+	/* Optional local-kernel provider registration for this exact dstore. */
+	struct reffs_prototype_registration_config ds_prototype_config;
+	pthread_mutex_t ds_prototype_mutex;
+	pthread_rwlock_t ds_prototype_lock;
+	struct ffv2_prototype_snapshot *ds_prototype_snapshot;
 
 	/*
 	 * Drain flag.  When true, LAYOUTGET /
