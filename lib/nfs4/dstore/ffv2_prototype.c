@@ -24,6 +24,8 @@
 #include "reffs/layout_segment.h"
 #include "reffs/log.h"
 
+#include "ffv2_prototype_internal.h"
+
 #define FFV2_NL_BUFFER_SIZE 8192
 #define FFV2_NFSD_FAMILY_NAME "nfsd"
 #define FFV2_NFSD_FAMILY_VERSION 1
@@ -70,6 +72,48 @@ struct ffv2_nl {
 	uint16_t family;
 	uint32_t seq;
 	uint8_t buffer[FFV2_NL_BUFFER_SIZE];
+	const struct ffv2_prototype_nl_io *io;
+	void *io_context;
+};
+
+static int nl_system_open(void *context __attribute__((unused)))
+{
+	return socket(AF_NETLINK, SOCK_RAW, NETLINK_GENERIC);
+}
+
+static int nl_system_bind(void *context __attribute__((unused)), int fd,
+			  const struct sockaddr *address, socklen_t address_len)
+{
+	return bind(fd, address, address_len);
+}
+
+static ssize_t nl_system_send(void *context __attribute__((unused)), int fd,
+			      const void *buffer, size_t len,
+			      const struct sockaddr *address,
+			      socklen_t address_len)
+{
+	return sendto(fd, buffer, len, 0, address, address_len);
+}
+
+static ssize_t nl_system_receive(void *context __attribute__((unused)), int fd,
+				 void *buffer, size_t len,
+				 struct sockaddr *address,
+				 socklen_t *address_len)
+{
+	return recvfrom(fd, buffer, len, 0, address, address_len);
+}
+
+static int nl_system_close(void *context __attribute__((unused)), int fd)
+{
+	return close(fd);
+}
+
+static const struct ffv2_prototype_nl_io nl_system_io = {
+	.open = nl_system_open,
+	.bind = nl_system_bind,
+	.send = nl_system_send,
+	.receive = nl_system_receive,
+	.close = nl_system_close,
 };
 
 static bool
@@ -249,14 +293,16 @@ static int nl_talk(struct ffv2_nl *nl, uint8_t *reply, size_t reply_size,
 	bool have_reply = false;
 
 	*reply_len = 0;
-	if (sendto(nl->fd, nl->buffer, request->nlmsg_len, 0,
-		   (struct sockaddr *)&kernel, sizeof(kernel)) < 0)
+	if (nl->io->send(nl->io_context, nl->fd, nl->buffer, request->nlmsg_len,
+			 (struct sockaddr *)&kernel, sizeof(kernel)) < 0)
 		return -errno;
 	for (;;) {
 		struct sockaddr_nl peer = { 0 };
 		socklen_t peer_len = sizeof(peer);
-		ssize_t got = recvfrom(nl->fd, input, sizeof(input), 0,
-				       (struct sockaddr *)&peer, &peer_len);
+		ssize_t got = nl->io->receive(nl->io_context, nl->fd, input,
+					      sizeof(input),
+					      (struct sockaddr *)&peer,
+					      &peer_len);
 		ssize_t remaining = got;
 		struct nlmsghdr *message;
 
@@ -272,8 +318,6 @@ static int nl_talk(struct ffv2_nl *nl, uint8_t *reply, size_t reply_size,
 
 			if (message->nlmsg_seq != request->nlmsg_seq)
 				continue;
-			if (message->nlmsg_pid != 0)
-				return -EBADMSG;
 			if (message->nlmsg_type == NLMSG_ERROR) {
 				const struct nlmsgerr *error =
 					NLMSG_DATA(message);
@@ -304,7 +348,8 @@ static int nl_talk(struct ffv2_nl *nl, uint8_t *reply, size_t reply_size,
 	}
 }
 
-static int nl_open(struct ffv2_nl *nl)
+static int nl_open_with_io(struct ffv2_nl *nl,
+			   const struct ffv2_prototype_nl_io *io)
 {
 	struct sockaddr_nl address = { .nl_family = AF_NETLINK };
 	uint8_t reply[FFV2_NL_BUFFER_SIZE];
@@ -313,10 +358,13 @@ static int nl_open(struct ffv2_nl *nl)
 	int error;
 
 	memset(nl, 0, sizeof(*nl));
-	nl->fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_GENERIC);
+	nl->io = io;
+	nl->io_context = io->context;
+	nl->fd = io->open(io->context);
 	if (nl->fd < 0)
 		return -errno;
-	if (bind(nl->fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+	if (io->bind(io->context, nl->fd, (struct sockaddr *)&address,
+		     sizeof(address)) < 0) {
 		error = -errno;
 		goto out_close;
 	}
@@ -342,9 +390,31 @@ static int nl_open(struct ffv2_nl *nl)
 	return 0;
 
 out_close:
-	close(nl->fd);
+	io->close(io->context, nl->fd);
 	nl->fd = -1;
 	return error;
+}
+
+static int nl_open(struct ffv2_nl *nl)
+{
+	return nl_open_with_io(nl, &nl_system_io);
+}
+
+int ffv2_prototype_nl_open_test(const struct ffv2_prototype_nl_io *io,
+				uint16_t *family)
+{
+	struct ffv2_nl nl;
+	int error;
+
+	if (!io || !io->open || !io->bind || !io->send || !io->receive ||
+	    !io->close || !family)
+		return -EINVAL;
+	error = nl_open_with_io(&nl, io);
+	if (error)
+		return error;
+	*family = nl.family;
+	io->close(io->context, nl.fd);
+	return 0;
 }
 
 static int nl_simple(struct ffv2_nl *nl, uint8_t command)

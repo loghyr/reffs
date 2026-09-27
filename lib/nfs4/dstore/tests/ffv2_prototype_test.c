@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include <check.h>
+#include <linux/genetlink.h>
 #include <linux/netlink.h>
 #include <openssl/sha.h>
 #include <rpc/xdr.h>
@@ -22,6 +23,8 @@
 #include "reffs/ffv2_prototype.h"
 #include "reffs/layout_segment.h"
 #include "libreffs_test.h"
+
+#include "ffv2_prototype_internal.h"
 
 nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 			    uint32_t ffv2m_coding_type, uint32_t writer_id,
@@ -45,6 +48,191 @@ struct reply_builder {
 	uint8_t bytes[2048];
 	size_t len;
 };
+
+struct netlink_reply {
+	uint8_t bytes[512];
+	size_t len;
+};
+
+struct netlink_datagram {
+	struct sockaddr_nl peer;
+	socklen_t peer_len;
+	const uint8_t *data;
+	size_t data_len;
+};
+
+struct netlink_test_context {
+	const struct netlink_datagram *datagrams;
+	size_t datagram_count;
+	size_t next_datagram;
+};
+
+static int netlink_test_open(void *context __attribute__((unused)))
+{
+	return 1;
+}
+
+static int netlink_test_bind(void *context __attribute__((unused)),
+			     int fd __attribute__((unused)),
+			     const struct sockaddr *address
+			     __attribute__((unused)),
+			     socklen_t address_len __attribute__((unused)))
+{
+	return 0;
+}
+
+static ssize_t netlink_test_send(void *context __attribute__((unused)),
+				 int fd __attribute__((unused)),
+				 const void *buffer __attribute__((unused)),
+				 size_t len,
+				 const struct sockaddr *address
+				 __attribute__((unused)),
+				 socklen_t address_len __attribute__((unused)))
+{
+	return (ssize_t)len;
+}
+
+static ssize_t netlink_test_receive(void *opaque,
+				    int fd __attribute__((unused)),
+				    void *buffer, size_t len,
+				    struct sockaddr *address,
+				    socklen_t *address_len)
+{
+	struct netlink_test_context *context = opaque;
+	const struct netlink_datagram *datagram;
+
+	if (context->next_datagram == context->datagram_count) {
+		errno = ETIMEDOUT;
+		return -1;
+	}
+	datagram = &context->datagrams[context->next_datagram++];
+	if (datagram->data_len > len || datagram->peer_len > *address_len) {
+		errno = EMSGSIZE;
+		return -1;
+	}
+	memcpy(buffer, datagram->data, datagram->data_len);
+	memcpy(address, &datagram->peer, datagram->peer_len);
+	*address_len = datagram->peer_len;
+	return (ssize_t)datagram->data_len;
+}
+
+static int netlink_test_close(void *context __attribute__((unused)),
+			      int fd __attribute__((unused)))
+{
+	return 0;
+}
+
+static int netlink_open(const struct netlink_datagram *datagrams,
+			size_t datagram_count, uint16_t *family)
+{
+	struct netlink_test_context context = {
+		.datagrams = datagrams,
+		.datagram_count = datagram_count,
+	};
+	const struct ffv2_prototype_nl_io io = {
+		.context = &context,
+		.open = netlink_test_open,
+		.bind = netlink_test_bind,
+		.send = netlink_test_send,
+		.receive = netlink_test_receive,
+		.close = netlink_test_close,
+	};
+
+	return ffv2_prototype_nl_open_test(&io, family);
+}
+
+static void build_family_reply(struct netlink_reply *reply, uint32_t seq,
+			       uint32_t portid, uint16_t type, uint16_t family)
+{
+	struct nlmsghdr *message;
+	struct genlmsghdr *generic;
+	struct nlattr *attribute;
+	struct nlmsgerr *ack;
+	size_t offset;
+
+	memset(reply, 0, sizeof(*reply));
+	message = (struct nlmsghdr *)reply->bytes;
+	message->nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
+	message->nlmsg_type = type;
+	message->nlmsg_seq = seq;
+	message->nlmsg_pid = portid;
+	generic = NLMSG_DATA(message);
+	generic->cmd = CTRL_CMD_NEWFAMILY;
+	offset = NLMSG_ALIGN(message->nlmsg_len);
+	attribute = (struct nlattr *)(reply->bytes + offset);
+	attribute->nla_type = CTRL_ATTR_FAMILY_ID;
+	attribute->nla_len = NLA_HDRLEN + sizeof(family);
+	memcpy((uint8_t *)attribute + NLA_HDRLEN, &family, sizeof(family));
+	message->nlmsg_len = offset + NLA_ALIGN(attribute->nla_len);
+
+	offset = NLMSG_ALIGN(message->nlmsg_len);
+	message = (struct nlmsghdr *)(reply->bytes + offset);
+	message->nlmsg_len = NLMSG_LENGTH(sizeof(*ack));
+	message->nlmsg_type = NLMSG_ERROR;
+	message->nlmsg_seq = seq;
+	message->nlmsg_pid = portid;
+	ack = NLMSG_DATA(message);
+	ack->error = 0;
+	reply->len = offset + NLMSG_ALIGN(message->nlmsg_len);
+}
+
+static struct netlink_datagram
+family_datagram(const struct netlink_reply *reply, uint32_t peer_portid)
+{
+	return (struct netlink_datagram){
+		.peer = {
+			.nl_family = AF_NETLINK,
+			.nl_pid = peer_portid,
+		},
+		.peer_len = sizeof(struct sockaddr_nl),
+		.data = reply->bytes,
+		.data_len = reply->len,
+	};
+}
+
+START_TEST(test_nl_open_accepts_kernel_reply_with_requester_header_portid)
+{
+	struct netlink_reply reply;
+	struct netlink_datagram datagram;
+	uint16_t family = 0;
+
+	build_family_reply(&reply, 1, 164, GENL_ID_CTRL, 55);
+	datagram = family_datagram(&reply, 0);
+	ck_assert_int_eq(netlink_open(&datagram, 1, &family), 0);
+	ck_assert_uint_eq(family, 55);
+}
+END_TEST
+
+START_TEST(test_nl_open_rejects_non_kernel_peer_and_wrong_message_type)
+{
+	struct netlink_reply reply;
+	struct netlink_datagram datagram;
+	uint16_t family = 0;
+
+	build_family_reply(&reply, 1, 164, GENL_ID_CTRL, 55);
+	datagram = family_datagram(&reply, 7);
+	ck_assert_int_eq(netlink_open(&datagram, 1, &family), -EBADMSG);
+
+	build_family_reply(&reply, 1, 164, GENL_ID_CTRL + 1, 55);
+	datagram = family_datagram(&reply, 0);
+	ck_assert_int_eq(netlink_open(&datagram, 1, &family), -EBADMSG);
+}
+END_TEST
+
+START_TEST(test_nl_open_ignores_unmatched_sequence_with_bounded_input)
+{
+	struct netlink_reply replies[2];
+	struct netlink_datagram datagrams[2];
+	uint16_t family = 0;
+
+	build_family_reply(&replies[0], 99, 164, GENL_ID_CTRL, 44);
+	build_family_reply(&replies[1], 1, 164, GENL_ID_CTRL, 55);
+	datagrams[0] = family_datagram(&replies[0], 0);
+	datagrams[1] = family_datagram(&replies[1], 0);
+	ck_assert_int_eq(netlink_open(datagrams, 2, &family), 0);
+	ck_assert_uint_eq(family, 55);
+}
+END_TEST
 
 static struct nlattr *put_attr(struct reply_builder *builder, uint16_t type,
 			       const void *value, size_t len)
@@ -811,6 +999,15 @@ static Suite *prototype_suite(void)
 	tcase_add_test(
 		test,
 		test_request_preserves_order_and_secret_is_not_snapshot_state);
+	tcase_add_test(
+		test,
+		test_nl_open_accepts_kernel_reply_with_requester_header_portid);
+	tcase_add_test(
+		test,
+		test_nl_open_rejects_non_kernel_peer_and_wrong_message_type);
+	tcase_add_test(
+		test,
+		test_nl_open_ignores_unmatched_sequence_with_bounded_input);
 	tcase_add_test(
 		test, test_request_rejects_incomplete_identity_before_encoding);
 	tcase_add_test(test, test_challenge_requires_nonce_and_expiry);
