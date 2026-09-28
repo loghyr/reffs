@@ -53,6 +53,9 @@ struct ffv2_prototype_transport {
 /* Install the configured provider vector for one dstore. */
 int ffv2_prototype_register_dstore(struct dstore *ds);
 
+/* Close an old provider before ordinary preflight opens the export. */
+int ffv2_prototype_disable(void);
+
 /* Shared registration state machine; exposed for fault-injection tests. */
 int ffv2_prototype_register_transport(
 	struct dstore *ds, const struct ffv2_prototype_transport *transport);

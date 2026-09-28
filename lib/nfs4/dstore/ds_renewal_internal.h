@@ -54,5 +54,6 @@ struct renewal_tick_ctx {
  * fix; no two-namespace cleanup needed across the keep-alive code.
  */
 void ds_renewal_tick_one(struct dstore *ds, struct renewal_tick_ctx *ctx);
+int ds_nfsv3_renewal_test(struct dstore *ds);
 
 #endif /* DS_RENEWAL_INTERNAL_H */

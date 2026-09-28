@@ -20,6 +20,8 @@
 #include <sys/types.h>
 #include <time.h>
 
+#include "reffs/dstore.h"
+
 struct dstore;
 struct layout_data_file;
 
@@ -145,22 +147,40 @@ static inline int dstore_data_file_create(struct dstore *ds,
 					  uint32_t dir_fh_len, const char *name,
 					  uint8_t *out_fh, uint32_t *out_fh_len)
 {
-	return ds->ds_ops->create(ds, dir_fh, dir_fh_len, name, out_fh,
-				  out_fh_len);
+	int ret = dstore_ordinary_get(ds, DSTORE_ORDINARY_CREATE);
+
+	if (!ret) {
+		ret = ds->ds_ops->create(ds, dir_fh, dir_fh_len, name, out_fh,
+					 out_fh_len);
+		dstore_ordinary_put(ds);
+	}
+	return ret;
 }
 
 static inline int dstore_data_file_remove(struct dstore *ds,
 					  const uint8_t *dir_fh,
 					  uint32_t dir_fh_len, const char *name)
 {
-	return ds->ds_ops->remove(ds, dir_fh, dir_fh_len, name);
+	int ret = dstore_ordinary_get(ds, DSTORE_ORDINARY_REMOVE);
+
+	if (!ret) {
+		ret = ds->ds_ops->remove(ds, dir_fh, dir_fh_len, name);
+		dstore_ordinary_put(ds);
+	}
+	return ret;
 }
 
 static inline int dstore_data_file_chmod(struct dstore *ds, const uint8_t *fh,
 					 uint32_t fh_len,
 					 struct dstore_wcc *wcc)
 {
-	return ds->ds_ops->chmod(ds, fh, fh_len, wcc);
+	int ret = dstore_ordinary_get(ds, DSTORE_ORDINARY_CHMOD);
+
+	if (!ret) {
+		ret = ds->ds_ops->chmod(ds, fh, fh_len, wcc);
+		dstore_ordinary_put(ds);
+	}
+	return ret;
 }
 
 static inline int dstore_data_file_truncate(struct dstore *ds,
@@ -168,7 +188,13 @@ static inline int dstore_data_file_truncate(struct dstore *ds,
 					    uint64_t size,
 					    struct dstore_wcc *wcc)
 {
-	return ds->ds_ops->truncate(ds, fh, fh_len, size, wcc);
+	int ret = dstore_ordinary_get(ds, DSTORE_ORDINARY_TRUNCATE);
+
+	if (!ret) {
+		ret = ds->ds_ops->truncate(ds, fh, fh_len, size, wcc);
+		dstore_ordinary_put(ds);
+	}
+	return ret;
 }
 
 static inline int dstore_data_file_fence(struct dstore *ds, const uint8_t *fh,
@@ -177,8 +203,14 @@ static inline int dstore_data_file_fence(struct dstore *ds, const uint8_t *fh,
 					 uint32_t fence_min, uint32_t fence_max,
 					 struct dstore_wcc *wcc)
 {
-	return ds->ds_ops->fence(ds, fh, fh_len, ldf, fence_min, fence_max,
-				 wcc);
+	int ret = dstore_ordinary_get(ds, DSTORE_ORDINARY_FENCE);
+
+	if (!ret) {
+		ret = ds->ds_ops->fence(ds, fh, fh_len, ldf, fence_min,
+					fence_max, wcc);
+		dstore_ordinary_put(ds);
+	}
+	return ret;
 }
 
 /*
@@ -191,16 +223,29 @@ static inline int dstore_data_file_set_chunked(struct dstore *ds,
 					       uint32_t fh_len, bool chunked,
 					       struct dstore_wcc *wcc)
 {
+	int ret;
+
 	if (!ds->ds_ops->set_chunked)
 		return 0;
-	return ds->ds_ops->set_chunked(ds, fh, fh_len, chunked, wcc);
+	ret = dstore_ordinary_get(ds, DSTORE_ORDINARY_SET_CHUNKED);
+	if (!ret) {
+		ret = ds->ds_ops->set_chunked(ds, fh, fh_len, chunked, wcc);
+		dstore_ordinary_put(ds);
+	}
+	return ret;
 }
 
 static inline int dstore_data_file_getattr(struct dstore *ds, const uint8_t *fh,
 					   uint32_t fh_len,
 					   struct layout_data_file *ldf)
 {
-	return ds->ds_ops->getattr(ds, fh, fh_len, ldf);
+	int ret = dstore_ordinary_get(ds, DSTORE_ORDINARY_GETATTR);
+
+	if (!ret) {
+		ret = ds->ds_ops->getattr(ds, fh, fh_len, ldf);
+		dstore_ordinary_put(ds);
+	}
+	return ret;
 }
 
 /* InBand I/O dispatch */
@@ -211,9 +256,17 @@ static inline ssize_t dstore_data_file_read(struct dstore *ds,
 					    uint64_t offset, uint32_t uid,
 					    uint32_t gid)
 {
+	ssize_t ret;
+
 	if (!ds->ds_ops->read)
 		return -ENOSYS;
-	return ds->ds_ops->read(ds, fh, fh_len, buf, len, offset, uid, gid);
+	ret = dstore_ordinary_get(ds, DSTORE_ORDINARY_READ);
+	if (!ret) {
+		ret = ds->ds_ops->read(ds, fh, fh_len, buf, len, offset, uid,
+				       gid);
+		dstore_ordinary_put(ds);
+	}
+	return ret;
 }
 
 static inline ssize_t dstore_data_file_write(struct dstore *ds,
@@ -222,27 +275,49 @@ static inline ssize_t dstore_data_file_write(struct dstore *ds,
 					     uint64_t offset, uint32_t uid,
 					     uint32_t gid)
 {
+	ssize_t ret;
+
 	if (!ds->ds_ops->write)
 		return -ENOSYS;
-	return ds->ds_ops->write(ds, fh, fh_len, buf, len, offset, uid, gid);
+	ret = dstore_ordinary_get(ds, DSTORE_ORDINARY_WRITE);
+	if (!ret) {
+		ret = ds->ds_ops->write(ds, fh, fh_len, buf, len, offset, uid,
+					gid);
+		dstore_ordinary_put(ds);
+	}
+	return ret;
 }
 
 static inline int dstore_data_file_commit(struct dstore *ds, const uint8_t *fh,
 					  uint32_t fh_len, uint64_t offset,
 					  uint32_t count)
 {
+	int ret;
+
 	if (!ds->ds_ops->commit)
 		return -ENOSYS;
-	return ds->ds_ops->commit(ds, fh, fh_len, offset, count);
+	ret = dstore_ordinary_get(ds, DSTORE_ORDINARY_COMMIT);
+	if (!ret) {
+		ret = ds->ds_ops->commit(ds, fh, fh_len, offset, count);
+		dstore_ordinary_put(ds);
+	}
+	return ret;
 }
 
 /* Tight-coupling dispatch */
 
 static inline int dstore_probe_tight_coupling(struct dstore *ds)
 {
+	int ret;
+
 	if (!ds->ds_ops->probe_tight_coupling)
 		return -ENOTSUP;
-	return ds->ds_ops->probe_tight_coupling(ds);
+	ret = dstore_ordinary_get(ds, DSTORE_ORDINARY_PROBE);
+	if (!ret) {
+		ret = ds->ds_ops->probe_tight_coupling(ds);
+		dstore_ordinary_put(ds);
+	}
+	return ret;
 }
 
 static inline int dstore_trust_stateid(struct dstore *ds, const uint8_t *fh,
@@ -252,29 +327,51 @@ static inline int dstore_trust_stateid(struct dstore *ds, const uint8_t *fh,
 				       int64_t expire_sec, uint32_t expire_nsec,
 				       const char *principal)
 {
+	int ret;
+
 	if (!ds->ds_ops->trust_stateid)
 		return -ENOTSUP;
-	return ds->ds_ops->trust_stateid(ds, fh, fh_len, stid_seqid, stid_other,
-					 iomode, clientid, expire_sec,
-					 expire_nsec, principal);
+	ret = dstore_ordinary_get(ds, DSTORE_ORDINARY_TRUST);
+	if (!ret) {
+		ret = ds->ds_ops->trust_stateid(ds, fh, fh_len, stid_seqid,
+						stid_other, iomode, clientid,
+						expire_sec, expire_nsec,
+						principal);
+		dstore_ordinary_put(ds);
+	}
+	return ret;
 }
 
 static inline int dstore_revoke_stateid(struct dstore *ds, const uint8_t *fh,
 					uint32_t fh_len, uint32_t stid_seqid,
 					const uint8_t *stid_other)
 {
+	int ret;
+
 	if (!ds->ds_ops->revoke_stateid)
 		return -ENOTSUP;
-	return ds->ds_ops->revoke_stateid(ds, fh, fh_len, stid_seqid,
-					  stid_other);
+	ret = dstore_ordinary_get(ds, DSTORE_ORDINARY_REVOKE);
+	if (!ret) {
+		ret = ds->ds_ops->revoke_stateid(ds, fh, fh_len, stid_seqid,
+						 stid_other);
+		dstore_ordinary_put(ds);
+	}
+	return ret;
 }
 
 static inline int dstore_bulk_revoke_stateid(struct dstore *ds,
 					     uint64_t clientid)
 {
+	int ret;
+
 	if (!ds->ds_ops->bulk_revoke_stateid)
 		return -ENOTSUP;
-	return ds->ds_ops->bulk_revoke_stateid(ds, clientid);
+	ret = dstore_ordinary_get(ds, DSTORE_ORDINARY_BULK_REVOKE);
+	if (!ret) {
+		ret = ds->ds_ops->bulk_revoke_stateid(ds, clientid);
+		dstore_ordinary_put(ds);
+	}
+	return ret;
 }
 
 #endif /* _REFFS_DSTORE_OPS_H */

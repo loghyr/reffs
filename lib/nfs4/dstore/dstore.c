@@ -22,6 +22,7 @@
 #include <errno.h>
 #include <netdb.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -37,7 +38,9 @@
 #include "reffs/dstore_ops.h"
 #include "reffs/filehandle.h"
 #include "reffs/ffv2_prototype.h"
+#include "reffs/fixed_inventory.h"
 #include "reffs/inode.h"
+#include "reffs/layout_segment.h"
 #include "reffs/super_block.h"
 #include "reffs/log.h"
 #include "reffs/runway.h"
@@ -48,6 +51,91 @@
 /* ------------------------------------------------------------------ */
 
 static struct cds_lfht *g_dstore_ht;
+
+int dstore_ordinary_get(struct dstore *ds, enum dstore_ordinary_op op)
+{
+	struct ds_ordinary_gate *gate;
+	int ret = 0;
+
+	if (!ds || op >= DSTORE_ORDINARY_OP_COUNT)
+		return -EINVAL;
+	gate = &ds->ds_ordinary_gate;
+	pthread_mutex_lock(&gate->mutex);
+	if (gate->state != DSTORE_ORDINARY_PREFLIGHT_OPEN) {
+		atomic_fetch_add_explicit(&gate->refused[op], 1,
+					  memory_order_relaxed);
+		ret = -ESHUTDOWN;
+	} else {
+		gate->in_flight++;
+		atomic_fetch_add_explicit(&gate->admitted[op], 1,
+					  memory_order_relaxed);
+	}
+	pthread_mutex_unlock(&gate->mutex);
+	return ret;
+}
+
+void dstore_ordinary_put(struct dstore *ds)
+{
+	struct ds_ordinary_gate *gate = &ds->ds_ordinary_gate;
+
+	pthread_mutex_lock(&gate->mutex);
+	assert(gate->in_flight > 0);
+	gate->in_flight--;
+	if (!gate->in_flight)
+		pthread_cond_broadcast(&gate->condition);
+	pthread_mutex_unlock(&gate->mutex);
+}
+
+int dstore_ordinary_close(struct dstore *ds)
+{
+	struct ds_ordinary_gate *gate;
+
+	if (!ds)
+		return -EINVAL;
+	gate = &ds->ds_ordinary_gate;
+	pthread_mutex_lock(&gate->mutex);
+	if (gate->state != DSTORE_ORDINARY_PREFLIGHT_OPEN) {
+		pthread_mutex_unlock(&gate->mutex);
+		return -EINVAL;
+	}
+	gate->state = DSTORE_ORDINARY_REGISTRATION_PENDING;
+	while (gate->in_flight)
+		pthread_cond_wait(&gate->condition, &gate->mutex);
+	pthread_mutex_unlock(&gate->mutex);
+	return 0;
+}
+
+void dstore_ordinary_activate(struct dstore *ds)
+{
+	pthread_mutex_lock(&ds->ds_ordinary_gate.mutex);
+	assert(ds->ds_ordinary_gate.state ==
+	       DSTORE_ORDINARY_REGISTRATION_PENDING);
+	assert(!ds->ds_ordinary_gate.in_flight);
+	ds->ds_ordinary_gate.state = DSTORE_ORDINARY_SERVICE_ACTIVE;
+	pthread_mutex_unlock(&ds->ds_ordinary_gate.mutex);
+}
+
+void dstore_ordinary_retire(struct dstore *ds)
+{
+	pthread_mutex_lock(&ds->ds_ordinary_gate.mutex);
+	if (ds->ds_ordinary_gate.state != DSTORE_ORDINARY_PREFLIGHT_OPEN)
+		ds->ds_ordinary_gate.state = DSTORE_ORDINARY_RETIRING;
+	pthread_mutex_unlock(&ds->ds_ordinary_gate.mutex);
+}
+
+int dstore_ordinary_reopen(struct dstore *ds)
+{
+	int ret = 0;
+
+	pthread_mutex_lock(&ds->ds_ordinary_gate.mutex);
+	if (ds->ds_ordinary_gate.state != DSTORE_ORDINARY_RETIRING ||
+	    ds->ds_ordinary_gate.in_flight)
+		ret = -EBUSY;
+	else
+		ds->ds_ordinary_gate.state = DSTORE_ORDINARY_PREFLIGHT_OPEN;
+	pthread_mutex_unlock(&ds->ds_ordinary_gate.mutex);
+	return ret;
+}
 
 /* ------------------------------------------------------------------ */
 /* Hash helpers                                                        */
@@ -100,6 +188,9 @@ static void dstore_free_rcu(struct rcu_head *rcu)
 	pthread_rwlock_destroy(&ds->ds_v4_session_rwlock);
 	pthread_mutex_destroy(&ds->ds_prototype_mutex);
 	pthread_rwlock_destroy(&ds->ds_prototype_lock);
+	pthread_cond_destroy(&ds->ds_ordinary_gate.condition);
+	pthread_mutex_destroy(&ds->ds_ordinary_gate.mutex);
+	free(ds->ds_fixed_inventory);
 	free(ds);
 }
 
@@ -450,6 +541,86 @@ int dstore_probe_root_access(struct dstore *ds)
 	return 0;
 }
 
+int dstore_mount_preflight(struct dstore *ds)
+{
+	int ret;
+
+	if (!ds)
+		return -EINVAL;
+	if (ds->ds_ops == &dstore_ops_local)
+		return 0;
+	if (ds->ds_protocol == REFFS_DS_PROTO_NFSV4)
+		return ds_session_create(ds);
+	ret = mount_get_root_fh(ds);
+	if (ret)
+		return ret;
+	ret = dstore_probe_root_access(ds);
+	if (ret)
+		__atomic_and_fetch(&ds->ds_state, ~DSTORE_IS_MOUNTED,
+				   __ATOMIC_RELEASE);
+	return ret;
+}
+
+int dstore_fixed_inventory_preflight(struct dstore *ds)
+{
+	struct ffv2_fixed_inventory_record *record;
+	struct ffv2_fixed_inventory_identity identity;
+	const struct reffs_prototype_registration_config *config;
+	int ret;
+
+	if (!ds)
+		return -EINVAL;
+	config = &ds->ds_prototype_config;
+	if (!config->enabled || !config->fixed_inventory)
+		return 0;
+	if (!ds->ds_state_dir[0])
+		return -EINVAL;
+	ret = ffv2_fixed_inventory_identity_init(
+		&identity, ds->ds_id, ds->ds_address, ds->ds_path, config);
+	if (ret)
+		return ret;
+	for (uint32_t i = 0; i < config->object_count; i++) {
+		const struct reffs_prototype_object_config *object =
+			&config->objects[i];
+		struct layout_data_file attributes = { 0 };
+		uint8_t handle[REFFS_CONFIG_MAX_PROTOTYPE_FH];
+		uint32_t handle_len = 0;
+
+		ret = dstore_data_file_create(ds, ds->ds_root_fh,
+					      ds->ds_root_fh_len, object->name,
+					      handle, &handle_len);
+		if (ret)
+			return ret;
+		if (handle_len != object->ordinary_handle_len ||
+		    memcmp(handle, object->ordinary_handle, handle_len))
+			return -ESTALE;
+		ret = dstore_data_file_getattr(ds, handle, handle_len,
+					       &attributes);
+		if (ret)
+			return ret;
+		if (attributes.ldf_size != 0)
+			return -EBUSY;
+	}
+	record = calloc(1, sizeof(*record));
+	if (!record)
+		return -ENOMEM;
+	ret = ffv2_fixed_inventory_load(ds->ds_state_dir, ds->ds_id, record);
+	if (ret == -ENOENT) {
+		record->identity = identity;
+		ret = ffv2_fixed_inventory_save(ds->ds_state_dir, record);
+	} else if (!ret && !ffv2_fixed_inventory_identity_equal(
+				   &record->identity, &identity)) {
+		ret = -ESTALE;
+	}
+	if (ret) {
+		free(record);
+		return ret;
+	}
+	free(ds->ds_fixed_inventory);
+	ds->ds_fixed_inventory = record;
+	return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Alloc / find                                                        */
 /* ------------------------------------------------------------------ */
@@ -486,6 +657,9 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
 	pthread_rwlock_init(&ds->ds_v4_session_rwlock, NULL);
 	pthread_mutex_init(&ds->ds_prototype_mutex, NULL);
 	pthread_rwlock_init(&ds->ds_prototype_lock, NULL);
+	pthread_mutex_init(&ds->ds_ordinary_gate.mutex, NULL);
+	pthread_cond_init(&ds->ds_ordinary_gate.condition, NULL);
+	ds->ds_ordinary_gate.state = DSTORE_ORDINARY_PREFLIGHT_OPEN;
 	atomic_store_explicit(&ds->ds_reconnect_backoff_sec, 0,
 			      memory_order_relaxed);
 	atomic_store_explicit(&ds->ds_reconnect_next_attempt_ns, 0,
@@ -550,26 +724,9 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
 	urcu_ref_init(&ds->ds_ref); /* ref 1: hash table */
 
 	/* Connect and mount (skipped for local / unit tests). */
-	if (do_mount && protocol == REFFS_DS_PROTO_NFSV4) {
-		/* NFSv4 DS: establish session + get root FH */
-		if (ds_session_create(ds) < 0)
-			LOG("dstore[%u]: NFSv4 session to %s failed "
-			    "(continuing)",
-			    id, address);
-	} else if (do_mount && ds->ds_ops == &dstore_ops_nfsv3) {
-		if (mount_get_root_fh(ds) < 0) {
-			LOG("dstore[%u]: mount failed for %s:%s (continuing)",
-			    id, address, path);
-		} else if (dstore_probe_root_access(ds) < 0) {
-			/*
-			 * Root access denied -- the DS export has root_squash
-			 * enabled.  Clear MOUNTED so LAYOUTGET skips this
-			 * dstore.  The LOG was already emitted by the probe.
-			 */
-			__atomic_and_fetch(&ds->ds_state, ~DSTORE_IS_MOUNTED,
-					   __ATOMIC_RELEASE);
-		}
-	}
+	if (do_mount && dstore_mount_preflight(ds) < 0)
+		LOG("dstore[%u]: mount failed for %s:%s (continuing)", id,
+		    address, path);
 
 	/* Insert into hash table. */
 	hash = dstore_hash(id);
@@ -589,6 +746,8 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
 		pthread_rwlock_destroy(&ds->ds_v4_session_rwlock);
 		pthread_mutex_destroy(&ds->ds_prototype_mutex);
 		pthread_rwlock_destroy(&ds->ds_prototype_lock);
+		pthread_cond_destroy(&ds->ds_ordinary_gate.condition);
+		pthread_mutex_destroy(&ds->ds_ordinary_gate.mutex);
 		free(ds);
 		return NULL;
 	}
@@ -629,6 +788,11 @@ struct dstore *dstore_find(uint32_t id)
 int dstore_reconnect(struct dstore *ds)
 {
 	int ret;
+	int gate_ret;
+
+	gate_ret = dstore_ordinary_get(ds, DSTORE_ORDINARY_PROBE);
+	if (gate_ret)
+		return gate_ret;
 
 	pthread_mutex_lock(&ds->ds_clnt_mutex);
 
@@ -642,6 +806,7 @@ int dstore_reconnect(struct dstore *ds)
 	 */
 	if (dstore_is_connected(ds)) {
 		pthread_mutex_unlock(&ds->ds_clnt_mutex);
+		dstore_ordinary_put(ds);
 		return 0;
 	}
 
@@ -664,6 +829,7 @@ int dstore_reconnect(struct dstore *ds)
 		LOG("dstore[%u]: reconnect failed: %s", ds->ds_id,
 		    strerror(-ret));
 	else if (ds->ds_prototype_config.enabled &&
+		 !ds->ds_prototype_config.fixed_inventory &&
 		 ffv2_prototype_register_dstore(ds) < 0)
 		LOG("dstore[%u]: prototype rebind failed; layouts fail closed",
 		    ds->ds_id);
@@ -671,6 +837,7 @@ int dstore_reconnect(struct dstore *ds)
 	__atomic_and_fetch(&ds->ds_state, ~DSTORE_IS_RECONNECTING,
 			   __ATOMIC_RELEASE);
 	pthread_mutex_unlock(&ds->ds_clnt_mutex);
+	dstore_ordinary_put(ds);
 	return ret;
 }
 
@@ -681,6 +848,8 @@ int dstore_reconnect(struct dstore *ds)
 int dstore_load_config(const struct reffs_config *cfg)
 {
 	unsigned int n = cfg->ndata_servers;
+	bool fixed_prototype = false;
+	int ret;
 
 	if (!g_dstore_ht)
 		return -EINVAL;
@@ -689,14 +858,26 @@ int dstore_load_config(const struct reffs_config *cfg)
 		LOG("dstore: no data servers configured");
 		return -EINVAL;
 	}
+	for (unsigned int i = 0; i < n; i++) {
+		if (cfg->data_servers[i].prototype_registration.enabled &&
+		    cfg->data_servers[i].prototype_registration.fixed_inventory) {
+			fixed_prototype = true;
+			break;
+		}
+	}
+	if (fixed_prototype) {
+		ret = ffv2_prototype_disable();
+		if (ret && ret != -EOPNOTSUPP)
+			return ret;
+	}
 
 	for (unsigned int i = 0; i < n; i++) {
 		const struct reffs_data_server_config *dsc =
 			&cfg->data_servers[i];
 		struct dstore *ds = dstore_alloc(dsc->id, dsc->address,
 						 dsc->port, dsc->mount_port,
-						 dsc->path, dsc->protocol, true,
-						 dsc->tight_coupling);
+						 dsc->path, dsc->protocol,
+						 false, dsc->tight_coupling);
 
 		if (!ds) {
 			LOG("dstore[%u]: alloc failed for %s:%s", i,
@@ -711,12 +892,45 @@ int dstore_load_config(const struct reffs_config *cfg)
 		 */
 		ds->ds_runway_size = cfg->runway_size;
 		ds->ds_prototype_config = dsc->prototype_registration;
-		if (ds->ds_prototype_config.enabled &&
-		    ffv2_prototype_register_dstore(ds) < 0)
+		if (snprintf(ds->ds_state_dir, sizeof(ds->ds_state_dir), "%s",
+			     cfg->state_file) >=
+		    (int)sizeof(ds->ds_state_dir)) {
+			ret = -ENAMETOOLONG;
+			goto fixed_failure;
+		}
+		ret = dstore_mount_preflight(ds);
+		if (ret) {
+			LOG("dstore[%u]: mount failed for %s:%s", ds->ds_id,
+			    dsc->address, dsc->path);
+			if (ds->ds_prototype_config.fixed_inventory)
+				goto fixed_failure;
+		}
+		if (ds->ds_prototype_config.fixed_inventory) {
+			ret = dstore_fixed_inventory_preflight(ds);
+			if (ret)
+				goto fixed_failure;
+			ret = dstore_ordinary_close(ds);
+			if (ret)
+				goto fixed_failure;
+			ret = ffv2_prototype_register_dstore(ds);
+			if (ret)
+				goto fixed_failure;
+			dstore_ordinary_activate(ds);
+		} else if (ds->ds_prototype_config.enabled &&
+			   ffv2_prototype_register_dstore(ds) < 0) {
 			LOG("dstore[%u]: prototype registration failed; layouts fail closed",
 			    ds->ds_id);
+		}
 		/* Drop the caller ref -- hash table holds the dstore alive. */
 		dstore_put(ds);
+		continue;
+
+fixed_failure:
+		LOG("dstore[%u]: fixed prototype startup failed: %s", ds->ds_id,
+		    strerror(-ret));
+		dstore_put(ds);
+		dstore_unload_all();
+		return ret;
 	}
 
 	TRACE("dstore: loaded %u data server(s)", n);
@@ -823,7 +1037,11 @@ void dstore_unload_all(void)
 		 * shutdown.
 		 */
 		ds_session_destroy(ds);
+		if (ds->ds_prototype_config.fixed_inventory)
+			dstore_ordinary_retire(ds);
 		ffv2_prototype_unregister_dstore(ds);
+		if (ds->ds_prototype_config.fixed_inventory)
+			dstore_ordinary_reopen(ds);
 
 		if (dstore_unhash(ds))
 			dstore_put(ds); /* drop hash ref */

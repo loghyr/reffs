@@ -976,6 +976,10 @@ int main(int argc, char *argv[])
 					dstore_put(ds);
 					continue;
 				}
+				if (ds->ds_prototype_config.fixed_inventory) {
+					dstore_put(ds);
+					continue;
+				}
 				atomic_store_explicit(
 					&ds->ds_runway,
 					runway_create(

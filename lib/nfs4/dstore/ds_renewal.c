@@ -112,10 +112,16 @@ static int ds_nfsv3_renewal_one(struct dstore *ds)
 	struct timeval tv = { .tv_sec = DS_NFSV3_KEEPALIVE_TIMEOUT_SEC,
 			      .tv_usec = 0 };
 	enum clnt_stat rpc_stat;
+	int ret;
+
+	ret = dstore_ordinary_get(ds, DSTORE_ORDINARY_NULL);
+	if (ret)
+		return ret;
 
 	pthread_mutex_lock(&ds->ds_clnt_mutex);
 	if (!ds->ds_clnt) {
 		pthread_mutex_unlock(&ds->ds_clnt_mutex);
+		dstore_ordinary_put(ds);
 		return -ENOTCONN;
 	}
 
@@ -131,6 +137,7 @@ static int ds_nfsv3_renewal_one(struct dstore *ds)
 			     (xdrproc_t)(void *)xdr_void, NULL,
 			     (xdrproc_t)(void *)xdr_void, NULL, tv);
 	pthread_mutex_unlock(&ds->ds_clnt_mutex);
+	dstore_ordinary_put(ds);
 
 	if (rpc_stat != RPC_SUCCESS) {
 		LOG("ds_renewal: dstore[%u] NFSv3 NULL keep-alive failed "
@@ -139,6 +146,11 @@ static int ds_nfsv3_renewal_one(struct dstore *ds)
 		return -EIO;
 	}
 	return 0;
+}
+
+int ds_nfsv3_renewal_test(struct dstore *ds)
+{
+	return ds_nfsv3_renewal_one(ds);
 }
 
 /*
@@ -202,6 +214,8 @@ static void renewal_tick_one_nfsv3(struct dstore *ds,
 				      memory_order_release);
 		return;
 	}
+	if (ret == -ESHUTDOWN)
+		return;
 
 	ctx->v3_failed++;
 
@@ -280,6 +294,8 @@ static void renewal_tick_one_nfsv3(struct dstore *ds,
  */
 static void runway_ensure(struct dstore *ds)
 {
+	if (ds->ds_prototype_config.fixed_inventory)
+		return;
 	if (!dstore_is_available(ds))
 		return;
 
@@ -467,6 +483,8 @@ void ds_renewal_tick_one(struct dstore *ds, struct renewal_tick_ctx *ctx)
 		ctx->skipped_local++;
 		return;
 	}
+	if (ds->ds_prototype_config.fixed_inventory)
+		return;
 
 	renewal_tick_one_body(ds, ctx);
 

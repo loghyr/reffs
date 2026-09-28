@@ -38,6 +38,42 @@
 struct dstore_ops;
 struct runway;
 struct ffv2_prototype_snapshot;
+struct ffv2_fixed_inventory_record;
+
+enum dstore_ordinary_state {
+	DSTORE_ORDINARY_PREFLIGHT_OPEN = 0,
+	DSTORE_ORDINARY_REGISTRATION_PENDING,
+	DSTORE_ORDINARY_SERVICE_ACTIVE,
+	DSTORE_ORDINARY_RETIRING,
+};
+
+enum dstore_ordinary_op {
+	DSTORE_ORDINARY_CREATE = 0,
+	DSTORE_ORDINARY_REMOVE,
+	DSTORE_ORDINARY_CHMOD,
+	DSTORE_ORDINARY_TRUNCATE,
+	DSTORE_ORDINARY_FENCE,
+	DSTORE_ORDINARY_SET_CHUNKED,
+	DSTORE_ORDINARY_GETATTR,
+	DSTORE_ORDINARY_READ,
+	DSTORE_ORDINARY_WRITE,
+	DSTORE_ORDINARY_COMMIT,
+	DSTORE_ORDINARY_PROBE,
+	DSTORE_ORDINARY_TRUST,
+	DSTORE_ORDINARY_REVOKE,
+	DSTORE_ORDINARY_BULK_REVOKE,
+	DSTORE_ORDINARY_NULL,
+	DSTORE_ORDINARY_OP_COUNT,
+};
+
+struct ds_ordinary_gate {
+	pthread_mutex_t mutex;
+	pthread_cond_t condition;
+	enum dstore_ordinary_state state;
+	uint64_t in_flight;
+	_Atomic uint64_t admitted[DSTORE_ORDINARY_OP_COUNT];
+	_Atomic uint64_t refused[DSTORE_ORDINARY_OP_COUNT];
+};
 
 struct dstore {
 	uint32_t ds_id; /* unique ID (from config) */
@@ -143,6 +179,9 @@ struct dstore {
 	pthread_mutex_t ds_prototype_mutex;
 	pthread_rwlock_t ds_prototype_lock;
 	struct ffv2_prototype_snapshot *ds_prototype_snapshot;
+	struct ffv2_fixed_inventory_record *ds_fixed_inventory;
+	char ds_state_dir[REFFS_CONFIG_MAX_PATH];
+	struct ds_ordinary_gate ds_ordinary_gate;
 
 	/*
 	 * Drain flag.  When true, LAYOUTGET /
@@ -296,6 +335,16 @@ bool dstore_unhash(struct dstore *ds);
  * for unit testing -- production callers use dstore_alloc().
  */
 int dstore_probe_root_access(struct dstore *ds);
+
+int dstore_ordinary_get(struct dstore *ds, enum dstore_ordinary_op op);
+void dstore_ordinary_put(struct dstore *ds);
+int dstore_ordinary_close(struct dstore *ds);
+void dstore_ordinary_activate(struct dstore *ds);
+void dstore_ordinary_retire(struct dstore *ds);
+int dstore_ordinary_reopen(struct dstore *ds);
+
+int dstore_mount_preflight(struct dstore *ds);
+int dstore_fixed_inventory_preflight(struct dstore *ds);
 
 /* ------------------------------------------------------------------ */
 /* Connection management                                               */

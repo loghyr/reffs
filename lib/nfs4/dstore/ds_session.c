@@ -208,7 +208,7 @@ int ds_session_create(struct dstore *ds)
 	 * ds_tight_coupled is read-only after this point.
 	 */
 	if (ds->ds_ops->probe_tight_coupling) {
-		int r = ds->ds_ops->probe_tight_coupling(ds);
+		int r = dstore_probe_tight_coupling(ds);
 
 		ds->ds_tight_coupled = (r == 0);
 		TRACE("ds_session: DS %s (dstore %u) tight coupling %s",

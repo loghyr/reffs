@@ -828,6 +828,20 @@ int ffv2_prototype_register_dstore(struct dstore *ds)
 	return ffv2_prototype_register_transport(ds, &transport);
 }
 
+int ffv2_prototype_disable(void)
+{
+	struct ffv2_nl nl;
+	int ret;
+
+	ret = nl_open(&nl);
+	if (ret)
+		return ret;
+	ret = nl_simple(&nl, FFV2_NFSD_CMD_PROTOTYPE_DISABLE);
+	OPENSSL_cleanse(nl.buffer, sizeof(nl.buffer));
+	close(nl.fd);
+	return ret;
+}
+
 void ffv2_prototype_unregister_dstore(struct dstore *ds)
 {
 	struct ffv2_prototype_snapshot *snapshot;

@@ -51,4 +51,5 @@ TESTS = \
 	dstore_root_probe_test \
 	ds_renewal_test \
 	ffv2_prototype_test \
-	fixed_inventory_test
+	fixed_inventory_test \
+	ordinary_gate_test
