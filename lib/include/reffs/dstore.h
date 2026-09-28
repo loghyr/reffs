@@ -225,6 +225,7 @@ struct dstore {
  * Call once at startup before dstore_alloc.
  */
 int dstore_init(void);
+int dstore_startup_result(const struct reffs_config *cfg, int load_result);
 
 /*
  * dstore_fini -- drain and destroy the global hash table.

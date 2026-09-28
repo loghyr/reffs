@@ -385,6 +385,20 @@ int dstore_init(void)
 	return 0;
 }
 
+int dstore_startup_result(const struct reffs_config *cfg, int load_result)
+{
+	if (load_result >= 0 || !cfg)
+		return load_result;
+	for (unsigned int i = 0; i < cfg->ndata_servers; i++) {
+		const struct reffs_prototype_registration_config *prototype =
+			&cfg->data_servers[i].prototype_registration;
+
+		if (prototype->enabled && prototype->fixed_inventory)
+			return load_result;
+	}
+	return 0;
+}
+
 void dstore_fini(void)
 {
 	TRACE("dstore_fini: draining");

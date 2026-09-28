@@ -108,6 +108,35 @@ static void *close_thread(void *argument)
 	return (void *)(intptr_t)dstore_ordinary_close(argument);
 }
 
+static int startup_worker_calls;
+
+static int startup_after_load(const struct reffs_config *cfg, int load_result)
+{
+	int ret = dstore_startup_result(cfg, load_result);
+
+	if (ret)
+		return ret;
+	startup_worker_calls++;
+	return 0;
+}
+
+START_TEST(test_fixed_load_failure_stops_before_workers)
+{
+	struct reffs_config cfg = { 0 };
+
+	cfg.ndata_servers = 1;
+	cfg.data_servers[0].prototype_registration.enabled = true;
+	cfg.data_servers[0].prototype_registration.fixed_inventory = true;
+	startup_worker_calls = 0;
+	ck_assert_int_eq(startup_after_load(&cfg, -EIO), -EIO);
+	ck_assert_int_eq(startup_worker_calls, 0);
+
+	cfg.data_servers[0].prototype_registration.fixed_inventory = false;
+	ck_assert_int_eq(startup_after_load(&cfg, -EIO), 0);
+	ck_assert_int_eq(startup_worker_calls, 1);
+}
+END_TEST
+
 START_TEST(test_close_drains_and_refuses_new_calls)
 {
 	struct dstore *ds = make_dstore();
@@ -240,6 +269,7 @@ static Suite *ordinary_gate_suite(void)
 	TCase *tc = tcase_create("lifecycle");
 
 	tcase_add_test(tc, test_close_drains_and_refuses_new_calls);
+	tcase_add_test(tc, test_fixed_load_failure_stops_before_workers);
 	tcase_add_test(tc, test_preflight_persists_exact_empty_vector);
 	suite_add_tcase(suite, tc);
 	return suite;

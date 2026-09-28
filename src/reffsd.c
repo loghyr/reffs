@@ -965,7 +965,14 @@ int main(int argc, char *argv[])
 			goto out;
 		}
 		if (cfg.ndata_servers > 0) {
-			if (dstore_load_config(&cfg) < 0)
+			int load_ret = dstore_load_config(&cfg);
+
+			if (dstore_startup_result(&cfg, load_ret) < 0) {
+				LOG("Fixed-inventory data store startup failed");
+				exit_code = 1;
+				goto out;
+			}
+			if (load_ret < 0)
 				TRACE("Warning: some data stores unavailable");
 
 			/* Pre-create file runway on each dstore. */
