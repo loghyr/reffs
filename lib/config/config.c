@@ -158,11 +158,17 @@ parse_prototype_registration(struct reffs_prototype_registration_config *proto,
 	bool have_auth = false, have_store = false, have_token = false;
 	bool have_chunk = false, have_data = false, have_parity = false;
 	bool have_writer = false, have_clientid = false;
+	bool have_fixed = false;
 	bool persisted_valid[REFFS_CONFIG_MAX_PROTOTYPE_OBJECTS] = { false };
 	uint64_t total;
 
 	memset(proto, 0, sizeof(*proto));
 	proto->enabled = true;
+	d = toml_bool_in(tbl, "fixed_inventory");
+	if (d.ok) {
+		proto->fixed_inventory = (bool)d.u.b;
+		have_fixed = true;
+	}
 
 	d = toml_string_in(tbl, "auth_domain");
 	if (d.ok) {
@@ -229,6 +235,15 @@ parse_prototype_registration(struct reffs_prototype_registration_config *proto,
 
 			if (!object)
 				continue;
+			value = toml_string_in(object, "name");
+			if (value.ok) {
+				size_t name_len = strlen(value.u.s);
+
+				if (name_len && name_len < sizeof(dst->name))
+					memcpy(dst->name, value.u.s,
+					       name_len + 1);
+				free(value.u.s);
+			}
 			value = toml_string_in(object, "ordinary_handle");
 			if (value.ok) {
 				if (!parse_hex(value.u.s, dst->ordinary_handle,
@@ -261,11 +276,21 @@ parse_prototype_registration(struct reffs_prototype_registration_config *proto,
 	    proto->object_count > REFFS_CONFIG_MAX_PROTOTYPE_OBJECTS ||
 	    (!proto->parity_count && proto->object_count != 1))
 		goto invalid;
+	if (have_fixed && proto->fixed_inventory &&
+	    (proto->data_count != 1 || proto->parity_count != 1 ||
+	     proto->object_count != 2))
+		goto invalid;
 	for (uint32_t i = 0; i < proto->object_count; i++) {
+		if (proto->fixed_inventory && !proto->objects[i].name[0])
+			goto invalid;
 		if (!proto->objects[i].ordinary_handle_len ||
 		    !persisted_valid[i])
 			goto invalid;
 		for (uint32_t j = 0; j < i; j++) {
+			if (proto->fixed_inventory &&
+			    !strcmp(proto->objects[i].name,
+				    proto->objects[j].name))
+				goto invalid;
 			if (proto->objects[i].ordinary_handle_len ==
 				    proto->objects[j].ordinary_handle_len &&
 			    !memcmp(proto->objects[i].ordinary_handle,

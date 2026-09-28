@@ -31,6 +31,7 @@
 #define REFFS_CONFIG_PROTOTYPE_STORE_UUID_SIZE 16
 #define REFFS_CONFIG_PROTOTYPE_BINDING_TOKEN_SIZE 32
 #define REFFS_CONFIG_PROTOTYPE_PERSISTED_HANDLE_SIZE 32
+#define REFFS_CONFIG_MAX_PROTOTYPE_OBJECT_NAME 128
 #define REFFS_CONFIG_PROTOTYPE_MAX_CHUNK_SIZE (4U * 1024U * 1024U)
 #define REFFS_CONFIG_MAX_ALLOWED_PS 8
 #define REFFS_CONFIG_MAX_PRINCIPAL 256
@@ -148,6 +149,7 @@ enum reffs_ds_protocol {
 };
 
 struct reffs_prototype_object_config {
+	char name[REFFS_CONFIG_MAX_PROTOTYPE_OBJECT_NAME];
 	uint8_t ordinary_handle[REFFS_CONFIG_MAX_PROTOTYPE_FH];
 	uint32_t ordinary_handle_len;
 	uint8_t persisted_handle[REFFS_CONFIG_PROTOTYPE_PERSISTED_HANDLE_SIZE];
@@ -155,6 +157,7 @@ struct reffs_prototype_object_config {
 
 struct reffs_prototype_registration_config {
 	bool enabled;
+	bool fixed_inventory;
 	char auth_domain[REFFS_CONFIG_MAX_AUTH_DOMAIN];
 	uint8_t store_uuid[REFFS_CONFIG_PROTOTYPE_STORE_UUID_SIZE];
 	uint8_t binding_token[REFFS_CONFIG_PROTOTYPE_BINDING_TOKEN_SIZE];

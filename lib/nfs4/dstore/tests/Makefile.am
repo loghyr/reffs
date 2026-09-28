@@ -50,4 +50,5 @@ TESTS = \
 	dstore_wcc_test \
 	dstore_root_probe_test \
 	ds_renewal_test \
-	ffv2_prototype_test
+	ffv2_prototype_test \
+	fixed_inventory_test

@@ -922,6 +922,7 @@ static const char prototype_config_prefix[] =
 	"address = \"192.0.2.7\"\n"
 	"path = \"/kernel-ds\"\n"
 	"[data_server.prototype_registration]\n"
+	"fixed_inventory = true\n"
 	"auth_domain = \"client.example\"\n"
 	"store_uuid = \"00112233445566778899aabbccddeeff\"\n"
 	"binding_token = \"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\"\n"
@@ -931,9 +932,11 @@ static const char prototype_config_prefix[] =
 	"writer_id = 17\n"
 	"pnfs_clientid = 23\n"
 	"[[data_server.prototype_registration.objects]]\n"
+	"name = \"ffv2-member-0\"\n"
 	"ordinary_handle = \"01020304\"\n"
 	"persisted_handle = \"101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f\"\n"
 	"[[data_server.prototype_registration.objects]]\n"
+	"name = \"ffv2-member-1\"\n"
 	"ordinary_handle = \"05060708\"\n"
 	"persisted_handle = \"303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f\"\n";
 
@@ -947,6 +950,10 @@ START_TEST(test_load_prototype_registration)
 	ck_assert_ptr_nonnull(path);
 	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
 	ck_assert(cfg.data_servers[0].prototype_registration.enabled);
+	ck_assert(cfg.data_servers[0].prototype_registration.fixed_inventory);
+	ck_assert_str_eq(
+		cfg.data_servers[0].prototype_registration.objects[0].name,
+		"ffv2-member-0");
 	ck_assert_str_eq(cfg.data_servers[0].prototype_registration.auth_domain,
 			 "client.example");
 	ck_assert_uint_eq(
