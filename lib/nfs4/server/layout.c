@@ -312,6 +312,8 @@ out_inventory:
 out_files:
 	free(files);
 out_ds:
+	if (ds)
+		(void)dstore_fixed_status_write(ds);
 	dstore_put(ds);
 	return ret;
 }
@@ -352,6 +354,7 @@ static void fixed_layout_retire(struct inode *inode)
 	ffv2_fixed_inventory_unlock();
 	ffv2_prototype_snapshot_clear(ds);
 	(void)ffv2_prototype_disable();
+	(void)dstore_fixed_status_write(ds);
 	dstore_put(ds);
 }
 
@@ -416,6 +419,7 @@ out:
 	ffv2_fixed_inventory_unlock();
 	if (ret)
 		fixed_layout_retire(inode);
+	(void)dstore_fixed_status_write(ds);
 	dstore_put(ds);
 	return ret;
 }
@@ -3003,6 +3007,7 @@ out:
 	ffv2_fixed_inventory_unlock();
 	if (retire)
 		fixed_layout_retire(inode);
+	(void)dstore_fixed_status_write(ds);
 	dstore_put(ds);
 	return handled;
 }
@@ -3590,6 +3595,7 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 		}
 		pthread_mutex_unlock(&compound->c_inode->i_layout_sync_mutex);
 		ffv2_fixed_inventory_unlock();
+		(void)dstore_fixed_status_write(fixed_ds);
 		dstore_put(fixed_ds);
 	}
 

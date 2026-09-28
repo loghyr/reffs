@@ -60,8 +60,13 @@ int ffv2_prototype_disable(void);
 int ffv2_prototype_register_transport(
 	struct dstore *ds, const struct ffv2_prototype_transport *transport);
 
+/* Shared retirement state machine; exposed for ordering/fault tests. */
+int ffv2_prototype_retire_transport(
+	struct dstore *ds, const struct ffv2_prototype_transport *transport);
+
 /* Tear down the provider gate and remove the locally published vector. */
 void ffv2_prototype_unregister_dstore(struct dstore *ds);
+int ffv2_prototype_retire_dstore(struct dstore *ds);
 
 /* Read-side lifetime is the dstore prototype rwlock. */
 const struct ffv2_prototype_snapshot *

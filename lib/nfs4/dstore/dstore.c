@@ -20,11 +20,16 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <inttypes.h>
+#include <limits.h>
 #include <netdb.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <arpa/inet.h>
 #include <ifaddrs.h>
@@ -43,6 +48,7 @@
 #include "reffs/layout_segment.h"
 #include "reffs/super_block.h"
 #include "reffs/log.h"
+#include "reffs/posix_shims.h"
 #include "reffs/runway.h"
 #include "reffs/trace/dstore.h"
 
@@ -51,6 +57,125 @@
 /* ------------------------------------------------------------------ */
 
 static struct cds_lfht *g_dstore_ht;
+static pthread_mutex_t fixed_status_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+int dstore_fixed_status_write(struct dstore *ds)
+{
+	static _Atomic uint64_t sequence;
+	char path[PATH_MAX] = { 0 }, temporary[PATH_MAX] = { 0 }, data[4096];
+	size_t len = 0, written = 0;
+	uint64_t admitted[DSTORE_ORDINARY_OP_COUNT];
+	uint64_t refused[DSTORE_ORDINARY_OP_COUNT];
+	uint64_t inventory_generation = 0, metadata_epoch = 0;
+	uint64_t provider_generation = 0, in_flight;
+	uint32_t inventory_state = 0, metadata_state = 0, ordinary_state;
+	int fd = -1, dirfd = -1, ret = 0;
+
+	if (!ds || !ds->ds_prototype_config.fixed_inventory ||
+	    !ds->ds_state_dir[0])
+		return 0;
+	pthread_mutex_lock(&fixed_status_mutex);
+	pthread_mutex_lock(&ds->ds_ordinary_gate.mutex);
+	ordinary_state = ds->ds_ordinary_gate.state;
+	in_flight = ds->ds_ordinary_gate.in_flight;
+	pthread_mutex_unlock(&ds->ds_ordinary_gate.mutex);
+	for (uint32_t i = 0; i < DSTORE_ORDINARY_OP_COUNT; i++) {
+		admitted[i] =
+			atomic_load_explicit(&ds->ds_ordinary_gate.admitted[i],
+					     memory_order_relaxed);
+		refused[i] = atomic_load_explicit(
+			&ds->ds_ordinary_gate.refused[i], memory_order_relaxed);
+	}
+	ffv2_fixed_inventory_lock();
+	if (ds->ds_fixed_inventory) {
+		inventory_state = ds->ds_fixed_inventory->state;
+		metadata_state = ds->ds_fixed_inventory->metadata_state;
+		inventory_generation = ds->ds_fixed_inventory->generation;
+		metadata_epoch = ds->ds_fixed_inventory->metadata_epoch;
+	}
+	ffv2_fixed_inventory_unlock();
+	const struct ffv2_prototype_snapshot *snapshot =
+		ffv2_prototype_snapshot_borrow(ds);
+
+	if (snapshot)
+		provider_generation = snapshot->generation;
+	ffv2_prototype_snapshot_release(ds);
+#define APPEND(...)                                                            \
+	do {                                                                   \
+		int amount =                                                   \
+			snprintf(data + len, sizeof(data) - len, __VA_ARGS__); \
+		if (amount < 0 || (size_t)amount >= sizeof(data) - len) {      \
+			ret = -EOVERFLOW;                                      \
+			goto out;                                              \
+		}                                                              \
+		len += (size_t)amount;                                         \
+	} while (0)
+	APPEND("{\"version\":1,\"dstore_id\":%u,\"inventory_state\":%u,"
+	       "\"metadata_state\":%u,\"inventory_generation\":%" PRIu64
+	       ",\"metadata_epoch\":%" PRIu64
+	       ",\"provider_generation\":%" PRIu64
+	       ",\"ordinary_state\":%u,\"in_flight\":%" PRIu64
+	       ",\"admitted\":[",
+	       ds->ds_id, inventory_state, metadata_state, inventory_generation,
+	       metadata_epoch, provider_generation, ordinary_state, in_flight);
+	for (uint32_t i = 0; i < DSTORE_ORDINARY_OP_COUNT; i++)
+		APPEND("%s%" PRIu64, i ? "," : "", admitted[i]);
+	APPEND("],\"refused\":[");
+	for (uint32_t i = 0; i < DSTORE_ORDINARY_OP_COUNT; i++)
+		APPEND("%s%" PRIu64, i ? "," : "", refused[i]);
+	APPEND("]}\n");
+#undef APPEND
+	if (snprintf(path, sizeof(path), "%s/ffv2-fixed-status-%u.json",
+		     ds->ds_state_dir, ds->ds_id) >= (int)sizeof(path) ||
+	    snprintf(temporary, sizeof(temporary), "%s.tmp.%u.%" PRIu64, path,
+		     (unsigned)getpid(),
+		     atomic_fetch_add_explicit(&sequence, 1,
+					       memory_order_relaxed)) >=
+		    (int)sizeof(temporary)) {
+		ret = -ENAMETOOLONG;
+		goto out;
+	}
+	fd = open(temporary, O_WRONLY | O_CREAT | O_EXCL, 0600);
+	if (fd < 0) {
+		ret = -errno;
+		goto out;
+	}
+	while (written < len) {
+		ssize_t amount = write(fd, data + written, len - written);
+
+		if (amount <= 0) {
+			ret = amount < 0 ? -errno : -EIO;
+			goto out;
+		}
+		written += (size_t)amount;
+	}
+	if (reffs_fdatasync(fd)) {
+		ret = -errno;
+		goto out;
+	}
+	if (close(fd)) {
+		fd = -1;
+		ret = -errno;
+		goto out;
+	}
+	fd = -1;
+	if (rename(temporary, path)) {
+		ret = -errno;
+		goto out;
+	}
+	dirfd = open(ds->ds_state_dir, O_RDONLY | O_DIRECTORY);
+	if (dirfd < 0 || fsync(dirfd))
+		ret = -errno;
+out:
+	if (dirfd >= 0)
+		close(dirfd);
+	if (fd >= 0)
+		close(fd);
+	if (ret && temporary[0])
+		unlink(temporary);
+	pthread_mutex_unlock(&fixed_status_mutex);
+	return ret;
+}
 
 int dstore_ordinary_get(struct dstore *ds, enum dstore_ordinary_op op)
 {
@@ -71,6 +196,8 @@ int dstore_ordinary_get(struct dstore *ds, enum dstore_ordinary_op op)
 					  memory_order_relaxed);
 	}
 	pthread_mutex_unlock(&gate->mutex);
+	if (ds->ds_prototype_config.fixed_inventory)
+		(void)dstore_fixed_status_write(ds);
 	return ret;
 }
 
@@ -84,6 +211,8 @@ void dstore_ordinary_put(struct dstore *ds)
 	if (!gate->in_flight)
 		pthread_cond_broadcast(&gate->condition);
 	pthread_mutex_unlock(&gate->mutex);
+	if (ds->ds_prototype_config.fixed_inventory)
+		(void)dstore_fixed_status_write(ds);
 }
 
 int dstore_ordinary_close(struct dstore *ds)
@@ -102,6 +231,7 @@ int dstore_ordinary_close(struct dstore *ds)
 	while (gate->in_flight)
 		pthread_cond_wait(&gate->condition, &gate->mutex);
 	pthread_mutex_unlock(&gate->mutex);
+	(void)dstore_fixed_status_write(ds);
 	return 0;
 }
 
@@ -113,6 +243,7 @@ void dstore_ordinary_activate(struct dstore *ds)
 	assert(!ds->ds_ordinary_gate.in_flight);
 	ds->ds_ordinary_gate.state = DSTORE_ORDINARY_SERVICE_ACTIVE;
 	pthread_mutex_unlock(&ds->ds_ordinary_gate.mutex);
+	(void)dstore_fixed_status_write(ds);
 }
 
 void dstore_ordinary_retire(struct dstore *ds)
@@ -121,6 +252,7 @@ void dstore_ordinary_retire(struct dstore *ds)
 	if (ds->ds_ordinary_gate.state != DSTORE_ORDINARY_PREFLIGHT_OPEN)
 		ds->ds_ordinary_gate.state = DSTORE_ORDINARY_RETIRING;
 	pthread_mutex_unlock(&ds->ds_ordinary_gate.mutex);
+	(void)dstore_fixed_status_write(ds);
 }
 
 int dstore_ordinary_reopen(struct dstore *ds)
@@ -134,6 +266,7 @@ int dstore_ordinary_reopen(struct dstore *ds)
 	else
 		ds->ds_ordinary_gate.state = DSTORE_ORDINARY_PREFLIGHT_OPEN;
 	pthread_mutex_unlock(&ds->ds_ordinary_gate.mutex);
+	(void)dstore_fixed_status_write(ds);
 	return ret;
 }
 
@@ -786,6 +919,7 @@ out:
 	if (owner_sb)
 		super_block_put(owner_sb);
 	ffv2_fixed_inventory_unlock();
+	(void)dstore_fixed_status_write(ds);
 	return ret;
 }
 
@@ -1208,11 +1342,37 @@ void dstore_unload_all(void)
 		 * shutdown.
 		 */
 		ds_session_destroy(ds);
-		if (ds->ds_prototype_config.fixed_inventory)
+		if (ds->ds_prototype_config.fixed_inventory) {
 			dstore_ordinary_retire(ds);
-		ffv2_prototype_unregister_dstore(ds);
-		if (ds->ds_prototype_config.fixed_inventory)
-			dstore_ordinary_reopen(ds);
+			int retire_ret = ffv2_prototype_retire_dstore(ds);
+
+			if (retire_ret) {
+				LOG("dstore[%u]: prototype retirement failed: %s",
+				    ds->ds_id, strerror(-retire_ret));
+			} else {
+				ffv2_fixed_inventory_lock();
+				struct ffv2_fixed_inventory_record *record =
+					ds->ds_fixed_inventory;
+
+				if (record &&
+				    record->state == FFV2_INVENTORY_ASSIGNED &&
+				    record->metadata_state !=
+					    FFV2_METADATA_CLEAN &&
+				    !ffv2_fixed_inventory_transition(
+					    record, FFV2_INVENTORY_FENCED,
+					    record->owner_sb_uuid,
+					    record->owner_ino) &&
+				    ffv2_fixed_inventory_save(ds->ds_state_dir,
+							      record))
+					LOG("dstore[%u]: failed to persist fenced "
+					    "metadata epoch",
+					    ds->ds_id);
+				ffv2_fixed_inventory_unlock();
+			}
+			(void)dstore_fixed_status_write(ds);
+		} else {
+			ffv2_prototype_unregister_dstore(ds);
+		}
 
 		if (dstore_unhash(ds))
 			dstore_put(ds); /* drop hash ref */

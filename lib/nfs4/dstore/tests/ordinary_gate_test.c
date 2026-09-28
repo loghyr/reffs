@@ -206,10 +206,28 @@ START_TEST(test_preflight_persists_exact_empty_vector)
 	ck_assert_int_eq(
 		ffv2_fixed_inventory_load(directory, ds->ds_id, &loaded), 0);
 	ck_assert_int_eq(loaded.state, FFV2_INVENTORY_FREE);
+	ck_assert_int_eq(dstore_fixed_status_write(ds), 0);
+	snprintf(path, sizeof(path), "%s/ffv2-fixed-status-91.json", directory);
+	FILE *status = fopen(path, "r");
+	char status_data[4096] = { 0 };
+
+	ck_assert_ptr_nonnull(status);
+	ck_assert_int_gt(fread(status_data, 1, sizeof(status_data) - 1, status),
+			 0);
+	fclose(status);
+	ck_assert_ptr_nonnull(strstr(status_data, "\"inventory_state\":0"));
+	ck_assert_ptr_nonnull(strstr(status_data, "\"ordinary_state\":0"));
+	ck_assert_ptr_nonnull(strstr(
+		status_data, "\"admitted\":[2,0,0,0,0,0,2,0,0,0,0,0,0,0,0]"));
+	ck_assert_ptr_null(
+		memmem(status_data, strlen(status_data),
+		       ds->ds_prototype_config.binding_token,
+		       sizeof(ds->ds_prototype_config.binding_token)));
 	ds->ds_prototype_config.objects[0].ordinary_handle[0] = 0xff;
 	ck_assert_int_eq(dstore_fixed_inventory_preflight(ds), -ESTALE);
 	ds->ds_prototype_config.enabled = false;
 	destroy_dstore(ds);
+	unlink(path);
 	snprintf(path, sizeof(path), "%s/ffv2-fixed-inventory-91", directory);
 	unlink(path);
 	rmdir(directory);

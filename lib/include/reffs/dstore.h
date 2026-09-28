@@ -342,6 +342,7 @@ int dstore_ordinary_close(struct dstore *ds);
 void dstore_ordinary_activate(struct dstore *ds);
 void dstore_ordinary_retire(struct dstore *ds);
 int dstore_ordinary_reopen(struct dstore *ds);
+int dstore_fixed_status_write(struct dstore *ds);
 
 int dstore_mount_preflight(struct dstore *ds);
 int dstore_fixed_inventory_preflight(struct dstore *ds);

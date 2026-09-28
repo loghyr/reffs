@@ -544,6 +544,9 @@ struct fake_transport_context {
 	enum fake_failure_stage failure;
 	uint32_t disable_calls;
 	uint32_t close_calls;
+	struct dstore *retiring_ds;
+	bool saw_retiring_gate;
+	bool saw_absent_snapshot;
 };
 
 static int fake_open(void *opaque)
@@ -558,6 +561,18 @@ static int fake_disable(void *opaque)
 	struct fake_transport_context *ctx = opaque;
 
 	ctx->disable_calls++;
+	if (ctx->retiring_ds) {
+		const struct ffv2_prototype_snapshot *snapshot =
+			ffv2_prototype_snapshot_borrow(ctx->retiring_ds);
+
+		ctx->saw_absent_snapshot = !snapshot;
+		ffv2_prototype_snapshot_release(ctx->retiring_ds);
+		pthread_mutex_lock(&ctx->retiring_ds->ds_ordinary_gate.mutex);
+		ctx->saw_retiring_gate =
+			ctx->retiring_ds->ds_ordinary_gate.state ==
+			DSTORE_ORDINARY_RETIRING;
+		pthread_mutex_unlock(&ctx->retiring_ds->ds_ordinary_gate.mutex);
+	}
 	return ctx->failure == FAKE_FAIL_DISABLE && ctx->disable_calls == 1 ?
 		       -EIO :
 		       0;
@@ -638,6 +653,49 @@ START_TEST(test_registration_failures_publish_no_partial_vector)
 		ffv2_prototype_snapshot_release(ds);
 		ck_assert_uint_eq(context.close_calls,
 				  failure == FAKE_FAIL_OPEN ? 0 : 1);
+		destroy_dstore(ds);
+	}
+}
+END_TEST
+
+START_TEST(test_retirement_unpublishes_before_disable_and_fails_closed)
+{
+	for (enum fake_failure_stage failure = FAKE_FAIL_NONE;
+	     failure <= FAKE_FAIL_DISABLE; failure++) {
+		struct dstore *ds = make_dstore();
+		struct fake_transport_context context = {
+			.failure = failure,
+			.retiring_ds = ds,
+		};
+		const struct ffv2_prototype_transport transport = {
+			.context = &context,
+			.open = fake_open,
+			.disable = fake_disable,
+			.close = fake_close,
+		};
+
+		ck_assert_int_eq(ffv2_prototype_snapshot_replace(
+					 ds, make_snapshot(10, 0x60)),
+				 0);
+		ck_assert_int_eq(dstore_ordinary_close(ds), 0);
+		dstore_ordinary_activate(ds);
+		dstore_ordinary_retire(ds);
+		int ret = ffv2_prototype_retire_transport(ds, &transport);
+
+		ck_assert_int_eq(ret, failure == FAKE_FAIL_NONE ? 0 : -EIO);
+		if (failure != FAKE_FAIL_OPEN) {
+			ck_assert(context.saw_retiring_gate);
+			ck_assert(context.saw_absent_snapshot);
+		}
+		ck_assert_ptr_null(ds->ds_prototype_snapshot);
+		ck_assert_uint_eq(context.disable_calls,
+				  failure == FAKE_FAIL_OPEN ? 0 : 1);
+		ck_assert_uint_eq(context.close_calls,
+				  failure == FAKE_FAIL_OPEN ? 0 : 1);
+		for (size_t i = 0;
+		     i < sizeof(ds->ds_prototype_config.binding_token); i++)
+			ck_assert_uint_eq(
+				ds->ds_prototype_config.binding_token[i], 0);
 		destroy_dstore(ds);
 	}
 }
@@ -880,6 +938,88 @@ START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
 	unlink(record_path);
 	rmdir(directory);
 	destroy_dstore(ds);
+}
+END_TEST
+
+START_TEST(test_fixed_layout_restart_rebinds_only_clean_owner)
+{
+	char directory[] = "/tmp/reffs-fixed-restart-XXXXXX";
+	char path[256];
+	struct dstore *ds = make_dstore();
+	struct super_block *sb;
+	struct inode *owner;
+
+	ck_assert_ptr_nonnull(mkdtemp(directory));
+	ds->ds_prototype_config.fixed_inventory = true;
+	strcpy(ds->ds_prototype_config.objects[0].name, "gate-b-data");
+	strcpy(ds->ds_prototype_config.objects[1].name, "gate-b-parity");
+	ck_assert_int_lt(snprintf(ds->ds_state_dir, sizeof(ds->ds_state_dir),
+				  "%s", directory),
+			 (int)sizeof(ds->ds_state_dir));
+	ds->ds_fixed_inventory = calloc(1, sizeof(*ds->ds_fixed_inventory));
+	ck_assert_ptr_nonnull(ds->ds_fixed_inventory);
+	ck_assert_int_eq(ffv2_fixed_inventory_identity_init(
+				 &ds->ds_fixed_inventory->identity, ds->ds_id,
+				 ds->ds_address, ds->ds_path,
+				 &ds->ds_prototype_config),
+			 0);
+	ck_assert_int_eq(ffv2_fixed_inventory_save(ds->ds_state_dir,
+						   ds->ds_fixed_inventory),
+			 0);
+	ck_assert_int_eq(
+		ffv2_prototype_snapshot_replace(ds, make_snapshot(10, 0x60)),
+		0);
+
+	sb = super_block_alloc(901, "/fixed-restart", REFFS_STORAGE_RAM, NULL);
+	ck_assert_ptr_nonnull(sb);
+	uuid_generate(sb->sb_uuid);
+	sb->sb_dstore_ids[0] = ds->ds_id;
+	sb->sb_ndstores = 1;
+	sb->sb_block_size = 4096;
+	sb->sb_stripe_unit = 4096;
+	sb->sb_checksum_algorithm = LAYOUT_CHECKSUM_ALG_CRC32;
+	owner = inode_alloc(sb, 101);
+	ck_assert_ptr_nonnull(owner);
+	ck_assert_int_eq(ffv2_fixed_layout_assign(owner, LAYOUT4_FLEX_FILES_V2),
+			 1);
+	ck_assert_int_eq(ds->ds_fixed_inventory->state,
+			 FFV2_INVENTORY_ASSIGNED);
+
+	/* Simulate restart by discarding memory and reloading the record. */
+	free(ds->ds_fixed_inventory);
+	ds->ds_fixed_inventory = calloc(1, sizeof(*ds->ds_fixed_inventory));
+	ck_assert_ptr_nonnull(ds->ds_fixed_inventory);
+	owner->i_layout_barrier.active = false;
+	ck_assert_int_eq(ffv2_fixed_inventory_load(ds->ds_state_dir, ds->ds_id,
+						   ds->ds_fixed_inventory),
+			 0);
+	ck_assert_int_eq(dstore_fixed_inventory_recover(ds), 0);
+	ck_assert(owner->i_layout_barrier.active);
+	ck_assert_int_eq(ds->ds_fixed_inventory->state,
+			 FFV2_INVENTORY_ASSIGNED);
+
+	/* A crash with uncertain metadata fences before re-registration. */
+	ck_assert_int_eq(ffv2_fixed_metadata_transition(ds->ds_fixed_inventory,
+							FFV2_METADATA_DIRTY),
+			 0);
+	ck_assert_int_eq(ffv2_fixed_inventory_save(ds->ds_state_dir,
+						   ds->ds_fixed_inventory),
+			 0);
+	owner->i_layout_barrier.active = false;
+	ck_assert_int_eq(dstore_fixed_inventory_recover(ds), -ESTALE);
+	ck_assert_int_eq(ds->ds_fixed_inventory->state, FFV2_INVENTORY_FENCED);
+	ck_assert(!owner->i_layout_barrier.active);
+
+	inode_active_put(owner);
+	super_block_drain(sb);
+	super_block_put(sb);
+	ds->ds_prototype_config.enabled = false;
+	destroy_dstore(ds);
+	snprintf(path, sizeof(path), "%s/ffv2-fixed-inventory-7", directory);
+	unlink(path);
+	snprintf(path, sizeof(path), "%s/ffv2-fixed-status-7.json", directory);
+	unlink(path);
+	rmdir(directory);
 }
 END_TEST
 
@@ -1232,6 +1372,9 @@ static Suite *prototype_suite(void)
 	tcase_add_test(test,
 		       test_registration_failures_publish_no_partial_vector);
 	tcase_add_test(test, test_registration_success_replaces_whole_vector);
+	tcase_add_test(
+		test,
+		test_retirement_unpublishes_before_disable_and_fails_closed);
 	tcase_add_test(test,
 		       test_layout_builder_publishes_exact_member_identities);
 	tcase_add_test(test,
@@ -1242,6 +1385,8 @@ static Suite *prototype_suite(void)
 	tcase_add_test(test,
 		       test_concurrent_layout_observes_one_complete_vector);
 	tcase_add_test(test, test_fixed_layout_claim_retry_and_exhaustion);
+	tcase_add_test(test,
+		       test_fixed_layout_restart_rebinds_only_clean_owner);
 	suite_add_tcase(suite, test);
 	return suite;
 }

@@ -842,14 +842,18 @@ int ffv2_prototype_disable(void)
 	return ret;
 }
 
-void ffv2_prototype_unregister_dstore(struct dstore *ds)
+int ffv2_prototype_retire_transport(
+	struct dstore *ds, const struct ffv2_prototype_transport *transport)
 {
 	struct ffv2_prototype_snapshot *snapshot;
-	struct ffv2_nl nl;
+	bool opened = false;
+	int ret = 0;
 
-	if (!ds)
-		return;
+	if (!ds || !transport || !transport->open || !transport->disable ||
+	    !transport->close)
+		return -EINVAL;
 	pthread_mutex_lock(&ds->ds_prototype_mutex);
+	/* Readers must lose the vector before the provider gate is disabled. */
 	pthread_rwlock_wrlock(&ds->ds_prototype_lock);
 	snapshot = ds->ds_prototype_snapshot;
 	ds->ds_prototype_snapshot = NULL;
@@ -857,15 +861,37 @@ void ffv2_prototype_unregister_dstore(struct dstore *ds)
 	free(snapshot);
 	if (!ds->ds_prototype_config.enabled)
 		goto out_unlock;
-	if (!nl_open(&nl)) {
-		nl_simple(&nl, FFV2_NFSD_CMD_PROTOTYPE_DISABLE);
-		OPENSSL_cleanse(nl.buffer, sizeof(nl.buffer));
-		close(nl.fd);
-	}
-	OPENSSL_cleanse(ds->ds_prototype_config.binding_token,
-			sizeof(ds->ds_prototype_config.binding_token));
+	ret = transport->open(transport->context);
+	if (ret)
+		goto out_unlock;
+	opened = true;
+	ret = transport->disable(transport->context);
 out_unlock:
+	if (opened)
+		transport->close(transport->context);
+	if (ds->ds_prototype_config.enabled)
+		OPENSSL_cleanse(ds->ds_prototype_config.binding_token,
+				sizeof(ds->ds_prototype_config.binding_token));
 	pthread_mutex_unlock(&ds->ds_prototype_mutex);
+	return ret;
+}
+
+int ffv2_prototype_retire_dstore(struct dstore *ds)
+{
+	struct ffv2_nl nl;
+	const struct ffv2_prototype_transport transport = {
+		.context = &nl,
+		.open = prototype_nl_open,
+		.disable = prototype_nl_disable,
+		.close = prototype_nl_close,
+	};
+
+	return ffv2_prototype_retire_transport(ds, &transport);
+}
+
+void ffv2_prototype_unregister_dstore(struct dstore *ds)
+{
+	(void)ffv2_prototype_retire_dstore(ds);
 }
 
 const struct ffv2_prototype_snapshot *
