@@ -909,17 +909,19 @@ uint32_t nfs4_op_remove(struct compound *compound)
 	 * -EISDIR if the target is a directory; fall back to vfs_rmdir().
 	 */
 	cinfo_before = inode_changeid(compound->c_inode);
-	ret = vfs_remove(compound->c_inode, name, &compound->c_ap, &dir_before,
-			 &dir_after);
+	ret = vfs_remove_expected(compound->c_inode, name, target,
+				  &compound->c_ap, &dir_before, &dir_after);
 	if (ret == -EISDIR)
-		ret = vfs_rmdir(compound->c_inode, name, &compound->c_ap,
-				&dir_before, &dir_after);
+		ret = vfs_rmdir_expected(compound->c_inode, name, target,
+					 &compound->c_ap, &dir_before,
+					 &dir_after);
 	nfs4_layout_remove_unlock(target);
 	if (target)
 		inode_active_put(target);
 
 	if (ret) {
-		*status = errno_to_nfs4(ret, OP_REMOVE);
+		*status = ret == -EAGAIN ? NFS4ERR_DELAY :
+					   errno_to_nfs4(ret, OP_REMOVE);
 		goto out;
 	}
 
@@ -950,6 +952,7 @@ uint32_t nfs4_op_rename(struct compound *compound)
 	RENAME4resok *resok = NFS4_OP_RESOK_SETUP(res, RENAME4res_u, resok4);
 
 	struct inode *old_dir = NULL;
+	struct inode *target = NULL;
 	struct timespec old_before, old_after, new_before, new_after;
 	changeid4 src_cinfo_before = 0, src_cinfo_after = 0;
 	changeid4 dst_cinfo_before = 0, dst_cinfo_after = 0;
@@ -1116,18 +1119,31 @@ uint32_t nfs4_op_rename(struct compound *compound)
 		goto out;
 	}
 
+	target = inode_name_get_inode(compound->c_inode, newname);
+	if (!nfs4_layout_remove_lock(target)) {
+		inode_active_put(target);
+		target = NULL;
+		*status = NFS4ERR_NOTSUPP;
+		goto out;
+	}
+
 	src_cinfo_before = inode_changeid(old_dir);
 	dst_cinfo_before = inode_changeid(compound->c_inode);
-	ret = vfs_rename(old_dir, oldname, compound->c_inode, newname,
-			 &compound->c_ap, &old_before, &old_after, &new_before,
-			 &new_after);
+	ret = vfs_rename_expected(old_dir, oldname, compound->c_inode, newname,
+				  target, &compound->c_ap, &old_before,
+				  &old_after, &new_before, &new_after);
+	nfs4_layout_remove_unlock(target);
+	inode_active_put(target);
+	target = NULL;
 	if (ret) {
 		/*
 		 * RFC 8881 S18.26.3: renaming a non-directory over a
 		 * directory returns NFS4ERR_EXIST, not NFS4ERR_ISDIR
 		 * (which is not a valid RENAME error).
 		 */
-		if (ret == -EISDIR)
+		if (ret == -EAGAIN)
+			*status = NFS4ERR_DELAY;
+		else if (ret == -EISDIR)
 			*status = NFS4ERR_EXIST;
 		else
 			*status = errno_to_nfs4(ret, OP_RENAME);
@@ -1157,6 +1173,8 @@ uint32_t nfs4_op_rename(struct compound *compound)
 	resok->target_cinfo.after = dst_cinfo_after;
 
 out:
+	nfs4_layout_remove_unlock(target);
+	inode_active_put(target);
 	inode_active_put(old_dir);
 	free(oldname);
 	free(newname);

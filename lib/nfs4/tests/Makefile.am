@@ -212,6 +212,7 @@ TESTS = \
 	nfs4_client_persist \
 	nfs4_session \
 	migration_record_test \
+	namespace_layout_guard_test \
 	open_trunc_test \
 	proxy_registration_test \
 	proxy_stateid_test \

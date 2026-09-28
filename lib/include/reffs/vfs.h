@@ -29,10 +29,26 @@ int vfs_rename(struct inode *old_dir, const char *old_name,
 	       struct timespec *old_after, struct timespec *new_before,
 	       struct timespec *new_after);
 
+/* Rename only while new_name still resolves to expected_dst. */
+int vfs_rename_expected(struct inode *old_dir, const char *old_name,
+			struct inode *new_dir, const char *new_name,
+			struct inode *expected_dst, struct authunix_parms *ap,
+			struct timespec *old_before, struct timespec *old_after,
+			struct timespec *new_before,
+			struct timespec *new_after);
+
 int vfs_remove(struct inode *dir, const char *name, struct authunix_parms *ap,
 	       struct timespec *dir_before, struct timespec *dir_after);
 int vfs_rmdir(struct inode *dir, const char *name, struct authunix_parms *ap,
 	      struct timespec *dir_before, struct timespec *dir_after);
+/* Remove only while name still resolves to expected. */
+int vfs_remove_expected(struct inode *dir, const char *name,
+			struct inode *expected, struct authunix_parms *ap,
+			struct timespec *dir_before,
+			struct timespec *dir_after);
+int vfs_rmdir_expected(struct inode *dir, const char *name,
+		       struct inode *expected, struct authunix_parms *ap,
+		       struct timespec *dir_before, struct timespec *dir_after);
 
 struct reffs_sattr {
 	mode_t mode;

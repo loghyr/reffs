@@ -22,6 +22,7 @@
 #include <rpc/xdr.h>
 
 #include "nfsv42_xdr.h"
+#include "reffs/backend.h"
 #include "reffs/dstore.h"
 #include "reffs/ffv2_prototype.h"
 #include "reffs/fixed_inventory.h"
@@ -762,6 +763,13 @@ static void fixed_inode_destroy(struct inode *inode)
 	pthread_mutex_destroy(&inode->i_layout_sync_mutex);
 }
 
+static unsigned int fixed_inode_sync_calls;
+
+static void fixed_inode_sync(struct inode *inode __attribute__((unused)))
+{
+	fixed_inode_sync_calls++;
+}
+
 struct fixed_assign_context {
 	struct inode *inode;
 	_Atomic bool started;
@@ -818,6 +826,9 @@ START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
 	char record_path[256];
 	struct dstore *ds = make_dstore();
 	struct super_block sb = { 0 };
+	const struct reffs_storage_ops storage_ops = {
+		.inode_sync = fixed_inode_sync,
+	};
 	struct inode first, second;
 	uint64_t ordinary_before = 0;
 
@@ -849,6 +860,7 @@ START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
 	sb.sb_block_size = 4096;
 	sb.sb_stripe_unit = 4096;
 	sb.sb_checksum_algorithm = LAYOUT_CHECKSUM_ALG_CRC32;
+	sb.sb_ops = &storage_ops;
 	fixed_inode_init(&first, &sb, 101);
 	fixed_inode_init(&second, &sb, 102);
 	struct fixed_assign_context assign_context = { .inode = &first };
@@ -873,8 +885,10 @@ START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
 			atomic_load_explicit(&ds->ds_ordinary_gate.admitted[i],
 					     memory_order_relaxed);
 
+	fixed_inode_sync_calls = 0;
 	ck_assert_int_eq(
 		ffv2_fixed_layout_assign(&first, LAYOUT4_FLEX_FILES_V2), 1);
+	ck_assert_uint_eq(fixed_inode_sync_calls, 1);
 	ck_assert_int_eq(ds->ds_fixed_inventory->state,
 			 FFV2_INVENTORY_ASSIGNED);
 	ck_assert_uint_eq(ds->ds_fixed_inventory->owner_ino, first.i_ino);
@@ -883,8 +897,10 @@ START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
 	ck_assert(!nfs4_layout_remove_lock(&first));
 	uint64_t assigned_generation = ds->ds_fixed_inventory->generation;
 
+	fixed_inode_sync_calls = 0;
 	ck_assert_int_eq(
 		ffv2_fixed_layout_assign(&first, LAYOUT4_FLEX_FILES_V2), 1);
+	ck_assert_uint_eq(fixed_inode_sync_calls, 0);
 	ck_assert_uint_eq(ds->ds_fixed_inventory->generation,
 			  assigned_generation);
 	stateid4 layout_stateid = { .seqid = 3 };

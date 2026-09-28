@@ -161,6 +161,7 @@ int vfs_is_subdir(struct inode *child, struct inode *maybe_parent)
 /* Internal helpers that assume locks are held */
 
 static int vfs_remove_common_locked(struct inode *dir, const char *name,
+				    struct inode *expected, bool check_expected,
 				    struct authunix_parms *ap, bool is_dir)
 {
 	struct reffs_dirent *rd = NULL;
@@ -175,12 +176,16 @@ static int vfs_remove_common_locked(struct inode *dir, const char *name,
 
 	rd = dirent_find(de_dir, rtc, (char *)name);
 	if (!rd) {
-		return -ENOENT;
+		return check_expected && expected ? -EAGAIN : -ENOENT;
 	}
 
 	rd_inode = dirent_ensure_inode(rd);
 	if (!rd_inode) {
-		ret = -ENOENT;
+		ret = check_expected && expected ? -EAGAIN : -ENOENT;
+		goto out;
+	}
+	if (check_expected && rd_inode != expected) {
+		ret = -EAGAIN;
 		goto out;
 	}
 
@@ -332,6 +337,7 @@ static int vfs_create_common_locked(struct inode *dir, const char *name,
 
 static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 			     struct inode *new_dir, const char *new_name,
+			     struct inode *expected_dst, bool check_expected,
 			     struct authunix_parms *ap)
 {
 	struct inode *inode_src_file = NULL;
@@ -361,6 +367,10 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 			dirent_put(rd_dst);
 			rd_dst = NULL;
 		}
+	}
+	if (check_expected && inode_dst_file != expected_dst) {
+		ret = -EAGAIN;
+		goto out;
 	}
 
 	if (rd_src == rd_dst) {
@@ -507,11 +517,14 @@ static void vfs_capture_after(struct inode *dir,
 
 /* Public API */
 
-int vfs_rename(struct inode *old_dir, const char *old_name,
-	       struct inode *new_dir, const char *new_name,
-	       struct authunix_parms *ap, struct timespec *old_before,
-	       struct timespec *old_after, struct timespec *new_before,
-	       struct timespec *new_after)
+static int vfs_rename_common(struct inode *old_dir, const char *old_name,
+			     struct inode *new_dir, const char *new_name,
+			     struct inode *expected_dst, bool check_expected,
+			     struct authunix_parms *ap,
+			     struct timespec *old_before,
+			     struct timespec *old_after,
+			     struct timespec *new_before,
+			     struct timespec *new_after)
 {
 	if (old_dir->i_sb != new_dir->i_sb)
 		return -EXDEV;
@@ -538,7 +551,8 @@ int vfs_rename(struct inode *old_dir, const char *old_name,
 		*old_before = old_dir->i_ctime;
 	if (new_before)
 		*new_before = new_dir->i_ctime;
-	ret = vfs_rename_locked(old_dir, old_name, new_dir, new_name, ap);
+	ret = vfs_rename_locked(old_dir, old_name, new_dir, new_name,
+				expected_dst, check_expected, ap);
 	if (old_after)
 		vfs_capture_after(old_dir, old_before, old_after, ret);
 	if (new_after)
@@ -547,32 +561,74 @@ int vfs_rename(struct inode *old_dir, const char *old_name,
 	return ret;
 }
 
-int vfs_remove(struct inode *dir, const char *name, struct authunix_parms *ap,
-	       struct timespec *dir_before, struct timespec *dir_after)
+int vfs_rename(struct inode *old_dir, const char *old_name,
+	       struct inode *new_dir, const char *new_name,
+	       struct authunix_parms *ap, struct timespec *old_before,
+	       struct timespec *old_after, struct timespec *new_before,
+	       struct timespec *new_after)
+{
+	return vfs_rename_common(old_dir, old_name, new_dir, new_name, NULL,
+				 false, ap, old_before, old_after, new_before,
+				 new_after);
+}
+
+int vfs_rename_expected(struct inode *old_dir, const char *old_name,
+			struct inode *new_dir, const char *new_name,
+			struct inode *expected_dst, struct authunix_parms *ap,
+			struct timespec *old_before, struct timespec *old_after,
+			struct timespec *new_before, struct timespec *new_after)
+{
+	return vfs_rename_common(old_dir, old_name, new_dir, new_name,
+				 expected_dst, true, ap, old_before, old_after,
+				 new_before, new_after);
+}
+
+static int vfs_remove_common(struct inode *dir, const char *name,
+			     struct inode *expected, bool check_expected,
+			     struct authunix_parms *ap,
+			     struct timespec *dir_before,
+			     struct timespec *dir_after, bool is_dir)
 {
 	int ret;
 	vfs_lock_dirs(dir, NULL);
 	if (dir_before)
 		*dir_before = dir->i_ctime;
-	ret = vfs_remove_common_locked(dir, name, ap, false);
+	ret = vfs_remove_common_locked(dir, name, expected, check_expected, ap,
+				       is_dir);
 	if (dir_after)
 		vfs_capture_after(dir, dir_before, dir_after, ret);
 	vfs_unlock_dirs(dir, NULL);
 	return ret;
 }
 
+int vfs_remove(struct inode *dir, const char *name, struct authunix_parms *ap,
+	       struct timespec *dir_before, struct timespec *dir_after)
+{
+	return vfs_remove_common(dir, name, NULL, false, ap, dir_before,
+				 dir_after, false);
+}
+
 int vfs_rmdir(struct inode *dir, const char *name, struct authunix_parms *ap,
 	      struct timespec *dir_before, struct timespec *dir_after)
 {
-	int ret;
-	vfs_lock_dirs(dir, NULL);
-	if (dir_before)
-		*dir_before = dir->i_ctime;
-	ret = vfs_remove_common_locked(dir, name, ap, true);
-	if (dir_after)
-		vfs_capture_after(dir, dir_before, dir_after, ret);
-	vfs_unlock_dirs(dir, NULL);
-	return ret;
+	return vfs_remove_common(dir, name, NULL, false, ap, dir_before,
+				 dir_after, true);
+}
+
+int vfs_remove_expected(struct inode *dir, const char *name,
+			struct inode *expected, struct authunix_parms *ap,
+			struct timespec *dir_before, struct timespec *dir_after)
+{
+	return vfs_remove_common(dir, name, expected, true, ap, dir_before,
+				 dir_after, false);
+}
+
+int vfs_rmdir_expected(struct inode *dir, const char *name,
+		       struct inode *expected, struct authunix_parms *ap,
+		       struct timespec *dir_before, struct timespec *dir_after)
+{
+	return vfs_remove_common(dir, name, expected, true, ap, dir_before,
+				 dir_after, true);
 }
 
 int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
@@ -921,7 +977,8 @@ int vfs_symlink(struct inode *dir, const char *name, const char *target,
 	if (ret == 0) {
 		inode->i_symlink = strdup(target);
 		if (!inode->i_symlink) {
-			vfs_remove_common_locked(dir, name, ap, false);
+			vfs_remove_common_locked(dir, name, NULL, false, ap,
+						 false);
 			inode_active_put(inode);
 			ret = -ENOMEM;
 		} else {
