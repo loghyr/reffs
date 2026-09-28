@@ -79,7 +79,7 @@ int ffv2_prototype_snapshot_replace(struct dstore *ds,
 /* Exact prototype selection.  Zero means ordinary path; negative fails shut. */
 int ffv2_prototype_snapshot_select(
 	const struct layout_segment *seg, uint32_t writer_id,
-	uint64_t pnfs_clientid, struct dstore **ds_out,
+	struct dstore **ds_out,
 	const struct ffv2_prototype_snapshot **snapshot_out);
 
 /* Test seams for canonical request and strict reply validation. */

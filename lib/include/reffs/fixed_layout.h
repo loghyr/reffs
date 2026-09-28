@@ -14,7 +14,8 @@ struct inode;
  * applies and the exact segment is assigned, zero when fixed mode does not
  * apply, or a negative errno on exhaustion or an inconsistent generation.
  */
-int ffv2_fixed_layout_assign(struct inode *inode, uint32_t layout_type);
+int ffv2_fixed_layout_assign(struct inode *inode, uint32_t layout_type,
+			     uint32_t writer_id);
 
 /* Hold the layout exclusion across a destructive namespace mutation. */
 bool nfs4_layout_remove_lock(struct inode *inode);

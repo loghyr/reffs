@@ -157,7 +157,8 @@ static int fixed_inventory_fence(struct dstore *ds, struct inode *inode)
 	return ret ? ret : -ESTALE;
 }
 
-int ffv2_fixed_layout_assign(struct inode *inode, uint32_t layout_type)
+int ffv2_fixed_layout_assign(struct inode *inode, uint32_t layout_type,
+			     uint32_t writer_id)
 {
 	struct ffv2_prototype_snapshot const *snapshot = NULL;
 	struct ffv2_fixed_inventory_record *record;
@@ -208,9 +209,8 @@ int ffv2_fixed_layout_assign(struct inode *inode, uint32_t layout_type)
 		.ls_checksum_algorithm = checksum,
 		.ls_files = files,
 	};
-	selected = ffv2_prototype_snapshot_select(
-		&expected, ds->ds_prototype_config.writer_id,
-		ds->ds_prototype_config.pnfs_clientid, &snapshot_ds, &snapshot);
+	selected = ffv2_prototype_snapshot_select(&expected, writer_id,
+						  &snapshot_ds, &snapshot);
 	if (selected != 1 || snapshot_ds != ds) {
 		if (selected == 1) {
 			ffv2_prototype_snapshot_release(snapshot_ds);
@@ -1605,7 +1605,6 @@ int default_coding_resolve_segment(const struct reffs_coding_spec *coding,
 
 nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 			    uint32_t ffv2m_coding_type, uint32_t writer_id,
-			    uint64_t pnfs_clientid,
 			    const stateid4 *layout_stateid, char **out_body,
 			    u_long *out_size)
 {
@@ -1615,7 +1614,7 @@ nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 	int prototype_selected;
 
 	prototype_selected = ffv2_prototype_snapshot_select(
-		seg, writer_id, pnfs_clientid, &prototype_ds, &prototype);
+		seg, writer_id, &prototype_ds, &prototype);
 	if (prototype_selected < 0)
 		return NFS4ERR_LAYOUTUNAVAILABLE;
 
@@ -2105,6 +2104,14 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	}
 
 	layouttype4 layout_type = args->loga_layout_type;
+	clientid4 layout_clientid = compound->c_nfs4_client ?
+					    (clientid4)nfs4_client_to_client(
+						    compound->c_nfs4_client)
+						    ->c_id :
+					    0;
+	uint32_t layout_writer = layout_clientid ?
+					 ffv2_writer_id(layout_clientid) :
+					 CHUNK_GUARD_CLIENT_ID_NONE;
 
 	if (!compound->c_inode) {
 		*status = NFS4ERR_NOFILEHANDLE;
@@ -2227,8 +2234,8 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	}
 
 	struct layout_segments *lss;
-	int fixed_assignment =
-		ffv2_fixed_layout_assign(compound->c_inode, layout_type);
+	int fixed_assignment = ffv2_fixed_layout_assign(
+		compound->c_inode, layout_type, layout_writer);
 
 	if (fixed_assignment < 0) {
 		*status = NFS4ERR_LAYOUTUNAVAILABLE;
@@ -2603,11 +2610,10 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		return 0;
 	}
 
-	/* Track the granted iomode. */
+	/* Remember the requested mode; publish it only after grant succeeds. */
 	uint64_t mode_bit = (args->loga_iomode == LAYOUTIOMODE4_RW) ?
 				    LAYOUT_STATEID_IOMODE_RW :
 				    LAYOUT_STATEID_IOMODE_READ;
-	__atomic_or_fetch(&ls->ls_state, mode_bit, __ATOMIC_RELEASE);
 
 	/*
 	 * For now, return the first segment as a single layout.
@@ -2693,19 +2699,9 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		} else {
 			coding_type = (uint32_t)FFV2_ENCODING_RS_VANDERMONDE;
 		}
-		clientid4 layout_clientid =
-			compound->c_nfs4_client ?
-				(clientid4)nfs4_client_to_client(
-					compound->c_nfs4_client)
-					->c_id :
-				0;
-
-		*status = layoutget_build_v2(
-			build_seg, coding_type,
-			layout_clientid ? ffv2_writer_id(layout_clientid) :
-					  CHUNK_GUARD_CLIENT_ID_NONE,
-			(uint64_t)layout_clientid, &layout_stid, &body,
-			&xdr_size);
+		*status = layoutget_build_v2(build_seg, coding_type,
+					     layout_writer, &layout_stid, &body,
+					     &xdr_size);
 	} else {
 		*status = layoutget_build_v1(
 			build_seg, compound->c_server_state->ss_stripe_width,
@@ -2793,6 +2789,9 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 			goto out_stateid;
 		}
 	}
+
+	/* The response and any fixed-layout barrier now describe a real grant. */
+	__atomic_or_fetch(&ls->ls_state, mode_bit, __ATOMIC_RELEASE);
 
 	/*
 	 * View is no longer needed -- the body has been encoded.

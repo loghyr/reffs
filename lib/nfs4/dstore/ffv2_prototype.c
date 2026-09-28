@@ -992,7 +992,7 @@ int ffv2_prototype_snapshot_replace(struct dstore *ds,
 
 int ffv2_prototype_snapshot_select(
 	const struct layout_segment *seg, uint32_t writer_id,
-	uint64_t pnfs_clientid, struct dstore **ds_out,
+	struct dstore **ds_out,
 	const struct ffv2_prototype_snapshot **snapshot_out)
 {
 	struct dstore *prototype_ds = NULL;
@@ -1025,7 +1025,8 @@ int ffv2_prototype_snapshot_select(
 		return 0;
 	snapshot = ffv2_prototype_snapshot_borrow(prototype_ds);
 	if (!snapshot || snapshot->writer_id != writer_id ||
-	    snapshot->pnfs_clientid != pnfs_clientid ||
+	    snapshot->pnfs_clientid !=
+		    prototype_ds->ds_prototype_config.pnfs_clientid ||
 	    snapshot->chunk_size != seg->ls_stripe_unit ||
 	    snapshot->data_count != seg->ls_k ||
 	    snapshot->parity_count != seg->ls_m ||

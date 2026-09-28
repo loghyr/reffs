@@ -39,7 +39,6 @@
 
 nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 			    uint32_t ffv2m_coding_type, uint32_t writer_id,
-			    uint64_t pnfs_clientid,
 			    const stateid4 *layout_stateid, char **out_body,
 			    u_long *out_size);
 
@@ -782,8 +781,8 @@ static void *fixed_assign_thread(void *opaque)
 	struct fixed_assign_context *context = opaque;
 
 	atomic_store_explicit(&context->started, true, memory_order_release);
-	context->result =
-		ffv2_fixed_layout_assign(context->inode, LAYOUT4_FLEX_FILES_V2);
+	context->result = ffv2_fixed_layout_assign(context->inode,
+						   LAYOUT4_FLEX_FILES_V2, 17);
 	atomic_store_explicit(&context->done, true, memory_order_release);
 	return NULL;
 }
@@ -863,6 +862,14 @@ START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
 	sb.sb_ops = &storage_ops;
 	fixed_inode_init(&first, &sb, 101);
 	fixed_inode_init(&second, &sb, 102);
+	/* A requester from another MDS slot must not claim the inventory. */
+	fixed_inode_sync_calls = 0;
+	ck_assert_int_eq(ffv2_fixed_layout_assign(&first, LAYOUT4_FLEX_FILES_V2,
+						  18),
+			 -ESTALE);
+	ck_assert_int_eq(ds->ds_fixed_inventory->state, FFV2_INVENTORY_FREE);
+	ck_assert_ptr_null(first.i_layout_segments);
+	ck_assert_uint_eq(fixed_inode_sync_calls, 0);
 	struct fixed_assign_context assign_context = { .inode = &first };
 	pthread_t assigner;
 
@@ -887,7 +894,7 @@ START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
 
 	fixed_inode_sync_calls = 0;
 	ck_assert_int_eq(
-		ffv2_fixed_layout_assign(&first, LAYOUT4_FLEX_FILES_V2), 1);
+		ffv2_fixed_layout_assign(&first, LAYOUT4_FLEX_FILES_V2, 17), 1);
 	ck_assert_uint_eq(fixed_inode_sync_calls, 1);
 	ck_assert_int_eq(ds->ds_fixed_inventory->state,
 			 FFV2_INVENTORY_ASSIGNED);
@@ -899,7 +906,7 @@ START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
 
 	fixed_inode_sync_calls = 0;
 	ck_assert_int_eq(
-		ffv2_fixed_layout_assign(&first, LAYOUT4_FLEX_FILES_V2), 1);
+		ffv2_fixed_layout_assign(&first, LAYOUT4_FLEX_FILES_V2, 17), 1);
 	ck_assert_uint_eq(fixed_inode_sync_calls, 0);
 	ck_assert_uint_eq(ds->ds_fixed_inventory->generation,
 			  assigned_generation);
@@ -947,12 +954,12 @@ START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
 		  (first.i_mtime.tv_sec == mtime_before.tv_sec &&
 		   first.i_mtime.tv_nsec >= mtime_before.tv_nsec));
 	ck_assert_int_eq(ffv2_fixed_layout_assign(&second,
-						  LAYOUT4_FLEX_FILES_V2),
+						  LAYOUT4_FLEX_FILES_V2, 17),
 			 -ENOSPC);
 	ck_assert_ptr_null(second.i_layout_segments);
 	ds->ds_prototype_config.chunk_size = 8192;
-	ck_assert_int_eq(ffv2_fixed_layout_assign(&first,
-						  LAYOUT4_FLEX_FILES_V2),
+	ck_assert_int_eq(ffv2_fixed_layout_assign(&first, LAYOUT4_FLEX_FILES_V2,
+						  17),
 			 -ESTALE);
 	ds->ds_prototype_config.chunk_size = 4096;
 	struct reffs_prototype_object_config swap =
@@ -960,8 +967,8 @@ START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
 
 	ds->ds_prototype_config.objects[0] = ds->ds_prototype_config.objects[1];
 	ds->ds_prototype_config.objects[1] = swap;
-	ck_assert_int_eq(ffv2_fixed_layout_assign(&first,
-						  LAYOUT4_FLEX_FILES_V2),
+	ck_assert_int_eq(ffv2_fixed_layout_assign(&first, LAYOUT4_FLEX_FILES_V2,
+						  17),
 			 -ESTALE);
 	swap = ds->ds_prototype_config.objects[0];
 	ds->ds_prototype_config.objects[0] = ds->ds_prototype_config.objects[1];
@@ -1035,8 +1042,8 @@ START_TEST(test_fixed_layout_restart_rebinds_only_clean_owner)
 	sb->sb_checksum_algorithm = LAYOUT_CHECKSUM_ALG_CRC32;
 	owner = inode_alloc(sb, 101);
 	ck_assert_ptr_nonnull(owner);
-	ck_assert_int_eq(ffv2_fixed_layout_assign(owner, LAYOUT4_FLEX_FILES_V2),
-			 1);
+	ck_assert_int_eq(
+		ffv2_fixed_layout_assign(owner, LAYOUT4_FLEX_FILES_V2, 17), 1);
 	ck_assert_int_eq(ds->ds_fixed_inventory->state,
 			 FFV2_INVENTORY_ASSIGNED);
 
@@ -1132,7 +1139,7 @@ START_TEST(test_snapshot_replacement_is_complete_and_config_bound)
 }
 END_TEST
 
-START_TEST(test_layout_builder_publishes_exact_member_identities)
+START_TEST(test_layout_builder_separates_mds_writer_from_ds_clientid)
 {
 	struct dstore *ds = make_dstore();
 	struct ffv2_prototype_snapshot *snapshot = make_snapshot(10, 0x60);
@@ -1158,7 +1165,7 @@ START_TEST(test_layout_builder_publishes_exact_member_identities)
 	ck_assert_int_eq(ffv2_prototype_snapshot_replace(ds, snapshot), 0);
 	ck_assert_int_eq(layoutget_build_v2(&segment,
 					    FFV2_ENCODING_RS_VANDERMONDE, 17,
-					    23, &layout_stateid, &body, &size),
+					    &layout_stateid, &body, &size),
 			 NFS4_OK);
 	XDR xdr;
 
@@ -1173,6 +1180,7 @@ START_TEST(test_layout_builder_publishes_exact_member_identities)
 	ck_assert(layout.ffv2l_flags & FFV2_FLAGS_NO_IO_THRU_MDS);
 	ck_assert(!(layout.ffv2l_flags & FFV2_FLAGS_NO_LAYOUTCOMMIT));
 	ck_assert_uint_eq(mirror->ffv2m_client_id, 17);
+	ck_assert_uint_eq(ds->ds_prototype_config.pnfs_clientid, 23);
 	for (uint32_t i = 0; i < 2; i++) {
 		ffv2_file_info4 *info =
 			&servers[i].ffv2ds_file_info.ffv2ds_file_info_val[0];
@@ -1213,35 +1221,60 @@ START_TEST(test_opted_in_layout_fails_closed_on_identity_mismatch)
 	}
 	ck_assert_int_eq(layoutget_build_v2(&segment,
 					    FFV2_ENCODING_RS_VANDERMONDE, 17,
-					    23, &layout_stateid, &body, &size),
+					    &layout_stateid, &body, &size),
 			 NFS4ERR_LAYOUTUNAVAILABLE);
 	ck_assert_int_eq(ffv2_prototype_snapshot_replace(ds, snapshot), 0);
 	ck_assert_int_eq(layoutget_build_v2(&segment,
 					    FFV2_ENCODING_RS_VANDERMONDE, 18,
-					    23, &layout_stateid, &body, &size),
+					    &layout_stateid, &body, &size),
 			 NFS4ERR_LAYOUTUNAVAILABLE);
+	ds->ds_prototype_config.pnfs_clientid = 24;
 	ck_assert_int_eq(layoutget_build_v2(&segment,
 					    FFV2_ENCODING_RS_VANDERMONDE, 17,
-					    24, &layout_stateid, &body, &size),
+					    &layout_stateid, &body, &size),
 			 NFS4ERR_LAYOUTUNAVAILABLE);
+	ds->ds_prototype_config.pnfs_clientid = 23;
 	segment.ls_stripe_unit = 8192;
 	ck_assert_int_eq(layoutget_build_v2(&segment,
 					    FFV2_ENCODING_RS_VANDERMONDE, 17,
-					    23, &layout_stateid, &body, &size),
+					    &layout_stateid, &body, &size),
 			 NFS4ERR_LAYOUTUNAVAILABLE);
 	segment.ls_stripe_unit = 4096;
 	segment.ls_k = 2;
 	segment.ls_m = 0;
 	ck_assert_int_eq(layoutget_build_v2(&segment,
 					    FFV2_ENCODING_RS_VANDERMONDE, 17,
-					    23, &layout_stateid, &body, &size),
+					    &layout_stateid, &body, &size),
 			 NFS4ERR_LAYOUTUNAVAILABLE);
 	segment.ls_k = 1;
 	segment.ls_m = 1;
+	segment.ls_nfiles = 1;
+	ck_assert_int_eq(layoutget_build_v2(&segment,
+					    FFV2_ENCODING_RS_VANDERMONDE, 17,
+					    &layout_stateid, &body, &size),
+			 NFS4ERR_LAYOUTUNAVAILABLE);
+	segment.ls_nfiles = 2;
+	files[0].ldf_dstore_id = 8;
+	ck_assert_int_eq(layoutget_build_v2(&segment,
+					    FFV2_ENCODING_RS_VANDERMONDE, 17,
+					    &layout_stateid, &body, &size),
+			 NFS4ERR_LAYOUTUNAVAILABLE);
+	files[0].ldf_dstore_id = 7;
+	uint8_t first_handle[4];
+
+	memcpy(first_handle, files[0].ldf_fh, sizeof(first_handle));
+	memcpy(files[0].ldf_fh, files[1].ldf_fh, sizeof(first_handle));
+	memcpy(files[1].ldf_fh, first_handle, sizeof(first_handle));
+	ck_assert_int_eq(layoutget_build_v2(&segment,
+					    FFV2_ENCODING_RS_VANDERMONDE, 17,
+					    &layout_stateid, &body, &size),
+			 NFS4ERR_LAYOUTUNAVAILABLE);
+	memcpy(files[1].ldf_fh, files[0].ldf_fh, sizeof(first_handle));
+	memcpy(files[0].ldf_fh, first_handle, sizeof(first_handle));
 	files[0].ldf_fh[0] ^= 1;
 	ck_assert_int_eq(layoutget_build_v2(&segment,
 					    FFV2_ENCODING_RS_VANDERMONDE, 17,
-					    23, &layout_stateid, &body, &size),
+					    &layout_stateid, &body, &size),
 			 NFS4ERR_LAYOUTUNAVAILABLE);
 	ck_assert_ptr_null(body);
 	destroy_dstore(ds);
@@ -1274,7 +1307,7 @@ START_TEST(test_absent_configuration_preserves_ordinary_layout_identity)
 	}
 	ck_assert_int_eq(layoutget_build_v2(&segment,
 					    FFV2_ENCODING_RS_VANDERMONDE, 29,
-					    31, &layout_stateid, &body, &size),
+					    &layout_stateid, &body, &size),
 			 NFS4_OK);
 	XDR xdr;
 
@@ -1363,7 +1396,7 @@ START_TEST(test_concurrent_layout_observes_one_complete_vector)
 
 		ck_assert_int_eq(layoutget_build_v2(
 					 &segment, FFV2_ENCODING_RS_VANDERMONDE,
-					 17, 23, &layout_stateid, &body, &size),
+					 17, &layout_stateid, &body, &size),
 				 NFS4_OK);
 		xdrmem_create(&xdr, body, size, XDR_DECODE);
 		ck_assert(xdr_ffv2_layout4(&xdr, &layout));
@@ -1430,8 +1463,9 @@ static Suite *prototype_suite(void)
 	tcase_add_test(
 		test,
 		test_retirement_unpublishes_before_disable_and_fails_closed);
-	tcase_add_test(test,
-		       test_layout_builder_publishes_exact_member_identities);
+	tcase_add_test(
+		test,
+		test_layout_builder_separates_mds_writer_from_ds_clientid);
 	tcase_add_test(test,
 		       test_opted_in_layout_fails_closed_on_identity_mismatch);
 	tcase_add_test(
