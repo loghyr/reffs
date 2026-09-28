@@ -47,14 +47,18 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdatomic.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <urcu.h>
 #include <urcu/rculfhash.h>
 
 #include <check.h>
+#include <openssl/sha.h>
 
 #include "nfsv42_xdr.h"
 #include "reffs/rpc.h"
@@ -73,6 +77,8 @@
 #include "nfs4_test_harness.h"
 
 #include "reffs/dstore.h"
+#include "reffs/ffv2_prototype.h"
+#include "reffs/fixed_inventory.h"
 #include "reffs/layout_segment.h"
 #include "dstore_mock.h"
 
@@ -1071,6 +1077,132 @@ static void rg_client_dstore_teardown(void)
 	dstore_fini();
 }
 
+static struct dstore_mock *fixed_dm;
+static char fixed_directory[] = "/tmp/reffs-layoutget-fixed-XXXXXX";
+
+static void
+fixed_snapshot_source(const struct reffs_prototype_registration_config *config,
+		      uint8_t source[16])
+{
+	uint8_t input[40 + 2 * REFFS_CONFIG_PROTOTYPE_PERSISTED_HANDLE_SIZE] = {
+		0
+	};
+	uint8_t digest[SHA256_DIGEST_LENGTH];
+
+	memcpy(input, "NFSD-FFV2-SET-V1", 16);
+	memcpy(input + 16, config->store_uuid, sizeof(config->store_uuid));
+	input[35] = 1;
+	input[39] = 1;
+	for (uint32_t i = 0; i < 2; i++)
+		memcpy(input + 40 +
+			       i * REFFS_CONFIG_PROTOTYPE_PERSISTED_HANDLE_SIZE,
+		       config->objects[i].persisted_handle,
+		       REFFS_CONFIG_PROTOTYPE_PERSISTED_HANDLE_SIZE);
+	SHA256(input, sizeof(input), digest);
+	memcpy(source, digest, 16);
+}
+
+static void rg_fixed_layout_setup(void)
+{
+	struct reffs_prototype_registration_config *config;
+	struct ffv2_prototype_snapshot *snapshot;
+	uint32_t writer;
+
+	rg_client_setup();
+	ck_assert_int_eq(dstore_init(), 0);
+	fixed_dm = dstore_mock_alloc(77);
+	ck_assert_ptr_nonnull(fixed_dm);
+	config = &fixed_dm->dm_ds->ds_prototype_config;
+	memset(config, 0, sizeof(*config));
+	config->enabled = true;
+	config->fixed_inventory = true;
+	strcpy(config->auth_domain, "layoutget.example");
+	memset(config->store_uuid, 0x31, sizeof(config->store_uuid));
+	memset(config->binding_token, 0x42, sizeof(config->binding_token));
+	config->chunk_size = 4096;
+	config->data_count = 1;
+	config->parity_count = 1;
+	writer = ffv2_writer_id(nfs4_client_to_client(g_nc)->c_id);
+	config->writer_id = writer;
+	config->pnfs_clientid = UINT64_C(0xd500000000000077);
+	config->object_count = 2;
+	for (uint32_t i = 0; i < 2; i++) {
+		snprintf(config->objects[i].name,
+			 sizeof(config->objects[i].name), "member-%u", i);
+		config->objects[i].ordinary_handle_len = 4;
+		memset(config->objects[i].ordinary_handle, 0x10 + i, 4);
+		memset(config->objects[i].persisted_handle, 0x30 + i,
+		       sizeof(config->objects[i].persisted_handle));
+	}
+	ck_assert_ptr_nonnull(mkdtemp(fixed_directory));
+	ck_assert_int_lt(snprintf(fixed_dm->dm_ds->ds_state_dir,
+				  sizeof(fixed_dm->dm_ds->ds_state_dir), "%s",
+				  fixed_directory),
+			 (int)sizeof(fixed_dm->dm_ds->ds_state_dir));
+	fixed_dm->dm_ds->ds_fixed_inventory =
+		calloc(1, sizeof(*fixed_dm->dm_ds->ds_fixed_inventory));
+	ck_assert_ptr_nonnull(fixed_dm->dm_ds->ds_fixed_inventory);
+	ck_assert_int_eq(ffv2_fixed_inventory_identity_init(
+				 &fixed_dm->dm_ds->ds_fixed_inventory->identity,
+				 fixed_dm->dm_ds->ds_id,
+				 fixed_dm->dm_ds->ds_address,
+				 fixed_dm->dm_ds->ds_path, config),
+			 0);
+	ck_assert_int_eq(
+		ffv2_fixed_inventory_save(fixed_dm->dm_ds->ds_state_dir,
+					  fixed_dm->dm_ds->ds_fixed_inventory),
+		0);
+
+	snapshot = calloc(1, sizeof(*snapshot));
+	ck_assert_ptr_nonnull(snapshot);
+	snapshot->dstore_id = fixed_dm->dm_ds->ds_id;
+	snapshot->chunk_size = config->chunk_size;
+	snapshot->data_count = config->data_count;
+	snapshot->parity_count = config->parity_count;
+	snapshot->writer_id = config->writer_id;
+	snapshot->pnfs_clientid = config->pnfs_clientid;
+	snapshot->generation = 9;
+	snapshot->object_count = config->object_count;
+	fixed_snapshot_source(config, snapshot->source_uuid);
+	memset(snapshot->service_uuid, 0x61, sizeof(snapshot->service_uuid));
+	memset(snapshot->replay_uuid, 0x72, sizeof(snapshot->replay_uuid));
+	for (uint32_t i = 0; i < 2; i++) {
+		snapshot->members[i].ordinary_handle_len = 4;
+		memcpy(snapshot->members[i].ordinary_handle,
+		       config->objects[i].ordinary_handle, 4);
+		snapshot->members[i].mapped_handle_len = 8;
+		memset(snapshot->members[i].mapped_handle, 0x60 + i, 8);
+		memset(snapshot->members[i].stateid, 0x70 + i, 16);
+	}
+	ck_assert_int_eq(
+		ffv2_prototype_snapshot_replace(fixed_dm->dm_ds, snapshot), 0);
+	test_sb->sb_dstore_ids[0] = fixed_dm->dm_ds->ds_id;
+	test_sb->sb_ndstores = 1;
+	test_sb->sb_stripe_unit = 4096;
+	test_sb->sb_checksum_algorithm = LAYOUT_CHECKSUM_ALG_CRC32;
+	test_sb->sb_layout_types |= SB_LAYOUT_FLEX_FILES_V2;
+}
+
+static void rg_fixed_layout_teardown(void)
+{
+	char path[PATH_MAX];
+
+	rg_client_teardown();
+	ffv2_prototype_snapshot_clear(fixed_dm->dm_ds);
+	fixed_dm->dm_ds->ds_prototype_config.enabled = false;
+	dstore_mock_free(fixed_dm);
+	fixed_dm = NULL;
+	dstore_fini();
+	snprintf(path, sizeof(path), "%s/ffv2-fixed-inventory-77",
+		 fixed_directory);
+	unlink(path);
+	snprintf(path, sizeof(path), "%s/ffv2-fixed-status-77.json",
+		 fixed_directory);
+	unlink(path);
+	rmdir(fixed_directory);
+	strcpy(fixed_directory, "/tmp/reffs-layoutget-fixed-XXXXXX");
+}
+
 /* ------------------------------------------------------------------ */
 /* Group C: SETATTR(size) fan-out sets COMPOUND_DS_ATTRS_REFRESHED    */
 /* ------------------------------------------------------------------ */
@@ -1572,11 +1704,179 @@ START_TEST(test_layoutget_toosmall)
 	LAYOUTGET4res *res =
 		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayoutget;
 	ck_assert_int_eq(res->logr_status, NFS4ERR_TOOSMALL);
+	ck_assert(!inode_has_write_layout(inode_a));
+	ck_assert(!inode_a->i_layout_barrier.uncertain);
+	ck_assert(!inode_a->i_layout_barrier.recall_in_flight);
 
 	layout_segments_free(inode_a->i_layout_segments);
 	inode_a->i_layout_segments = NULL;
 	free_rg_ctx(ctx);
 	dstore_mock_free(dm);
+}
+END_TEST
+
+static struct rg_ctx *fixed_layoutget_context(uint32_t maxcount)
+{
+	struct rg_ctx *ctx = make_rg_ctx(1);
+	struct compound *c = ctx->compound;
+	LAYOUTGET4args *args;
+
+	set_compound_current_inode(ctx, inode_a);
+	c->c_nfs4_client = g_nc;
+	c->c_curr_op = 0;
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUTGET;
+	args = &c->c_args->argarray.argarray_val[0].nfs_argop4_u.oplayoutget;
+	args->loga_layout_type = LAYOUT4_FLEX_FILES_V2;
+	args->loga_minlength = 0;
+	args->loga_length = UINT64_MAX;
+	args->loga_iomode = LAYOUTIOMODE4_RW;
+	args->loga_maxcount = maxcount;
+	return ctx;
+}
+
+static void fixed_layoutget_response_free(LAYOUTGET4res *res)
+{
+	if (res->logr_status != NFS4_OK)
+		return;
+	LAYOUTGET4resok *ok = &res->LAYOUTGET4res_u.logr_resok4;
+
+	for (uint32_t i = 0; i < ok->logr_layout.logr_layout_len; i++)
+		free(ok->logr_layout.logr_layout_val[i]
+			     .lo_content.loc_body.loc_body_val);
+	free(ok->logr_layout.logr_layout_val);
+	ok->logr_layout.logr_layout_val = NULL;
+	ok->logr_layout.logr_layout_len = 0;
+}
+
+START_TEST(test_fixed_layoutget_separates_clientid_namespaces)
+{
+	struct rg_ctx *ctx = fixed_layoutget_context(65536);
+	struct compound *c = ctx->compound;
+	LAYOUTGET4res *res;
+	ffv2_layout4 layout = { 0 };
+	XDR xdr;
+
+	ck_assert_uint_eq(nfs4_op_layoutget(c), 0);
+	res = &c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayoutget;
+	ck_assert_int_eq(res->logr_status, NFS4_OK);
+	ck_assert_uint_ne((uint64_t)nfs4_client_to_client(g_nc)->c_id,
+			  fixed_dm->dm_ds->ds_prototype_config.pnfs_clientid);
+	LAYOUTGET4resok *ok = &res->LAYOUTGET4res_u.logr_resok4;
+	layout4 *wire = &ok->logr_layout.logr_layout_val[0];
+
+	xdrmem_create(&xdr, wire->lo_content.loc_body.loc_body_val,
+		      wire->lo_content.loc_body.loc_body_len, XDR_DECODE);
+	ck_assert(xdr_ffv2_layout4(&xdr, &layout));
+	xdr_destroy(&xdr);
+	ffv2_mirror4 *mirror = &layout.ffv2l_mirrors.ffv2l_mirrors_val[0];
+	ffv2_data_server4 *servers =
+		mirror->ffv2m_stripes.ffv2m_stripes_val[0]
+			.ffv2s_data_servers.ffv2s_data_servers_val;
+
+	ck_assert_uint_eq(mirror->ffv2m_client_id,
+			  fixed_dm->dm_ds->ds_prototype_config.writer_id);
+	for (uint32_t i = 0; i < 2; i++) {
+		ffv2_file_info4 *info =
+			&servers[i].ffv2ds_file_info.ffv2ds_file_info_val[0];
+
+		ck_assert_uint_eq(info->ffv2fi_fh_vers.nfs_fh4_len, 8);
+		ck_assert_uint_eq((uint8_t)info->ffv2fi_fh_vers.nfs_fh4_val[0],
+				  0x60 + i);
+		ck_assert_uint_eq(((uint8_t *)&info->ffv2fi_stateid)[0],
+				  0x70 + i);
+	}
+	ck_assert(inode_has_write_layout(inode_a));
+	ck_assert(inode_a->i_layout_barrier.uncertain);
+	xdr_free((xdrproc_t)xdr_ffv2_layout4, (char *)&layout);
+	fixed_layoutget_response_free(res);
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+START_TEST(test_fixed_layoutget_wrong_writer_mutates_nothing)
+{
+	struct rg_ctx *ctx = fixed_layoutget_context(65536);
+	struct compound *c = ctx->compound;
+	struct nfs4_client wrong = { 0 };
+	uint32_t writer = fixed_dm->dm_ds->ds_prototype_config.writer_id;
+
+	wrong.nc_client.c_id = clientid_make(writer + 1, 0, 0);
+	c->c_nfs4_client = &wrong;
+	ck_assert_uint_eq(nfs4_op_layoutget(c), 0);
+	LAYOUTGET4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayoutget;
+
+	ck_assert_int_eq(res->logr_status, NFS4ERR_LAYOUTUNAVAILABLE);
+	ck_assert_int_eq(fixed_dm->dm_ds->ds_fixed_inventory->state,
+			 FFV2_INVENTORY_FREE);
+	ck_assert_ptr_null(inode_a->i_layout_segments);
+	ck_assert(!inode_a->i_layout_barrier.active);
+	ck_assert(!inode_has_write_layout(inode_a));
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+START_TEST(test_fixed_layoutget_failures_publish_no_rw_state)
+{
+	struct rg_ctx *ctx = fixed_layoutget_context(1);
+	struct compound *c = ctx->compound;
+
+	ck_assert_uint_eq(nfs4_op_layoutget(c), 0);
+	LAYOUTGET4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayoutget;
+
+	ck_assert_int_eq(res->logr_status, NFS4ERR_TOOSMALL);
+	ck_assert_int_eq(fixed_dm->dm_ds->ds_fixed_inventory->state,
+			 FFV2_INVENTORY_ASSIGNED);
+	ck_assert_ptr_nonnull(inode_a->i_layout_segments);
+	ck_assert(!inode_has_write_layout(inode_a));
+	ck_assert(!inode_a->i_layout_barrier.uncertain);
+	ck_assert(!inode_a->i_layout_barrier.recall_in_flight);
+
+	/* GETATTR can finish, so a following CLOSE is not masked by DELAY. */
+	struct rg_ctx *getattr = make_rg_ctx(1);
+
+	set_compound_current_inode(getattr, inode_a);
+	getattr->compound->c_nfs4_client = g_nc;
+	getattr->compound->c_curr_op = 0;
+	getattr->compound->c_args->argarray.argarray_val[0].argop = OP_GETATTR;
+	ck_assert_uint_eq(nfs4_op_getattr(getattr->compound), 0);
+	GETATTR4res *getattr_res =
+		&getattr->compound->c_res->resarray.resarray_val[0]
+			 .nfs_resop4_u.opgetattr;
+
+	ck_assert_int_eq(getattr_res->status, NFS4_OK);
+	free_rg_ctx(getattr);
+
+	/* The retained claim is idempotently reusable by its intended writer. */
+	c->c_args->argarray.argarray_val[0]
+		.nfs_argop4_u.oplayoutget.loga_maxcount = 65536;
+	ck_assert_uint_eq(nfs4_op_layoutget(c), 0);
+	ck_assert_int_eq(res->logr_status, NFS4_OK);
+	ck_assert(inode_has_write_layout(inode_a));
+	fixed_layoutget_response_free(res);
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+START_TEST(test_fixed_layoutget_stateid_failure_publishes_no_mode)
+{
+	struct rg_ctx *ctx = fixed_layoutget_context(65536);
+	struct cds_lfht *stateids = inode_a->i_stateids;
+
+	inode_a->i_stateids = NULL;
+	ck_assert_uint_eq(nfs4_op_layoutget(ctx->compound), 0);
+	LAYOUTGET4res *res = &ctx->compound->c_res->resarray.resarray_val[0]
+				      .nfs_resop4_u.oplayoutget;
+
+	ck_assert_int_eq(res->logr_status, NFS4ERR_DELAY);
+	inode_a->i_stateids = stateids;
+	ck_assert(!inode_has_write_layout(inode_a));
+	ck_assert(!inode_a->i_layout_barrier.uncertain);
+	ck_assert(!inode_a->i_layout_barrier.recall_in_flight);
+	ck_assert_int_eq(fixed_dm->dm_ds->ds_fixed_inventory->state,
+			 FFV2_INVENTORY_ASSIGNED);
+	free_rg_ctx(ctx);
 }
 END_TEST
 
@@ -2064,6 +2364,20 @@ Suite *reflected_getattr_suite(void)
 	tcase_add_test(tc_g, test_layoutget_toosmall);
 	tcase_add_test(tc_g, test_layoutget_build_v1_grid);
 	suite_add_tcase(s, tc_g);
+
+	TCase *tc_g_fixed = tcase_create("G: fixed LAYOUTGET publication");
+
+	tcase_add_checked_fixture(tc_g_fixed, rg_fixed_layout_setup,
+				  rg_fixed_layout_teardown);
+	tcase_add_test(tc_g_fixed,
+		       test_fixed_layoutget_separates_clientid_namespaces);
+	tcase_add_test(tc_g_fixed,
+		       test_fixed_layoutget_wrong_writer_mutates_nothing);
+	tcase_add_test(tc_g_fixed,
+		       test_fixed_layoutget_failures_publish_no_rw_state);
+	tcase_add_test(tc_g_fixed,
+		       test_fixed_layoutget_stateid_failure_publishes_no_mode);
+	suite_add_tcase(s, tc_g_fixed);
 
 	/* Group H: LAYOUTCOMMIT (Option B). */
 	TCase *tc_h = tcase_create("H: LAYOUTCOMMIT Option B");
