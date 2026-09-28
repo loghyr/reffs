@@ -167,6 +167,7 @@ int ffv2_fixed_layout_assign(struct inode *inode, uint32_t layout_type)
 	struct layout_segment expected = { 0 };
 	bool fixed_configured;
 	bool inode_changed = false;
+	bool layout_locked = false;
 	uint32_t checksum;
 	int selected, ret = -ESTALE;
 
@@ -234,14 +235,18 @@ int ffv2_fixed_layout_assign(struct inode *inode, uint32_t layout_type)
 		ret = -ENOSPC;
 		goto out_inventory;
 	}
+	pthread_mutex_lock(&inode->i_layout_sync_mutex);
+	layout_locked = true;
+	if (!atomic_load_explicit(&inode->i_nlink, memory_order_acquire)) {
+		ret = -ESTALE;
+		goto out_inventory;
+	}
 
 	if (record->state == FFV2_INVENTORY_FREE) {
-		pthread_mutex_lock(&inode->i_layout_sync_mutex);
 		pthread_mutex_lock(&inode->i_attr_mutex);
 		bool empty = !inode->i_layout_segments ||
 			     inode->i_layout_segments->lss_count == 0;
 		pthread_mutex_unlock(&inode->i_attr_mutex);
-		pthread_mutex_unlock(&inode->i_layout_sync_mutex);
 		if (!empty) {
 			ret = -ESTALE;
 			goto out_inventory;
@@ -267,7 +272,6 @@ int ffv2_fixed_layout_assign(struct inode *inode, uint32_t layout_type)
 		goto out_inventory;
 	}
 
-	pthread_mutex_lock(&inode->i_layout_sync_mutex);
 	pthread_mutex_lock(&inode->i_attr_mutex);
 	if (!inode->i_layout_segments) {
 		inode->i_layout_segments = layout_segments_alloc();
@@ -294,7 +298,6 @@ int ffv2_fixed_layout_assign(struct inode *inode, uint32_t layout_type)
 	ret = 0;
 out_inode:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
-	pthread_mutex_unlock(&inode->i_layout_sync_mutex);
 	if (ret) {
 		if (ret == -ESTALE)
 			ret = fixed_inventory_fence(ds, inode);
@@ -310,8 +313,12 @@ out_inode:
 							record);
 	}
 	if (!ret)
+		inode->i_layout_barrier.active = true;
+	if (!ret)
 		ret = 1;
 out_inventory:
+	if (layout_locked)
+		pthread_mutex_unlock(&inode->i_layout_sync_mutex);
 	ffv2_fixed_inventory_unlock();
 out_files:
 	free(files);
@@ -320,6 +327,24 @@ out_ds:
 		(void)dstore_fixed_status_write(ds);
 	dstore_put(ds);
 	return ret;
+}
+
+bool nfs4_layout_remove_lock(struct inode *inode)
+{
+	if (!inode)
+		return true;
+	pthread_mutex_lock(&inode->i_layout_sync_mutex);
+	if (inode->i_layout_barrier.active) {
+		pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+		return false;
+	}
+	return true;
+}
+
+void nfs4_layout_remove_unlock(struct inode *inode)
+{
+	if (inode)
+		pthread_mutex_unlock(&inode->i_layout_sync_mutex);
 }
 
 bool nfs4_layout_barrier_active(struct inode *inode)

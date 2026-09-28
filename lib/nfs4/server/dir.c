@@ -21,6 +21,7 @@
 #include "reffs/log.h"
 #include "reffs/rpc.h"
 #include "reffs/dirent.h"
+#include "reffs/fixed_layout.h"
 #include "reffs/identity.h"
 #include "reffs/super_block.h"
 #include "reffs/vfs.h"
@@ -897,13 +898,11 @@ uint32_t nfs4_op_remove(struct compound *compound)
 	}
 	struct inode *target = inode_name_get_inode(compound->c_inode, name);
 
-	if (target && nfs4_layout_barrier_active(target)) {
+	if (!nfs4_layout_remove_lock(target)) {
 		inode_active_put(target);
 		*status = NFS4ERR_NOTSUPP;
 		goto out;
 	}
-	if (target)
-		inode_active_put(target);
 
 	/*
 	 * Try removing as a non-directory first.  vfs_remove() returns
@@ -915,6 +914,9 @@ uint32_t nfs4_op_remove(struct compound *compound)
 	if (ret == -EISDIR)
 		ret = vfs_rmdir(compound->c_inode, name, &compound->c_ap,
 				&dir_before, &dir_after);
+	nfs4_layout_remove_unlock(target);
+	if (target)
+		inode_active_put(target);
 
 	if (ret) {
 		*status = errno_to_nfs4(ret, OP_REMOVE);

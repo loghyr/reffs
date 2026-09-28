@@ -7,7 +7,9 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -747,6 +749,7 @@ static void fixed_inode_init(struct inode *inode, struct super_block *sb,
 	memset(inode, 0, sizeof(*inode));
 	inode->i_sb = sb;
 	inode->i_ino = ino;
+	atomic_init(&inode->i_nlink, 1);
 	ck_assert_int_eq(pthread_mutex_init(&inode->i_layout_sync_mutex, NULL),
 			 0);
 	ck_assert_int_eq(pthread_mutex_init(&inode->i_attr_mutex, NULL), 0);
@@ -757,6 +760,24 @@ static void fixed_inode_destroy(struct inode *inode)
 	layout_segments_free(inode->i_layout_segments);
 	pthread_mutex_destroy(&inode->i_attr_mutex);
 	pthread_mutex_destroy(&inode->i_layout_sync_mutex);
+}
+
+struct fixed_assign_context {
+	struct inode *inode;
+	_Atomic bool started;
+	_Atomic bool done;
+	int result;
+};
+
+static void *fixed_assign_thread(void *opaque)
+{
+	struct fixed_assign_context *context = opaque;
+
+	atomic_store_explicit(&context->started, true, memory_order_release);
+	context->result =
+		ffv2_fixed_layout_assign(context->inode, LAYOUT4_FLEX_FILES_V2);
+	atomic_store_explicit(&context->done, true, memory_order_release);
+	return NULL;
 }
 
 static nfsstat4 fixed_layoutcommit(struct inode *inode, clientid4 clientid,
@@ -830,6 +851,23 @@ START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
 	sb.sb_checksum_algorithm = LAYOUT_CHECKSUM_ALG_CRC32;
 	fixed_inode_init(&first, &sb, 101);
 	fixed_inode_init(&second, &sb, 102);
+	struct fixed_assign_context assign_context = { .inode = &first };
+	pthread_t assigner;
+
+	ck_assert(nfs4_layout_remove_lock(&first));
+	ck_assert_int_eq(pthread_create(&assigner, NULL, fixed_assign_thread,
+					&assign_context),
+			 0);
+	while (!atomic_load_explicit(&assign_context.started,
+				     memory_order_acquire))
+		sched_yield();
+	ck_assert(!atomic_load_explicit(&assign_context.done,
+					memory_order_acquire));
+	atomic_store_explicit(&first.i_nlink, 0, memory_order_release);
+	nfs4_layout_remove_unlock(&first);
+	ck_assert_int_eq(pthread_join(assigner, NULL), 0);
+	ck_assert_int_eq(assign_context.result, -ESTALE);
+	atomic_store_explicit(&first.i_nlink, 1, memory_order_release);
 	for (uint32_t i = 0; i < DSTORE_ORDINARY_OP_COUNT; i++)
 		ordinary_before +=
 			atomic_load_explicit(&ds->ds_ordinary_gate.admitted[i],
@@ -842,6 +880,7 @@ START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
 	ck_assert_uint_eq(ds->ds_fixed_inventory->owner_ino, first.i_ino);
 	ck_assert_uint_eq(first.i_layout_segments->lss_count, 1);
 	ck_assert_uint_eq(first.i_layout_segments->lss_segs[0].ls_nfiles, 2);
+	ck_assert(!nfs4_layout_remove_lock(&first));
 	uint64_t assigned_generation = ds->ds_fixed_inventory->generation;
 
 	ck_assert_int_eq(
