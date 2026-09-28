@@ -67,6 +67,7 @@ void ffv2_prototype_unregister_dstore(struct dstore *ds);
 const struct ffv2_prototype_snapshot *
 ffv2_prototype_snapshot_borrow(struct dstore *ds);
 void ffv2_prototype_snapshot_release(struct dstore *ds);
+void ffv2_prototype_snapshot_clear(struct dstore *ds);
 int ffv2_prototype_snapshot_replace(struct dstore *ds,
 				    struct ffv2_prototype_snapshot *snapshot);
 

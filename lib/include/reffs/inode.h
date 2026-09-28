@@ -23,6 +23,24 @@ struct reffs_dirent;
 struct layout_segments;
 struct chunk_store;
 
+struct ffv2_layout_barrier {
+	bool active;
+	bool uncertain;
+	bool commit_seen;
+	bool return_seen;
+	bool recall_in_flight;
+	bool recall_acked;
+	bool fenced;
+	uint64_t dirty_epoch;
+	uint64_t commit_epoch;
+	uint64_t return_epoch;
+	uint64_t deadline_ns;
+	uint64_t clientid;
+	uint32_t stateid_seqid;
+	uint8_t stateid_other[12];
+	uint8_t sessionid[16];
+};
+
 /* Forward declaration only; weak stub lives in lib/fs/inode.c. */
 
 struct reffs_file_handle {
@@ -85,6 +103,7 @@ struct inode {
 	pthread_rwlock_t i_db_rwlock;
 	/* Serializes fixed-layout ownership and metadata-barrier state. */
 	pthread_mutex_t i_layout_sync_mutex;
+	struct ffv2_layout_barrier i_layout_barrier;
 	pthread_mutex_t i_attr_mutex;
 
 	/* locking */

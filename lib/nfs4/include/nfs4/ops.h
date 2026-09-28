@@ -160,6 +160,18 @@ nfs4_layout_implicit_return_rw(struct compound *compound,
  */
 uint32_t nfs4_op_layoutreturn_resume(struct rpc_trans *rt);
 
+/* Enforce authoritative metadata for an active fixed prototype layout. */
+uint32_t nfs4_layout_metadata_barrier(
+	struct compound *compound, nfsstat4 *status,
+	uint32_t (*resume_action)(struct compound *compound));
+uint32_t nfs4_layout_metadata_barrier_inode(
+	struct compound *compound, struct inode *inode, nfsstat4 *status,
+	uint32_t (*resume_action)(struct compound *compound));
+bool nfs4_layout_barrier_active(struct inode *inode);
+int nfs4_fixed_layout_barrier_begin(struct inode *inode, clientid4 clientid,
+				    const stateid4 *stateid,
+				    const sessionid4 sessionid);
+
 /*
  * nfs4_op_layoutget_trust_resume - fan-out resume for TRUST_STATEID
  * propagation at LAYOUTGET.  Best-effort: logs failures and proceeds.

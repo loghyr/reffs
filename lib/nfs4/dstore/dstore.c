@@ -759,6 +759,15 @@ int dstore_fixed_inventory_recover(struct dstore *ds)
 			   record)) {
 		ret = -ESTALE;
 	}
+	if (!ret && record->state == FFV2_INVENTORY_ASSIGNED) {
+		if (record->metadata_state != FFV2_METADATA_CLEAN) {
+			ret = -ESTALE;
+		} else {
+			owner->i_layout_barrier.active = true;
+			owner->i_layout_barrier.dirty_epoch =
+				record->metadata_epoch;
+		}
+	}
 out_inode:
 	pthread_mutex_unlock(&owner->i_attr_mutex);
 	pthread_mutex_unlock(&owner->i_layout_sync_mutex);

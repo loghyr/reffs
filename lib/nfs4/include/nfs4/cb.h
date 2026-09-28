@@ -15,6 +15,7 @@ struct nfs4_session;
 struct server_state;
 struct task;
 struct compound;
+struct inode;
 struct rpc_trans;
 
 /* ------------------------------------------------------------------ */
@@ -47,6 +48,8 @@ struct cb_pending {
 	struct cb_pending *cp_next;
 	struct cb_pending *cp_prev;
 	uint64_t cp_deadline_ns; /* CLOCK_MONOTONIC deadline */
+	uint32_t (*cp_resume_action)(struct compound *compound);
+	struct inode *cp_barrier_inode;
 };
 
 struct cb_pending *cb_pending_alloc(struct task *task,

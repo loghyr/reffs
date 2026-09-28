@@ -982,6 +982,49 @@ START_TEST(test_layoutcommit_mtime_stale)
 }
 END_TEST
 
+START_TEST(test_fixed_barrier_delays_after_callback_ack)
+{
+	struct rg_ctx *ctx = make_op_ctx(inode_a, 1);
+	nfsstat4 status = NFS4_OK;
+
+	inode_a->i_layout_barrier.active = true;
+	inode_a->i_layout_barrier.uncertain = true;
+	inode_a->i_layout_barrier.recall_in_flight = true;
+	inode_a->i_layout_barrier.recall_acked = true;
+	ck_assert_uint_eq(nfs4_layout_metadata_barrier(ctx->compound, &status,
+						       nfs4_op_getattr),
+			  0);
+	ck_assert_int_eq(status, NFS4ERR_DELAY);
+	ck_assert(inode_a->i_layout_barrier.uncertain);
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+START_TEST(test_fixed_barrier_requires_commit_and_return)
+{
+	struct rg_ctx *ctx = make_op_ctx(inode_a, 1);
+	nfsstat4 status = NFS4_OK;
+
+	inode_a->i_layout_barrier.active = true;
+	inode_a->i_layout_barrier.uncertain = true;
+	inode_a->i_layout_barrier.recall_in_flight = true;
+	inode_a->i_layout_barrier.commit_seen = true;
+	ck_assert_uint_eq(nfs4_layout_metadata_barrier(ctx->compound, &status,
+						       nfs4_op_close),
+			  0);
+	ck_assert_int_eq(status, NFS4ERR_DELAY);
+	status = NFS4_OK;
+	inode_a->i_layout_barrier.return_seen = true;
+	ck_assert_uint_eq(nfs4_layout_metadata_barrier(ctx->compound, &status,
+						       nfs4_op_close),
+			  0);
+	ck_assert_int_eq(status, NFS4_OK);
+	ck_assert(!inode_a->i_layout_barrier.uncertain);
+	ck_assert(!inode_a->i_layout_barrier.recall_in_flight);
+	free_rg_ctx(ctx);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Fixtures: dstore mock variants of the base and client fixtures     */
 /* ------------------------------------------------------------------ */
@@ -1142,6 +1185,32 @@ START_TEST(test_setattr_size_no_segs_no_fanout)
 	ck_assert_uint_eq(ret, 0);
 	ck_assert(!(c->c_flags & COMPOUND_DS_ATTRS_REFRESHED));
 
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+START_TEST(test_setattr_size_rejects_fixed_owner)
+{
+	struct rg_ctx *ctx = make_rg_ctx(1);
+	struct compound *c = ctx->compound;
+	uint32_t bm_word[1], attr_words[2];
+
+	set_compound_current_inode(ctx, inode_a);
+	c->c_curr_op = 0;
+	c->c_args->argarray.argarray_val[0].argop = OP_SETATTR;
+	SETATTR4args *args =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.opsetattr;
+	memset(&args->stateid, 0, sizeof(args->stateid));
+	fill_fattr4_size(&args->obj_attributes, 4096, bm_word, attr_words);
+	inode_a->i_layout_barrier.active = true;
+	int64_t old_size = inode_a->i_size;
+
+	ck_assert_uint_eq(nfs4_op_setattr(c), 0);
+	SETATTR4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.opsetattr;
+
+	ck_assert_int_eq(res->status, NFS4ERR_NOTSUPP);
+	ck_assert_int_eq(inode_a->i_size, old_size);
 	free_rg_ctx(ctx);
 }
 END_TEST
@@ -1970,6 +2039,7 @@ Suite *reflected_getattr_suite(void)
 	tcase_add_checked_fixture(tc_c, rg_dstore_setup, rg_dstore_teardown);
 	tcase_add_test(tc_c, test_setattr_size_fanout_sets_flag);
 	tcase_add_test(tc_c, test_setattr_size_no_segs_no_fanout);
+	tcase_add_test(tc_c, test_setattr_size_rejects_fixed_owner);
 	suite_add_tcase(s, tc_c);
 
 	/* Group E: DELEGRETURN implicit layout return with deleg stateid. */
@@ -2003,6 +2073,8 @@ Suite *reflected_getattr_suite(void)
 	tcase_add_test(tc_h, test_layoutcommit_updates_size);
 	tcase_add_test(tc_h, test_layoutcommit_no_shrink);
 	tcase_add_test(tc_h, test_layoutcommit_mtime_stale);
+	tcase_add_test(tc_h, test_fixed_barrier_delays_after_callback_ack);
+	tcase_add_test(tc_h, test_fixed_barrier_requires_commit_and_return);
 	suite_add_tcase(s, tc_h);
 
 	/*

@@ -883,6 +883,19 @@ void ffv2_prototype_snapshot_release(struct dstore *ds)
 		pthread_rwlock_unlock(&ds->ds_prototype_lock);
 }
 
+void ffv2_prototype_snapshot_clear(struct dstore *ds)
+{
+	struct ffv2_prototype_snapshot *snapshot;
+
+	if (!ds)
+		return;
+	pthread_rwlock_wrlock(&ds->ds_prototype_lock);
+	snapshot = ds->ds_prototype_snapshot;
+	ds->ds_prototype_snapshot = NULL;
+	pthread_rwlock_unlock(&ds->ds_prototype_lock);
+	free(snapshot);
+}
+
 int ffv2_prototype_snapshot_replace(struct dstore *ds,
 				    struct ffv2_prototype_snapshot *snapshot)
 {

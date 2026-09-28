@@ -3639,6 +3639,11 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 		goto out;
 	}
 
+	uint32_t barrier_flags =
+		nfs4_layout_metadata_barrier(compound, status, nfs4_op_getattr);
+	if (barrier_flags || *status != NFS4_OK)
+		return barrier_flags;
+
 	/*
 	 * MDS mode: if there is an active write layout on this inode
 	 * and the DS attrs haven't already been refreshed in this
@@ -4207,6 +4212,29 @@ restart_snap:
 	dir_de_rdlocked = false;
 
 	/*
+	 * Do not encode attributes from an uncertain prototype owner.  This
+	 * pass runs before reply construction so an asynchronous recall can
+	 * safely restart the complete READDIR operation.
+	 */
+	if (args->attr_request.bitmap4_len > 0) {
+		for (size_t si = 0; si < snap_count; si++) {
+			struct inode *child = dirent_ensure_inode(snap[si].rd);
+
+			if (!child)
+				continue;
+			uint32_t barrier_flags =
+				nfs4_layout_metadata_barrier_inode(
+					compound, child, status,
+					nfs4_op_readdir);
+			inode_active_put(child);
+			if (barrier_flags || *status != NFS4_OK) {
+				free(snap);
+				return barrier_flags;
+			}
+		}
+	}
+
+	/*
 	 * Phase 2a: pre-warm the idmap cache for owner strings.
 	 *
 	 * If the client requested FATTR4_OWNER or FATTR4_OWNER_GROUP,
@@ -4499,6 +4527,11 @@ uint32_t nfs4_op_setattr(struct compound *compound)
 
 	if (nfs4_check_grace()) {
 		*status = NFS4ERR_GRACE;
+		goto out;
+	}
+	if (bitmap4_attribute_is_set(&fattr->attrmask, FATTR4_SIZE) &&
+	    nfs4_layout_barrier_active(compound->c_inode)) {
+		*status = NFS4ERR_NOTSUPP;
 		goto out;
 	}
 
@@ -4856,6 +4889,10 @@ uint32_t nfs4_op_verify(struct compound *compound)
 		*status = NFS4ERR_BADHANDLE;
 		return 0;
 	}
+	uint32_t barrier_flags =
+		nfs4_layout_metadata_barrier(compound, status, nfs4_op_verify);
+	if (barrier_flags || *status != NFS4_OK)
+		return barrier_flags;
 
 	*status = verify_common(compound, &args->obj_attributes, false,
 				OP_VERIFY);
@@ -4873,6 +4910,10 @@ uint32_t nfs4_op_nverify(struct compound *compound)
 		*status = NFS4ERR_BADHANDLE;
 		return 0;
 	}
+	uint32_t barrier_flags =
+		nfs4_layout_metadata_barrier(compound, status, nfs4_op_nverify);
+	if (barrier_flags || *status != NFS4_OK)
+		return barrier_flags;
 
 	*status = verify_common(compound, &args->obj_attributes, true,
 				OP_NVERIFY);

@@ -28,6 +28,9 @@
 #include "reffs/layout_segment.h"
 #include "reffs/super_block.h"
 #include "libreffs_test.h"
+#include "nfs4/client.h"
+#include "nfs4/compound.h"
+#include "nfs4/ops.h"
 
 #include "ffv2_prototype_internal.h"
 
@@ -698,6 +701,38 @@ static void fixed_inode_destroy(struct inode *inode)
 	pthread_mutex_destroy(&inode->i_layout_sync_mutex);
 }
 
+static nfsstat4 fixed_layoutcommit(struct inode *inode, clientid4 clientid,
+				   const stateid4 *stateid, uint64_t offset)
+{
+	nfs_argop4 arg = { .argop = OP_LAYOUTCOMMIT };
+	nfs_resop4 result = { 0 };
+	COMPOUND4args args = {
+		.argarray = { .argarray_len = 1, .argarray_val = &arg },
+	};
+	COMPOUND4res res = {
+		.resarray = { .resarray_len = 1, .resarray_val = &result },
+	};
+	struct nfs4_client client = { 0 };
+	struct compound compound = {
+		.c_curr_op = 0,
+		.c_inode = inode,
+		.c_nfs4_client = &client,
+		.c_args = &args,
+		.c_res = &res,
+	};
+
+	client.nc_client.c_id = clientid;
+	compound.c_curr_nfh.nfh_sb = inode->i_sb->sb_id;
+	compound.c_curr_nfh.nfh_ino = inode->i_ino;
+	arg.nfs_argop4_u.oplayoutcommit.loca_stateid = *stateid;
+	arg.nfs_argop4_u.oplayoutcommit.loca_last_write_offset.no_newoffset =
+		true;
+	arg.nfs_argop4_u.oplayoutcommit.loca_last_write_offset.newoffset4_u
+		.no_offset = offset;
+	ck_assert_uint_eq(nfs4_op_layoutcommit(&compound), 0);
+	return result.nfs_resop4_u.oplayoutcommit.locr_status;
+}
+
 START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
 {
 	char directory[] = "/tmp/reffs-fixed-layout-XXXXXX";
@@ -731,6 +766,8 @@ START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
 	uuid_generate(sb.sb_uuid);
 	sb.sb_dstore_ids[0] = ds->ds_id;
 	sb.sb_ndstores = 1;
+	sb.sb_id = 11;
+	sb.sb_block_size = 4096;
 	sb.sb_stripe_unit = 4096;
 	sb.sb_checksum_algorithm = LAYOUT_CHECKSUM_ALG_CRC32;
 	fixed_inode_init(&first, &sb, 101);
@@ -753,6 +790,49 @@ START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
 		ffv2_fixed_layout_assign(&first, LAYOUT4_FLEX_FILES_V2), 1);
 	ck_assert_uint_eq(ds->ds_fixed_inventory->generation,
 			  assigned_generation);
+	stateid4 layout_stateid = { .seqid = 3 };
+	sessionid4 sessionid = { 0 };
+
+	memset(layout_stateid.other, 0xa5, sizeof(layout_stateid.other));
+	ck_assert_int_eq(nfs4_fixed_layout_barrier_begin(
+				 &first, 23, &layout_stateid, sessionid),
+			 0);
+	ck_assert_int_eq(ds->ds_fixed_inventory->metadata_state,
+			 FFV2_METADATA_DIRTY);
+	ck_assert_int_eq(fixed_layoutcommit(&first, 23, &layout_stateid, 4095),
+			 NFS4_OK);
+	ck_assert_int_eq(first.i_size, 4096);
+	ck_assert_int_eq(first.i_used, 1);
+	ck_assert_uint_eq(atomic_load_explicit(&sb.sb_bytes_used,
+					       memory_order_relaxed),
+			  4096);
+	ck_assert_uint_eq(atomic_load_explicit(&first.i_changeid,
+					       memory_order_relaxed),
+			  1);
+	ck_assert_int_eq(ds->ds_fixed_inventory->metadata_state,
+			 FFV2_METADATA_COMMITTED);
+	ck_assert_int_eq(ffv2_fixed_metadata_transition(ds->ds_fixed_inventory,
+							FFV2_METADATA_CLEAN),
+			 0);
+	first.i_layout_barrier.uncertain = false;
+	first.i_layout_barrier.commit_seen = false;
+	first.i_layout_barrier.return_seen = true;
+	ck_assert_int_eq(nfs4_fixed_layout_barrier_begin(
+				 &first, 23, &layout_stateid, sessionid),
+			 0);
+	struct timespec mtime_before = first.i_mtime;
+	uint64_t change_before =
+		atomic_load_explicit(&first.i_changeid, memory_order_relaxed);
+
+	ck_assert_int_eq(fixed_layoutcommit(&first, 23, &layout_stateid, 1023),
+			 NFS4_OK);
+	ck_assert_int_eq(first.i_size, 4096);
+	ck_assert_uint_eq(atomic_load_explicit(&first.i_changeid,
+					       memory_order_relaxed),
+			  change_before + 1);
+	ck_assert(first.i_mtime.tv_sec > mtime_before.tv_sec ||
+		  (first.i_mtime.tv_sec == mtime_before.tv_sec &&
+		   first.i_mtime.tv_nsec >= mtime_before.tv_nsec));
 	ck_assert_int_eq(ffv2_fixed_layout_assign(&second,
 						  LAYOUT4_FLEX_FILES_V2),
 			 -ENOSPC);
@@ -781,6 +861,17 @@ START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
 			atomic_load_explicit(&ds->ds_ordinary_gate.admitted[i],
 					     memory_order_relaxed);
 	ck_assert_uint_eq(ordinary_after, ordinary_before);
+	struct compound barrier_compound = { .c_inode = &first };
+	nfsstat4 barrier_status = NFS4_OK;
+
+	first.i_layout_barrier.deadline_ns = 1;
+	ck_assert_uint_eq(nfs4_layout_metadata_barrier(&barrier_compound,
+						       &barrier_status,
+						       nfs4_op_getattr),
+			  0);
+	ck_assert_int_eq(barrier_status, NFS4ERR_IO);
+	ck_assert_int_eq(ds->ds_fixed_inventory->state, FFV2_INVENTORY_FENCED);
+	ck_assert_ptr_null(ds->ds_prototype_snapshot);
 
 	fixed_inode_destroy(&second);
 	fixed_inode_destroy(&first);
@@ -884,6 +975,8 @@ START_TEST(test_layout_builder_publishes_exact_member_identities)
 		mirror->ffv2m_stripes.ffv2m_stripes_val[0]
 			.ffv2s_data_servers.ffv2s_data_servers_val;
 
+	ck_assert(layout.ffv2l_flags & FFV2_FLAGS_NO_IO_THRU_MDS);
+	ck_assert(!(layout.ffv2l_flags & FFV2_FLAGS_NO_LAYOUTCOMMIT));
 	ck_assert_uint_eq(mirror->ffv2m_client_id, 17);
 	for (uint32_t i = 0; i < 2; i++) {
 		ffv2_file_info4 *info =

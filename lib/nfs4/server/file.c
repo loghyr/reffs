@@ -1495,6 +1495,11 @@ uint32_t nfs4_op_close(struct compound *compound)
 		return 0;
 	}
 
+	uint32_t barrier_flags =
+		nfs4_layout_metadata_barrier(compound, status, nfs4_op_close);
+	if (barrier_flags || *status != NFS4_OK)
+		return barrier_flags;
+
 	/*
 	 * RFC 8881 S16.2.3.1.2: current stateid -- substitute the
 	 * stateid set by a previous op in this compound (e.g., OPEN).

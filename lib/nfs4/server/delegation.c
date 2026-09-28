@@ -49,6 +49,10 @@ uint32_t nfs4_op_delegreturn(struct compound *compound)
 		*status = NFS4ERR_NOFILEHANDLE;
 		return 0;
 	}
+	uint32_t barrier_flags = nfs4_layout_metadata_barrier(
+		compound, status, nfs4_op_delegreturn);
+	if (barrier_flags || *status != NFS4_OK)
+		return barrier_flags;
 
 	if (stateid4_is_special(&args->deleg_stateid)) {
 		*status = NFS4ERR_BAD_STATEID;

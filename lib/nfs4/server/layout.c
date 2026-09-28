@@ -37,6 +37,7 @@
 #include "reffs/settings.h"
 #include "reffs/stateid.h"
 #include "reffs/task.h"
+#include "reffs/time.h"
 #include "nfs4/attr.h"
 #include "nfs4/cb.h"
 #include "nfs4/client.h"
@@ -313,6 +314,240 @@ out_files:
 out_ds:
 	dstore_put(ds);
 	return ret;
+}
+
+bool nfs4_layout_barrier_active(struct inode *inode)
+{
+	bool active;
+
+	if (!inode)
+		return false;
+	pthread_mutex_lock(&inode->i_layout_sync_mutex);
+	active = inode->i_layout_barrier.active;
+	pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+	return active;
+}
+
+static void fixed_layout_retire(struct inode *inode)
+{
+	bool configured;
+	struct dstore *ds = fixed_dstore_for_inode(inode, &configured);
+
+	if (!ds)
+		return;
+	ffv2_fixed_inventory_lock();
+	struct ffv2_fixed_inventory_record *record = ds->ds_fixed_inventory;
+
+	if (record &&
+	    (record->state == FFV2_INVENTORY_CLAIMED ||
+	     record->state == FFV2_INVENTORY_ASSIGNED) &&
+	    record->owner_ino == inode->i_ino &&
+	    !uuid_compare(record->owner_sb_uuid, inode->i_sb->sb_uuid)) {
+		if (!ffv2_fixed_inventory_transition(
+			    record, FFV2_INVENTORY_FENCED, inode->i_sb->sb_uuid,
+			    inode->i_ino))
+			(void)ffv2_fixed_inventory_save(ds->ds_state_dir,
+							record);
+	}
+	ffv2_fixed_inventory_unlock();
+	ffv2_prototype_snapshot_clear(ds);
+	(void)ffv2_prototype_disable();
+	dstore_put(ds);
+}
+
+static bool
+fixed_barrier_stateid_equal(const struct ffv2_layout_barrier *barrier,
+			    const stateid4 *stateid)
+{
+	return barrier->stateid_seqid == stateid->seqid &&
+	       !memcmp(barrier->stateid_other, stateid->other,
+		       sizeof(barrier->stateid_other));
+}
+
+static bool
+fixed_record_owner_equal(const struct ffv2_fixed_inventory_record *record,
+			 const struct inode *inode)
+{
+	return record && record->state == FFV2_INVENTORY_ASSIGNED &&
+	       record->owner_ino == inode->i_ino &&
+	       !uuid_compare(record->owner_sb_uuid, inode->i_sb->sb_uuid);
+}
+
+int nfs4_fixed_layout_barrier_begin(struct inode *inode, clientid4 clientid,
+				    const stateid4 *stateid,
+				    const sessionid4 sessionid)
+{
+	bool configured;
+	struct dstore *ds = fixed_dstore_for_inode(inode, &configured);
+	int ret = -ESTALE;
+
+	if (!ds)
+		return ret;
+	ffv2_fixed_inventory_lock();
+	pthread_mutex_lock(&inode->i_layout_sync_mutex);
+	struct ffv2_fixed_inventory_record *record = ds->ds_fixed_inventory;
+	struct ffv2_layout_barrier *barrier = &inode->i_layout_barrier;
+
+	if (!fixed_record_owner_equal(record, inode) ||
+	    record->metadata_state != FFV2_METADATA_CLEAN || barrier->uncertain)
+		goto out;
+	ret = ffv2_fixed_metadata_transition(record, FFV2_METADATA_DIRTY);
+	if (ret)
+		goto out;
+	ret = ffv2_fixed_inventory_save(ds->ds_state_dir, record);
+	if (ret)
+		goto out;
+	barrier->active = true;
+	barrier->dirty_epoch = record->metadata_epoch;
+	barrier->uncertain = true;
+	barrier->commit_seen = false;
+	barrier->return_seen = false;
+	barrier->recall_in_flight = false;
+	barrier->recall_acked = false;
+	barrier->fenced = false;
+	barrier->deadline_ns = 0;
+	barrier->clientid = clientid;
+	barrier->stateid_seqid = stateid->seqid;
+	memcpy(barrier->stateid_other, stateid->other,
+	       sizeof(barrier->stateid_other));
+	memcpy(barrier->sessionid, sessionid, sizeof(barrier->sessionid));
+out:
+	pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+	ffv2_fixed_inventory_unlock();
+	if (ret)
+		fixed_layout_retire(inode);
+	dstore_put(ds);
+	return ret;
+}
+
+static uint32_t nfs4_layout_barrier_resume(struct rpc_trans *rt)
+{
+	struct compound *compound = rt->rt_compound;
+	struct cb_pending *cp = rt->rt_async_data;
+	struct inode *inode = cp->cp_barrier_inode;
+	uint32_t (*resume_action)(struct compound *compound) =
+		cp->cp_resume_action;
+	int cb_status =
+		atomic_load_explicit(&cp->cp_status, memory_order_acquire);
+	bool failed = cb_status != 0 || cp->cp_res.status != NFS4_OK;
+
+	rt->rt_async_data = NULL;
+	pthread_mutex_lock(&inode->i_layout_sync_mutex);
+	if (failed) {
+		inode->i_layout_barrier.fenced = true;
+		inode->i_layout_barrier.recall_in_flight = false;
+	} else {
+		inode->i_layout_barrier.recall_acked = true;
+	}
+	pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+	cp->cp_barrier_inode = NULL;
+	cb_pending_free(cp);
+	if (failed)
+		fixed_layout_retire(inode);
+	uint32_t ret = resume_action(compound);
+
+	inode_active_put(inode);
+	return ret;
+}
+
+uint32_t nfs4_layout_metadata_barrier_inode(
+	struct compound *compound, struct inode *inode, nfsstat4 *status,
+	uint32_t (*resume_action)(struct compound *compound))
+{
+	struct ffv2_layout_barrier *barrier;
+	stateid4 stateid;
+	sessionid4 sessionid;
+	uint64_t now = reffs_now_ns();
+
+	if (!inode)
+		return 0;
+	pthread_mutex_lock(&inode->i_layout_sync_mutex);
+	barrier = &inode->i_layout_barrier;
+	if (!barrier->active || !barrier->uncertain) {
+		pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+		return 0;
+	}
+	if (barrier->commit_seen && barrier->return_seen) {
+		barrier->uncertain = false;
+		barrier->recall_in_flight = false;
+		pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+		return 0;
+	}
+	if (barrier->fenced ||
+	    (barrier->deadline_ns && now >= barrier->deadline_ns)) {
+		barrier->fenced = true;
+		barrier->recall_in_flight = false;
+		pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+		fixed_layout_retire(inode);
+		*status = NFS4ERR_IO;
+		return 0;
+	}
+	if (barrier->recall_in_flight) {
+		pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+		*status = NFS4ERR_DELAY;
+		return 0;
+	}
+	barrier->recall_in_flight = true;
+	barrier->deadline_ns = now + 30ULL * 1000000000ULL;
+	stateid.seqid = barrier->stateid_seqid;
+	memcpy(stateid.other, barrier->stateid_other,
+	       sizeof(barrier->stateid_other));
+	memcpy(sessionid, barrier->sessionid, sizeof(sessionid));
+	pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+
+	struct nfs4_session *session =
+		nfs4_session_find(compound->c_server_state, sessionid);
+	struct cb_pending *cp =
+		session ? cb_pending_alloc(compound->c_rt->rt_task, compound,
+					   OP_CB_LAYOUTRECALL) :
+			  NULL;
+	if (!session || !cp) {
+		if (session)
+			nfs4_session_put(session);
+		pthread_mutex_lock(&inode->i_layout_sync_mutex);
+		barrier->fenced = true;
+		barrier->recall_in_flight = false;
+		pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+		fixed_layout_retire(inode);
+		*status = NFS4ERR_IO;
+		return 0;
+	}
+	cp->cp_resume_action = resume_action;
+	cp->cp_barrier_inode = inode;
+	inode_active_get(inode);
+	struct network_file_handle callback_handle = {
+		.nfh_ino = inode->i_ino,
+		.nfh_sb = inode->i_sb->sb_id,
+	};
+	nfs_fh4 callback_fh = {
+		.nfs_fh4_len = sizeof(callback_handle),
+		.nfs_fh4_val = (char *)&callback_handle,
+	};
+	struct rpc_trans *rt = compound->c_rt;
+
+	rt->rt_next_action = nfs4_layout_barrier_resume;
+	rt->rt_async_data = cp;
+	task_pause(rt->rt_task);
+	int ret = nfs4_cb_layoutrecall_send(session, LAYOUT4_FLEX_FILES_V2,
+					    LAYOUTIOMODE4_RW, true,
+					    &callback_fh, 0, NFS4_UINT64_MAX,
+					    &stateid, cp);
+	nfs4_session_put(session);
+	if (ret) {
+		atomic_store_explicit(&cp->cp_status, -ret,
+				      memory_order_release);
+		task_resume(rt->rt_task);
+	}
+	return NFS4_OP_FLAG_ASYNC;
+}
+
+uint32_t nfs4_layout_metadata_barrier(
+	struct compound *compound, nfsstat4 *status,
+	uint32_t (*resume_action)(struct compound *compound))
+{
+	return nfs4_layout_metadata_barrier_inode(
+		compound, compound ? compound->c_inode : NULL, status,
+		resume_action);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1352,8 +1587,7 @@ nfsstat4 layoutget_build_v2(struct layout_segment *seg,
 		return NFS4ERR_LAYOUTUNAVAILABLE;
 
 	memset(&ffl, 0, sizeof(ffl));
-	ffl.ffv2l_flags = FFV2_FLAGS_NO_LAYOUTCOMMIT |
-			  FFV2_FLAGS_NO_IO_THRU_MDS;
+	ffl.ffv2l_flags = FFV2_FLAGS_NO_IO_THRU_MDS;
 	ffl.ffv2l_stats_collect_hint = 0;
 
 	ffl.ffv2l_mirrors.ffv2l_mirrors_len = 1;
@@ -1967,6 +2201,18 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		*status = NFS4ERR_LAYOUTUNAVAILABLE;
 		return 0;
 	}
+	if (fixed_assignment == 1) {
+		pthread_mutex_lock(&compound->c_inode->i_layout_sync_mutex);
+		compound->c_inode->i_layout_barrier.active = true;
+		if (args->loga_iomode == LAYOUTIOMODE4_RW &&
+		    compound->c_inode->i_layout_barrier.uncertain) {
+			pthread_mutex_unlock(
+				&compound->c_inode->i_layout_sync_mutex);
+			*status = NFS4ERR_DELAY;
+			return 0;
+		}
+		pthread_mutex_unlock(&compound->c_inode->i_layout_sync_mutex);
+	}
 
 	/*
 	 * On-demand layout creation: if the inode has no layout
@@ -2469,7 +2715,6 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		*status = NFS4ERR_TOOSMALL;
 		goto out_stateid;
 	}
-
 	/* Build the response. */
 	resok->logr_return_on_close = true;
 
@@ -2494,6 +2739,27 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	lo->lo_content.loc_type = build_seg->ls_layout_type;
 	lo->lo_content.loc_body.loc_body_val = body;
 	lo->lo_content.loc_body.loc_body_len = (u_int)xdr_size;
+	if (fixed_assignment == 1 && args->loga_iomode == LAYOUTIOMODE4_RW) {
+		sessionid4 sessionid = { 0 };
+		clientid4 clientid =
+			compound->c_nfs4_client ?
+				compound->c_nfs4_client->nc_client.c_id :
+				0;
+
+		if (compound->c_session)
+			memcpy(sessionid, compound->c_session->ns_sessionid,
+			       sizeof(sessionid));
+		if (nfs4_fixed_layout_barrier_begin(compound->c_inode, clientid,
+						    &layout_stid, sessionid)) {
+			free(body);
+			free(resok->logr_layout.logr_layout_val);
+			resok->logr_layout.logr_layout_val = NULL;
+			resok->logr_layout.logr_layout_len = 0;
+			migration_release_view(&view);
+			*status = NFS4ERR_IO;
+			goto out_stateid;
+		}
+	}
 
 	/*
 	 * View is no longer needed -- the body has been encoded.
@@ -2629,6 +2895,118 @@ out_stateid:
 /* LAYOUTCOMMIT                                                        */
 /* ------------------------------------------------------------------ */
 
+static bool fixed_layoutcommit(struct compound *compound,
+			       const LAYOUTCOMMIT4args *args,
+			       LAYOUTCOMMIT4res *res, LAYOUTCOMMIT4resok *resok)
+{
+	struct inode *inode = compound->c_inode;
+	bool active = nfs4_layout_barrier_active(inode);
+	bool configured;
+	struct dstore *ds = fixed_dstore_for_inode(inode, &configured);
+	bool handled = false;
+	bool retire = false;
+
+	if (!ds) {
+		if (active)
+			res->locr_status = NFS4ERR_IO;
+		return active;
+	}
+	ffv2_fixed_inventory_lock();
+	pthread_mutex_lock(&inode->i_layout_sync_mutex);
+	struct ffv2_layout_barrier *barrier = &inode->i_layout_barrier;
+	struct ffv2_fixed_inventory_record *record = ds->ds_fixed_inventory;
+
+	if (!barrier->active)
+		goto out;
+	handled = true;
+	if (!fixed_record_owner_equal(record, inode) || !barrier->uncertain ||
+	    !fixed_barrier_stateid_equal(barrier, &args->loca_stateid) ||
+	    !compound->c_nfs4_client ||
+	    barrier->clientid != compound->c_nfs4_client->nc_client.c_id) {
+		res->locr_status = NFS4ERR_BAD_STATEID;
+		goto out;
+	}
+	if (barrier->commit_seen) {
+		if (record->metadata_state != FFV2_METADATA_COMMITTED ||
+		    record->metadata_epoch != barrier->dirty_epoch)
+			res->locr_status = NFS4ERR_IO;
+		goto out;
+	}
+	if (record->metadata_state != FFV2_METADATA_DIRTY ||
+	    record->metadata_epoch != barrier->dirty_epoch) {
+		res->locr_status = NFS4ERR_IO;
+		goto out;
+	}
+	if (args->loca_last_write_offset.no_newoffset &&
+	    args->loca_last_write_offset.newoffset4_u.no_offset == UINT64_MAX) {
+		res->locr_status = NFS4ERR_INVAL;
+		goto out;
+	}
+
+	struct timespec now;
+
+	clock_gettime(CLOCK_REALTIME, &now);
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	if (args->loca_last_write_offset.no_newoffset) {
+		uint64_t new_end =
+			args->loca_last_write_offset.newoffset4_u.no_offset + 1;
+
+		if (new_end > (uint64_t)INT64_MAX) {
+			pthread_mutex_unlock(&inode->i_attr_mutex);
+			res->locr_status = NFS4ERR_FBIG;
+			goto out;
+		}
+		if ((int64_t)new_end > inode->i_size) {
+			inode->i_size = (int64_t)new_end;
+			resok->locr_newsize.ns_sizechanged = true;
+			resok->locr_newsize.newsize4_u.ns_size = new_end;
+		}
+	}
+	int64_t old_used = inode->i_used;
+
+	inode->i_used = inode->i_size / inode->i_sb->sb_block_size +
+			(inode->i_size % inode->i_sb->sb_block_size ? 1 : 0);
+	int64_t byte_delta =
+		(inode->i_used - old_used) * inode->i_sb->sb_block_size;
+
+	if (byte_delta > 0)
+		atomic_fetch_add_explicit(&inode->i_sb->sb_bytes_used,
+					  (size_t)byte_delta,
+					  memory_order_relaxed);
+	else if (byte_delta < 0)
+		atomic_fetch_sub_explicit(&inode->i_sb->sb_bytes_used,
+					  (size_t)-byte_delta,
+					  memory_order_relaxed);
+	if (args->loca_time_modify.nt_timechanged) {
+		inode->i_mtime.tv_sec =
+			args->loca_time_modify.newtime4_u.nt_time.seconds;
+		inode->i_mtime.tv_nsec =
+			args->loca_time_modify.newtime4_u.nt_time.nseconds;
+	} else {
+		inode->i_mtime = now;
+	}
+	inode->i_ctime = now;
+	atomic_fetch_add_explicit(&inode->i_changeid, 1, memory_order_relaxed);
+	inode_sync_to_disk(inode);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+	if (ffv2_fixed_metadata_transition(record, FFV2_METADATA_COMMITTED) ||
+	    ffv2_fixed_inventory_save(ds->ds_state_dir, record)) {
+		barrier->fenced = true;
+		res->locr_status = NFS4ERR_IO;
+		retire = true;
+		goto out;
+	}
+	barrier->commit_seen = true;
+	barrier->commit_epoch = barrier->dirty_epoch;
+out:
+	pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+	ffv2_fixed_inventory_unlock();
+	if (retire)
+		fixed_layout_retire(inode);
+	dstore_put(ds);
+	return handled;
+}
+
 uint32_t nfs4_op_layoutcommit(struct compound *compound)
 {
 	LAYOUTCOMMIT4args *args = NFS4_OP_ARG_SETUP(compound, oplayoutcommit);
@@ -2641,6 +3019,8 @@ uint32_t nfs4_op_layoutcommit(struct compound *compound)
 		res->locr_status = NFS4ERR_NOFILEHANDLE;
 		return 0;
 	}
+	if (fixed_layoutcommit(compound, args, res, resok))
+		return 0;
 
 	/*
 	 * Update inode size if the client reports a new last write offset.
@@ -2810,11 +3190,9 @@ nfs4_layout_implicit_return_rw(struct compound *compound,
  * stripe is padded before encoding and nothing on the wire records how
  * much of it was real, so this can overshoot by up to
  * ls_k * ls_stripe_unit - 1 bytes.  LAYOUTCOMMIT carries the exact
- * value and wins wherever a client sends one; this path exists because
- * the metadata server sets FFV2_FLAGS_NO_LAYOUTCOMMIT, which per
- * draft-haynes-nfsv4-flexfiles-v2 lets the client omit LAYOUTCOMMIT
- * entirely and leaves the reflected GETATTR as the only thing the
- * metadata server can size the file from.
+ * value and wins wherever a client sends one.  This legacy helper remains
+ * for layouts that permit reflected GETATTR; fixed prototype layouts use
+ * the persisted LAYOUTCOMMIT metadata barrier instead.
  *
  * ls_m == 0 covers both a replicated layout, where every shard is a
  * whole copy, and the legacy PASSTHROUGH geometry, which records
@@ -3127,9 +3505,93 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 		(args->lora_iomode == LAYOUTIOMODE4_READ) ?
 			LAYOUT_STATEID_IOMODE_READ :
 			(LAYOUT_STATEID_IOMODE_READ | LAYOUT_STATEID_IOMODE_RW);
+	bool fixed_write_return = false;
+	struct dstore *fixed_ds = NULL;
+
+	if ((clear_bit & LAYOUT_STATEID_IOMODE_RW) &&
+	    nfs4_layout_barrier_active(compound->c_inode)) {
+		bool configured;
+
+		fixed_ds =
+			fixed_dstore_for_inode(compound->c_inode, &configured);
+		if (!fixed_ds) {
+			stateid_put(stid);
+			*status = NFS4ERR_IO;
+			return 0;
+		}
+		ffv2_fixed_inventory_lock();
+		pthread_mutex_lock(&compound->c_inode->i_layout_sync_mutex);
+		struct ffv2_layout_barrier *barrier =
+			&compound->c_inode->i_layout_barrier;
+		struct ffv2_fixed_inventory_record *record =
+			fixed_ds->ds_fixed_inventory;
+
+		if (barrier->active) {
+			fixed_write_return = true;
+			if (!barrier->uncertain ||
+			    !fixed_barrier_stateid_equal(barrier,
+							 &lrf->lrf_stateid) ||
+			    !fixed_record_owner_equal(record,
+						      compound->c_inode)) {
+				pthread_mutex_unlock(
+					&compound->c_inode->i_layout_sync_mutex);
+				ffv2_fixed_inventory_unlock();
+				dstore_put(fixed_ds);
+				stateid_put(stid);
+				*status = NFS4ERR_BAD_STATEID;
+				return 0;
+			}
+			if (!barrier->commit_seen ||
+			    record->metadata_state != FFV2_METADATA_COMMITTED ||
+			    record->metadata_epoch != barrier->dirty_epoch) {
+				pthread_mutex_unlock(
+					&compound->c_inode->i_layout_sync_mutex);
+				ffv2_fixed_inventory_unlock();
+				dstore_put(fixed_ds);
+				stateid_put(stid);
+				*status = NFS4ERR_DELAY;
+				return 0;
+			}
+		}
+		if (!fixed_write_return) {
+			pthread_mutex_unlock(
+				&compound->c_inode->i_layout_sync_mutex);
+			ffv2_fixed_inventory_unlock();
+			dstore_put(fixed_ds);
+			fixed_ds = NULL;
+		}
+	}
 
 	uint64_t remaining =
 		__atomic_and_fetch(&ls->ls_state, ~clear_bit, __ATOMIC_ACQ_REL);
+	if (fixed_write_return) {
+		struct ffv2_layout_barrier *barrier =
+			&compound->c_inode->i_layout_barrier;
+
+		barrier->return_seen = true;
+		barrier->return_epoch = barrier->dirty_epoch;
+		if (ffv2_fixed_metadata_transition(fixed_ds->ds_fixed_inventory,
+						   FFV2_METADATA_CLEAN) ||
+		    ffv2_fixed_inventory_save(fixed_ds->ds_state_dir,
+					      fixed_ds->ds_fixed_inventory)) {
+			barrier->fenced = true;
+			pthread_mutex_unlock(
+				&compound->c_inode->i_layout_sync_mutex);
+			ffv2_fixed_inventory_unlock();
+			dstore_put(fixed_ds);
+			stateid_put(stid);
+			fixed_layout_retire(compound->c_inode);
+			*status = NFS4ERR_IO;
+			return 0;
+		}
+		if (barrier->commit_seen) {
+			barrier->uncertain = false;
+			barrier->recall_in_flight = false;
+		}
+		pthread_mutex_unlock(&compound->c_inode->i_layout_sync_mutex);
+		ffv2_fixed_inventory_unlock();
+		dstore_put(fixed_ds);
+	}
 
 	if (remaining == 0) {
 		/* No layouts left -- free the stateid. */
@@ -3161,7 +3623,7 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	 * compound, it will handle the fan-out.  Otherwise, we
 	 * trigger a reflected GETATTR now (async fan-out).
 	 */
-	if ((clear_bit & LAYOUT_STATEID_IOMODE_RW) &&
+	if ((clear_bit & LAYOUT_STATEID_IOMODE_RW) && !fixed_write_return &&
 	    !(compound->c_flags & COMPOUND_DS_ATTRS_REFRESHED) &&
 	    compound->c_inode->i_layout_segments &&
 	    compound->c_inode->i_layout_segments->lss_count > 0) {
@@ -3382,6 +3844,21 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 		}
 
 		dstore_put(err_ds);
+		if (nfs4_layout_barrier_active(compound->c_inode) &&
+		    (de->de_status == NFS4ERR_BAD_STATEID ||
+		     de->de_status == NFS4ERR_ACCESS ||
+		     de->de_status == NFS4ERR_PERM ||
+		     de->de_status == NFS4ERR_IO)) {
+			pthread_mutex_lock(
+				&compound->c_inode->i_layout_sync_mutex);
+			compound->c_inode->i_layout_barrier.fenced = true;
+			compound->c_inode->i_layout_barrier.recall_in_flight =
+				false;
+			pthread_mutex_unlock(
+				&compound->c_inode->i_layout_sync_mutex);
+			fixed_layout_retire(compound->c_inode);
+			continue;
+		}
 
 		if (de->de_status == NFS4ERR_BAD_STATEID && lss &&
 		    lss->lss_count > 0) {

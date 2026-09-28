@@ -895,6 +895,15 @@ uint32_t nfs4_op_remove(struct compound *compound)
 		*status = errno_to_nfs4(ret, OP_REMOVE);
 		goto out;
 	}
+	struct inode *target = inode_name_get_inode(compound->c_inode, name);
+
+	if (target && nfs4_layout_barrier_active(target)) {
+		inode_active_put(target);
+		*status = NFS4ERR_NOTSUPP;
+		goto out;
+	}
+	if (target)
+		inode_active_put(target);
 
 	/*
 	 * Try removing as a non-directory first.  vfs_remove() returns
