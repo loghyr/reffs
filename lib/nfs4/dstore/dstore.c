@@ -621,6 +621,165 @@ int dstore_fixed_inventory_preflight(struct dstore *ds)
 	return 0;
 }
 
+static bool
+fixed_recovery_segment_equal(const struct dstore *ds,
+			     const struct layout_segment *segment,
+			     const struct ffv2_fixed_inventory_record *record)
+{
+	const struct ffv2_fixed_inventory_identity *identity =
+		&record->identity;
+
+	if (!segment || segment->ls_offset != record->segment_offset ||
+	    segment->ls_length != record->segment_length ||
+	    segment->ls_stripe_unit != record->segment_stripe_unit ||
+	    segment->ls_k != identity->data_count ||
+	    segment->ls_m != identity->parity_count ||
+	    segment->ls_nfiles != identity->object_count ||
+	    segment->ls_layout_type != record->segment_layout_type ||
+	    segment->ls_checksum_algorithm !=
+		    record->segment_checksum_algorithm)
+		return false;
+	for (uint32_t i = 0; i < identity->object_count; i++) {
+		const struct layout_data_file *file = &segment->ls_files[i];
+		const struct reffs_prototype_object_config *object =
+			&identity->objects[i];
+
+		if (file->ldf_dstore_id != ds->ds_id ||
+		    file->ldf_fh_len != object->ordinary_handle_len ||
+		    memcmp(file->ldf_fh, object->ordinary_handle,
+			   object->ordinary_handle_len))
+			return false;
+	}
+	return true;
+}
+
+static int fixed_recovery_transition(struct dstore *ds,
+				     enum ffv2_fixed_inventory_state next)
+{
+	struct ffv2_fixed_inventory_record *record = ds->ds_fixed_inventory;
+	int ret = ffv2_fixed_inventory_transition(
+		record, next, record->owner_sb_uuid, record->owner_ino);
+
+	if (!ret)
+		ret = ffv2_fixed_inventory_save(ds->ds_state_dir, record);
+	return ret;
+}
+
+int dstore_fixed_inventory_recover(struct dstore *ds)
+{
+	struct ffv2_fixed_inventory_record *record;
+	struct super_block *owner_sb = NULL;
+	struct inode *owner = NULL;
+	int ret = 0;
+
+	if (!ds || !ds->ds_prototype_config.fixed_inventory)
+		return 0;
+	record = ds->ds_fixed_inventory;
+	if (!record)
+		return -EINVAL;
+	ffv2_fixed_inventory_lock();
+	if (record->state == FFV2_INVENTORY_FREE)
+		goto out;
+	if (record->state == FFV2_INVENTORY_RETIRED ||
+	    record->state == FFV2_INVENTORY_FENCED) {
+		ret = -ESTALE;
+		goto out;
+	}
+
+	rcu_read_lock();
+	struct super_block *candidate;
+
+	cds_list_for_each_entry_rcu(candidate, super_block_list_head(),
+				    sb_link) {
+		if (!uuid_compare(candidate->sb_uuid, record->owner_sb_uuid)) {
+			owner_sb = super_block_get(candidate);
+			break;
+		}
+	}
+	rcu_read_unlock();
+	if (owner_sb)
+		owner = inode_find(owner_sb, record->owner_ino);
+	if (!owner) {
+		ret = fixed_recovery_transition(ds, FFV2_INVENTORY_RETIRED);
+		if (!ret)
+			ret = -ENOENT;
+		goto out;
+	}
+
+	pthread_mutex_lock(&owner->i_layout_sync_mutex);
+	pthread_mutex_lock(&owner->i_attr_mutex);
+	if (!owner->i_layout_segments || !owner->i_layout_segments->lss_count) {
+		if (record->state == FFV2_INVENTORY_ASSIGNED) {
+			ret = -ESTALE;
+			goto out_inode;
+		}
+		struct layout_data_file *files;
+		struct layout_segment segment = {
+			.ls_offset = record->segment_offset,
+			.ls_length = record->segment_length,
+			.ls_stripe_unit = record->segment_stripe_unit,
+			.ls_k = record->identity.data_count,
+			.ls_m = record->identity.parity_count,
+			.ls_nfiles = record->identity.object_count,
+			.ls_layout_type = record->segment_layout_type,
+			.ls_checksum_algorithm =
+				record->segment_checksum_algorithm,
+		};
+
+		files = calloc(segment.ls_nfiles, sizeof(*files));
+		if (!files) {
+			ret = -ENOMEM;
+			goto out_inode;
+		}
+		for (uint32_t i = 0; i < segment.ls_nfiles; i++) {
+			files[i].ldf_dstore_id = ds->ds_id;
+			files[i].ldf_fh_len =
+				record->identity.objects[i].ordinary_handle_len;
+			memcpy(files[i].ldf_fh,
+			       record->identity.objects[i].ordinary_handle,
+			       files[i].ldf_fh_len);
+		}
+		segment.ls_files = files;
+		if (!owner->i_layout_segments)
+			owner->i_layout_segments = layout_segments_alloc();
+		if (!owner->i_layout_segments) {
+			free(files);
+			ret = -ENOMEM;
+			goto out_inode;
+		}
+		ret = layout_segments_add(owner->i_layout_segments, &segment);
+		if (ret) {
+			free(files);
+			goto out_inode;
+		}
+		inode_sync_to_disk(owner);
+	} else if (owner->i_layout_segments->lss_count != 1 ||
+		   !fixed_recovery_segment_equal(
+			   ds, &owner->i_layout_segments->lss_segs[0],
+			   record)) {
+		ret = -ESTALE;
+	}
+out_inode:
+	pthread_mutex_unlock(&owner->i_attr_mutex);
+	pthread_mutex_unlock(&owner->i_layout_sync_mutex);
+	if (ret == -ESTALE) {
+		int fence_ret =
+			fixed_recovery_transition(ds, FFV2_INVENTORY_FENCED);
+
+		if (fence_ret)
+			ret = fence_ret;
+	} else if (!ret && record->state == FFV2_INVENTORY_CLAIMED) {
+		ret = fixed_recovery_transition(ds, FFV2_INVENTORY_ASSIGNED);
+	}
+out:
+	if (owner)
+		inode_active_put(owner);
+	if (owner_sb)
+		super_block_put(owner_sb);
+	ffv2_fixed_inventory_unlock();
+	return ret;
+}
+
 /* ------------------------------------------------------------------ */
 /* Alloc / find                                                        */
 /* ------------------------------------------------------------------ */
@@ -907,6 +1066,9 @@ int dstore_load_config(const struct reffs_config *cfg)
 		}
 		if (ds->ds_prototype_config.fixed_inventory) {
 			ret = dstore_fixed_inventory_preflight(ds);
+			if (ret)
+				goto fixed_failure;
+			ret = dstore_fixed_inventory_recover(ds);
 			if (ret)
 				goto fixed_failure;
 			ret = dstore_ordinary_close(ds);

@@ -26,6 +26,18 @@
 #define FFV2_INVENTORY_MAGIC 0x52464956U /* RFIV */
 #define FFV2_INVENTORY_MAX_ENCODED 8192
 
+static pthread_mutex_t inventory_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void ffv2_fixed_inventory_lock(void)
+{
+	pthread_mutex_lock(&inventory_mutex);
+}
+
+void ffv2_fixed_inventory_unlock(void)
+{
+	pthread_mutex_unlock(&inventory_mutex);
+}
+
 struct encoder {
 	uint8_t *data;
 	size_t len;

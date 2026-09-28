@@ -86,4 +86,8 @@ int ffv2_fixed_inventory_save(const char *state_dir,
 int ffv2_fixed_inventory_load(const char *state_dir, uint32_t dstore_id,
 			      struct ffv2_fixed_inventory_record *record);
 
+/* Shared process-wide owner lock; always precedes inode layout locks. */
+void ffv2_fixed_inventory_lock(void);
+void ffv2_fixed_inventory_unlock(void);
+
 #endif /* _REFFS_FIXED_INVENTORY_H */

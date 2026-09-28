@@ -345,6 +345,7 @@ int dstore_ordinary_reopen(struct dstore *ds);
 
 int dstore_mount_preflight(struct dstore *ds);
 int dstore_fixed_inventory_preflight(struct dstore *ds);
+int dstore_fixed_inventory_recover(struct dstore *ds);
 
 /* ------------------------------------------------------------------ */
 /* Connection management                                               */

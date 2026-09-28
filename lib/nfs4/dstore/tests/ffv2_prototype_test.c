@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <check.h>
@@ -21,7 +22,11 @@
 #include "nfsv42_xdr.h"
 #include "reffs/dstore.h"
 #include "reffs/ffv2_prototype.h"
+#include "reffs/fixed_inventory.h"
+#include "reffs/fixed_layout.h"
+#include "reffs/inode.h"
 #include "reffs/layout_segment.h"
+#include "reffs/super_block.h"
 #include "libreffs_test.h"
 
 #include "ffv2_prototype_internal.h"
@@ -675,6 +680,118 @@ static void destroy_dstore(struct dstore *ds)
 	dstore_fini();
 }
 
+static void fixed_inode_init(struct inode *inode, struct super_block *sb,
+			     uint64_t ino)
+{
+	memset(inode, 0, sizeof(*inode));
+	inode->i_sb = sb;
+	inode->i_ino = ino;
+	ck_assert_int_eq(pthread_mutex_init(&inode->i_layout_sync_mutex, NULL),
+			 0);
+	ck_assert_int_eq(pthread_mutex_init(&inode->i_attr_mutex, NULL), 0);
+}
+
+static void fixed_inode_destroy(struct inode *inode)
+{
+	layout_segments_free(inode->i_layout_segments);
+	pthread_mutex_destroy(&inode->i_attr_mutex);
+	pthread_mutex_destroy(&inode->i_layout_sync_mutex);
+}
+
+START_TEST(test_fixed_layout_claim_retry_and_exhaustion)
+{
+	char directory[] = "/tmp/reffs-fixed-layout-XXXXXX";
+	char record_path[256];
+	struct dstore *ds = make_dstore();
+	struct super_block sb = { 0 };
+	struct inode first, second;
+	uint64_t ordinary_before = 0;
+
+	ck_assert_ptr_nonnull(mkdtemp(directory));
+	ds->ds_prototype_config.fixed_inventory = true;
+	strcpy(ds->ds_prototype_config.objects[0].name, "gate-b-data");
+	strcpy(ds->ds_prototype_config.objects[1].name, "gate-b-parity");
+	ck_assert_int_lt(snprintf(ds->ds_state_dir, sizeof(ds->ds_state_dir),
+				  "%s", directory),
+			 (int)sizeof(ds->ds_state_dir));
+	ds->ds_fixed_inventory = calloc(1, sizeof(*ds->ds_fixed_inventory));
+	ck_assert_ptr_nonnull(ds->ds_fixed_inventory);
+	ck_assert_int_eq(ffv2_fixed_inventory_identity_init(
+				 &ds->ds_fixed_inventory->identity, ds->ds_id,
+				 ds->ds_address, ds->ds_path,
+				 &ds->ds_prototype_config),
+			 0);
+	ck_assert_int_eq(ffv2_fixed_inventory_save(ds->ds_state_dir,
+						   ds->ds_fixed_inventory),
+			 0);
+	ck_assert_int_eq(
+		ffv2_prototype_snapshot_replace(ds, make_snapshot(10, 0x60)),
+		0);
+
+	uuid_generate(sb.sb_uuid);
+	sb.sb_dstore_ids[0] = ds->ds_id;
+	sb.sb_ndstores = 1;
+	sb.sb_stripe_unit = 4096;
+	sb.sb_checksum_algorithm = LAYOUT_CHECKSUM_ALG_CRC32;
+	fixed_inode_init(&first, &sb, 101);
+	fixed_inode_init(&second, &sb, 102);
+	for (uint32_t i = 0; i < DSTORE_ORDINARY_OP_COUNT; i++)
+		ordinary_before +=
+			atomic_load_explicit(&ds->ds_ordinary_gate.admitted[i],
+					     memory_order_relaxed);
+
+	ck_assert_int_eq(
+		ffv2_fixed_layout_assign(&first, LAYOUT4_FLEX_FILES_V2), 1);
+	ck_assert_int_eq(ds->ds_fixed_inventory->state,
+			 FFV2_INVENTORY_ASSIGNED);
+	ck_assert_uint_eq(ds->ds_fixed_inventory->owner_ino, first.i_ino);
+	ck_assert_uint_eq(first.i_layout_segments->lss_count, 1);
+	ck_assert_uint_eq(first.i_layout_segments->lss_segs[0].ls_nfiles, 2);
+	uint64_t assigned_generation = ds->ds_fixed_inventory->generation;
+
+	ck_assert_int_eq(
+		ffv2_fixed_layout_assign(&first, LAYOUT4_FLEX_FILES_V2), 1);
+	ck_assert_uint_eq(ds->ds_fixed_inventory->generation,
+			  assigned_generation);
+	ck_assert_int_eq(ffv2_fixed_layout_assign(&second,
+						  LAYOUT4_FLEX_FILES_V2),
+			 -ENOSPC);
+	ck_assert_ptr_null(second.i_layout_segments);
+	ds->ds_prototype_config.chunk_size = 8192;
+	ck_assert_int_eq(ffv2_fixed_layout_assign(&first,
+						  LAYOUT4_FLEX_FILES_V2),
+			 -ESTALE);
+	ds->ds_prototype_config.chunk_size = 4096;
+	struct reffs_prototype_object_config swap =
+		ds->ds_prototype_config.objects[0];
+
+	ds->ds_prototype_config.objects[0] = ds->ds_prototype_config.objects[1];
+	ds->ds_prototype_config.objects[1] = swap;
+	ck_assert_int_eq(ffv2_fixed_layout_assign(&first,
+						  LAYOUT4_FLEX_FILES_V2),
+			 -ESTALE);
+	swap = ds->ds_prototype_config.objects[0];
+	ds->ds_prototype_config.objects[0] = ds->ds_prototype_config.objects[1];
+	ds->ds_prototype_config.objects[1] = swap;
+
+	uint64_t ordinary_after = 0;
+
+	for (uint32_t i = 0; i < DSTORE_ORDINARY_OP_COUNT; i++)
+		ordinary_after +=
+			atomic_load_explicit(&ds->ds_ordinary_gate.admitted[i],
+					     memory_order_relaxed);
+	ck_assert_uint_eq(ordinary_after, ordinary_before);
+
+	fixed_inode_destroy(&second);
+	fixed_inode_destroy(&first);
+	snprintf(record_path, sizeof(record_path), "%s/ffv2-fixed-inventory-%u",
+		 directory, ds->ds_id);
+	unlink(record_path);
+	rmdir(directory);
+	destroy_dstore(ds);
+}
+END_TEST
+
 START_TEST(test_snapshot_replacement_rejects_stale_generation)
 {
 	struct dstore *ds = make_dstore();
@@ -1031,6 +1148,7 @@ static Suite *prototype_suite(void)
 		test_absent_configuration_preserves_ordinary_layout_identity);
 	tcase_add_test(test,
 		       test_concurrent_layout_observes_one_complete_vector);
+	tcase_add_test(test, test_fixed_layout_claim_retry_and_exhaustion);
 	suite_add_tcase(suite, test);
 	return suite;
 }

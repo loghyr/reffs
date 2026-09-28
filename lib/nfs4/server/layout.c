@@ -26,6 +26,8 @@
 #include "dstore_fanout.h"
 #include "reffs/dstore_ops.h"
 #include "reffs/ffv2_prototype.h"
+#include "reffs/fixed_inventory.h"
+#include "reffs/fixed_layout.h"
 #include "reffs/inode.h"
 #include "reffs/layout_segment.h"
 #include "reffs/log.h"
@@ -48,6 +50,270 @@
 #include "ps_sb.h"
 #include "ps_state.h"
 #include "nfs4/stateid.h"
+
+static struct dstore *fixed_dstore_for_inode(const struct inode *inode,
+					     bool *configured)
+{
+	struct dstore *selected = NULL;
+	struct super_block *sb = inode->i_sb;
+	bool ambiguous = false;
+
+	*configured = false;
+	if (sb->sb_ndstores) {
+		for (uint32_t i = 0; i < sb->sb_ndstores; i++) {
+			struct dstore *ds = dstore_find(sb->sb_dstore_ids[i]);
+
+			if (!ds)
+				continue;
+			if (!ds->ds_prototype_config.fixed_inventory) {
+				dstore_put(ds);
+				continue;
+			}
+			*configured = true;
+			if (selected) {
+				dstore_put(ds);
+				dstore_put(selected);
+				return NULL;
+			}
+			selected = ds;
+		}
+		return selected;
+	}
+
+	struct dstore *dstores[DSTORE_REVOKE_MAX];
+	uint32_t count = dstore_collect_all(dstores, DSTORE_REVOKE_MAX);
+
+	for (uint32_t i = 0; i < count; i++) {
+		if (dstores[i]->ds_prototype_config.fixed_inventory &&
+		    !selected) {
+			*configured = true;
+			selected = dstores[i];
+			continue;
+		}
+		if (dstores[i]->ds_prototype_config.fixed_inventory) {
+			*configured = true;
+			ambiguous = true;
+		}
+		dstore_put(dstores[i]);
+	}
+	if (ambiguous) {
+		dstore_put(selected);
+		return NULL;
+	}
+	return selected;
+}
+
+static bool fixed_segment_equal(const struct layout_segment *segment,
+				const struct layout_segment *expected)
+{
+	if (!segment || segment->ls_offset != expected->ls_offset ||
+	    segment->ls_length != expected->ls_length ||
+	    segment->ls_stripe_unit != expected->ls_stripe_unit ||
+	    segment->ls_k != expected->ls_k ||
+	    segment->ls_m != expected->ls_m ||
+	    segment->ls_nfiles != expected->ls_nfiles ||
+	    segment->ls_layout_type != expected->ls_layout_type ||
+	    segment->ls_checksum_algorithm != expected->ls_checksum_algorithm)
+		return false;
+	for (uint32_t i = 0; i < expected->ls_nfiles; i++) {
+		const struct layout_data_file *left = &segment->ls_files[i];
+		const struct layout_data_file *right = &expected->ls_files[i];
+
+		if (left->ldf_dstore_id != right->ldf_dstore_id ||
+		    left->ldf_fh_len != right->ldf_fh_len ||
+		    memcmp(left->ldf_fh, right->ldf_fh, left->ldf_fh_len))
+			return false;
+	}
+	return true;
+}
+
+static bool
+fixed_record_segment_equal(const struct ffv2_fixed_inventory_record *record,
+			   const struct layout_segment *segment)
+{
+	return record->segment_offset == segment->ls_offset &&
+	       record->segment_length == segment->ls_length &&
+	       record->segment_stripe_unit == segment->ls_stripe_unit &&
+	       record->segment_layout_type == segment->ls_layout_type &&
+	       record->segment_checksum_algorithm ==
+		       segment->ls_checksum_algorithm;
+}
+
+static int fixed_inventory_fence(struct dstore *ds, struct inode *inode)
+{
+	struct ffv2_fixed_inventory_record *record = ds->ds_fixed_inventory;
+	int ret;
+
+	if (record->state != FFV2_INVENTORY_CLAIMED &&
+	    record->state != FFV2_INVENTORY_ASSIGNED)
+		return -ESTALE;
+	ret = ffv2_fixed_inventory_transition(record, FFV2_INVENTORY_FENCED,
+					      inode->i_sb->sb_uuid,
+					      inode->i_ino);
+	if (ret)
+		return ret;
+	ret = ffv2_fixed_inventory_save(ds->ds_state_dir, record);
+	return ret ? ret : -ESTALE;
+}
+
+int ffv2_fixed_layout_assign(struct inode *inode, uint32_t layout_type)
+{
+	struct ffv2_prototype_snapshot const *snapshot = NULL;
+	struct ffv2_fixed_inventory_record *record;
+	struct layout_data_file *files = NULL;
+	struct dstore *snapshot_ds = NULL;
+	struct dstore *ds;
+	struct layout_segment expected = { 0 };
+	bool fixed_configured;
+	uint32_t checksum;
+	int selected, ret = -ESTALE;
+
+	if (!inode || !inode->i_sb)
+		return -EINVAL;
+	ds = fixed_dstore_for_inode(inode, &fixed_configured);
+	if (!ds)
+		return fixed_configured ? -ESTALE : 0;
+	if (!ds->ds_fixed_inventory || layout_type != LAYOUT4_FLEX_FILES_V2) {
+		ret = -ESTALE;
+		goto out_ds;
+	}
+	files = calloc(ds->ds_prototype_config.object_count, sizeof(*files));
+	if (!files) {
+		ret = -ENOMEM;
+		goto out_ds;
+	}
+	for (uint32_t i = 0; i < ds->ds_prototype_config.object_count; i++) {
+		const struct reffs_prototype_object_config *object =
+			&ds->ds_prototype_config.objects[i];
+
+		files[i].ldf_dstore_id = ds->ds_id;
+		files[i].ldf_fh_len = object->ordinary_handle_len;
+		memcpy(files[i].ldf_fh, object->ordinary_handle,
+		       object->ordinary_handle_len);
+	}
+	checksum = inode->i_sb->sb_checksum_algorithm;
+	if (checksum == LAYOUT_CHECKSUM_ALG_NONE)
+		checksum = LAYOUT_CHECKSUM_ALG_CRC32;
+	expected = (struct layout_segment){
+		.ls_offset = 0,
+		.ls_length = 0,
+		.ls_stripe_unit = ds->ds_prototype_config.chunk_size,
+		.ls_k = ds->ds_prototype_config.data_count,
+		.ls_m = ds->ds_prototype_config.parity_count,
+		.ls_nfiles = ds->ds_prototype_config.object_count,
+		.ls_layout_type = layout_type,
+		.ls_checksum_algorithm = checksum,
+		.ls_files = files,
+	};
+	selected = ffv2_prototype_snapshot_select(
+		&expected, ds->ds_prototype_config.writer_id,
+		ds->ds_prototype_config.pnfs_clientid, &snapshot_ds, &snapshot);
+	if (selected != 1 || snapshot_ds != ds) {
+		if (selected == 1) {
+			ffv2_prototype_snapshot_release(snapshot_ds);
+			dstore_put(snapshot_ds);
+		}
+		ret = selected < 0 ? selected : -ESTALE;
+		goto out_files;
+	}
+	ffv2_prototype_snapshot_release(snapshot_ds);
+	dstore_put(snapshot_ds);
+
+	ffv2_fixed_inventory_lock();
+	record = ds->ds_fixed_inventory;
+	if (!record || record->state == FFV2_INVENTORY_RETIRED ||
+	    record->state == FFV2_INVENTORY_FENCED) {
+		ret = -ENOSPC;
+		goto out_inventory;
+	}
+	if (record->state != FFV2_INVENTORY_FREE &&
+	    (record->owner_ino != inode->i_ino ||
+	     uuid_compare(record->owner_sb_uuid, inode->i_sb->sb_uuid))) {
+		ret = -ENOSPC;
+		goto out_inventory;
+	}
+
+	if (record->state == FFV2_INVENTORY_FREE) {
+		pthread_mutex_lock(&inode->i_layout_sync_mutex);
+		pthread_mutex_lock(&inode->i_attr_mutex);
+		bool empty = !inode->i_layout_segments ||
+			     inode->i_layout_segments->lss_count == 0;
+		pthread_mutex_unlock(&inode->i_attr_mutex);
+		pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+		if (!empty) {
+			ret = -ESTALE;
+			goto out_inventory;
+		}
+		ret = ffv2_fixed_inventory_transition(record,
+						      FFV2_INVENTORY_CLAIMED,
+						      inode->i_sb->sb_uuid,
+						      inode->i_ino);
+		if (ret)
+			goto out_inventory;
+		record->segment_offset = expected.ls_offset;
+		record->segment_length = expected.ls_length;
+		record->segment_stripe_unit = expected.ls_stripe_unit;
+		record->segment_layout_type = expected.ls_layout_type;
+		record->segment_checksum_algorithm =
+			expected.ls_checksum_algorithm;
+		ret = ffv2_fixed_inventory_save(ds->ds_state_dir, record);
+		if (ret)
+			goto out_inventory;
+	}
+	if (!fixed_record_segment_equal(record, &expected)) {
+		ret = fixed_inventory_fence(ds, inode);
+		goto out_inventory;
+	}
+
+	pthread_mutex_lock(&inode->i_layout_sync_mutex);
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	if (!inode->i_layout_segments) {
+		inode->i_layout_segments = layout_segments_alloc();
+		if (!inode->i_layout_segments) {
+			ret = -ENOMEM;
+			goto out_inode;
+		}
+	}
+	if (!inode->i_layout_segments->lss_count) {
+		ret = layout_segments_add(inode->i_layout_segments, &expected);
+		if (ret)
+			goto out_inode;
+		files = NULL;
+	} else if (inode->i_layout_segments->lss_count != 1 ||
+		   !fixed_segment_equal(&inode->i_layout_segments->lss_segs[0],
+					&expected)) {
+		ret = -ESTALE;
+		goto out_inode;
+	}
+	inode_sync_to_disk(inode);
+	ret = 0;
+out_inode:
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+	pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+	if (ret) {
+		if (ret == -ESTALE)
+			ret = fixed_inventory_fence(ds, inode);
+		goto out_inventory;
+	}
+	if (record->state == FFV2_INVENTORY_CLAIMED) {
+		ret = ffv2_fixed_inventory_transition(record,
+						      FFV2_INVENTORY_ASSIGNED,
+						      inode->i_sb->sb_uuid,
+						      inode->i_ino);
+		if (!ret)
+			ret = ffv2_fixed_inventory_save(ds->ds_state_dir,
+							record);
+	}
+	if (!ret)
+		ret = 1;
+out_inventory:
+	ffv2_fixed_inventory_unlock();
+out_files:
+	free(files);
+out_ds:
+	dstore_put(ds);
+	return ret;
+}
 
 /* ------------------------------------------------------------------ */
 /* Device ID encoding                                                  */
@@ -1694,6 +1960,13 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	}
 
 	struct layout_segments *lss;
+	int fixed_assignment =
+		ffv2_fixed_layout_assign(compound->c_inode, layout_type);
+
+	if (fixed_assignment < 0) {
+		*status = NFS4ERR_LAYOUTUNAVAILABLE;
+		return 0;
+	}
 
 	/*
 	 * On-demand layout creation: if the inode has no layout

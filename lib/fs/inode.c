@@ -77,6 +77,7 @@ static void inode_free_rcu(struct rcu_head *rcu)
 		data_block_put(inode->i_db);
 
 	pthread_rwlock_destroy(&inode->i_db_rwlock);
+	pthread_mutex_destroy(&inode->i_layout_sync_mutex);
 	pthread_mutex_destroy(&inode->i_attr_mutex);
 	pthread_mutex_destroy(&inode->i_lock_mutex);
 
@@ -402,13 +403,20 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 		free(inode);
 		return NULL;
 	}
+	if (pthread_mutex_init(&inode->i_layout_sync_mutex, NULL) != 0) {
+		pthread_rwlock_destroy(&inode->i_db_rwlock);
+		free(inode);
+		return NULL;
+	}
 	if (pthread_mutex_init(&inode->i_attr_mutex, NULL) != 0) {
+		pthread_mutex_destroy(&inode->i_layout_sync_mutex);
 		pthread_rwlock_destroy(&inode->i_db_rwlock);
 		free(inode);
 		return NULL;
 	}
 	if (pthread_mutex_init(&inode->i_lock_mutex, NULL) != 0) {
 		pthread_mutex_destroy(&inode->i_attr_mutex);
+		pthread_mutex_destroy(&inode->i_layout_sync_mutex);
 		pthread_rwlock_destroy(&inode->i_db_rwlock);
 		free(inode);
 		return NULL;

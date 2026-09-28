@@ -83,6 +83,8 @@ struct inode {
 	struct reffs_dirent *i_dirent; /* weak, nullable */
 
 	pthread_rwlock_t i_db_rwlock;
+	/* Serializes fixed-layout ownership and metadata-barrier state. */
+	pthread_mutex_t i_layout_sync_mutex;
 	pthread_mutex_t i_attr_mutex;
 
 	/* locking */
