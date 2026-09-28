@@ -263,6 +263,42 @@ START_TEST(test_preflight_persists_exact_empty_vector)
 }
 END_TEST
 
+START_TEST(test_observation_publishes_counters_off_operation_path)
+{
+	char directory[] = "/tmp/reffs-status-observation-XXXXXX";
+	char path[512], status_data[4096] = { 0 };
+	struct dstore *ds = make_dstore();
+	FILE *status;
+
+	ck_assert_ptr_nonnull(mkdtemp(directory));
+	fill_fixed_config(ds, directory);
+	snprintf(path, sizeof(path), "%s/ffv2-fixed-status-91.json", directory);
+	ck_assert_int_eq(dstore_ordinary_get(ds, DSTORE_ORDINARY_GETATTR), 0);
+	dstore_ordinary_put(ds);
+	ck_assert_int_eq(access(path, F_OK), -1);
+	ck_assert_int_eq(errno, ENOENT);
+
+	ck_assert_int_eq(dstore_fixed_status_write(ds), 0);
+	status = fopen(path, "r");
+	ck_assert_ptr_nonnull(status);
+	ck_assert_int_gt(fread(status_data, 1, sizeof(status_data) - 1, status),
+			 0);
+	fclose(status);
+	ck_assert_ptr_nonnull(strstr(
+		status_data, "\"admitted\":[0,0,0,0,0,0,1,0,0,0,0,0,0,0,0]"));
+	ck_assert_ptr_nonnull(strstr(
+		status_data, "\"refused\":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]"));
+	ck_assert_ptr_null(
+		memmem(status_data, strlen(status_data),
+		       ds->ds_prototype_config.binding_token,
+		       sizeof(ds->ds_prototype_config.binding_token)));
+	ds->ds_prototype_config.enabled = false;
+	destroy_dstore(ds);
+	unlink(path);
+	rmdir(directory);
+}
+END_TEST
+
 static Suite *ordinary_gate_suite(void)
 {
 	Suite *suite = suite_create("ordinary_gate");
@@ -271,6 +307,8 @@ static Suite *ordinary_gate_suite(void)
 	tcase_add_test(tc, test_close_drains_and_refuses_new_calls);
 	tcase_add_test(tc, test_fixed_load_failure_stops_before_workers);
 	tcase_add_test(tc, test_preflight_persists_exact_empty_vector);
+	tcase_add_test(tc,
+		       test_observation_publishes_counters_off_operation_path);
 	suite_add_tcase(suite, tc);
 	return suite;
 }

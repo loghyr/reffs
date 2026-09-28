@@ -196,8 +196,6 @@ int dstore_ordinary_get(struct dstore *ds, enum dstore_ordinary_op op)
 					  memory_order_relaxed);
 	}
 	pthread_mutex_unlock(&gate->mutex);
-	if (ds->ds_prototype_config.fixed_inventory)
-		(void)dstore_fixed_status_write(ds);
 	return ret;
 }
 
@@ -211,8 +209,6 @@ void dstore_ordinary_put(struct dstore *ds)
 	if (!gate->in_flight)
 		pthread_cond_broadcast(&gate->condition);
 	pthread_mutex_unlock(&gate->mutex);
-	if (ds->ds_prototype_config.fixed_inventory)
-		(void)dstore_fixed_status_write(ds);
 }
 
 int dstore_ordinary_close(struct dstore *ds)
