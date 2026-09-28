@@ -166,6 +166,7 @@ int ffv2_fixed_layout_assign(struct inode *inode, uint32_t layout_type)
 	struct dstore *ds;
 	struct layout_segment expected = { 0 };
 	bool fixed_configured;
+	bool inode_changed = false;
 	uint32_t checksum;
 	int selected, ret = -ESTALE;
 
@@ -274,19 +275,22 @@ int ffv2_fixed_layout_assign(struct inode *inode, uint32_t layout_type)
 			ret = -ENOMEM;
 			goto out_inode;
 		}
+		inode_changed = true;
 	}
 	if (!inode->i_layout_segments->lss_count) {
 		ret = layout_segments_add(inode->i_layout_segments, &expected);
 		if (ret)
 			goto out_inode;
 		files = NULL;
+		inode_changed = true;
 	} else if (inode->i_layout_segments->lss_count != 1 ||
 		   !fixed_segment_equal(&inode->i_layout_segments->lss_segs[0],
 					&expected)) {
 		ret = -ESTALE;
 		goto out_inode;
 	}
-	inode_sync_to_disk(inode);
+	if (inode_changed)
+		inode_sync_to_disk(inode);
 	ret = 0;
 out_inode:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
