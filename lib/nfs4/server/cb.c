@@ -149,6 +149,7 @@ static int cb_build_and_alloc(struct nfs4_session *session,
 	cb_rt->rt_reply = buf;
 	cb_rt->rt_reply_len = buf_len;
 	cb_rt->rt_info.ri_xid = xid;
+	cb_rt->rt_raw_reply = true;
 	cb_rt->rt_rc = io_network_get_global();
 
 	*out_rt = cb_rt;
@@ -169,6 +170,7 @@ struct cb_pending *cb_pending_alloc(struct task *task,
 		return NULL;
 
 	cp->cp_task = task;
+	atomic_store_explicit(&cp->cp_refs, 1, memory_order_relaxed);
 	cp->cp_compound = compound;
 	cp->cp_op = op;
 	atomic_store_explicit(&cp->cp_status, CB_PENDING_INFLIGHT,
@@ -181,9 +183,17 @@ void cb_pending_free(struct cb_pending *cp)
 {
 	if (!cp)
 		return;
+	if (atomic_fetch_sub_explicit(&cp->cp_refs, 1, memory_order_acq_rel) !=
+	    1)
+		return;
 
 	xdr_free((xdrproc_t)xdr_CB_COMPOUND4res, (caddr_t)&cp->cp_res);
 	free(cp);
+}
+
+void cb_pending_get(struct cb_pending *cp)
+{
+	atomic_fetch_add_explicit(&cp->cp_refs, 1, memory_order_relaxed);
 }
 
 /* ------------------------------------------------------------------ */
@@ -217,7 +227,8 @@ int cb_reply_handler(struct rpc_trans *rt)
 	 */
 	int status = -EIO;
 
-	if (rt->rt_offset < rt->rt_body_len) {
+	if (rt->rt_info.ri_accept_stat == SUCCESS &&
+	    rt->rt_offset < rt->rt_body_len) {
 		XDR xdrs;
 		size_t remaining = rt->rt_body_len - rt->rt_offset;
 
@@ -227,6 +238,8 @@ int cb_reply_handler(struct rpc_trans *rt)
 			status = 0;
 		xdr_destroy(&xdrs);
 	}
+	TRACE("CB reply xid=0x%08x decode=%d compound=%u op=%u",
+	      rt->rt_info.ri_xid, status, cp->cp_res.status, cp->cp_op);
 
 	/* Remove from timeout tracking. */
 	cb_timeout_unregister(cp);
@@ -238,6 +251,7 @@ int cb_reply_handler(struct rpc_trans *rt)
 	 */
 	if (cb_pending_try_complete(cp, status))
 		task_resume(cp->cp_task);
+	cb_pending_free(cp); /* transport ref */
 	return 0;
 }
 
@@ -533,6 +547,7 @@ int nfs4_cb_getattr_send(struct nfs4_session *session, const nfs_fh4 *fh,
 
 	/* Set up for reply matching. */
 	cb_rt->rt_context = cp;
+	cb_pending_get(cp);
 	cb_rt->rt_cb = cb_reply_handler;
 
 	ret = io_register_request(cb_rt);
@@ -540,6 +555,7 @@ int nfs4_cb_getattr_send(struct nfs4_session *session, const nfs_fh4 *fh,
 		/* cp is owned by the caller's cb_pending_alloc, not cb_rt;
 		 * clear rt_context so rpc_trans_release doesn't touch it. */
 		cb_rt->rt_context = NULL;
+		cb_pending_free(cp);
 		rpc_protocol_free(cb_rt);
 		return ret;
 	}
@@ -555,6 +571,7 @@ int nfs4_cb_getattr_send(struct nfs4_session *session, const nfs_fh4 *fh,
 		io_unregister_request(xid);
 		cb_timeout_unregister(cp);
 		cb_rt->rt_context = NULL;
+		cb_pending_free(cp);
 		rpc_protocol_free(cb_rt);
 		return ret;
 	}
@@ -622,11 +639,13 @@ int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
 	cp->cp_xid = xid;
 
 	cb_rt->rt_context = cp;
+	cb_pending_get(cp);
 	cb_rt->rt_cb = cb_reply_handler;
 
 	ret = io_register_request(cb_rt);
 	if (ret) {
 		cb_rt->rt_context = NULL;
+		cb_pending_free(cp);
 		rpc_protocol_free(cb_rt);
 		return ret;
 	}
@@ -638,6 +657,7 @@ int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
 		io_unregister_request(xid);
 		cb_timeout_unregister(cp);
 		cb_rt->rt_context = NULL;
+		cb_pending_free(cp);
 		rpc_protocol_free(cb_rt);
 		return ret;
 	}

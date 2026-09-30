@@ -7,6 +7,8 @@
 #define _REFFS_NFS4_CB_H
 
 #include <stdatomic.h>
+#include <stdbool.h>
+#include <limits.h>
 #include <stdint.h>
 
 #include "nfsv42_xdr.h"
@@ -35,8 +37,10 @@ struct rpc_trans;
  *   -EIO                 -- reply arrived but XDR decode failed
  */
 #define CB_PENDING_INFLIGHT (-EINPROGRESS)
+#define CB_PENDING_RETRY_READY (INT_MIN + 1)
 
 struct cb_pending {
+	_Atomic uint32_t cp_refs;
 	struct task *cp_task; /* paused compound's task */
 	struct compound *cp_compound; /* paused compound */
 	nfs_cb_opnum4 cp_op; /* which CB (CB_GETATTR, etc.) */
@@ -48,6 +52,9 @@ struct cb_pending {
 	struct cb_pending *cp_next;
 	struct cb_pending *cp_prev;
 	uint64_t cp_deadline_ns; /* CLOCK_MONOTONIC deadline */
+	uint64_t cp_hard_deadline_ns; /* optional caller's earlier deadline */
+	bool cp_retry_wait;
+	uint32_t cp_retry_count;
 	uint32_t (*cp_resume_action)(struct compound *compound);
 	struct inode *cp_barrier_inode;
 };
@@ -56,6 +63,7 @@ struct cb_pending *cb_pending_alloc(struct task *task,
 				    struct compound *compound,
 				    nfs_cb_opnum4 op);
 void cb_pending_free(struct cb_pending *cp);
+void cb_pending_get(struct cb_pending *cp);
 
 /*
  * cb_pending_try_complete -- atomically transition cp_status from
@@ -189,5 +197,6 @@ int cb_timeout_init(void);
 void cb_timeout_fini(void);
 void cb_timeout_register(struct cb_pending *cp);
 void cb_timeout_unregister(struct cb_pending *cp);
+void cb_retry_register(struct cb_pending *cp, uint64_t delay_ns);
 
 #endif /* _REFFS_NFS4_CB_H */

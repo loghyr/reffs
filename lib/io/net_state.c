@@ -93,6 +93,24 @@ struct rpc_trans *io_find_request_by_xid(uint32_t xid)
 	return rt;
 }
 
+/* Remove and transfer the pending request's creator ref to the caller. */
+struct rpc_trans *io_take_request_by_xid(uint32_t xid)
+{
+	struct rpc_trans *rt = NULL;
+
+	pthread_mutex_lock(&request_mutex);
+	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
+		if (pending_requests[i] &&
+		    pending_requests[i]->rt_info.ri_xid == xid) {
+			rt = pending_requests[i];
+			pending_requests[i] = NULL;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&request_mutex);
+	return rt;
+}
+
 int io_unregister_request(uint32_t xid)
 {
 	TRACE("xid=0x%08x", xid);

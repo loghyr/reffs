@@ -1089,14 +1089,13 @@ int rpc_process_task(struct task *t)
 		TRACE("fd=%d xid=0x%08x", rt->rt_fd, rt->rt_info.ri_xid);
 
 		struct rpc_trans *rt_old =
-			io_find_request_by_xid(rt->rt_info.ri_xid);
+			io_take_request_by_xid(rt->rt_info.ri_xid);
 		if (!rt_old)
 			goto drop_on_floor;
-
-		io_unregister_request(rt->rt_info.ri_xid);
 		rt->rt_rc = rt_old->rt_rc;
 		rt->rt_cb = rt_old->rt_cb;
 		rt->rt_compound = rt_old->rt_compound;
+		rt->rt_raw_reply = rt_old->rt_raw_reply;
 
 		/*
 		 * Transfer the protocol-handler context (ph_args, ph_res,
@@ -1110,12 +1109,39 @@ int rpc_process_task(struct task *t)
 		rt_old->rt_context = NULL;
 
 		/*
-		 * rt_old is now a shell.  Drop the find-ref
-		 * io_find_request_by_xid took (#31) and then the creator-
-		 * ref: the second put triggers rpc_trans_release.
+		 * io_take_request_by_xid transferred the pending request's
+		 * creator ref.  Its context belongs to this inbound reply now.
 		 */
 		rpc_protocol_free(rt_old);
-		rpc_protocol_free(rt_old);
+
+		if (rt->rt_raw_reply) {
+			uint32_t reply_stat, verf_len, accept_stat;
+
+			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
+			p = rpc_decode_uint32_t(rt, p, &reply_stat);
+			if (!p || reply_stat != 0)
+				goto raw_reply_done;
+			p = rpc_decode_uint32_t(
+				rt, p, &rt->rt_info.ri_verifier_flavor);
+			if (p)
+				p = rpc_decode_uint32_t(rt, p, &verf_len);
+			if (!p || verf_len > rt->rt_body_len - rt->rt_offset)
+				goto raw_reply_done;
+			size_t padded = ((size_t)verf_len + 3) & ~3UL;
+
+			if (padded > rt->rt_body_len - rt->rt_offset)
+				goto raw_reply_done;
+			p = (uint32_t *)((char *)p + padded);
+			rt->rt_offset += padded;
+			p = rpc_decode_uint32_t(rt, p, &accept_stat);
+			if (p)
+				rt->rt_info.ri_accept_stat = accept_stat;
+raw_reply_done:
+			if (rt->rt_cb)
+				rt->rt_cb(rt);
+			rpc_protocol_free(rt);
+			return 0;
+		}
 
 		/*
 		 * Decode the rest of the RPC reply header and the

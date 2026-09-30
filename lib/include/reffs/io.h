@@ -328,6 +328,7 @@ int io_rpc_trans_cb(struct rpc_trans *rt);
 
 int io_register_request(struct rpc_trans *rt);
 struct rpc_trans *io_find_request_by_xid(uint32_t xid);
+struct rpc_trans *io_take_request_by_xid(uint32_t xid);
 int io_unregister_request(uint32_t xid);
 
 int io_send_request(struct rpc_trans *rt);

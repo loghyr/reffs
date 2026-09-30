@@ -53,6 +53,7 @@
 #include <stdatomic.h>
 #include <string.h>
 #include <unistd.h>
+#include <arpa/inet.h>
 
 #include <urcu.h>
 #include <urcu/rculfhash.h>
@@ -62,8 +63,10 @@
 
 #include "nfsv42_xdr.h"
 #include "reffs/rpc.h"
+#include "reffs/io.h"
 #include "reffs/server.h"
 #include "reffs/task.h"
+#include "reffs/time.h"
 #include "reffs/inode.h"
 #include "reffs/super_block.h"
 #include "reffs/filehandle.h"
@@ -73,12 +76,14 @@
 #include "nfs4/attr.h"
 #include "nfs4/stateid.h"
 #include "nfs4/client.h"
+#include "nfs4/cb.h"
 #include "nfs4/client_persist.h"
 #include "nfs4_test_harness.h"
 
 #include "reffs/dstore.h"
 #include "reffs/ffv2_prototype.h"
 #include "reffs/fixed_inventory.h"
+#include "reffs/fixed_layout.h"
 #include "reffs/layout_segment.h"
 #include "dstore_mock.h"
 
@@ -1748,6 +1753,316 @@ static void fixed_layoutget_response_free(LAYOUTGET4res *res)
 	ok->logr_layout.logr_layout_len = 0;
 }
 
+struct recall_thread_arg {
+	struct inode *inode;
+	stateid4 stateid;
+	bool advanced;
+};
+
+static void *fixed_recall_thread(void *opaque)
+{
+	struct recall_thread_arg *arg = opaque;
+
+	pthread_mutex_lock(&arg->inode->i_layout_sync_mutex);
+	arg->advanced = nfs4_fixed_layout_recall_advance_locked(arg->inode,
+								&arg->stateid);
+	pthread_mutex_unlock(&arg->inode->i_layout_sync_mutex);
+	return NULL;
+}
+
+START_TEST(test_fixed_recall_uses_authoritative_layout_seqid)
+{
+	struct rg_ctx *ctx = fixed_layoutget_context(65536);
+	LAYOUTGET4res *res;
+	stateid4 grant;
+	uint32_t seqid, id, type, cookie;
+	struct recall_thread_arg first = { .inode = inode_a };
+	struct recall_thread_arg second = { .inode = inode_a };
+	pthread_t first_thread, second_thread;
+
+	ck_assert_uint_eq(nfs4_op_layoutget(ctx->compound), 0);
+	res = &ctx->compound->c_res->resarray.resarray_val[0]
+		       .nfs_resop4_u.oplayoutget;
+	ck_assert_int_eq(res->logr_status, NFS4_OK);
+	grant = res->LAYOUTGET4res_u.logr_resok4.logr_stateid;
+	ck_assert_uint_eq(grant.seqid, 1);
+	ck_assert_uint_eq(inode_a->i_layout_barrier.stateid_seqid, 1);
+
+	unpack_stateid4(&grant, &seqid, &id, &type, &cookie);
+	struct stateid *stid = stateid_find(inode_a, id);
+
+	ck_assert_ptr_nonnull(stid);
+	ck_assert_int_eq(pthread_create(&first_thread, NULL,
+					fixed_recall_thread, &first),
+			 0);
+	ck_assert_int_eq(pthread_create(&second_thread, NULL,
+					fixed_recall_thread, &second),
+			 0);
+	ck_assert_int_eq(pthread_join(first_thread, NULL), 0);
+	ck_assert_int_eq(pthread_join(second_thread, NULL), 0);
+	ck_assert(first.advanced);
+	ck_assert(second.advanced);
+	ck_assert_uint_eq(first.stateid.seqid, 2);
+	ck_assert_uint_eq(second.stateid.seqid, first.stateid.seqid);
+	ck_assert_int_eq(memcmp(first.stateid.other, grant.other,
+				sizeof(grant.other)),
+			 0);
+	ck_assert_uint_eq(stid->s_seqid, first.stateid.seqid);
+	ck_assert_uint_eq(inode_a->i_layout_barrier.stateid_seqid, 1);
+	ck_assert_uint_eq(inode_a->i_layout_barrier.recall_seqid, 2);
+	stateid_put(stid);
+	fixed_layoutget_response_free(res);
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+START_TEST(test_fixed_recall_skips_zero_after_wrap)
+{
+	struct rg_ctx *ctx = fixed_layoutget_context(65536);
+	LAYOUTGET4res *res;
+	stateid4 grant, recall;
+	uint32_t seqid, id, type, cookie;
+
+	ck_assert_uint_eq(nfs4_op_layoutget(ctx->compound), 0);
+	res = &ctx->compound->c_res->resarray.resarray_val[0]
+		       .nfs_resop4_u.oplayoutget;
+	ck_assert_int_eq(res->logr_status, NFS4_OK);
+	grant = res->LAYOUTGET4res_u.logr_resok4.logr_stateid;
+	unpack_stateid4(&grant, &seqid, &id, &type, &cookie);
+	struct stateid *stid = stateid_find(inode_a, id);
+
+	ck_assert_ptr_nonnull(stid);
+	pthread_mutex_lock(&inode_a->i_layout_sync_mutex);
+	stid->s_seqid = UINT32_MAX;
+	ck_assert(nfs4_fixed_layout_recall_advance_locked(inode_a, &recall));
+	pthread_mutex_unlock(&inode_a->i_layout_sync_mutex);
+	ck_assert_uint_eq(recall.seqid, 1);
+	ck_assert_uint_eq(stid->s_seqid, 1);
+	stateid_put(stid);
+	fixed_layoutget_response_free(res);
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+START_TEST(test_fixed_recall_advances_after_intervening_read_grant)
+{
+	struct rg_ctx *write_ctx = fixed_layoutget_context(65536);
+	struct rg_ctx *read_ctx;
+	LAYOUTGET4res *write_res, *read_res;
+	stateid4 grant, recall;
+
+	ck_assert_uint_eq(nfs4_op_layoutget(write_ctx->compound), 0);
+	write_res = &write_ctx->compound->c_res->resarray.resarray_val[0]
+			     .nfs_resop4_u.oplayoutget;
+	ck_assert_int_eq(write_res->logr_status, NFS4_OK);
+	grant = write_res->LAYOUTGET4res_u.logr_resok4.logr_stateid;
+	read_ctx = fixed_layoutget_context(65536);
+	LAYOUTGET4args *read_args =
+		&read_ctx->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.oplayoutget;
+
+	read_args->loga_iomode = LAYOUTIOMODE4_READ;
+	read_args->loga_stateid = grant;
+	ck_assert_uint_eq(nfs4_op_layoutget(read_ctx->compound), 0);
+	read_res = &read_ctx->compound->c_res->resarray.resarray_val[0]
+			    .nfs_resop4_u.oplayoutget;
+	ck_assert_int_eq(read_res->logr_status, NFS4_OK);
+	ck_assert_uint_eq(
+		read_res->LAYOUTGET4res_u.logr_resok4.logr_stateid.seqid,
+		grant.seqid + 1);
+	pthread_mutex_lock(&inode_a->i_layout_sync_mutex);
+	ck_assert(nfs4_fixed_layout_recall_advance_locked(inode_a, &recall));
+	pthread_mutex_unlock(&inode_a->i_layout_sync_mutex);
+	ck_assert_uint_eq(recall.seqid, grant.seqid + 2);
+	ck_assert_uint_eq(inode_a->i_layout_barrier.stateid_seqid, grant.seqid);
+	ck_assert_uint_eq(inode_a->i_layout_barrier.latest_grant_seqid,
+			  grant.seqid + 1);
+	fixed_layoutget_response_free(read_res);
+	fixed_layoutget_response_free(write_res);
+	free_rg_ctx(read_ctx);
+	free_rg_ctx(write_ctx);
+}
+END_TEST
+
+static uint32_t fixed_recall_test_resume(struct compound *compound
+					 __attribute__((unused)))
+{
+	return 0;
+}
+
+START_TEST(test_fixed_old_stateid_reply_fences_metadata)
+{
+	struct rg_ctx *ctx = fixed_layoutget_context(65536);
+	LAYOUTGET4res *res;
+	stateid4 recall;
+	char packet[256] = { 0 };
+	uint32_t *header = (uint32_t *)packet;
+	CB_COMPOUND4res old_reply = { .status = NFS4ERR_OLD_STATEID };
+	XDR xdr;
+	struct task task = { 0 };
+	struct cb_pending *cp;
+	struct rpc_trans *out;
+	struct rpc_trans resume = { 0 };
+	nfsstat4 status = NFS4_OK;
+
+	ck_assert_uint_eq(nfs4_op_layoutget(ctx->compound), 0);
+	res = &ctx->compound->c_res->resarray.resarray_val[0]
+		       .nfs_resop4_u.oplayoutget;
+	ck_assert_int_eq(res->logr_status, NFS4_OK);
+	pthread_mutex_lock(&inode_a->i_layout_sync_mutex);
+	ck_assert(nfs4_fixed_layout_recall_advance_locked(inode_a, &recall));
+	inode_a->i_layout_barrier.recall_in_flight = true;
+	inode_a->i_layout_barrier.deadline_ns =
+		reffs_now_ns() + 30ULL * 1000000000ULL;
+	pthread_mutex_unlock(&inode_a->i_layout_sync_mutex);
+
+	cp = cb_pending_alloc(&task, ctx->compound, OP_CB_LAYOUTRECALL);
+	out = rpc_trans_create();
+	ck_assert_ptr_nonnull(cp);
+	ck_assert_ptr_nonnull(out);
+	cp->cp_barrier_inode = inode_a;
+	cp->cp_resume_action = fixed_recall_test_resume;
+	cp->cp_xid = 0x10000001;
+	inode_active_get(inode_a);
+	free(out->rt_context);
+	out->rt_context = cp;
+	cb_pending_get(cp);
+	out->rt_raw_reply = true;
+	out->rt_cb = cb_reply_handler;
+	out->rt_info.ri_xid = cp->cp_xid;
+	ck_assert_int_eq(io_register_request(out), 0);
+	header[0] = htonl(cp->cp_xid);
+	header[1] = htonl(1);
+	header[2] = htonl(0);
+	header[3] = htonl(0);
+	header[4] = htonl(0);
+	header[5] = htonl(0);
+	xdrmem_create(&xdr, packet + 24, sizeof(packet) - 24, XDR_ENCODE);
+	ck_assert(xdr_CB_COMPOUND4res(&xdr, &old_reply));
+	task.t_buffer = packet;
+	task.t_bytes_read = (int)(24 + xdr_getpos(&xdr));
+	xdr_destroy(&xdr);
+	ck_assert_int_eq(rpc_process_task(&task), 0);
+	ck_assert_int_eq(atomic_load(&cp->cp_status), 0);
+	ck_assert_int_eq(cp->cp_res.status, NFS4ERR_OLD_STATEID);
+	resume.rt_compound = ctx->compound;
+	resume.rt_async_data = cp;
+	ck_assert_uint_eq(nfs4_layout_barrier_resume(&resume), 0);
+	ck_assert(inode_a->i_layout_barrier.fenced);
+	ck_assert(!inode_a->i_layout_barrier.recall_in_flight);
+	ck_assert_uint_eq(nfs4_layout_metadata_barrier(ctx->compound, &status,
+						       nfs4_op_getattr),
+			  0);
+	ck_assert_int_eq(status, NFS4ERR_IO);
+	fixed_layoutget_response_free(res);
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+START_TEST(test_fixed_recall_accepts_inflight_commit_and_matching_return)
+{
+	struct rg_ctx *grant_ctx = fixed_layoutget_context(65536);
+	struct rg_ctx *commit_ctx, *return_ctx;
+	LAYOUTGET4res *grant_res;
+	LAYOUTCOMMIT4args *commit_args;
+	LAYOUTCOMMIT4res *commit_res;
+	LAYOUTRETURN4args *return_args;
+	LAYOUTRETURN4res *return_res;
+	stateid4 grant, recall;
+	uint32_t empty_body[2] = { 0, 0 };
+	struct cb_pending *pending;
+
+	ck_assert_uint_eq(nfs4_op_layoutget(grant_ctx->compound), 0);
+	grant_res = &grant_ctx->compound->c_res->resarray.resarray_val[0]
+			     .nfs_resop4_u.oplayoutget;
+	ck_assert_int_eq(grant_res->logr_status, NFS4_OK);
+	grant = grant_res->LAYOUTGET4res_u.logr_resok4.logr_stateid;
+	pthread_mutex_lock(&inode_a->i_layout_sync_mutex);
+	ck_assert(nfs4_fixed_layout_recall_advance_locked(inode_a, &recall));
+	inode_a->i_layout_barrier.recall_in_flight = true;
+	inode_a->i_layout_barrier.deadline_ns =
+		reffs_now_ns() + 30ULL * 1000000000ULL;
+	pthread_mutex_unlock(&inode_a->i_layout_sync_mutex);
+	pending = cb_pending_alloc(&grant_ctx->task, grant_ctx->compound,
+				   OP_CB_LAYOUTRECALL);
+	ck_assert_ptr_nonnull(pending);
+	pending->cp_barrier_inode = inode_a;
+	pending->cp_resume_action = fixed_recall_test_resume;
+	pending->cp_res.status = NFS4ERR_DELAY;
+	pending->cp_retry_count = 3;
+	atomic_store(&pending->cp_status, 0);
+	inode_active_get(inode_a);
+	grant_ctx->rt.rt_async_data = pending;
+	ck_assert_uint_eq(nfs4_layout_barrier_resume(&grant_ctx->rt),
+			  NFS4_OP_FLAG_ASYNC);
+	ck_assert_uint_eq(pending->cp_retry_count, 4);
+	ck_assert(pending->cp_retry_wait);
+	ck_assert_uint_eq(atomic_load(&grant_ctx->task.t_state), TASK_PAUSED);
+
+	commit_ctx = make_op_ctx(inode_a, 1);
+	commit_ctx->compound->c_nfs4_client = g_nc;
+	commit_ctx->compound->c_args->argarray.argarray_val[0].argop =
+		OP_LAYOUTCOMMIT;
+	commit_args = &commit_ctx->compound->c_args->argarray.argarray_val[0]
+			       .nfs_argop4_u.oplayoutcommit;
+	commit_res = &commit_ctx->compound->c_res->resarray.resarray_val[0]
+			      .nfs_resop4_u.oplayoutcommit;
+	commit_args->loca_stateid = recall;
+	commit_args->loca_stateid.seqid++;
+	commit_args->loca_last_write_offset.no_newoffset = true;
+	commit_args->loca_last_write_offset.newoffset4_u.no_offset = 4095;
+	ck_assert_uint_eq(nfs4_op_layoutcommit(commit_ctx->compound), 0);
+	ck_assert_int_eq(commit_res->locr_status, NFS4ERR_BAD_STATEID);
+	ck_assert(!inode_a->i_layout_barrier.commit_seen);
+	commit_args->loca_stateid = grant;
+	commit_res->locr_status = NFS4_OK;
+	ck_assert_uint_eq(nfs4_op_layoutcommit(commit_ctx->compound), 0);
+	ck_assert_int_eq(commit_res->locr_status, NFS4_OK);
+	ck_assert_uint_eq(inode_a->i_size, 4096);
+	ck_assert(inode_a->i_layout_barrier.commit_seen);
+	ck_assert(inode_a->i_layout_barrier.uncertain);
+
+	return_ctx = make_op_ctx(inode_a, 1);
+	return_ctx->compound->c_nfs4_client = g_nc;
+	return_ctx->compound->c_args->argarray.argarray_val[0].argop =
+		OP_LAYOUTRETURN;
+	return_args = &return_ctx->compound->c_args->argarray.argarray_val[0]
+			       .nfs_argop4_u.oplayoutreturn;
+	return_res = &return_ctx->compound->c_res->resarray.resarray_val[0]
+			      .nfs_resop4_u.oplayoutreturn;
+	return_args->lora_layout_type = LAYOUT4_FLEX_FILES_V2;
+	return_args->lora_iomode = LAYOUTIOMODE4_RW;
+	return_args->lora_layoutreturn.lr_returntype = LAYOUTRETURN4_FILE;
+	layoutreturn_file4 *file =
+		&return_args->lora_layoutreturn.layoutreturn4_u.lr_layout;
+
+	file->lrf_stateid = grant;
+	file->lrf_body.lrf_body_len = sizeof(empty_body);
+	file->lrf_body.lrf_body_val = (char *)empty_body;
+	ck_assert_uint_eq(nfs4_op_layoutreturn(return_ctx->compound), 0);
+	ck_assert_int_eq(return_res->lorr_status, NFS4ERR_BAD_STATEID);
+	ck_assert(!inode_a->i_layout_barrier.return_seen);
+	file->lrf_stateid = recall;
+	return_res->lorr_status = NFS4_OK;
+	ck_assert_uint_eq(nfs4_op_layoutreturn(return_ctx->compound), 0);
+	ck_assert_int_eq(return_res->lorr_status, NFS4_OK);
+	ck_assert(inode_a->i_layout_barrier.return_seen);
+	ck_assert(!inode_a->i_layout_barrier.uncertain);
+	ck_assert_int_eq(fixed_dm->dm_ds->ds_fixed_inventory->metadata_state,
+			 FFV2_METADATA_CLEAN);
+	/* The return wins while retry is scheduled; no second CB is sent. */
+	cb_timeout_unregister(pending);
+	atomic_store(&pending->cp_status, CB_PENDING_RETRY_READY);
+	atomic_store(&grant_ctx->task.t_state, TASK_RUNNING);
+	ck_assert_uint_eq(nfs4_layout_barrier_resume(&grant_ctx->rt), 0);
+	ck_assert(!inode_a->i_layout_barrier.fenced);
+	fixed_layoutget_response_free(grant_res);
+	free_rg_ctx(return_ctx);
+	free_rg_ctx(commit_ctx);
+	free_rg_ctx(grant_ctx);
+}
+END_TEST
+
 START_TEST(test_fixed_layoutget_separates_clientid_namespaces)
 {
 	struct rg_ctx *ctx = fixed_layoutget_context(65536);
@@ -2377,6 +2692,16 @@ Suite *reflected_getattr_suite(void)
 		       test_fixed_layoutget_failures_publish_no_rw_state);
 	tcase_add_test(tc_g_fixed,
 		       test_fixed_layoutget_stateid_failure_publishes_no_mode);
+	tcase_add_test(tc_g_fixed,
+		       test_fixed_recall_uses_authoritative_layout_seqid);
+	tcase_add_test(tc_g_fixed, test_fixed_recall_skips_zero_after_wrap);
+	tcase_add_test(tc_g_fixed,
+		       test_fixed_recall_advances_after_intervening_read_grant);
+	tcase_add_test(tc_g_fixed,
+		       test_fixed_old_stateid_reply_fences_metadata);
+	tcase_add_test(
+		tc_g_fixed,
+		test_fixed_recall_accepts_inflight_commit_and_matching_return);
 	suite_add_tcase(s, tc_g_fixed);
 
 	/* Group H: LAYOUTCOMMIT (Option B). */
