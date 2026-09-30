@@ -110,6 +110,7 @@ struct rpc_trans {
 	char *rt_reply; // The raw RPC payload
 	size_t rt_reply_len; // The length of the payload
 	void *rt_context; // Protocol specific context
+	bool rt_raw_reply; /* callback owns reply XDR, not protocol_handler */
 	struct ring_context *rt_rc;
 	int (*rt_cb)(struct rpc_trans *rt); // Callback function pointer
 	struct rpc_program_handler *rt_rph;

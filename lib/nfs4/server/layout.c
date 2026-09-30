@@ -388,12 +388,82 @@ static void fixed_layout_retire(struct inode *inode)
 }
 
 static bool
-fixed_barrier_stateid_equal(const struct ffv2_layout_barrier *barrier,
-			    const stateid4 *stateid)
+fixed_barrier_stateid_other_equal(const struct ffv2_layout_barrier *barrier,
+				  const stateid4 *stateid)
 {
-	return barrier->stateid_seqid == stateid->seqid &&
-	       !memcmp(barrier->stateid_other, stateid->other,
-		       sizeof(barrier->stateid_other));
+	return stateid->seqid && !memcmp(barrier->stateid_other, stateid->other,
+					 sizeof(barrier->stateid_other));
+}
+
+static bool
+fixed_barrier_commit_stateid_equal(const struct ffv2_layout_barrier *barrier,
+				   const stateid4 *stateid)
+{
+	return fixed_barrier_stateid_other_equal(barrier, stateid) &&
+	       (stateid->seqid == barrier->stateid_seqid ||
+		stateid->seqid == barrier->latest_grant_seqid ||
+		(barrier->recall_sent &&
+		 stateid->seqid == barrier->recall_seqid));
+}
+
+static bool
+fixed_barrier_return_stateid_equal(const struct ffv2_layout_barrier *barrier,
+				   const stateid4 *stateid)
+{
+	return fixed_barrier_stateid_other_equal(barrier, stateid) &&
+	       stateid->seqid == (barrier->recall_sent ?
+					  barrier->recall_seqid :
+					  barrier->latest_grant_seqid);
+}
+
+static uint32_t fixed_layout_next_seqid(uint32_t seqid)
+{
+	seqid++;
+	return seqid ? seqid : 1;
+}
+
+/* Called with i_layout_sync_mutex.  The lookup ref pins the stateid. */
+bool nfs4_fixed_layout_recall_advance_locked(struct inode *inode,
+					     stateid4 *stateid)
+{
+	struct ffv2_layout_barrier *barrier = &inode->i_layout_barrier;
+	stateid4 saved = { .seqid = barrier->stateid_seqid };
+	uint32_t seqid, id, type, cookie;
+
+	if (!barrier->active || !barrier->uncertain)
+		return false;
+	if (barrier->recall_sent) {
+		stateid->seqid = barrier->recall_seqid;
+		memcpy(stateid->other, barrier->stateid_other,
+		       sizeof(stateid->other));
+		return true;
+	}
+	memcpy(saved.other, barrier->stateid_other, sizeof(saved.other));
+	unpack_stateid4(&saved, &seqid, &id, &type, &cookie);
+	if (type != Layout_Stateid)
+		return false;
+	struct stateid *stid = stateid_find(inode, id);
+
+	if (!stid)
+		return false;
+	bool valid = stid->s_tag == Layout_Stateid &&
+		     stid->s_cookie == cookie && stid->s_client &&
+		     stid->s_client->c_id == barrier->clientid;
+
+	if (valid) {
+		uint32_t current =
+			__atomic_load_n(&stid->s_seqid, __ATOMIC_RELAXED);
+
+		barrier->recall_seqid = fixed_layout_next_seqid(current);
+		__atomic_store_n(&stid->s_seqid, barrier->recall_seqid,
+				 __ATOMIC_RELAXED);
+		barrier->recall_sent = true;
+		stateid->seqid = barrier->recall_seqid;
+		memcpy(stateid->other, barrier->stateid_other,
+		       sizeof(stateid->other));
+	}
+	stateid_put(stid);
+	return valid;
 }
 
 static bool
@@ -436,10 +506,13 @@ int nfs4_fixed_layout_barrier_begin(struct inode *inode, clientid4 clientid,
 	barrier->return_seen = false;
 	barrier->recall_in_flight = false;
 	barrier->recall_acked = false;
+	barrier->recall_sent = false;
 	barrier->fenced = false;
 	barrier->deadline_ns = 0;
 	barrier->clientid = clientid;
 	barrier->stateid_seqid = stateid->seqid;
+	barrier->latest_grant_seqid = stateid->seqid;
+	barrier->recall_seqid = 0;
 	memcpy(barrier->stateid_other, stateid->other,
 	       sizeof(barrier->stateid_other));
 	memcpy(barrier->sessionid, sessionid, sizeof(barrier->sessionid));
@@ -453,7 +526,7 @@ out:
 	return ret;
 }
 
-static uint32_t nfs4_layout_barrier_resume(struct rpc_trans *rt)
+uint32_t nfs4_layout_barrier_resume(struct rpc_trans *rt)
 {
 	struct compound *compound = rt->rt_compound;
 	struct cb_pending *cp = rt->rt_async_data;
@@ -462,17 +535,92 @@ static uint32_t nfs4_layout_barrier_resume(struct rpc_trans *rt)
 		cp->cp_resume_action;
 	int cb_status =
 		atomic_load_explicit(&cp->cp_status, memory_order_acquire);
+	bool retry_ready = cb_status == CB_PENDING_RETRY_READY;
+	bool callback_delay = cb_status == 0 &&
+			      cp->cp_res.status == NFS4ERR_DELAY;
 	bool failed = cb_status != 0 || cp->cp_res.status != NFS4_OK;
+	stateid4 stateid;
+	sessionid4 sessionid;
+	bool completed, expired;
+	uint64_t delay_ns = 0;
 
-	rt->rt_async_data = NULL;
 	pthread_mutex_lock(&inode->i_layout_sync_mutex);
-	if (failed) {
-		inode->i_layout_barrier.fenced = true;
-		inode->i_layout_barrier.recall_in_flight = false;
+	struct ffv2_layout_barrier *barrier = &inode->i_layout_barrier;
+
+	completed = barrier->commit_seen && barrier->return_seen;
+	expired = reffs_now_ns() >= barrier->deadline_ns;
+	if ((retry_ready || callback_delay) && !completed && !barrier->fenced &&
+	    !expired) {
+		if (callback_delay) {
+			uint32_t shift =
+				cp->cp_retry_count < 3 ? cp->cp_retry_count : 3;
+
+			delay_ns = 500000000ULL << shift;
+			cp->cp_retry_count++;
+		} else {
+			stateid.seqid = barrier->recall_seqid;
+			memcpy(stateid.other, barrier->stateid_other,
+			       sizeof(stateid.other));
+			memcpy(sessionid, barrier->sessionid,
+			       sizeof(sessionid));
+		}
+		pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+		if (callback_delay) {
+			xdr_free((xdrproc_t)xdr_CB_COMPOUND4res,
+				 (caddr_t)&cp->cp_res);
+			memset(&cp->cp_res, 0, sizeof(cp->cp_res));
+			task_pause(rt->rt_task);
+			cb_retry_register(cp, delay_ns);
+			return NFS4_OP_FLAG_ASYNC;
+		}
+		struct nfs4_session *session =
+			nfs4_session_find(compound->c_server_state, sessionid);
+
+		if (session) {
+			struct network_file_handle callback_handle = {
+				.nfh_ino = inode->i_ino,
+				.nfh_sb = inode->i_sb->sb_id,
+			};
+			nfs_fh4 callback_fh = {
+				.nfs_fh4_len = sizeof(callback_handle),
+				.nfs_fh4_val = (char *)&callback_handle,
+			};
+
+			atomic_store_explicit(&cp->cp_status,
+					      CB_PENDING_INFLIGHT,
+					      memory_order_release);
+			task_pause(rt->rt_task);
+			int ret = nfs4_cb_layoutrecall_send(
+				session, LAYOUT4_FLEX_FILES_V2,
+				LAYOUTIOMODE4_RW, true, &callback_fh, 0,
+				NFS4_UINT64_MAX, &stateid, cp);
+
+			nfs4_session_put(session);
+			if (ret) {
+				atomic_store_explicit(&cp->cp_status, -ret,
+						      memory_order_release);
+				task_resume(cp->cp_task);
+			}
+			return NFS4_OP_FLAG_ASYNC;
+		}
+		failed = true;
+		pthread_mutex_lock(&inode->i_layout_sync_mutex);
+	}
+	if (!completed && (failed || expired || barrier->fenced)) {
+		barrier->fenced = true;
+		barrier->recall_in_flight = false;
+		failed = true;
+	} else if (!completed) {
+		barrier->recall_acked = true;
+		failed = false;
 	} else {
-		inode->i_layout_barrier.recall_acked = true;
+		failed = false;
 	}
 	pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+	TRACE("fixed recall resume xid=0x%08x decode=%d compound=%u "
+	      "completed=%d fenced=%d",
+	      cp->cp_xid, cb_status, cp->cp_res.status, completed, failed);
+	rt->rt_async_data = NULL;
 	cp->cp_barrier_inode = NULL;
 	cb_pending_free(cp);
 	if (failed)
@@ -491,6 +639,7 @@ uint32_t nfs4_layout_metadata_barrier_inode(
 	stateid4 stateid;
 	sessionid4 sessionid;
 	uint64_t now = reffs_now_ns();
+	uint64_t deadline_ns;
 
 	if (!inode)
 		return 0;
@@ -520,11 +669,16 @@ uint32_t nfs4_layout_metadata_barrier_inode(
 		*status = NFS4ERR_DELAY;
 		return 0;
 	}
+	if (!nfs4_fixed_layout_recall_advance_locked(inode, &stateid)) {
+		barrier->fenced = true;
+		pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+		fixed_layout_retire(inode);
+		*status = NFS4ERR_IO;
+		return 0;
+	}
 	barrier->recall_in_flight = true;
 	barrier->deadline_ns = now + 30ULL * 1000000000ULL;
-	stateid.seqid = barrier->stateid_seqid;
-	memcpy(stateid.other, barrier->stateid_other,
-	       sizeof(barrier->stateid_other));
+	deadline_ns = barrier->deadline_ns;
 	memcpy(sessionid, barrier->sessionid, sizeof(sessionid));
 	pthread_mutex_unlock(&inode->i_layout_sync_mutex);
 
@@ -547,6 +701,7 @@ uint32_t nfs4_layout_metadata_barrier_inode(
 	}
 	cp->cp_resume_action = resume_action;
 	cp->cp_barrier_inode = inode;
+	cp->cp_hard_deadline_ns = deadline_ns;
 	inode_active_get(inode);
 	struct network_file_handle callback_handle = {
 		.nfh_ino = inode->i_ino,
@@ -2665,11 +2820,36 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	 * monotonic, the client's cached stateid is untouched by a failed
 	 * LAYOUTGET, and the paths in between are allocation failures.
 	 */
-	__atomic_add_fetch(&ls->ls_stid.s_seqid, 1, __ATOMIC_RELAXED);
+	if (fixed_assignment == 1) {
+		pthread_mutex_lock(&compound->c_inode->i_layout_sync_mutex);
+		struct ffv2_layout_barrier *barrier =
+			&compound->c_inode->i_layout_barrier;
+
+		if (barrier->recall_in_flight) {
+			*status = barrier->recall_acked ?
+					  NFS4ERR_RETURNCONFLICT :
+					  NFS4ERR_RECALLCONFLICT;
+			pthread_mutex_unlock(
+				&compound->c_inode->i_layout_sync_mutex);
+			migration_release_view(&view);
+			goto out_stateid;
+		}
+	}
+	if (fixed_assignment == 1) {
+		uint32_t next_seqid = fixed_layout_next_seqid(__atomic_load_n(
+			&ls->ls_stid.s_seqid, __ATOMIC_RELAXED));
+
+		__atomic_store_n(&ls->ls_stid.s_seqid, next_seqid,
+				 __ATOMIC_RELAXED);
+	} else {
+		__atomic_add_fetch(&ls->ls_stid.s_seqid, 1, __ATOMIC_RELAXED);
+	}
 
 	stateid4 layout_stid;
 
 	pack_stateid4(&layout_stid, &ls->ls_stid);
+	if (fixed_assignment == 1)
+		pthread_mutex_unlock(&compound->c_inode->i_layout_sync_mutex);
 
 	/*
 	 * Build the layout body.  Dispatch based on what the client
@@ -2791,6 +2971,17 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	}
 
 	/* The response and any fixed-layout barrier now describe a real grant. */
+	if (fixed_assignment == 1 && args->loga_iomode == LAYOUTIOMODE4_READ) {
+		pthread_mutex_lock(&compound->c_inode->i_layout_sync_mutex);
+		struct ffv2_layout_barrier *barrier =
+			&compound->c_inode->i_layout_barrier;
+
+		if (barrier->active && barrier->uncertain &&
+		    !memcmp(barrier->stateid_other, layout_stid.other,
+			    sizeof(barrier->stateid_other)))
+			barrier->latest_grant_seqid = layout_stid.seqid;
+		pthread_mutex_unlock(&compound->c_inode->i_layout_sync_mutex);
+	}
 	__atomic_or_fetch(&ls->ls_state, mode_bit, __ATOMIC_RELEASE);
 
 	/*
@@ -2952,7 +3143,7 @@ static bool fixed_layoutcommit(struct compound *compound,
 		goto out;
 	handled = true;
 	if (!fixed_record_owner_equal(record, inode) || !barrier->uncertain ||
-	    !fixed_barrier_stateid_equal(barrier, &args->loca_stateid) ||
+	    !fixed_barrier_commit_stateid_equal(barrier, &args->loca_stateid) ||
 	    !compound->c_nfs4_client ||
 	    barrier->clientid != compound->c_nfs4_client->nc_client.c_id) {
 		res->locr_status = NFS4ERR_BAD_STATEID;
@@ -3562,8 +3753,8 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 		if (barrier->active) {
 			fixed_write_return = true;
 			if (!barrier->uncertain ||
-			    !fixed_barrier_stateid_equal(barrier,
-							 &lrf->lrf_stateid) ||
+			    !fixed_barrier_return_stateid_equal(
+				    barrier, &lrf->lrf_stateid) ||
 			    !fixed_record_owner_equal(record,
 						      compound->c_inode)) {
 				pthread_mutex_unlock(

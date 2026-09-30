@@ -30,6 +30,7 @@ struct ffv2_layout_barrier {
 	bool return_seen;
 	bool recall_in_flight;
 	bool recall_acked;
+	bool recall_sent;
 	bool fenced;
 	uint64_t dirty_epoch;
 	uint64_t commit_epoch;
@@ -37,6 +38,8 @@ struct ffv2_layout_barrier {
 	uint64_t deadline_ns;
 	uint64_t clientid;
 	uint32_t stateid_seqid;
+	uint32_t latest_grant_seqid;
+	uint32_t recall_seqid;
 	uint8_t stateid_other[12];
 	uint8_t sessionid[16];
 };

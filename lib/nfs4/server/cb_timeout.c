@@ -30,6 +30,7 @@
 #include "nfsv42_xdr.h"
 #include "reffs/log.h"
 #include "reffs/io.h"
+#include "reffs/rpc.h"
 #include "reffs/task.h"
 #include "nfs4/cb.h"
 
@@ -37,7 +38,7 @@
 #define CB_TIMEOUT_SEC 90
 
 /* Scan interval: 5 seconds. */
-#define CB_SCAN_INTERVAL_SEC 5
+#define CB_SCAN_INTERVAL_SEC 1
 
 /* ------------------------------------------------------------------ */
 /* Global state                                                        */
@@ -69,6 +70,10 @@ void cb_timeout_register(struct cb_pending *cp)
 {
 	cp->cp_deadline_ns =
 		now_ns() + (uint64_t)CB_TIMEOUT_SEC * 1000000000ULL;
+	if (cp->cp_hard_deadline_ns &&
+	    cp->cp_deadline_ns > cp->cp_hard_deadline_ns)
+		cp->cp_deadline_ns = cp->cp_hard_deadline_ns;
+	cp->cp_retry_wait = false;
 
 	pthread_mutex_lock(&cb_timeout_mutex);
 	/* Insert at tail (before sentinel). */
@@ -76,6 +81,23 @@ void cb_timeout_register(struct cb_pending *cp)
 	cp->cp_next = &cb_timeout_head;
 	cb_timeout_head.cp_prev->cp_next = cp;
 	cb_timeout_head.cp_prev = cp;
+	pthread_mutex_unlock(&cb_timeout_mutex);
+}
+
+void cb_retry_register(struct cb_pending *cp, uint64_t delay_ns)
+{
+	uint64_t due = now_ns() + delay_ns;
+
+	if (cp->cp_hard_deadline_ns && due > cp->cp_hard_deadline_ns)
+		due = cp->cp_hard_deadline_ns;
+	cp->cp_deadline_ns = due;
+	cp->cp_retry_wait = true;
+	pthread_mutex_lock(&cb_timeout_mutex);
+	cp->cp_prev = cb_timeout_head.cp_prev;
+	cp->cp_next = &cb_timeout_head;
+	cb_timeout_head.cp_prev->cp_next = cp;
+	cb_timeout_head.cp_prev = cp;
+	pthread_cond_signal(&cb_timeout_cv);
 	pthread_mutex_unlock(&cb_timeout_mutex);
 }
 
@@ -130,15 +152,29 @@ static void *cb_timeout_thread_fn(void *arg __attribute__((unused)))
 				TRACE("CB timeout xid=0x%08x op=%u", cp->cp_xid,
 				      cp->cp_op);
 
-				/* Remove from RPC pending table. */
-				io_unregister_request(cp->cp_xid);
-
-				/*
-				 * CAS ensures only one of reply handler /
-				 * timeout calls task_resume.
-				 */
-				if (cb_pending_try_complete(cp, -ETIMEDOUT))
+				if (cp->cp_retry_wait) {
+					cp->cp_retry_wait = false;
+					atomic_store_explicit(
+						&cp->cp_status,
+						CB_PENDING_RETRY_READY,
+						memory_order_release);
 					task_resume(cp->cp_task);
+				} else {
+					/* Remove from RPC pending table. */
+					struct rpc_trans *out =
+						io_take_request_by_xid(
+							cp->cp_xid);
+
+					if (out) {
+						out->rt_context = NULL;
+						rpc_protocol_free(out);
+						if (cb_pending_try_complete(
+							    cp, -ETIMEDOUT))
+							task_resume(
+								cp->cp_task);
+						cb_pending_free(cp);
+					}
+				}
 			}
 
 			cp = next;
