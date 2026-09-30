@@ -55,10 +55,15 @@ struct cb_pending {
 	uint64_t cp_hard_deadline_ns; /* optional caller's earlier deadline */
 	bool cp_retry_wait;
 	uint32_t cp_retry_count;
+	/* A completion during submission waits until the sender releases rt. */
+	_Atomic int cp_submit_state;
 	/* Optional transport submission seam for deterministic callback tests. */
 	int (*cp_submit)(struct rpc_trans *rt);
 	uint32_t (*cp_resume_action)(struct compound *compound);
 	struct inode *cp_barrier_inode;
+	uint64_t cp_dirty_epoch;
+	clientid4 cp_recall_clientid;
+	stateid4 cp_recall_stateid;
 };
 
 struct cb_pending *cb_pending_alloc(struct task *task,
@@ -66,6 +71,7 @@ struct cb_pending *cb_pending_alloc(struct task *task,
 				    nfs_cb_opnum4 op);
 void cb_pending_free(struct cb_pending *cp);
 void cb_pending_get(struct cb_pending *cp);
+void cb_pending_resume(struct cb_pending *cp);
 
 /*
  * cb_pending_try_complete -- atomically transition cp_status from
@@ -199,6 +205,7 @@ int cb_timeout_init(void);
 void cb_timeout_fini(void);
 void cb_timeout_register(struct cb_pending *cp);
 void cb_timeout_unregister(struct cb_pending *cp);
+bool cb_timeout_expire(struct cb_pending *cp);
 void cb_retry_register(struct cb_pending *cp, uint64_t delay_ns);
 
 #endif /* _REFFS_NFS4_CB_H */

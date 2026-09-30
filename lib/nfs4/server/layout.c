@@ -535,6 +535,16 @@ out:
 	return ret;
 }
 
+static bool fixed_recall_matches(const struct ffv2_layout_barrier *barrier,
+				 const struct cb_pending *cp)
+{
+	return barrier->active && barrier->dirty_epoch == cp->cp_dirty_epoch &&
+	       barrier->clientid == cp->cp_recall_clientid &&
+	       barrier->recall_seqid == cp->cp_recall_stateid.seqid &&
+	       !memcmp(barrier->stateid_other, cp->cp_recall_stateid.other,
+		       sizeof(barrier->stateid_other));
+}
+
 uint32_t nfs4_layout_barrier_resume(struct rpc_trans *rt)
 {
 	struct compound *compound = rt->rt_compound;
@@ -556,8 +566,14 @@ uint32_t nfs4_layout_barrier_resume(struct rpc_trans *rt)
 	pthread_mutex_lock(&inode->i_layout_sync_mutex);
 	struct ffv2_layout_barrier *barrier = &inode->i_layout_barrier;
 
+	if (!fixed_recall_matches(barrier, cp)) {
+		failed = false;
+		pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+		goto done;
+	}
 	completed = barrier->commit_seen && barrier->return_seen;
-	expired = reffs_now_ns() >= barrier->deadline_ns;
+	expired = barrier->deadline_ns &&
+		  reffs_now_ns() >= barrier->deadline_ns;
 	if ((retry_ready || callback_delay) && !completed && !barrier->fenced &&
 	    !expired) {
 		if (callback_delay) {
@@ -612,13 +628,20 @@ uint32_t nfs4_layout_barrier_resume(struct rpc_trans *rt)
 			if (!ret)
 				return NFS4_OP_FLAG_ASYNC;
 			/* Submission failed: no callback owns the paused task. */
-			task_unpause(rt->rt_task);
+			if (!task_unpause(rt->rt_task))
+				return NFS4_OP_FLAG_ASYNC;
 			rt->rt_next_action = NULL;
 			atomic_store_explicit(&cp->cp_status, -ret,
 					      memory_order_release);
 			cb_status = -ret;
 			failed = true;
 			pthread_mutex_lock(&inode->i_layout_sync_mutex);
+			if (!fixed_recall_matches(barrier, cp)) {
+				failed = false;
+				pthread_mutex_unlock(
+					&inode->i_layout_sync_mutex);
+				goto done;
+			}
 			completed = barrier->commit_seen &&
 				    barrier->return_seen;
 		} else {
@@ -640,6 +663,7 @@ uint32_t nfs4_layout_barrier_resume(struct rpc_trans *rt)
 	TRACE("fixed recall resume xid=0x%08x decode=%d compound=%u "
 	      "completed=%d fenced=%d",
 	      cp->cp_xid, cb_status, cp->cp_res.status, completed, failed);
+done:
 	rt->rt_async_data = NULL;
 	cp->cp_barrier_inode = NULL;
 	cb_pending_free(cp);
@@ -699,6 +723,8 @@ uint32_t nfs4_layout_metadata_barrier_inode(
 	barrier->recall_in_flight = true;
 	barrier->deadline_ns = now + 30ULL * 1000000000ULL;
 	deadline_ns = barrier->deadline_ns;
+	uint64_t dirty_epoch = barrier->dirty_epoch;
+	clientid4 recall_clientid = barrier->clientid;
 	memcpy(sessionid, barrier->sessionid, sizeof(sessionid));
 	pthread_mutex_unlock(&inode->i_layout_sync_mutex);
 
@@ -722,6 +748,9 @@ uint32_t nfs4_layout_metadata_barrier_inode(
 	cp->cp_resume_action = resume_action;
 	cp->cp_barrier_inode = inode;
 	cp->cp_hard_deadline_ns = deadline_ns;
+	cp->cp_dirty_epoch = dirty_epoch;
+	cp->cp_recall_clientid = recall_clientid;
+	cp->cp_recall_stateid = stateid;
 	inode_active_get(inode);
 	struct network_file_handle callback_handle = {
 		.nfh_ino = inode->i_ino,

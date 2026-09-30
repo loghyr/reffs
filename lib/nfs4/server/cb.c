@@ -196,6 +196,31 @@ void cb_pending_get(struct cb_pending *cp)
 	atomic_fetch_add_explicit(&cp->cp_refs, 1, memory_order_relaxed);
 }
 
+/* Submission holds an rt ref; a completer must wait for its last deref. */
+void cb_pending_resume(struct cb_pending *cp)
+{
+	int state = atomic_load_explicit(&cp->cp_submit_state,
+					 memory_order_acquire);
+
+	while (state == 1) {
+		if (atomic_compare_exchange_weak_explicit(
+			    &cp->cp_submit_state, &state, 2,
+			    memory_order_acq_rel, memory_order_acquire))
+			return;
+	}
+	if (state == 0)
+		task_resume(cp->cp_task);
+}
+
+static void cb_submit_done(struct cb_pending *cp)
+{
+	int state = atomic_exchange_explicit(&cp->cp_submit_state, 0,
+					     memory_order_acq_rel);
+
+	if (state == 2)
+		task_resume(cp->cp_task);
+}
+
 /* ------------------------------------------------------------------ */
 /* CB reply handler                                                    */
 /*                                                                     */
@@ -250,7 +275,7 @@ int cb_reply_handler(struct rpc_trans *rt)
 	 * silently drop the late reply.
 	 */
 	if (cb_pending_try_complete(cp, status))
-		task_resume(cp->cp_task);
+		cb_pending_resume(cp);
 	cb_pending_free(cp); /* transport ref */
 	return 0;
 }
@@ -641,26 +666,36 @@ int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
 	cb_rt->rt_context = cp;
 	cb_pending_get(cp);
 	cb_rt->rt_cb = cb_reply_handler;
+	atomic_store_explicit(&cp->cp_submit_state, 1, memory_order_release);
+	rpc_trans_get(cb_rt); /* submitter ref before publication */
 
 	ret = io_register_request(cb_rt);
 	if (ret) {
 		cb_rt->rt_context = NULL;
 		cb_pending_free(cp);
 		rpc_protocol_free(cb_rt);
+		rpc_protocol_free(cb_rt);
 		return ret;
 	}
 
 	cb_timeout_register(cp);
 
+	/* Timeout/reply may take the pending-table ref during submission. */
 	ret = cp->cp_submit ? cp->cp_submit(cb_rt) : io_rpc_trans_cb(cb_rt);
 	if (ret) {
-		io_unregister_request(xid);
-		cb_timeout_unregister(cp);
-		cb_rt->rt_context = NULL;
-		cb_pending_free(cp);
-		rpc_protocol_free(cb_rt);
-		return ret;
-	}
+		struct rpc_trans *owned = io_take_request_by_xid(xid);
 
-	return 0;
+		if (owned) {
+			cb_timeout_unregister(cp);
+			owned->rt_context = NULL;
+			cb_pending_free(cp);
+			rpc_protocol_free(owned);
+		} else {
+			/* The reply or timeout owns completion. */
+			ret = 0;
+		}
+	}
+	rpc_protocol_free(cb_rt); /* submitter ref */
+	cb_submit_done(cp);
+	return ret;
 }

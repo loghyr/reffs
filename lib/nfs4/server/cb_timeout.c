@@ -113,6 +113,47 @@ void cb_timeout_unregister(struct cb_pending *cp)
 	pthread_mutex_unlock(&cb_timeout_mutex);
 }
 
+/* Caller holds cb_timeout_mutex.  The pending-table take selects the owner. */
+static bool cb_timeout_expire_locked(struct cb_pending *cp)
+{
+	if (!cp->cp_next)
+		return false;
+	cp->cp_prev->cp_next = cp->cp_next;
+	cp->cp_next->cp_prev = cp->cp_prev;
+	cp->cp_next = NULL;
+	cp->cp_prev = NULL;
+
+	TRACE("CB timeout xid=0x%08x op=%u", cp->cp_xid, cp->cp_op);
+	if (cp->cp_retry_wait) {
+		cp->cp_retry_wait = false;
+		atomic_store_explicit(&cp->cp_status, CB_PENDING_RETRY_READY,
+				      memory_order_release);
+		task_resume(cp->cp_task);
+	} else {
+		struct rpc_trans *out = io_take_request_by_xid(cp->cp_xid);
+
+		if (out) {
+			out->rt_context = NULL;
+			rpc_protocol_free(out);
+			if (cb_pending_try_complete(cp, -ETIMEDOUT))
+				cb_pending_resume(cp);
+			cb_pending_free(cp);
+		}
+	}
+	return true;
+}
+
+/* Also used by deterministic tests at the real submission seam. */
+bool cb_timeout_expire(struct cb_pending *cp)
+{
+	bool expired;
+
+	pthread_mutex_lock(&cb_timeout_mutex);
+	expired = cb_timeout_expire_locked(cp);
+	pthread_mutex_unlock(&cb_timeout_mutex);
+	return expired;
+}
+
 /* ------------------------------------------------------------------ */
 /* Timer thread                                                        */
 /* ------------------------------------------------------------------ */
@@ -143,38 +184,7 @@ static void *cb_timeout_thread_fn(void *arg __attribute__((unused)))
 			struct cb_pending *next = cp->cp_next;
 
 			if (now >= cp->cp_deadline_ns) {
-				/* Unlink from list. */
-				cp->cp_prev->cp_next = cp->cp_next;
-				cp->cp_next->cp_prev = cp->cp_prev;
-				cp->cp_next = NULL;
-				cp->cp_prev = NULL;
-
-				TRACE("CB timeout xid=0x%08x op=%u", cp->cp_xid,
-				      cp->cp_op);
-
-				if (cp->cp_retry_wait) {
-					cp->cp_retry_wait = false;
-					atomic_store_explicit(
-						&cp->cp_status,
-						CB_PENDING_RETRY_READY,
-						memory_order_release);
-					task_resume(cp->cp_task);
-				} else {
-					/* Remove from RPC pending table. */
-					struct rpc_trans *out =
-						io_take_request_by_xid(
-							cp->cp_xid);
-
-					if (out) {
-						out->rt_context = NULL;
-						rpc_protocol_free(out);
-						if (cb_pending_try_complete(
-							    cp, -ETIMEDOUT))
-							task_resume(
-								cp->cp_task);
-						cb_pending_free(cp);
-					}
-				}
+				cb_timeout_expire_locked(cp);
 			}
 
 			cp = next;

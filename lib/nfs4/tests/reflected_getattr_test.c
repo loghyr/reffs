@@ -1903,10 +1903,26 @@ START_TEST(test_fixed_read_grants_publish_in_serial_order)
 }
 END_TEST
 
+static unsigned fixed_recall_resume_count;
+
 static uint32_t fixed_recall_test_resume(struct compound *compound
 					 __attribute__((unused)))
 {
+	fixed_recall_resume_count++;
 	return 0;
+}
+
+static void fixed_recall_test_identity(struct cb_pending *cp)
+{
+	struct ffv2_layout_barrier *barrier = &inode_a->i_layout_barrier;
+
+	pthread_mutex_lock(&inode_a->i_layout_sync_mutex);
+	cp->cp_dirty_epoch = barrier->dirty_epoch;
+	cp->cp_recall_clientid = barrier->clientid;
+	cp->cp_recall_stateid.seqid = barrier->recall_seqid;
+	memcpy(cp->cp_recall_stateid.other, barrier->stateid_other,
+	       sizeof(barrier->stateid_other));
+	pthread_mutex_unlock(&inode_a->i_layout_sync_mutex);
 }
 
 START_TEST(test_fixed_old_stateid_reply_fences_metadata)
@@ -1940,6 +1956,7 @@ START_TEST(test_fixed_old_stateid_reply_fences_metadata)
 	ck_assert_ptr_nonnull(cp);
 	ck_assert_ptr_nonnull(out);
 	cp->cp_barrier_inode = inode_a;
+	fixed_recall_test_identity(cp);
 	cp->cp_resume_action = fixed_recall_test_resume;
 	cp->cp_xid = 0x10000001;
 	inode_active_get(inode_a);
@@ -2016,6 +2033,21 @@ static int fixed_retry_capture_send(struct rpc_trans *out)
 	return retry_capture.result;
 }
 
+static int fixed_retry_timeout_during_submit(struct rpc_trans *out)
+{
+	struct cb_pending *cp = out->rt_context;
+
+	ck_assert_int_eq(fixed_retry_capture_send(out), 0);
+	ck_assert(cb_timeout_expire(cp));
+	ck_assert_ptr_null(cp->cp_next);
+	ck_assert_ptr_null(io_take_request_by_xid(out->rt_info.ri_xid));
+	ck_assert_int_eq(atomic_load(&cp->cp_status), -ETIMEDOUT);
+	ck_assert_int_eq(atomic_load(&cp->cp_submit_state), 2);
+	ck_assert(task_is_paused(cp->cp_task));
+	ck_assert_uint_eq(atomic_load(&cp->cp_refs), 1);
+	return EIO;
+}
+
 static struct nfs4_session *fixed_retry_session(struct rg_ctx *ctx)
 {
 	channel_attrs4 channel = { .ca_maxoperations = 4, .ca_maxrequests = 1 };
@@ -2043,6 +2075,7 @@ static struct cb_pending *fixed_retry_pending(struct rg_ctx *ctx,
 	cp = cb_pending_alloc(&ctx->task, ctx->compound, OP_CB_LAYOUTRECALL);
 	ck_assert_ptr_nonnull(cp);
 	cp->cp_barrier_inode = inode_a;
+	fixed_recall_test_identity(cp);
 	cp->cp_resume_action = fixed_recall_test_resume;
 	cp->cp_hard_deadline_ns = inode_a->i_layout_barrier.deadline_ns;
 	cp->cp_submit = fixed_retry_capture_send;
@@ -2170,6 +2203,90 @@ START_TEST(test_fixed_recall_resend_failure_fences_through_dispatch)
 }
 END_TEST
 
+START_TEST(test_fixed_recall_timeout_owns_submit_failure)
+{
+	struct rg_ctx *ctx = fixed_layoutget_context(65536);
+	struct nfs4_session *session;
+	struct cb_pending *cp;
+	LAYOUTGET4res *grant;
+	stateid4 recall;
+	int64_t active;
+
+	ck_assert_uint_eq(nfs4_op_layoutget(ctx->compound), 0);
+	grant = &ctx->compound->c_res->resarray.resarray_val[0]
+			 .nfs_resop4_u.oplayoutget;
+	ck_assert_int_eq(grant->logr_status, NFS4_OK);
+	session = fixed_retry_session(ctx);
+	active = __atomic_load_n(&inode_a->i_active, __ATOMIC_RELAXED);
+	memset(&retry_capture, 0, sizeof(retry_capture));
+	cp = fixed_retry_pending(ctx, &recall);
+	cp->cp_submit = fixed_retry_timeout_during_submit;
+	ck_assert(dispatch_compound(ctx->compound));
+	fixed_retry_ready(ctx, cp);
+	ck_assert(dispatch_compound(ctx->compound));
+	ck_assert_uint_eq(retry_capture.calls, 1);
+	ck_assert_ptr_null(io_take_request_by_xid(retry_capture.xid));
+	ck_assert_int_eq(atomic_load(&cp->cp_status), -ETIMEDOUT);
+	ck_assert_uint_eq(atomic_load(&cp->cp_refs), 1);
+	ck_assert(!dispatch_compound(ctx->compound));
+	ck_assert_ptr_null(ctx->rt.rt_async_data);
+	ck_assert(inode_a->i_layout_barrier.fenced);
+	ck_assert_int_eq(__atomic_load_n(&inode_a->i_active, __ATOMIC_RELAXED),
+			 active);
+	nfs4_session_unhash(ctx->compound->c_server_state, session);
+	nfs4_session_put(session);
+	fixed_layoutget_response_free(grant);
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+START_TEST(test_fixed_recall_submit_error_owns_timeout_cleanup)
+{
+	struct rg_ctx *ctx = fixed_layoutget_context(65536);
+	struct nfs4_session *session;
+	struct cb_pending *cp;
+	LAYOUTGET4res *grant;
+	stateid4 recall;
+	struct network_file_handle callback_handle;
+	nfs_fh4 callback_fh;
+
+	ck_assert_uint_eq(nfs4_op_layoutget(ctx->compound), 0);
+	grant = &ctx->compound->c_res->resarray.resarray_val[0]
+			 .nfs_resop4_u.oplayoutget;
+	ck_assert_int_eq(grant->logr_status, NFS4_OK);
+	session = fixed_retry_session(ctx);
+	memset(&retry_capture, 0, sizeof(retry_capture));
+	retry_capture.result = EIO;
+	cp = fixed_retry_pending(ctx, &recall);
+	callback_handle.nfh_ino = inode_a->i_ino;
+	callback_handle.nfh_sb = inode_a->i_sb->sb_id;
+	callback_fh.nfs_fh4_len = sizeof(callback_handle);
+	callback_fh.nfs_fh4_val = (char *)&callback_handle;
+	task_pause(&ctx->task);
+	ck_assert_int_eq(
+		nfs4_cb_layoutrecall_send(session, LAYOUT4_FLEX_FILES_V2,
+					  LAYOUTIOMODE4_RW, true, &callback_fh,
+					  0, NFS4_UINT64_MAX, &recall, cp),
+		EIO);
+	ck_assert_uint_eq(retry_capture.calls, 1);
+	ck_assert_ptr_null(io_take_request_by_xid(retry_capture.xid));
+	ck_assert(!cb_timeout_expire(cp));
+	ck_assert_ptr_null(cp->cp_next);
+	ck_assert_uint_eq(atomic_load(&cp->cp_refs), 1);
+	ck_assert(task_is_paused(&ctx->task));
+	ck_assert(task_unpause(&ctx->task));
+	ctx->rt.rt_async_data = NULL;
+	ctx->rt.rt_next_action = NULL;
+	cp->cp_barrier_inode = NULL;
+	cb_pending_free(cp);
+	inode_active_put(inode_a);
+	nfs4_session_unhash(ctx->compound->c_server_state, session);
+	nfs4_session_put(session);
+	fixed_layoutget_response_free(grant);
+	free_rg_ctx(ctx);
+}
+END_TEST
+
 START_TEST(test_fixed_recall_deadline_fences_without_resend)
 {
 	struct rg_ctx *ctx = fixed_layoutget_context(65536);
@@ -2187,6 +2304,8 @@ START_TEST(test_fixed_recall_deadline_fences_without_resend)
 	cp = fixed_retry_pending(ctx, &recall);
 	ck_assert_uint_eq(atomic_load(&cp->cp_refs), 1);
 	inode_a->i_layout_barrier.deadline_ns = reffs_now_ns() - 1;
+	if (_i)
+		atomic_store(&cp->cp_status, CB_PENDING_RETRY_READY);
 	ck_assert(!dispatch_compound(ctx->compound));
 	ck_assert_uint_eq(retry_capture.calls, 0);
 	ck_assert_ptr_null(ctx->rt.rt_async_data);
@@ -2226,6 +2345,7 @@ START_TEST(test_fixed_recall_accepts_inflight_commit_and_matching_return)
 				   OP_CB_LAYOUTRECALL);
 	ck_assert_ptr_nonnull(pending);
 	pending->cp_barrier_inode = inode_a;
+	fixed_recall_test_identity(pending);
 	pending->cp_resume_action = fixed_recall_test_resume;
 	pending->cp_res.status = NFS4ERR_DELAY;
 	pending->cp_retry_count = 3;
@@ -2300,6 +2420,116 @@ START_TEST(test_fixed_recall_accepts_inflight_commit_and_matching_return)
 	free_rg_ctx(return_ctx);
 	free_rg_ctx(commit_ctx);
 	free_rg_ctx(grant_ctx);
+}
+END_TEST
+
+START_TEST(test_fixed_old_completion_does_not_change_new_grant)
+{
+	struct rg_ctx *ctx = fixed_layoutget_context(65536);
+	struct rg_ctx *commit_ctx, *return_ctx, *new_ctx;
+	LAYOUTGET4res *grant_res, *new_res;
+	LAYOUTCOMMIT4args *commit_args;
+	LAYOUTRETURN4args *return_args;
+	stateid4 grant, recall, new_recall;
+	struct cb_pending *pending;
+	uint32_t empty_body[2] = { 0, 0 };
+	uint64_t new_epoch;
+	int64_t active;
+	unsigned resumes = fixed_recall_resume_count;
+
+	ck_assert_uint_eq(nfs4_op_layoutget(ctx->compound), 0);
+	grant_res = &ctx->compound->c_res->resarray.resarray_val[0]
+			     .nfs_resop4_u.oplayoutget;
+	ck_assert_int_eq(grant_res->logr_status, NFS4_OK);
+	grant = grant_res->LAYOUTGET4res_u.logr_resok4.logr_stateid;
+	pending = fixed_retry_pending(ctx, &recall);
+	if (_i < 2) {
+		ck_assert(dispatch_compound(ctx->compound));
+		ck_assert(pending->cp_retry_wait);
+	}
+
+	commit_ctx = make_op_ctx(inode_a, 1);
+	commit_ctx->compound->c_nfs4_client = g_nc;
+	commit_ctx->compound->c_args->argarray.argarray_val[0].argop =
+		OP_LAYOUTCOMMIT;
+	commit_args = &commit_ctx->compound->c_args->argarray.argarray_val[0]
+			       .nfs_argop4_u.oplayoutcommit;
+	commit_args->loca_stateid = grant;
+	commit_args->loca_last_write_offset.no_newoffset = true;
+	ck_assert_uint_eq(nfs4_op_layoutcommit(commit_ctx->compound), 0);
+	ck_assert_int_eq(commit_ctx->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.oplayoutcommit.locr_status,
+			 NFS4_OK);
+
+	return_ctx = make_op_ctx(inode_a, 1);
+	return_ctx->compound->c_nfs4_client = g_nc;
+	return_ctx->compound->c_args->argarray.argarray_val[0].argop =
+		OP_LAYOUTRETURN;
+	return_args = &return_ctx->compound->c_args->argarray.argarray_val[0]
+			       .nfs_argop4_u.oplayoutreturn;
+	return_args->lora_layout_type = LAYOUT4_FLEX_FILES_V2;
+	return_args->lora_iomode = LAYOUTIOMODE4_RW;
+	return_args->lora_layoutreturn.lr_returntype = LAYOUTRETURN4_FILE;
+	layoutreturn_file4 *file =
+		&return_args->lora_layoutreturn.layoutreturn4_u.lr_layout;
+
+	file->lrf_stateid = recall;
+	file->lrf_body.lrf_body_len = sizeof(empty_body);
+	file->lrf_body.lrf_body_val = (char *)empty_body;
+	ck_assert_uint_eq(nfs4_op_layoutreturn(return_ctx->compound), 0);
+	ck_assert_int_eq(return_ctx->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.oplayoutreturn.lorr_status,
+			 NFS4_OK);
+	ck_assert(!inode_a->i_layout_barrier.uncertain);
+
+	new_ctx = fixed_layoutget_context(65536);
+	ck_assert_uint_eq(nfs4_op_layoutget(new_ctx->compound), 0);
+	new_res = &new_ctx->compound->c_res->resarray.resarray_val[0]
+			   .nfs_resop4_u.oplayoutget;
+	ck_assert_int_eq(new_res->logr_status, NFS4_OK);
+	new_epoch = inode_a->i_layout_barrier.dirty_epoch;
+	ck_assert_uint_ne(new_epoch, pending->cp_dirty_epoch);
+	if (_i) {
+		pthread_mutex_lock(&inode_a->i_layout_sync_mutex);
+		ck_assert(nfs4_fixed_layout_recall_advance_locked(inode_a,
+								  &new_recall));
+		inode_a->i_layout_barrier.recall_in_flight = true;
+		inode_a->i_layout_barrier.deadline_ns =
+			reffs_now_ns() + 30ULL * 1000000000ULL;
+		pthread_mutex_unlock(&inode_a->i_layout_sync_mutex);
+	} else {
+		ck_assert_uint_eq(inode_a->i_layout_barrier.deadline_ns, 0);
+	}
+	active = __atomic_load_n(&inode_a->i_active, __ATOMIC_RELAXED);
+	memset(&retry_capture, 0, sizeof(retry_capture));
+	if (_i < 2) {
+		fixed_retry_ready(ctx, pending);
+	} else {
+		pending->cp_res.status = _i == 2 ? NFS4_OK : NFS4ERR_IO;
+		atomic_store(&ctx->task.t_state, TASK_RUNNING);
+	}
+	ck_assert(!dispatch_compound(ctx->compound));
+	ck_assert_uint_eq(fixed_recall_resume_count, resumes + 1);
+	ck_assert_uint_eq(retry_capture.calls, 0);
+	ck_assert_uint_eq(inode_a->i_layout_barrier.dirty_epoch, new_epoch);
+	ck_assert(inode_a->i_layout_barrier.uncertain);
+	ck_assert(!inode_a->i_layout_barrier.fenced);
+	if (_i) {
+		ck_assert(inode_a->i_layout_barrier.recall_in_flight);
+		ck_assert_uint_eq(inode_a->i_layout_barrier.recall_seqid,
+				  new_recall.seqid);
+		ck_assert(!inode_a->i_layout_barrier.recall_acked);
+	}
+	ck_assert_int_eq(fixed_dm->dm_ds->ds_fixed_inventory->metadata_state,
+			 FFV2_METADATA_DIRTY);
+	ck_assert_int_eq(__atomic_load_n(&inode_a->i_active, __ATOMIC_RELAXED),
+			 active - 1);
+	fixed_layoutget_response_free(new_res);
+	fixed_layoutget_response_free(grant_res);
+	free_rg_ctx(new_ctx);
+	free_rg_ctx(return_ctx);
+	free_rg_ctx(commit_ctx);
+	free_rg_ctx(ctx);
 }
 END_TEST
 
@@ -2947,10 +3177,18 @@ Suite *reflected_getattr_suite(void)
 		tc_g_fixed,
 		test_fixed_recall_resend_failure_fences_through_dispatch);
 	tcase_add_test(tc_g_fixed,
-		       test_fixed_recall_deadline_fences_without_resend);
+		       test_fixed_recall_timeout_owns_submit_failure);
+	tcase_add_test(tc_g_fixed,
+		       test_fixed_recall_submit_error_owns_timeout_cleanup);
+	tcase_add_loop_test(tc_g_fixed,
+			    test_fixed_recall_deadline_fences_without_resend, 0,
+			    2);
 	tcase_add_test(
 		tc_g_fixed,
 		test_fixed_recall_accepts_inflight_commit_and_matching_return);
+	tcase_add_loop_test(tc_g_fixed,
+			    test_fixed_old_completion_does_not_change_new_grant,
+			    0, 4);
 	suite_add_tcase(s, tc_g_fixed);
 
 	/* Group H: LAYOUTCOMMIT (Option B). */
