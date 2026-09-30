@@ -55,6 +55,8 @@ struct cb_pending {
 	uint64_t cp_hard_deadline_ns; /* optional caller's earlier deadline */
 	bool cp_retry_wait;
 	uint32_t cp_retry_count;
+	/* Optional transport submission seam for deterministic callback tests. */
+	int (*cp_submit)(struct rpc_trans *rt);
 	uint32_t (*cp_resume_action)(struct compound *compound);
 	struct inode *cp_barrier_inode;
 };

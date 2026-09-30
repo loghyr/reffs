@@ -422,6 +422,15 @@ static uint32_t fixed_layout_next_seqid(uint32_t seqid)
 	return seqid ? seqid : 1;
 }
 
+/* Called with i_layout_sync_mutex after the grant body was built. */
+void nfs4_fixed_layout_grant_publish_locked(struct inode *inode, uint32_t seqid)
+{
+	struct ffv2_layout_barrier *barrier = &inode->i_layout_barrier;
+
+	if ((int32_t)(seqid - barrier->latest_grant_seqid) > 0)
+		barrier->latest_grant_seqid = seqid;
+}
+
 /* Called with i_layout_sync_mutex.  The lookup ref pins the stateid. */
 bool nfs4_fixed_layout_recall_advance_locked(struct inode *inode,
 					     stateid4 *stateid)
@@ -569,6 +578,8 @@ uint32_t nfs4_layout_barrier_resume(struct rpc_trans *rt)
 			xdr_free((xdrproc_t)xdr_CB_COMPOUND4res,
 				 (caddr_t)&cp->cp_res);
 			memset(&cp->cp_res, 0, sizeof(cp->cp_res));
+			rt->rt_next_action = nfs4_layout_barrier_resume;
+			rt->rt_async_data = cp;
 			task_pause(rt->rt_task);
 			cb_retry_register(cp, delay_ns);
 			return NFS4_OP_FLAG_ASYNC;
@@ -589,6 +600,8 @@ uint32_t nfs4_layout_barrier_resume(struct rpc_trans *rt)
 			atomic_store_explicit(&cp->cp_status,
 					      CB_PENDING_INFLIGHT,
 					      memory_order_release);
+			rt->rt_next_action = nfs4_layout_barrier_resume;
+			rt->rt_async_data = cp;
 			task_pause(rt->rt_task);
 			int ret = nfs4_cb_layoutrecall_send(
 				session, LAYOUT4_FLEX_FILES_V2,
@@ -596,15 +609,22 @@ uint32_t nfs4_layout_barrier_resume(struct rpc_trans *rt)
 				NFS4_UINT64_MAX, &stateid, cp);
 
 			nfs4_session_put(session);
-			if (ret) {
-				atomic_store_explicit(&cp->cp_status, -ret,
-						      memory_order_release);
-				task_resume(cp->cp_task);
-			}
-			return NFS4_OP_FLAG_ASYNC;
+			if (!ret)
+				return NFS4_OP_FLAG_ASYNC;
+			/* Submission failed: no callback owns the paused task. */
+			task_unpause(rt->rt_task);
+			rt->rt_next_action = NULL;
+			atomic_store_explicit(&cp->cp_status, -ret,
+					      memory_order_release);
+			cb_status = -ret;
+			failed = true;
+			pthread_mutex_lock(&inode->i_layout_sync_mutex);
+			completed = barrier->commit_seen &&
+				    barrier->return_seen;
+		} else {
+			failed = true;
+			pthread_mutex_lock(&inode->i_layout_sync_mutex);
 		}
-		failed = true;
-		pthread_mutex_lock(&inode->i_layout_sync_mutex);
 	}
 	if (!completed && (failed || expired || barrier->fenced)) {
 		barrier->fenced = true;
@@ -2814,11 +2834,10 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	 * registers the same value.  All three have to agree, so there
 	 * is only one place it can be computed.
 	 *
-	 * The cost is that a build failure after this point returns an
-	 * error having already consumed a seqid.  That is benign: the
-	 * layout stateid's seqid is server-controlled and need only be
-	 * monotonic, the client's cached stateid is untouched by a failed
-	 * LAYOUTGET, and the paths in between are allocation failures.
+	 * A build failure after this point consumes a seqid without publishing
+	 * a grant.  For a fixed layout this may make a later recall appear to
+	 * skip a sequence at the client.  The bounded retry then fences at its
+	 * deadline if the client continues to answer DELAY.
 	 */
 	if (fixed_assignment == 1) {
 		pthread_mutex_lock(&compound->c_inode->i_layout_sync_mutex);
@@ -2979,7 +2998,8 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		if (barrier->active && barrier->uncertain &&
 		    !memcmp(barrier->stateid_other, layout_stid.other,
 			    sizeof(barrier->stateid_other)))
-			barrier->latest_grant_seqid = layout_stid.seqid;
+			nfs4_fixed_layout_grant_publish_locked(
+				compound->c_inode, layout_stid.seqid);
 		pthread_mutex_unlock(&compound->c_inode->i_layout_sync_mutex);
 	}
 	__atomic_or_fetch(&ls->ls_state, mode_bit, __ATOMIC_RELEASE);

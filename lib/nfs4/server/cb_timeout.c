@@ -37,7 +37,7 @@
 /* Default timeout: 90 seconds. */
 #define CB_TIMEOUT_SEC 90
 
-/* Scan interval: 5 seconds. */
+/* Scan interval: one second; retry deadlines are checked at this cadence. */
 #define CB_SCAN_INTERVAL_SEC 1
 
 /* ------------------------------------------------------------------ */
@@ -210,7 +210,7 @@ void cb_timeout_fini(void)
 	 * our lock blocks until the thread has entered the wait -- and our
 	 * signal is then guaranteed to reach it.  Without the lock the
 	 * signal fires into the void and the thread sleeps for the full
-	 * CB_SCAN_INTERVAL_SEC (5 s), causing intermittent test timeouts.
+	 * CB_SCAN_INTERVAL_SEC, causing intermittent test timeouts.
 	 */
 	pthread_mutex_lock(&cb_timeout_mutex);
 	atomic_store_explicit(&cb_timeout_running, 0, memory_order_relaxed);

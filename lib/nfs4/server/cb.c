@@ -652,7 +652,7 @@ int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
 
 	cb_timeout_register(cp);
 
-	ret = io_rpc_trans_cb(cb_rt);
+	ret = cp->cp_submit ? cp->cp_submit(cb_rt) : io_rpc_trans_cb(cb_rt);
 	if (ret) {
 		io_unregister_request(xid);
 		cb_timeout_unregister(cp);

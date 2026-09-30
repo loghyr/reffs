@@ -26,6 +26,8 @@ void nfs4_layout_remove_unlock(struct inode *inode);
 /* Caller holds i_layout_sync_mutex; repeated calls retain recall identity. */
 bool nfs4_fixed_layout_recall_advance_locked(struct inode *inode,
 					     stateid4 *stateid);
+void nfs4_fixed_layout_grant_publish_locked(struct inode *inode,
+					    uint32_t seqid);
 uint32_t nfs4_layout_barrier_resume(struct rpc_trans *rt);
 
 #endif /* _REFFS_FIXED_LAYOUT_H */
