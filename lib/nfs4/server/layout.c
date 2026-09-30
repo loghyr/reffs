@@ -545,6 +545,9 @@ static bool fixed_recall_matches(const struct ffv2_layout_barrier *barrier,
 		       sizeof(barrier->stateid_other));
 }
 
+/* The test binary may replace an unlocked callback-session lookup boundary. */
+extern void nfs4_layout_lookup_test_hook(bool retry) __attribute__((weak));
+
 uint32_t nfs4_layout_barrier_resume(struct rpc_trans *rt)
 {
 	struct compound *compound = rt->rt_compound;
@@ -600,7 +603,11 @@ uint32_t nfs4_layout_barrier_resume(struct rpc_trans *rt)
 			cb_retry_register(cp, delay_ns);
 			return NFS4_OP_FLAG_ASYNC;
 		}
-		struct nfs4_session *session =
+		struct nfs4_session *session;
+
+		if (nfs4_layout_lookup_test_hook)
+			nfs4_layout_lookup_test_hook(true);
+		session =
 			nfs4_session_find(compound->c_server_state, sessionid);
 
 		if (session) {
@@ -647,6 +654,14 @@ uint32_t nfs4_layout_barrier_resume(struct rpc_trans *rt)
 		} else {
 			failed = true;
 			pthread_mutex_lock(&inode->i_layout_sync_mutex);
+			if (!fixed_recall_matches(barrier, cp)) {
+				failed = false;
+				pthread_mutex_unlock(
+					&inode->i_layout_sync_mutex);
+				goto done;
+			}
+			completed = barrier->commit_seen &&
+				    barrier->return_seen;
 		}
 	}
 	if (!completed && (failed || expired || barrier->fenced)) {
@@ -728,6 +743,8 @@ uint32_t nfs4_layout_metadata_barrier_inode(
 	memcpy(sessionid, barrier->sessionid, sizeof(sessionid));
 	pthread_mutex_unlock(&inode->i_layout_sync_mutex);
 
+	if (nfs4_layout_lookup_test_hook)
+		nfs4_layout_lookup_test_hook(false);
 	struct nfs4_session *session =
 		nfs4_session_find(compound->c_server_state, sessionid);
 	struct cb_pending *cp =
@@ -738,6 +755,15 @@ uint32_t nfs4_layout_metadata_barrier_inode(
 		if (session)
 			nfs4_session_put(session);
 		pthread_mutex_lock(&inode->i_layout_sync_mutex);
+		if (!barrier->active || barrier->dirty_epoch != dirty_epoch ||
+		    barrier->clientid != recall_clientid ||
+		    barrier->recall_seqid != stateid.seqid ||
+		    memcmp(barrier->stateid_other, stateid.other,
+			   sizeof(stateid.other))) {
+			pthread_mutex_unlock(&inode->i_layout_sync_mutex);
+			*status = NFS4ERR_DELAY;
+			return 0;
+		}
 		barrier->fenced = true;
 		barrier->recall_in_flight = false;
 		pthread_mutex_unlock(&inode->i_layout_sync_mutex);
