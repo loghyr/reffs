@@ -75,6 +75,8 @@ struct netlink_test_context {
 	const struct netlink_datagram *datagrams;
 	size_t datagram_count;
 	size_t next_datagram;
+	uint8_t commands[8];
+	size_t command_count;
 };
 
 static int netlink_test_open(void *context __attribute__((unused)))
@@ -91,14 +93,21 @@ static int netlink_test_bind(void *context __attribute__((unused)),
 	return 0;
 }
 
-static ssize_t netlink_test_send(void *context __attribute__((unused)),
-				 int fd __attribute__((unused)),
-				 const void *buffer __attribute__((unused)),
-				 size_t len,
+static ssize_t netlink_test_send(void *opaque, int fd __attribute__((unused)),
+				 const void *buffer, size_t len,
 				 const struct sockaddr *address
 				 __attribute__((unused)),
 				 socklen_t address_len __attribute__((unused)))
 {
+	struct netlink_test_context *context = opaque;
+	const struct nlmsghdr *message = buffer;
+	const struct genlmsghdr *generic;
+
+	ck_assert(len >= NLMSG_LENGTH(GENL_HDRLEN));
+	ck_assert_uint_eq(message->nlmsg_len, len);
+	ck_assert(context->command_count < sizeof(context->commands));
+	generic = NLMSG_DATA(message);
+	context->commands[context->command_count++] = generic->cmd;
 	return (ssize_t)len;
 }
 
@@ -181,6 +190,62 @@ static void build_family_reply(struct netlink_reply *reply, uint32_t seq,
 	message->nlmsg_type = NLMSG_ERROR;
 	message->nlmsg_seq = seq;
 	message->nlmsg_pid = portid;
+	ack = NLMSG_DATA(message);
+	ack->error = 0;
+	reply->len = offset + NLMSG_ALIGN(message->nlmsg_len);
+}
+
+static void build_ack_reply(struct netlink_reply *reply, uint32_t seq,
+			    int error)
+{
+	struct nlmsghdr *message;
+	struct nlmsgerr *ack;
+
+	memset(reply, 0, sizeof(*reply));
+	message = (struct nlmsghdr *)reply->bytes;
+	message->nlmsg_len = NLMSG_LENGTH(sizeof(*ack));
+	message->nlmsg_type = NLMSG_ERROR;
+	message->nlmsg_seq = seq;
+	ack = NLMSG_DATA(message);
+	ack->error = error;
+	reply->len = NLMSG_ALIGN(message->nlmsg_len);
+}
+
+static void build_challenge_reply(struct netlink_reply *reply, uint32_t seq,
+				  uint16_t family)
+{
+	struct nlmsghdr *message;
+	struct genlmsghdr *generic;
+	struct nlattr *attribute;
+	struct nlmsgerr *ack;
+	uint8_t nonce[32];
+	uint64_t expires = 10;
+	size_t offset;
+
+	memset(reply, 0, sizeof(*reply));
+	memset(nonce, 0x5a, sizeof(nonce));
+	message = (struct nlmsghdr *)reply->bytes;
+	message->nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
+	message->nlmsg_type = family;
+	message->nlmsg_seq = seq;
+	generic = NLMSG_DATA(message);
+	generic->version = 1;
+	offset = NLMSG_ALIGN(message->nlmsg_len);
+	attribute = (struct nlattr *)(reply->bytes + offset);
+	attribute->nla_type = A_NONCE;
+	attribute->nla_len = NLA_HDRLEN + sizeof(nonce);
+	memcpy((uint8_t *)attribute + NLA_HDRLEN, nonce, sizeof(nonce));
+	offset += NLA_ALIGN(attribute->nla_len);
+	attribute = (struct nlattr *)(reply->bytes + offset);
+	attribute->nla_type = A_EXPIRES;
+	attribute->nla_len = NLA_HDRLEN + sizeof(expires);
+	memcpy((uint8_t *)attribute + NLA_HDRLEN, &expires, sizeof(expires));
+	message->nlmsg_len = offset + NLA_ALIGN(attribute->nla_len);
+	offset = NLMSG_ALIGN(message->nlmsg_len);
+	message = (struct nlmsghdr *)(reply->bytes + offset);
+	message->nlmsg_len = NLMSG_LENGTH(sizeof(*ack));
+	message->nlmsg_type = NLMSG_ERROR;
+	message->nlmsg_seq = seq;
 	ack = NLMSG_DATA(message);
 	ack->error = 0;
 	reply->len = offset + NLMSG_ALIGN(message->nlmsg_len);
@@ -497,6 +562,8 @@ START_TEST(test_reply_rejects_bad_common_identity_and_extra_state)
 }
 END_TEST
 
+static void destroy_dstore(struct dstore *ds);
+
 static struct dstore *make_dstore(void)
 {
 	struct dstore *ds;
@@ -509,7 +576,72 @@ static struct dstore *make_dstore(void)
 	return ds;
 }
 
-static void destroy_dstore(struct dstore *ds);
+START_TEST(test_production_netlink_command_vector)
+{
+	struct netlink_reply replies[6], retire_replies[2];
+	struct netlink_datagram datagrams[6], retire_datagrams[2];
+	struct netlink_test_context context = {
+		.datagrams = datagrams,
+		.datagram_count = 6,
+	};
+	struct netlink_test_context retire_context = {
+		.datagrams = retire_datagrams,
+		.datagram_count = 2,
+	};
+	const struct ffv2_prototype_nl_io io = {
+		.context = &context,
+		.open = netlink_test_open,
+		.bind = netlink_test_bind,
+		.send = netlink_test_send,
+		.receive = netlink_test_receive,
+		.close = netlink_test_close,
+	};
+	struct ffv2_prototype_nl_io retire_io = io;
+	struct dstore *ds = make_dstore();
+#ifdef REFFS_FFV2_NFSD_REFRESHED
+	const uint8_t expected[] = { CTRL_CMD_GETFAMILY, 23, 22, 24, 25, 23 };
+	const uint8_t retire_expected[] = { CTRL_CMD_GETFAMILY, 23 };
+	const uint8_t reserved_unregister = 26;
+#else
+	const uint8_t expected[] = { CTRL_CMD_GETFAMILY, 22, 21, 23, 24, 22 };
+	const uint8_t retire_expected[] = { CTRL_CMD_GETFAMILY, 22 };
+	const uint8_t reserved_unregister = 25;
+#endif
+
+	build_family_reply(&replies[0], 1, 164, GENL_ID_CTRL, 55);
+	build_ack_reply(&replies[1], 2, 0);
+	build_ack_reply(&replies[2], 3, 0);
+	build_challenge_reply(&replies[3], 4, 55);
+	build_ack_reply(&replies[4], 5, -EIO);
+	build_ack_reply(&replies[5], 6, 0);
+	for (size_t i = 0; i < 6; i++)
+		datagrams[i] = family_datagram(&replies[i], 0);
+	ck_assert_int_eq(ffv2_prototype_register_nl_test(ds, &io), -EIO);
+	ck_assert_uint_eq(context.next_datagram, 6);
+	ck_assert_uint_eq(context.command_count, sizeof(expected));
+	ck_assert_int_eq(memcmp(context.commands, expected, sizeof(expected)),
+			 0);
+
+	build_family_reply(&retire_replies[0], 1, 164, GENL_ID_CTRL, 55);
+	build_ack_reply(&retire_replies[1], 2, 0);
+	for (size_t i = 0; i < 2; i++)
+		retire_datagrams[i] = family_datagram(&retire_replies[i], 0);
+	retire_io.context = &retire_context;
+	ck_assert_int_eq(ffv2_prototype_retire_nl_test(ds, &retire_io), 0);
+	ck_assert_uint_eq(retire_context.next_datagram, 2);
+	ck_assert_uint_eq(retire_context.command_count,
+			  sizeof(retire_expected));
+	ck_assert_int_eq(memcmp(retire_context.commands, retire_expected,
+				sizeof(retire_expected)),
+			 0);
+	for (size_t i = 0; i < context.command_count; i++)
+		ck_assert_uint_ne(context.commands[i], reserved_unregister);
+	for (size_t i = 0; i < retire_context.command_count; i++)
+		ck_assert_uint_ne(retire_context.commands[i],
+				  reserved_unregister);
+	destroy_dstore(ds);
+}
+END_TEST
 
 static struct ffv2_prototype_snapshot *make_snapshot(uint64_t generation,
 						     uint8_t base)
@@ -1437,6 +1569,7 @@ static Suite *prototype_suite(void)
 	tcase_add_test(
 		test,
 		test_request_preserves_order_and_secret_is_not_snapshot_state);
+	tcase_add_test(test, test_production_netlink_command_vector);
 	tcase_add_test(
 		test,
 		test_nl_open_accepts_kernel_reply_with_requester_header_portid);

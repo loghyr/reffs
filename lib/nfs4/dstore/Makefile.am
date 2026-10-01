@@ -4,6 +4,7 @@
 SUBDIRS = tests
 
 AM_CFLAGS = -I$(top_srcdir)/lib/include \
+	$(FFV2_NFSD_UAPI_CPPFLAGS) \
 	-I$(top_srcdir)/lib/nfs4/include \
 	-I$(top_srcdir)/lib/nfs4/client \
 	$(TIRPC_CFLAGS) \

@@ -21,6 +21,13 @@ struct ffv2_prototype_nl_io {
 	int (*close)(void *context, int fd);
 };
 
+struct dstore;
+
+int ffv2_prototype_register_nl_test(struct dstore *ds,
+				    const struct ffv2_prototype_nl_io *io);
+int ffv2_prototype_retire_nl_test(struct dstore *ds,
+				  const struct ffv2_prototype_nl_io *io);
+
 /* Direct receive-boundary seam for the generic-netlink envelope tests. */
 int ffv2_prototype_nl_open_test(const struct ffv2_prototype_nl_io *io,
 				uint16_t *family);

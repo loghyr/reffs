@@ -29,6 +29,58 @@ AC_PROG_AWK
 AC_USE_SYSTEM_EXTENSIONS
 m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
 
+# The default keeps the accepted prototype's command namespace. The refreshed
+# prototype requires an explicit target kernel UAPI include directory.
+AC_ARG_WITH([ffv2-nfsd-uapi],
+    [AS_HELP_STRING([--with-ffv2-nfsd-uapi=DIR],
+                    [pair FFv2 prototype netlink with DIR/linux/nfsd_netlink.h])],
+    [ffv2_nfsd_uapi_dir="$withval"],
+    [ffv2_nfsd_uapi_dir=legacy])
+FFV2_NFSD_UAPI_CPPFLAGS=
+AS_IF([test "x$ffv2_nfsd_uapi_dir" = xlegacy],
+    [AC_MSG_NOTICE([FFv2 nfsd prototype profile: legacy accepted DS])],
+    [AS_IF([test "x$ffv2_nfsd_uapi_dir" = xyes ||
+            test "x$ffv2_nfsd_uapi_dir" = xno ||
+            test ! -f "$ffv2_nfsd_uapi_dir/linux/nfsd_netlink.h"],
+           [AC_MSG_ERROR([--with-ffv2-nfsd-uapi requires a target UAPI include directory])])
+     ffv2_nfsd_uapi_dir=`cd "$ffv2_nfsd_uapi_dir" && pwd -P`
+     AS_CASE([$ffv2_nfsd_uapi_dir], [*\ *],
+             [AC_MSG_ERROR([FFv2 nfsd UAPI path cannot contain spaces])])
+     mkdir -p ffv2-nfsd-uapi/linux ||
+         AC_MSG_ERROR([cannot create FFv2 nfsd UAPI build directory])
+     cp "$ffv2_nfsd_uapi_dir/linux/nfsd_netlink.h" \
+         ffv2-nfsd-uapi/linux/nfsd_netlink.h ||
+         AC_MSG_ERROR([cannot copy the selected FFv2 nfsd UAPI header])
+     FFV2_NFSD_UAPI_CPPFLAGS="-I`pwd -P`/ffv2-nfsd-uapi"
+     reffs_saved_CPPFLAGS="$CPPFLAGS"
+     CPPFLAGS="$FFV2_NFSD_UAPI_CPPFLAGS $CPPFLAGS"
+     AC_MSG_CHECKING([for the refreshed FFv2 nfsd command namespace])
+     AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
+         [[#include <linux/nfsd_netlink.h>]],
+         [[_Static_assert(NFSD_CMD_FFV2_PROTOTYPE_ENABLE == 22, "enable");
+           _Static_assert(NFSD_CMD_FFV2_PROTOTYPE_DISABLE == 23, "disable");
+           _Static_assert(NFSD_CMD_FFV2_PROTOTYPE_CHALLENGE == 24, "challenge");
+           _Static_assert(NFSD_CMD_FFV2_PROTOTYPE_REGISTER == 25, "register");
+           _Static_assert(NFSD_CMD_FFV2_PROTOTYPE_UNREGISTER == 26, "unregister");]])],
+         [AC_MSG_RESULT([yes])],
+         [AC_MSG_RESULT([no])
+          AC_MSG_ERROR([target nfsd UAPI is incompatible with the refreshed FFv2 prototype])])
+     AC_PATH_PROG([FFV2_SHA256SUM], [sha256sum])
+     AS_IF([test -z "$FFV2_SHA256SUM"],
+           [AC_MSG_ERROR([sha256sum is required for the refreshed FFv2 nfsd profile])])
+     ffv2_nfsd_uapi_sha=`$FFV2_SHA256SUM ffv2-nfsd-uapi/linux/nfsd_netlink.h | cut -c1-64`
+     AC_MSG_CHECKING([for the exact refreshed nfsd UAPI header])
+     AS_IF([test "x$ffv2_nfsd_uapi_sha" = \
+           x4f406424a7cfb8de34ee5f8c3e3b0a4725eb824594c2bdb68d5ea625d5c909e7],
+           [AC_MSG_RESULT([yes])],
+           [AC_MSG_RESULT([no])
+            AC_MSG_ERROR([target nfsd UAPI header differs from the paired refreshed DS])])
+     CPPFLAGS="$reffs_saved_CPPFLAGS"
+     AC_DEFINE([REFFS_FFV2_NFSD_REFRESHED], [1],
+               [Build against the explicitly selected refreshed nfsd UAPI])
+     AC_MSG_NOTICE([FFv2 nfsd prototype profile: refreshed $ffv2_nfsd_uapi_dir])])
+AC_SUBST([FFV2_NFSD_UAPI_CPPFLAGS])
+
 # Per-host adjustments for BSDs and Darwin (macOS).  FreeBSD installs
 # ports under /usr/local; Darwin installs Homebrew under
 # /opt/homebrew (Apple Silicon) or /usr/local (Intel).  Neither is on

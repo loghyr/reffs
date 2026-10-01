@@ -30,13 +30,34 @@
 #define FFV2_NFSD_FAMILY_NAME "nfsd"
 #define FFV2_NFSD_FAMILY_VERSION 1
 
-/* Pinned to the accepted nfsd UAPI at bf7385226fd5. */
+#ifdef REFFS_FFV2_NFSD_REFRESHED
+#include <linux/nfsd_netlink.h>
+
+_Static_assert(NFSD_FAMILY_VERSION == FFV2_NFSD_FAMILY_VERSION,
+	       "nfsd family version changed");
+_Static_assert(NFSD_CMD_FFV2_PROTOTYPE_ENABLE == 22, "enable command changed");
+_Static_assert(NFSD_CMD_FFV2_PROTOTYPE_DISABLE == 23,
+	       "disable command changed");
+_Static_assert(NFSD_CMD_FFV2_PROTOTYPE_CHALLENGE == 24,
+	       "challenge command changed");
+_Static_assert(NFSD_CMD_FFV2_PROTOTYPE_REGISTER == 25,
+	       "register command changed");
+_Static_assert(NFSD_CMD_FFV2_PROTOTYPE_UNREGISTER == 26,
+	       "unregister command changed");
+
+#define FFV2_NFSD_CMD_PROTOTYPE_ENABLE NFSD_CMD_FFV2_PROTOTYPE_ENABLE
+#define FFV2_NFSD_CMD_PROTOTYPE_DISABLE NFSD_CMD_FFV2_PROTOTYPE_DISABLE
+#define FFV2_NFSD_CMD_PROTOTYPE_CHALLENGE NFSD_CMD_FFV2_PROTOTYPE_CHALLENGE
+#define FFV2_NFSD_CMD_PROTOTYPE_REGISTER NFSD_CMD_FFV2_PROTOTYPE_REGISTER
+#else
+/* The ordinary build stays paired with the accepted DS command namespace. */
 enum ffv2_nfsd_command {
 	FFV2_NFSD_CMD_PROTOTYPE_ENABLE = 21,
 	FFV2_NFSD_CMD_PROTOTYPE_DISABLE,
 	FFV2_NFSD_CMD_PROTOTYPE_CHALLENGE,
 	FFV2_NFSD_CMD_PROTOTYPE_REGISTER,
 };
+#endif
 
 enum ffv2_nfsd_attribute {
 	FFV2_NFSD_A_NONCE = 1,
@@ -66,6 +87,39 @@ enum ffv2_nfsd_object_attribute {
 	FFV2_NFSD_A_OBJECT_MAPPED_HANDLE,
 	FFV2_NFSD_A_OBJECT_STATEID,
 };
+
+#ifdef REFFS_FFV2_NFSD_REFRESHED
+#define CHECK_ATTR(name, target) \
+	_Static_assert(name == target, #name " changed")
+CHECK_ATTR(FFV2_NFSD_A_NONCE, NFSD_A_FFV2_PROTOTYPE_NONCE);
+CHECK_ATTR(FFV2_NFSD_A_EXPIRES, NFSD_A_FFV2_PROTOTYPE_EXPIRES);
+CHECK_ATTR(FFV2_NFSD_A_AUTH_DOMAIN, NFSD_A_FFV2_PROTOTYPE_AUTH_DOMAIN);
+CHECK_ATTR(FFV2_NFSD_A_HANDLE, NFSD_A_FFV2_PROTOTYPE_HANDLE);
+CHECK_ATTR(FFV2_NFSD_A_CHUNK_SIZE, NFSD_A_FFV2_PROTOTYPE_CHUNK_SIZE);
+CHECK_ATTR(FFV2_NFSD_A_DATA_COUNT, NFSD_A_FFV2_PROTOTYPE_DATA_COUNT);
+CHECK_ATTR(FFV2_NFSD_A_PARITY_COUNT, NFSD_A_FFV2_PROTOTYPE_PARITY_COUNT);
+CHECK_ATTR(FFV2_NFSD_A_SOURCE_UUID, NFSD_A_FFV2_PROTOTYPE_SOURCE_UUID);
+CHECK_ATTR(FFV2_NFSD_A_SERVICE_UUID, NFSD_A_FFV2_PROTOTYPE_SERVICE_UUID);
+CHECK_ATTR(FFV2_NFSD_A_REPLAY_UUID, NFSD_A_FFV2_PROTOTYPE_REPLAY_UUID);
+CHECK_ATTR(FFV2_NFSD_A_GENERATION, NFSD_A_FFV2_PROTOTYPE_GENERATION);
+CHECK_ATTR(FFV2_NFSD_A_STATEID, NFSD_A_FFV2_PROTOTYPE_STATEID);
+CHECK_ATTR(FFV2_NFSD_A_MAPPED_HANDLE, NFSD_A_FFV2_PROTOTYPE_MAPPED_HANDLE);
+CHECK_ATTR(FFV2_NFSD_A_STORE_UUID, NFSD_A_FFV2_PROTOTYPE_STORE_UUID);
+CHECK_ATTR(FFV2_NFSD_A_BINDING_TOKEN, NFSD_A_FFV2_PROTOTYPE_BINDING_TOKEN);
+CHECK_ATTR(FFV2_NFSD_A_PERSISTED_HANDLE,
+	   NFSD_A_FFV2_PROTOTYPE_PERSISTED_HANDLE);
+CHECK_ATTR(FFV2_NFSD_A_WRITER_ID, NFSD_A_FFV2_PROTOTYPE_WRITER_ID);
+CHECK_ATTR(FFV2_NFSD_A_PNFS_CLIENTID, NFSD_A_FFV2_PROTOTYPE_PNFS_CLIENTID);
+CHECK_ATTR(FFV2_NFSD_A_OBJECTS, NFSD_A_FFV2_PROTOTYPE_OBJECTS);
+CHECK_ATTR(FFV2_NFSD_A_OBJECT_ORDINARY_HANDLE,
+	   NFSD_A_FFV2_PROTOTYPE_OBJECT_ORDINARY_HANDLE);
+CHECK_ATTR(FFV2_NFSD_A_OBJECT_PERSISTED_HANDLE,
+	   NFSD_A_FFV2_PROTOTYPE_OBJECT_PERSISTED_HANDLE);
+CHECK_ATTR(FFV2_NFSD_A_OBJECT_MAPPED_HANDLE,
+	   NFSD_A_FFV2_PROTOTYPE_OBJECT_MAPPED_HANDLE);
+CHECK_ATTR(FFV2_NFSD_A_OBJECT_STATEID, NFSD_A_FFV2_PROTOTYPE_OBJECT_STATEID);
+#undef CHECK_ATTR
+#endif
 
 struct ffv2_nl {
 	int fd;
@@ -722,7 +776,9 @@ prototype_nl_register(void *context,
 
 static int prototype_nl_open(void *context)
 {
-	return nl_open(context);
+	struct ffv2_nl *nl = context;
+
+	return nl_open_with_io(nl, nl->io);
 }
 
 static int prototype_nl_disable(void *context)
@@ -744,7 +800,7 @@ static void prototype_nl_close(void *context)
 	struct ffv2_nl *nl = context;
 
 	OPENSSL_cleanse(nl->buffer, sizeof(nl->buffer));
-	close(nl->fd);
+	nl->io->close(nl->io_context, nl->fd);
 }
 
 int ffv2_prototype_register_transport(
@@ -812,9 +868,10 @@ out_unlock:
 	return error;
 }
 
-int ffv2_prototype_register_dstore(struct dstore *ds)
+static int prototype_register_with_io(struct dstore *ds,
+				      const struct ffv2_prototype_nl_io *io)
 {
-	struct ffv2_nl nl;
+	struct ffv2_nl nl = { .io = io };
 	const struct ffv2_prototype_transport transport = {
 		.context = &nl,
 		.open = prototype_nl_open,
@@ -826,6 +883,20 @@ int ffv2_prototype_register_dstore(struct dstore *ds)
 	};
 
 	return ffv2_prototype_register_transport(ds, &transport);
+}
+
+int ffv2_prototype_register_dstore(struct dstore *ds)
+{
+	return prototype_register_with_io(ds, &nl_system_io);
+}
+
+int ffv2_prototype_register_nl_test(struct dstore *ds,
+				    const struct ffv2_prototype_nl_io *io)
+{
+	if (!io || !io->open || !io->bind || !io->send || !io->receive ||
+	    !io->close)
+		return -EINVAL;
+	return prototype_register_with_io(ds, io);
 }
 
 int ffv2_prototype_disable(void)
@@ -876,9 +947,10 @@ out_unlock:
 	return ret;
 }
 
-int ffv2_prototype_retire_dstore(struct dstore *ds)
+static int prototype_retire_with_io(struct dstore *ds,
+				    const struct ffv2_prototype_nl_io *io)
 {
-	struct ffv2_nl nl;
+	struct ffv2_nl nl = { .io = io };
 	const struct ffv2_prototype_transport transport = {
 		.context = &nl,
 		.open = prototype_nl_open,
@@ -887,6 +959,20 @@ int ffv2_prototype_retire_dstore(struct dstore *ds)
 	};
 
 	return ffv2_prototype_retire_transport(ds, &transport);
+}
+
+int ffv2_prototype_retire_dstore(struct dstore *ds)
+{
+	return prototype_retire_with_io(ds, &nl_system_io);
+}
+
+int ffv2_prototype_retire_nl_test(struct dstore *ds,
+				  const struct ffv2_prototype_nl_io *io)
+{
+	if (!io || !io->open || !io->bind || !io->send || !io->receive ||
+	    !io->close)
+		return -EINVAL;
+	return prototype_retire_with_io(ds, io);
 }
 
 void ffv2_prototype_unregister_dstore(struct dstore *ds)
