@@ -18,6 +18,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <uuid/uuid.h>
+#include <urcu.h>
 
 #include "reffs/dirent.h"
 #include "reffs/context.h"
@@ -86,6 +87,7 @@ START_TEST(root_identity_two_starts)
 	ck_assert_int_eq(reffs_fs_create("/owned", S_IFREG | 0644), 0);
 	super_block_put(sb);
 	ck_assert_int_eq(reffs_ns_fini(), 0);
+	rcu_barrier();
 
 	/* This creates a genuinely new superblock rather than re-reading the
 	 * record while the original superblock remains live. */
@@ -101,6 +103,7 @@ START_TEST(root_identity_two_starts)
 	inode_put(owner);
 	super_block_put(sb);
 	ck_assert_int_eq(reffs_ns_fini(), 0);
+	rcu_barrier();
 
 	fixture_init(&f2);
 	ck_assert_int_eq(reffs_root_identity_load_or_create(f2.backend,
