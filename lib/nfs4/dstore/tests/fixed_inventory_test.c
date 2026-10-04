@@ -232,6 +232,14 @@ START_TEST(test_restart_compatibility_keeps_full_identity_checks)
 	check_restart_difference(&stored, &config, 7, "192.0.2.7",
 				 "/kernel-ds");
 	config.objects[1].ordinary_handle[0]--;
+	config.objects[0].ordinary_handle_len++;
+	check_restart_difference(&stored, &config, 7, "192.0.2.7",
+				 "/kernel-ds");
+	config.objects[0].ordinary_handle_len--;
+	config.objects[1].ordinary_handle_len++;
+	check_restart_difference(&stored, &config, 7, "192.0.2.7",
+				 "/kernel-ds");
+	config.objects[1].ordinary_handle_len--;
 	config.objects[0].persisted_handle[0]++;
 	check_restart_difference(&stored, &config, 7, "192.0.2.7",
 				 "/kernel-ds");
@@ -258,6 +266,24 @@ START_TEST(test_restart_compatibility_keeps_full_identity_checks)
 			 -EBADMSG);
 	fill_config(&config);
 	config.pnfs_clientid = 0;
+	ck_assert_int_eq(
+		ffv2_fixed_inventory_identity_init(&current, 7, "192.0.2.7",
+						   "/kernel-ds", &config),
+		-EINVAL);
+	fill_config(&config);
+	config.data_count = 2;
+	ck_assert_int_eq(
+		ffv2_fixed_inventory_identity_init(&current, 7, "192.0.2.7",
+						   "/kernel-ds", &config),
+		-EINVAL);
+	fill_config(&config);
+	config.parity_count = 0;
+	ck_assert_int_eq(
+		ffv2_fixed_inventory_identity_init(&current, 7, "192.0.2.7",
+						   "/kernel-ds", &config),
+		-EINVAL);
+	fill_config(&config);
+	config.object_count = 1;
 	ck_assert_int_eq(
 		ffv2_fixed_inventory_identity_init(&current, 7, "192.0.2.7",
 						   "/kernel-ds", &config),
