@@ -12,4 +12,7 @@
 int reffs_root_identity_load_or_create(const char *backend_path,
 				       const char *state_dir, uuid_t root_uuid);
 
+/* Internal identity-directory sync boundary; overridden by its fault test. */
+int reffs_root_identity_sync_directory(int dirfd);
+
 #endif

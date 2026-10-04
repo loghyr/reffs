@@ -8,6 +8,7 @@
 #endif
 
 #include <check.h>
+#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -32,6 +33,19 @@ struct fixture {
 	char backend[64];
 	char state[64];
 };
+
+static unsigned int sync_calls;
+static unsigned int fail_sync_call;
+
+int reffs_root_identity_sync_directory(int dirfd)
+{
+	sync_calls++;
+	if (sync_calls == fail_sync_call) {
+		errno = EIO;
+		return -1;
+	}
+	return fsync(dirfd);
+}
 
 static void fixture_init(struct fixture *f)
 {
@@ -64,6 +78,44 @@ static void replace_byte(const char *name, off_t offset, unsigned char value)
 
 	ck_assert_int_ge(fd, 0);
 	ck_assert_int_eq(pwrite(fd, &value, 1, offset), 1);
+	ck_assert_int_eq(close(fd), 0);
+}
+
+static unsigned char read_byte(const char *name, off_t offset)
+{
+	unsigned char value;
+	int fd = open(name, O_RDONLY);
+
+	ck_assert_int_ge(fd, 0);
+	ck_assert_int_eq(pread(fd, &value, 1, offset), 1);
+	ck_assert_int_eq(close(fd), 0);
+	return value;
+}
+
+static uint32_t test_crc(const unsigned char *data, size_t len)
+{
+	uint32_t crc = ~0U;
+
+	for (size_t i = 0; i < len; i++) {
+		crc ^= data[i];
+		for (unsigned int bit = 0; bit < 8; bit++)
+			crc = (crc >> 1) ^ (0xedb88320U & -(crc & 1U));
+	}
+	return ~crc;
+}
+
+static void make_valid_zero_uuid_byte(const char *name)
+{
+	unsigned char data[44];
+	uint32_t crc;
+	int fd = open(name, O_RDWR);
+
+	ck_assert_int_ge(fd, 0);
+	ck_assert_int_eq(read(fd, data, sizeof(data)), sizeof(data));
+	data[24] = 0;
+	crc = htonl(test_crc(data, sizeof(data) - sizeof(crc)));
+	memcpy(data + sizeof(data) - sizeof(crc), &crc, sizeof(crc));
+	ck_assert_int_eq(pwrite(fd, data, sizeof(data), 0), sizeof(data));
 	ck_assert_int_eq(close(fd), 0);
 }
 
@@ -128,7 +180,7 @@ START_TEST(root_identity_rejects_damage)
 							    identity),
 			 0);
 	path(name, sizeof(name), &f, "root-identity");
-	replace_byte(name, 24, 0);
+	replace_byte(name, 24, read_byte(name, 24) ^ 0x80);
 	ck_assert_int_eq(reffs_root_identity_load_or_create(f.backend, f.state,
 							    ignored),
 			 -EBADMSG);
@@ -139,6 +191,94 @@ START_TEST(root_identity_rejects_damage)
 	ck_assert_int_eq(reffs_root_identity_load_or_create(f.backend, f.state,
 							    ignored),
 			 -EBADMSG);
+	fixture_fini(&f);
+}
+END_TEST
+
+START_TEST(root_identity_rejects_damage_from_zero)
+{
+	struct fixture f;
+	uuid_t identity, ignored;
+	char root[128], marker[128];
+
+	fixture_init(&f);
+	ck_assert_int_eq(reffs_root_identity_load_or_create(f.backend, f.state,
+							    identity),
+			 0);
+	path(root, sizeof(root), &f, "root-identity");
+	path(marker, sizeof(marker), &f, "root-backend-id");
+	make_valid_zero_uuid_byte(root);
+	make_valid_zero_uuid_byte(marker);
+	ck_assert_int_eq(reffs_root_identity_load_or_create(f.backend, f.state,
+							    ignored),
+			 0);
+	ck_assert_int_eq(read_byte(root, 24), 0);
+	replace_byte(root, 24, read_byte(root, 24) ^ 0x80);
+	ck_assert_int_eq(reffs_root_identity_load_or_create(f.backend, f.state,
+							    ignored),
+			 -EBADMSG);
+	fixture_fini(&f);
+}
+END_TEST
+
+START_TEST(root_identity_retry_syncs_published_records)
+{
+	struct fixture f;
+	uuid_t ignored, restored;
+	char root[128], marker[128];
+	unsigned char original_root[44], original_marker[44];
+	int fd;
+
+	fixture_init(&f);
+	reffs_fs_set_storage(REFFS_STORAGE_POSIX, f.backend);
+	sync_calls = 0;
+	fail_sync_call = 2; /* Final sync after publishing root-identity. */
+	ck_assert_int_eq(reffs_ns_init_with_state(f.state), -EIO);
+	ck_assert_ptr_null(super_block_find(1));
+	ck_assert_int_eq(sync_calls, 2);
+	path(root, sizeof(root), &f, "root-identity");
+	path(marker, sizeof(marker), &f, "root-backend-id");
+	fd = open(root, O_RDONLY);
+	ck_assert_int_ge(fd, 0);
+	ck_assert_int_eq(read(fd, original_root, sizeof(original_root)),
+			 sizeof(original_root));
+	ck_assert_int_eq(close(fd), 0);
+	fd = open(marker, O_RDONLY);
+	ck_assert_int_ge(fd, 0);
+	ck_assert_int_eq(read(fd, original_marker, sizeof(original_marker)),
+			 sizeof(original_marker));
+	ck_assert_int_eq(close(fd), 0);
+
+	/* A failed retry may not expose a namespace or replace either entry. */
+	memset(ignored, 0x5a, sizeof(ignored));
+	fail_sync_call = 3;
+	ck_assert_int_eq(reffs_root_identity_load_or_create(f.backend, f.state,
+							    ignored),
+			 -EIO);
+	ck_assert_int_eq(sync_calls, 3);
+	for (size_t i = 0; i < sizeof(ignored); i++)
+		ck_assert_int_eq(ignored[i], 0x5a);
+	ck_assert_ptr_null(super_block_find(1));
+
+	fail_sync_call = 0;
+	ck_assert_int_eq(reffs_root_identity_load_or_create(f.backend, f.state,
+							    restored),
+			 0);
+	ck_assert_int_eq(sync_calls, 4);
+	ck_assert_int_eq(memcmp(restored, original_root + 24, sizeof(restored)),
+			 0);
+	fd = open(root, O_RDONLY);
+	ck_assert_int_ge(fd, 0);
+	unsigned char current[44];
+	ck_assert_int_eq(read(fd, current, sizeof(current)), sizeof(current));
+	ck_assert_int_eq(memcmp(current, original_root, sizeof(current)), 0);
+	ck_assert_int_eq(close(fd), 0);
+	fd = open(marker, O_RDONLY);
+	ck_assert_int_ge(fd, 0);
+	ck_assert_int_eq(read(fd, current, sizeof(current)), sizeof(current));
+	ck_assert_int_eq(memcmp(current, original_marker, sizeof(current)), 0);
+	ck_assert_int_eq(close(fd), 0);
+	sync_calls = 0;
 	fixture_fini(&f);
 }
 END_TEST
@@ -302,6 +442,8 @@ static Suite *root_identity_suite(void)
 
 	tcase_add_test(core, root_identity_two_starts);
 	tcase_add_test(core, root_identity_rejects_damage);
+	tcase_add_test(core, root_identity_rejects_damage_from_zero);
+	tcase_add_test(core, root_identity_retry_syncs_published_records);
 	tcase_add_test(core, root_identity_rejects_partial_creation);
 	tcase_add_test(core, root_identity_rejects_unsupported_and_conflict);
 	tcase_add_test(core, root_identity_rejects_legacy_and_inventory);

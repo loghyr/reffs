@@ -30,6 +30,13 @@
 #define ID_VERSION 1U
 #define ID_LEN 44U
 
+/* Keep the directory sync as one operation so the identity test can fault
+ * its publication and restoration paths independently. */
+__attribute__((weak)) int reffs_root_identity_sync_directory(int dirfd)
+{
+	return fsync(dirfd);
+}
+
 static uint32_t record_crc(const unsigned char *data, size_t len)
 {
 	uint32_t crc = ~0U;
@@ -133,7 +140,7 @@ out:
 		ret = -errno;
 	if (unlinkat(dirfd, temporary, 0) && !ret)
 		ret = -errno;
-	if (!ret && fsync(dirfd))
+	if (!ret && reffs_root_identity_sync_directory(dirfd))
 		ret = -errno;
 	return ret;
 }
@@ -234,6 +241,10 @@ int reffs_root_identity_load_or_create(const char *backend_path,
 			ret = -EBADMSG;
 		if (!ret && memcmp(root + 8, backend + 8, 2 * sizeof(uuid_t)))
 			ret = -EXDEV;
+		/* A previous publisher may have failed after linkat(). The
+		 * validated entries must be durable before this start exposes them. */
+		if (!ret && reffs_root_identity_sync_directory(dirfd))
+			ret = -errno;
 		if (!ret)
 			memcpy(root_uuid, root + 24, sizeof(uuid_t));
 		goto out;
