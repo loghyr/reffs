@@ -263,6 +263,53 @@ START_TEST(test_preflight_persists_exact_empty_vector)
 }
 END_TEST
 
+START_TEST(test_preflight_accepts_new_clientid_without_rewriting_inventory)
+{
+	char directory[] = "/tmp/reffs-restart-inventory-XXXXXX";
+	char path[512];
+	struct ffv2_fixed_inventory_record before, after;
+	uint8_t before_bytes[8192], after_bytes[8192];
+	size_t before_len, after_len;
+	FILE *inventory;
+	struct dstore *ds = make_dstore();
+
+	ck_assert_ptr_nonnull(mkdtemp(directory));
+	fill_fixed_config(ds, directory);
+	block_create = false;
+	ck_assert_int_eq(dstore_fixed_inventory_preflight(ds), 0);
+	ck_assert_int_eq(
+		ffv2_fixed_inventory_load(directory, ds->ds_id, &before), 0);
+	snprintf(path, sizeof(path), "%s/ffv2-fixed-inventory-91", directory);
+	inventory = fopen(path, "rb");
+	ck_assert_ptr_nonnull(inventory);
+	before_len = fread(before_bytes, 1, sizeof(before_bytes), inventory);
+	ck_assert_int_gt(before_len, 0);
+	ck_assert_int_eq(fclose(inventory), 0);
+	ds->ds_prototype_config.pnfs_clientid = 24;
+	ck_assert_int_eq(dstore_fixed_inventory_preflight(ds), 0);
+	ck_assert_ptr_nonnull(ds->ds_fixed_inventory);
+	ck_assert_int_eq(ds->ds_fixed_inventory->identity.pnfs_clientid, 23);
+	ck_assert_int_eq(ds->ds_prototype_config.pnfs_clientid, 24);
+	ck_assert_int_eq(
+		ffv2_fixed_inventory_load(directory, ds->ds_id, &after), 0);
+	ck_assert(ffv2_fixed_inventory_identity_equal(&before.identity,
+						      &after.identity));
+	inventory = fopen(path, "rb");
+	ck_assert_ptr_nonnull(inventory);
+	after_len = fread(after_bytes, 1, sizeof(after_bytes), inventory);
+	ck_assert_int_eq(fclose(inventory), 0);
+	ck_assert_uint_eq(before_len, after_len);
+	ck_assert_int_eq(memcmp(before_bytes, after_bytes, before_len), 0);
+	ds->ds_prototype_config.enabled = false;
+	destroy_dstore(ds);
+	snprintf(path, sizeof(path), "%s/ffv2-fixed-status-91.json", directory);
+	ck_assert_int_eq(unlink(path), 0);
+	snprintf(path, sizeof(path), "%s/ffv2-fixed-inventory-91", directory);
+	ck_assert_int_eq(unlink(path), 0);
+	ck_assert_int_eq(rmdir(directory), 0);
+}
+END_TEST
+
 START_TEST(test_observation_publishes_counters_off_operation_path)
 {
 	char directory[] = "/tmp/reffs-status-observation-XXXXXX";
@@ -307,6 +354,9 @@ static Suite *ordinary_gate_suite(void)
 	tcase_add_test(tc, test_close_drains_and_refuses_new_calls);
 	tcase_add_test(tc, test_fixed_load_failure_stops_before_workers);
 	tcase_add_test(tc, test_preflight_persists_exact_empty_vector);
+	tcase_add_test(
+		tc,
+		test_preflight_accepts_new_clientid_without_rewriting_inventory);
 	tcase_add_test(tc,
 		       test_observation_publishes_counters_off_operation_path);
 	suite_add_tcase(suite, tc);

@@ -287,7 +287,8 @@ int ffv2_fixed_inventory_identity_init(
 	if (!identity || !dstore_id || !address || !address[0] ||
 	    !export_path || !export_path[0] || !config || !config->enabled ||
 	    !config->fixed_inventory || config->data_count != 1 ||
-	    config->parity_count != 1 || config->object_count != 2)
+	    config->parity_count != 1 || config->object_count != 2 ||
+	    !config->pnfs_clientid)
 		return -EINVAL;
 	memset(identity, 0, sizeof(*identity));
 	identity->dstore_id = dstore_id;
@@ -319,6 +320,29 @@ bool ffv2_fixed_inventory_identity_equal(
 {
 	return left && right &&
 	       !memcmp(left->digest, right->digest, sizeof(left->digest));
+}
+
+int ffv2_fixed_inventory_restart_compatible(
+	const struct ffv2_fixed_inventory_identity *stored,
+	const struct ffv2_fixed_inventory_identity *current, bool *compatible)
+{
+	struct ffv2_fixed_inventory_identity stored_copy, current_copy;
+	int ret;
+
+	if (!stored || !current || !compatible)
+		return -EINVAL;
+	*compatible = false;
+	stored_copy = *stored;
+	current_copy = *current;
+	if (identity_validate(&stored_copy) || identity_validate(&current_copy))
+		return -EBADMSG;
+	current_copy.pnfs_clientid = stored_copy.pnfs_clientid;
+	ret = identity_digest(&current_copy);
+	if (ret)
+		return ret;
+	*compatible = ffv2_fixed_inventory_identity_equal(&stored_copy,
+							  &current_copy);
+	return 0;
 }
 
 int ffv2_fixed_inventory_transition(struct ffv2_fixed_inventory_record *record,

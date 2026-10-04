@@ -709,6 +709,7 @@ int dstore_fixed_inventory_preflight(struct dstore *ds)
 	struct ffv2_fixed_inventory_record *record;
 	struct ffv2_fixed_inventory_identity identity;
 	const struct reffs_prototype_registration_config *config;
+	bool compatible;
 	int ret;
 
 	if (!ds)
@@ -751,9 +752,11 @@ int dstore_fixed_inventory_preflight(struct dstore *ds)
 	if (ret == -ENOENT) {
 		record->identity = identity;
 		ret = ffv2_fixed_inventory_save(ds->ds_state_dir, record);
-	} else if (!ret && !ffv2_fixed_inventory_identity_equal(
-				   &record->identity, &identity)) {
-		ret = -ESTALE;
+	} else if (!ret) {
+		ret = ffv2_fixed_inventory_restart_compatible(
+			&record->identity, &identity, &compatible);
+		if (!ret && !compatible)
+			ret = -ESTALE;
 	}
 	if (ret) {
 		free(record);

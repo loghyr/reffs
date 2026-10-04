@@ -52,6 +52,7 @@ enum {
 	A_OBJECT_STATEID = 4,
 	A_OBJECTS = 19,
 	A_OBJECT_MAPPED_HANDLE = 3,
+	A_PNFS_CLIENTID = 18,
 };
 
 struct reply_builder {
@@ -444,6 +445,61 @@ START_TEST(test_request_preserves_order_and_secret_is_not_snapshot_state)
 	ck_assert_int_eq(sizeof(((struct ffv2_prototype_snapshot *)0)->members),
 			 REFFS_CONFIG_MAX_PROTOTYPE_OBJECTS *
 				 sizeof(struct ffv2_prototype_member));
+}
+END_TEST
+
+START_TEST(test_reboot_registration_uses_current_clientid)
+{
+	struct reffs_prototype_registration_config config;
+	struct ffv2_fixed_inventory_identity historical;
+	struct ffv2_prototype_snapshot *snapshot;
+	struct reply_builder reply;
+	uint8_t message[2048], nonce[32] = { 1 };
+	const struct nlmsghdr *header;
+	const struct nlattr *attribute;
+	size_t len, offset;
+	bool found = false;
+
+	fill_config(&config);
+	config.fixed_inventory = true;
+	strcpy(config.objects[0].name, "member-0");
+	strcpy(config.objects[1].name, "member-1");
+	ck_assert_int_eq(
+		ffv2_fixed_inventory_identity_init(&historical, 7, "192.0.2.7",
+						   "/kernel-ds", &config),
+		0);
+	config.pnfs_clientid = 24;
+	ck_assert_int_eq(ffv2_prototype_request_build(&config, nonce, 55, 7,
+						      message, sizeof(message),
+						      &len),
+			 0);
+	header = (const struct nlmsghdr *)message;
+	for (offset = NLMSG_ALIGN(NLMSG_LENGTH(GENL_HDRLEN));
+	     offset + NLA_HDRLEN <= header->nlmsg_len;
+	     offset += NLA_ALIGN(attribute->nla_len)) {
+		attribute = (const struct nlattr *)(message + offset);
+		ck_assert(attribute->nla_len >= NLA_HDRLEN);
+		ck_assert(offset + attribute->nla_len <= header->nlmsg_len);
+		if (attribute->nla_type == A_PNFS_CLIENTID) {
+			uint64_t clientid;
+
+			ck_assert_uint_eq(attribute->nla_len,
+					  NLA_HDRLEN + sizeof(clientid));
+			memcpy(&clientid,
+			       (const uint8_t *)attribute + NLA_HDRLEN,
+			       sizeof(clientid));
+			ck_assert_uint_eq(clientid, config.pnfs_clientid);
+			found = true;
+		}
+	}
+	ck_assert(found);
+	ck_assert_uint_eq(historical.pnfs_clientid, 23);
+	build_reply(&config, &reply, false, false, false);
+	ck_assert_int_eq(ffv2_prototype_reply_parse(&config, 7, reply.bytes,
+						    reply.len, &snapshot),
+			 0);
+	ck_assert_uint_eq(snapshot->pnfs_clientid, 24);
+	free(snapshot);
 }
 END_TEST
 
@@ -1569,6 +1625,7 @@ static Suite *prototype_suite(void)
 	tcase_add_test(
 		test,
 		test_request_preserves_order_and_secret_is_not_snapshot_state);
+	tcase_add_test(test, test_reboot_registration_uses_current_clientid);
 	tcase_add_test(test, test_production_netlink_command_vector);
 	tcase_add_test(
 		test,

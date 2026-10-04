@@ -69,6 +69,9 @@ int ffv2_fixed_inventory_identity_init(
 bool ffv2_fixed_inventory_identity_equal(
 	const struct ffv2_fixed_inventory_identity *left,
 	const struct ffv2_fixed_inventory_identity *right);
+int ffv2_fixed_inventory_restart_compatible(
+	const struct ffv2_fixed_inventory_identity *stored,
+	const struct ffv2_fixed_inventory_identity *current, bool *compatible);
 
 int ffv2_fixed_inventory_transition(struct ffv2_fixed_inventory_record *record,
 				    enum ffv2_fixed_inventory_state next,
