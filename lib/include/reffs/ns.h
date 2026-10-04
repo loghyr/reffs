@@ -11,6 +11,9 @@
 void release_all_fs_dirents(void);
 int reffs_ns_fini(void);
 int reffs_ns_init(void);
+/* Server startup passes the state directory so a missing POSIX root identity
+ * cannot be initialized over an existing fixed inventory. */
+int reffs_ns_init_with_state(const char *state_dir);
 
 /*
  * Create a listener-scoped root superblock (sb_id=1, listener_id=N).

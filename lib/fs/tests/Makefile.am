@@ -133,6 +133,7 @@ TESTS = \
 	posix_recovery_15 \
 	posix_recovery_16 \
 	posix_force_load \
+	root_identity_test \
 	fs_usage_ram \
 	$(FS_USAGE_POSIX_TEST) \
 	layout_segment_test \
@@ -152,3 +153,6 @@ endif
 
 posix_force_load_SOURCES = posix_force_load.c
 posix_force_load_LDADD = $(LDADD)
+
+root_identity_test_SOURCES = root_identity_test.c
+root_identity_test_LDADD = $(LDADD)

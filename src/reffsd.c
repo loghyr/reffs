@@ -582,7 +582,7 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
-	exit_code = reffs_ns_init();
+	exit_code = reffs_ns_init_with_state(cfg.state_file);
 	if (exit_code == 0) {
 		struct super_block *root_sb = super_block_find(1);
 		if (root_sb) {

@@ -33,6 +33,7 @@
 #include "reffs/inode.h"
 #include "reffs/log.h"
 #include "reffs/ns.h"
+#include "reffs/root_identity.h"
 #include "reffs/evictor.h"
 #include "reffs/super_block.h"
 #include "reffs/types.h"
@@ -42,13 +43,24 @@ volatile sig_atomic_t reffs_namespace_initialized = 0;
 static struct super_block *reffs_root_sb = NULL;
 static struct reffs_dirent *reffs_root_de = NULL;
 
-int reffs_ns_init(void)
+int reffs_ns_init_with_state(const char *state_dir)
 {
 	struct inode *inode = NULL;
+	uuid_t root_uuid;
 	int ret = 0;
 
 	if (reffs_namespace_initialized)
 		return -EALREADY;
+
+	/* Resolve durable identity before creating even the root inode. */
+	if (reffs_fs_get_storage_type() == REFFS_STORAGE_POSIX) {
+		ret = reffs_root_identity_load_or_create(
+			reffs_fs_get_backend_path(), state_dir, root_uuid);
+		if (ret)
+			return ret;
+	} else {
+		uuid_generate(root_uuid);
+	}
 
 	reffs_namespace_initialized = 1;
 
@@ -60,7 +72,7 @@ int reffs_ns_init(void)
 		ret = -ENOMEM;
 		goto out;
 	}
-	uuid_generate(reffs_root_sb->sb_uuid);
+	uuid_copy(reffs_root_sb->sb_uuid, root_uuid);
 
 	ret = super_block_dirent_create(reffs_root_sb, NULL,
 					reffs_life_action_birth);
@@ -99,6 +111,11 @@ out:
 		reffs_ns_fini();
 
 	return ret;
+}
+
+int reffs_ns_init(void)
+{
+	return reffs_ns_init_with_state(NULL);
 }
 
 int reffs_ns_init_proxy_listener(uint32_t listener_id)
