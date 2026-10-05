@@ -28,7 +28,7 @@ build-test:
     - apt-get update
     - >-
       apt-get install -y --no-install-recommends
-      ca-certificates build-essential clang file
+      ca-certificates build-essential clang libclang-rt-18-dev file
       pkg-config autoconf automake autoconf-archive libtool libtool-bin
       make cmake git
       liburcu-dev libtirpc-dev check librocksdb-dev libxxhash-dev
