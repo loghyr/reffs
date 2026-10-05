@@ -95,7 +95,8 @@ pip install reply-xdr@git+https://github.com/loghyr/reply.git
 `.gitlab-ci.yml` runs on every branch push to GitLab, including WIP
 branches; merge requests are not required. It also supports manually
 starting a branch pipeline. The job checks formatting and licensing, then
-builds and runs unit tests with ASan and UBSan in Ubuntu 24.04. Test logs
+builds and runs unit tests as an unprivileged user with ASan and UBSan in
+Ubuntu 24.04. Test logs
 are retained for 14 days, including on failure. New pushes cancel older
 interruptible runs on the same branch.
 

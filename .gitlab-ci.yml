@@ -28,7 +28,7 @@ build-test:
     - apt-get update
     - >-
       apt-get install -y --no-install-recommends
-      ca-certificates build-essential clang libclang-rt-18-dev file
+      ca-certificates build-essential clang libclang-rt-18-dev file util-linux
       pkg-config autoconf automake autoconf-archive libtool libtool-bin
       make cmake git
       liburcu-dev libtirpc-dev check librocksdb-dev libxxhash-dev
@@ -46,16 +46,22 @@ build-test:
       cmake --build "$histogram_dir/build" --parallel "$(nproc)"
       cmake --install "$histogram_dir/build"
       ldconfig
+    # Permission-denial tests must not run with root's DAC override.
+    - useradd --create-home reffs-ci
+    - chown -R reffs-ci:reffs-ci "$CI_PROJECT_DIR"
   script:
-    - mkdir -p m4
-    - autoreconf -fi
-    - make -f Makefile.reffs style CLANG_FORMAT=clang-format
-    - SKIP_STYLE=1 make -f Makefile.reffs license
-    - mkdir -p build
-    - cd build
-    - ../configure --enable-asan --enable-ubsan
-    - make -j"$(nproc)"
-    - make check
+    - |
+      runuser -u reffs-ci -- bash -e <<'CI_SCRIPT'
+      mkdir -p m4
+      autoreconf -fi
+      make -f Makefile.reffs style CLANG_FORMAT=clang-format
+      SKIP_STYLE=1 make -f Makefile.reffs license
+      mkdir -p build
+      cd build
+      ../configure --enable-asan --enable-ubsan
+      make -j"$(nproc)"
+      make check
+      CI_SCRIPT
   artifacts:
     when: always
     expire_in: 14 days
