@@ -1025,6 +1025,133 @@ union NOTIFY_DEVICEID1res switch (probe_stat1 ndr_status) {
 		void;
 };
 
+/*
+ * LAYOUTRECALL (op 41) -- on-demand CB_LAYOUTRECALL test trigger.
+ * Sends one FILE, FSID or ALL recall to one client and resends it
+ * every lra_interval_ms while the client answers NFS4ERR_DELAY.  It
+ * completes on NFS4ERR_NOMATCHING_LAYOUT (the layouts in scope are
+ * then freed) or on a covering LAYOUTRETURN after NFS4_OK.  At
+ * lra_limit_ms / lra_limit_count it logs and stops: nothing is
+ * revoked or fenced.
+ *
+ * Target client: lra_clientid; else lra_client_addr (dotted IPv4);
+ * else the only client with a callback channel.  lra_sb_id names the
+ * fsid for FSID, and with lra_ino the file for FILE.  Zero selects a
+ * default: lra_layout_type LAYOUT4_FLEX_FILES, lra_interval_ms 1000,
+ * lra_length to end of file, lra_limit_* no limit.  Type and iomode
+ * values mirror layoutrecall_type4 and layoutiomode4.
+ *
+ * Returns at once with an id; LAYOUTRECALL_STATUS (op 42) reads the
+ * send/reply log and LAYOUTRECALL_CANCEL (op 43) stops resending.
+ */
+enum probe_layoutrecall_type1 {
+	PROBE1_LAYOUTRECALL_FILE = 1,
+	PROBE1_LAYOUTRECALL_FSID = 2,
+	PROBE1_LAYOUTRECALL_ALL = 3
+};
+
+const PROBE1_MAX_ADDR = 64;
+
+struct LAYOUTRECALL1args {
+	unsigned hyper			lra_clientid;
+	string				lra_client_addr<PROBE1_MAX_ADDR>;
+	probe_layoutrecall_type1	lra_type;
+	unsigned int			lra_layout_type;
+	unsigned int			lra_iomode;
+	bool				lra_changed;
+	unsigned hyper			lra_sb_id;
+	unsigned hyper			lra_ino;
+	unsigned hyper			lra_offset;
+	unsigned hyper			lra_length;
+	unsigned int			lra_interval_ms;
+	unsigned int			lra_limit_ms;
+	unsigned int			lra_limit_count;
+};
+
+struct LAYOUTRECALL1resok {
+	unsigned int			lrr_id;
+	unsigned hyper			lrr_clientid;
+};
+
+union LAYOUTRECALL1res switch (probe_stat1 lrr_status) {
+	case PROBE1_OK:
+		LAYOUTRECALL1resok	lrr_resok;
+	default:
+		void;
+};
+
+/* Values mirror enum layout_recall_state. */
+enum probe_layoutrecall_state1 {
+	PROBE1_LAYOUTRECALL_SENDING = 1,
+	PROBE1_LAYOUTRECALL_WAIT_RESEND = 2,
+	PROBE1_LAYOUTRECALL_ACKED = 3,
+	PROBE1_LAYOUTRECALL_DONE = 4,
+	PROBE1_LAYOUTRECALL_EXPIRED = 5,
+	PROBE1_LAYOUTRECALL_FAILED = 6,
+	PROBE1_LAYOUTRECALL_CANCELLED = 7
+};
+
+/* Values mirror enum layout_recall_event_kind. */
+enum probe_layoutrecall_event1 {
+	PROBE1_LRE_SEND = 1,
+	PROBE1_LRE_REPLY = 2,
+	PROBE1_LRE_TIMEOUT = 3,
+	PROBE1_LRE_RETURN = 4,
+	PROBE1_LRE_DONE = 5,
+	PROBE1_LRE_EXPIRED = 6,
+	PROBE1_LRE_FAILED = 7,
+	PROBE1_LRE_CANCELLED = 8
+};
+
+/*
+ * One logged event.  plre_time_ns is CLOCK_REALTIME.  plre_send is the
+ * 1-based send it belongs to.  plre_cb_status is the CB_COMPOUND
+ * status, or -errno for a timeout or send failure; plre_op_status is
+ * the CB_LAYOUTRECALL status.  plre_dropped counts layout stateids
+ * freed when a NOMATCHING_LAYOUT reply completes the recall.
+ */
+struct probe_layoutrecall_ev1 {
+	unsigned hyper			plre_time_ns;
+	probe_layoutrecall_event1	plre_kind;
+	unsigned int			plre_send;
+	int				plre_cb_status;
+	int				plre_op_status;
+	unsigned int			plre_dropped;
+};
+
+struct LAYOUTRECALL_STATUS1args {
+	unsigned int			lrsa_id;	/* 0: most recent */
+};
+
+struct LAYOUTRECALL_STATUS1resok {
+	unsigned int			lrs_id;
+	probe_layoutrecall_state1	lrs_state;
+	unsigned hyper			lrs_clientid;
+	probe_layoutrecall_type1	lrs_type;
+	unsigned int			lrs_layout_type;
+	unsigned int			lrs_iomode;
+	bool				lrs_changed;
+	unsigned hyper			lrs_sb_id;
+	unsigned hyper			lrs_ino;
+	unsigned int			lrs_interval_ms;
+	unsigned int			lrs_limit_ms;
+	unsigned int			lrs_limit_count;
+	unsigned int			lrs_sends;
+	unsigned int			lrs_events_lost;
+	probe_layoutrecall_ev1		lrs_events<>;
+};
+
+union LAYOUTRECALL_STATUS1res switch (probe_stat1 lrsr_status) {
+	case PROBE1_OK:
+		LAYOUTRECALL_STATUS1resok	lrsr_resok;
+	default:
+		void;
+};
+
+struct LAYOUTRECALL_CANCEL1args {
+	unsigned int			lrca_id;	/* 0: most recent */
+};
+
 const PROBE_PORT = 20490;
 
 /*
@@ -1109,5 +1236,13 @@ program PROBE_PROGRAM {
 		/* Tight-coupling trust-table counters */
 		TRUST_STATEID_STATS1res
 		PROBEPROC1_TRUST_STATEID_STATS(void) = 40;
+
+		/* On-demand CB_LAYOUTRECALL test trigger */
+		LAYOUTRECALL1res
+		PROBEPROC1_LAYOUTRECALL(LAYOUTRECALL1args) = 41;
+		LAYOUTRECALL_STATUS1res
+		PROBEPROC1_LAYOUTRECALL_STATUS(LAYOUTRECALL_STATUS1args) = 42;
+		probe_stat1
+		PROBEPROC1_LAYOUTRECALL_CANCEL(LAYOUTRECALL_CANCEL1args) = 43;
 	} = 1;
 } = 211768;
