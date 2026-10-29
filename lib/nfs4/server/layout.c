@@ -3414,8 +3414,8 @@ nfs4_layout_implicit_return_rw(struct compound *compound,
 	TRACE("implicit LAYOUTRETURN(RW): ino=%" PRIu64 " remaining=0x%lx",
 	      inode->i_ino, (unsigned long)remaining);
 
-	if (remaining == 0) {
-		stateid_inode_unhash(ls_stid);
+	/* Only the caller that unhashes owns the state ref. */
+	if (remaining == 0 && stateid_inode_unhash(ls_stid)) {
 		stateid_client_unhash(ls_stid);
 		stateid_put(ls_stid); /* state ref --> freed via RCU */
 	}
@@ -3894,10 +3894,15 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	}
 
 	if (remaining == 0) {
-		/* No layouts left -- free the stateid. */
-		stateid_inode_unhash(stid);
-		stateid_client_unhash(stid);
-		stateid_put(stid); /* state ref --> freed */
+		/*
+		 * No layouts left -- free the stateid.  A concurrent
+		 * return may also see zero; only the unhasher owns the
+		 * state ref.
+		 */
+		if (stateid_inode_unhash(stid)) {
+			stateid_client_unhash(stid);
+			stateid_put(stid); /* state ref --> freed */
+		}
 
 		/* Return no stateid (layout fully returned). */
 		res->LAYOUTRETURN4res_u.lorr_stateid.lrs_present = false;
