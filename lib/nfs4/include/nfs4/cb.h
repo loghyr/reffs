@@ -192,6 +192,18 @@ int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
 			      struct cb_pending *cp);
 
 /*
+ * nfs4_cb_layoutrecall_send_recall -- as nfs4_cb_layoutrecall_send,
+ * but the caller supplies the whole layoutrecall4 body, so FSID and
+ * ALL recalls (RFC 8881 sec 20.3) can be sent.  The body is copied
+ * during XDR encode; it need not outlive the call.
+ */
+int nfs4_cb_layoutrecall_send_recall(struct nfs4_session *session,
+				     layouttype4 layout_type,
+				     layoutiomode4 iomode, int changed,
+				     const layoutrecall4 *recall,
+				     struct cb_pending *cp);
+
+/*
  * nfs4_cb_layoutrecall_fnf -- fire-and-forget variant of
  * nfs4_cb_layoutrecall_send.  Same wire shape, no caller wait for
  * the ack.  Used by the migration-commit path

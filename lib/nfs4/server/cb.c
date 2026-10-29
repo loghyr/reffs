@@ -617,11 +617,11 @@ int nfs4_cb_getattr_send(struct nfs4_session *session, const nfs_fh4 *fh,
 /* CB_LAYOUTRECALL -- send and wait for reply                           */
 /* ------------------------------------------------------------------ */
 
-int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
-			      layouttype4 layout_type, layoutiomode4 iomode,
-			      int changed, const nfs_fh4 *fh, uint64_t offset,
-			      uint64_t length, const stateid4 *lo_stateid,
-			      struct cb_pending *cp)
+int nfs4_cb_layoutrecall_send_recall(struct nfs4_session *session,
+				     layouttype4 layout_type,
+				     layoutiomode4 iomode, int changed,
+				     const layoutrecall4 *recall,
+				     struct cb_pending *cp)
 {
 	CB_COMPOUND4args args = { 0 };
 	nfs_cb_argop4 ops[2] = { 0 };
@@ -630,7 +630,7 @@ int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
 	uint32_t xid;
 	int ret;
 
-	if (!session || !cp)
+	if (!session || !cp || !recall)
 		return EINVAL;
 	if (session->ns_cb_fd < 0)
 		return ENOTCONN;
@@ -649,21 +649,7 @@ int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
 	lr->clora_type = layout_type;
 	lr->clora_iomode = iomode;
 	lr->clora_changed = changed;
-
-	/*
-	 * File-level recall.  For FSID and ALL recalls, the caller
-	 * would set clora_recall differently; for now we only support
-	 * per-file recall.
-	 */
-	lr->clora_recall.lor_recalltype = LAYOUTRECALL4_FILE;
-	lr->clora_recall.layoutrecall4_u.lor_layout.lor_fh.nfs_fh4_len =
-		fh->nfs_fh4_len;
-	lr->clora_recall.layoutrecall4_u.lor_layout.lor_fh.nfs_fh4_val =
-		fh->nfs_fh4_val;
-	lr->clora_recall.layoutrecall4_u.lor_layout.lor_offset = offset;
-	lr->clora_recall.layoutrecall4_u.lor_layout.lor_length = length;
-	memcpy(&lr->clora_recall.layoutrecall4_u.lor_layout.lor_stateid,
-	       lo_stateid, sizeof(stateid4));
+	lr->clora_recall = *recall;
 
 	ret = cb_build_and_alloc(session, &args, &cb_rt, &xid);
 	if (ret)
@@ -706,4 +692,23 @@ int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
 	rpc_protocol_free(cb_rt); /* submitter ref */
 	cb_submit_done(cp);
 	return ret;
+}
+
+int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
+			      layouttype4 layout_type, layoutiomode4 iomode,
+			      int changed, const nfs_fh4 *fh, uint64_t offset,
+			      uint64_t length, const stateid4 *lo_stateid,
+			      struct cb_pending *cp)
+{
+	layoutrecall4 recall = { .lor_recalltype = LAYOUTRECALL4_FILE };
+	layoutrecall_file4 *lrf = &recall.layoutrecall4_u.lor_layout;
+
+	if (!fh || !lo_stateid)
+		return EINVAL;
+	lrf->lor_fh = *fh;
+	lrf->lor_offset = offset;
+	lrf->lor_length = length;
+	lrf->lor_stateid = *lo_stateid;
+	return nfs4_cb_layoutrecall_send_recall(session, layout_type, iomode,
+						changed, &recall, cp);
 }
