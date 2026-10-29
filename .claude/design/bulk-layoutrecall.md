@@ -123,13 +123,10 @@ also emitted to the trace file (`REFFS_TRACE_CAT_NFS`, prefix
 `layoutrecall:`), one line per event:
 
 ```
-layoutrecall: id=1 clid=0x... type=FSID sb=10 SEND n=1
-layoutrecall: id=1 clid=0x... REPLY n=1 cb=OK op=NFS4ERR_DELAY
-layoutrecall: id=1 clid=0x... SEND n=2
-layoutrecall: id=1 clid=0x... REPLY n=2 cb=OK op=NFS4ERR_DELAY
-layoutrecall: id=1 clid=0x... SEND n=3
-layoutrecall: id=1 clid=0x... REPLY n=3 cb=OK op=NFS4ERR_NOMATCHING_LAYOUT
-layoutrecall: id=1 clid=0x... DONE dropped=4
+layoutrecall: id=1 clid=0x... type=FSID sb=1 ino=0 SEND n=1 cb=NFS4_OK(0) op=NFS4_OK(0) dropped=0
+layoutrecall: id=1 clid=0x... type=FSID sb=1 ino=0 REPLY n=1 cb=NFS4ERR_DELAY(10008) op=NFS4ERR_DELAY(10008) dropped=0
+...
+layoutrecall: id=1 clid=0x... type=FSID sb=1 ino=0 DONE n=3 cb=NFS4_OK(0) op=NFS4ERR_NOMATCHING_LAYOUT(10060) dropped=2
 ```
 
 (CLOCK_REALTIME timestamps come from the trace line prefix and are
@@ -157,6 +154,32 @@ network and no sleeps:
 Existing tests: none should change.  `cp_complete` is NULL for all
 existing callers; the send-signature change is mechanical.
 
+## As built (differences from the plan above)
+
+- Lock order is `cb_timeout_mutex -> lr_mutex` (the hook runs on the
+  timeout thread under `cb_timeout_mutex`).  Nothing calls into `cb_*`
+  while holding `lr_mutex`; `layout_recall_fini()` detaches in-flight
+  callbacks first and reclaims them unlocked.
+- A NOMATCHING reply marks the recall draining; the drop runs outside
+  `lr_mutex` and the recall stays outstanding (LAYOUTGET keeps getting
+  RECALLCONFLICT) until it finishes.
+- FILE recall: the layout stateid's seqid is bumped once, after the
+  table slot is reserved, so a refused start never consumes a seqid.
+  DELAY resends reuse it (a resend is the same recall, not a new one;
+  sec 12.5.3 read that way).  On NOMATCHING the stateid is freed only
+  if its seqid is still the recall's (sec 12.5.5.2.1.3); a newer grant
+  is left alone.
+- Completion by LAYOUTRETURN requires the return's iomode to cover the
+  recall's (ANY covers all).  Byte ranges are not compared.
+- The DELAY interval is measured from when the reply is processed.
+- Only one recall per client may be outstanding (`-EBUSY`).
+- Probe ops: 41 LAYOUTRECALL, 42 LAYOUTRECALL_STATUS,
+  43 LAYOUTRECALL_CANCEL; C (`reffs_probe1_clnt --op layoutrecall*`)
+  and Python (`reffs-probe.py layoutrecall*`, with `--wait`).
+- Also fixed on the way: FILE LAYOUTRETURN and the implicit RW return
+  could both put a stateid's state ref when racing; now only the
+  caller that unhashes it does.
+
 ## Deliberately not done
 
 - Revoke / fence on expiry (log-and-stop only; NOT_NOW_BROWN_COW).
@@ -172,3 +195,21 @@ existing callers; the send-signature change is mechanical.
 - FFv2 fixed-layout barrier interaction: a bulk drop does not run
   the barrier's commit/return bookkeeping.
 - Persistence: recalls are in-memory only.
+- Bulk recalls carry no stateid, so a LAYOUTGET granted while the
+  recall is in flight (it passed the conflict check before the recall
+  started) is freed along with the rest on NOMATCHING.
+- A bulk drop (NOMATCHING, or LAYOUTRETURN FSID/ALL) does not run the
+  reflected-GETATTR fan-out that a FILE RW return does, so MDS size and
+  mtime can lag until the next LAYOUTCOMMIT or fan-out; nor does it run
+  the FFv2 fixed-dstore barrier bookkeeping.
+- RECALLCONFLICT is scoped: during an FSID recall, LAYOUTGET and FILE
+  returns on other fsids proceed.  Sec 12.5.5.2.1.5's last paragraph
+  reads literally as "any".
+- Internal recalls (fixed-layout barrier, trust-stateid conflict scan)
+  are not tracked, so a bulk recall can start while one is in flight;
+  sec 12.5.5.2.1.5 says the server MUST NOT.  This is a test trigger.
+- A FILE NOMATCHING frees the whole stateid regardless of the recalled
+  byte range or layout type.
+- Sole-client selection looks at the first 64 clients.
+- If `fini` finds a callback whose reply path already owns it, its
+  reference is leaked rather than raced (shutdown only).
