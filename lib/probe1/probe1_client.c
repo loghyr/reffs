@@ -22,6 +22,7 @@
 #include <rpc/clnt.h>
 #include <rpc/rpc_msg.h>
 #include <errno.h>
+#include <arpa/inet.h>
 
 #include "probe1_xdr.h"
 #include "nfsv42_names.h"
@@ -1849,4 +1850,237 @@ struct rpc_trans *probe1_client_op_layoutrecall_cancel(uint32_t id)
 		return NULL;
 	}
 	return rt;
+}
+
+static bool errinject_name_eq(const char *full, const char *prefix,
+			      const char *want)
+{
+	size_t plen = strlen(prefix);
+
+	if (!full)
+		return false;
+	if (!strcasecmp(full, want))
+		return true;
+	return !strncmp(full, prefix, plen) && !strcasecmp(full + plen, want);
+}
+
+int probe1_parse_nfs4_op(const char *s, uint32_t *op)
+{
+	char *end;
+	unsigned long v = strtoul(s, &end, 0);
+
+	if (*s && !*end) {
+		if (v >= OP_MAX)
+			return -EINVAL;
+		*op = (uint32_t)v;
+		return 0;
+	}
+	for (uint32_t i = 0; i < OP_MAX; i++) {
+		if (errinject_name_eq(nfs4_op_name(i), "OP_", s)) {
+			*op = i;
+			return 0;
+		}
+	}
+	return -EINVAL;
+}
+
+int probe1_parse_nfs4_status(const char *s, uint32_t *st)
+{
+	static const uint32_t ranges[][2] = { { 1, 100 }, { 10001, 10200 } };
+	char *end;
+	unsigned long v = strtoul(s, &end, 0);
+
+	if (*s && !*end) {
+		*st = (uint32_t)v;
+		return 0;
+	}
+	for (size_t r = 0; r < sizeof(ranges) / sizeof(ranges[0]); r++)
+		for (uint32_t i = ranges[r][0]; i <= ranges[r][1]; i++)
+			if (errinject_name_eq(nfs4_err_name(i), "NFS4ERR_",
+					      s)) {
+				*st = i;
+				return 0;
+			}
+	return -EINVAL;
+}
+
+static const char *errinject_state_name(probe_errinject_state1 s)
+{
+	switch (s) {
+	case PROBE1_ERRINJECT_ARMED:
+		return "ARMED";
+	case PROBE1_ERRINJECT_FIRED:
+		return "FIRED";
+	case PROBE1_ERRINJECT_DISARMED:
+		return "DISARMED";
+	}
+	return "?";
+}
+
+static void errinject_time(uint64_t ns, char *buf, size_t len)
+{
+	time_t sec = (time_t)(ns / 1000000000ULL);
+	struct tm tm;
+	char when[32];
+
+	if (!ns) {
+		snprintf(buf, len, "-");
+		return;
+	}
+	gmtime_r(&sec, &tm);
+	strftime(when, sizeof(when), "%Y-%m-%dT%H:%M:%S", &tm);
+	snprintf(buf, len, "%s.%09" PRIu64 "Z", when,
+		 (uint64_t)(ns % 1000000000ULL));
+}
+
+static int errinject_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	ERRINJECT1res *res = ph->ph_res;
+
+	if (res->eir_status)
+		LOG("errinject error = %d", res->eir_status);
+	else
+		printf("id=%u ARMED\n", res->ERRINJECT1res_u.eir_resok.eir_id);
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_errinject(const struct ERRINJECT1args *req)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_ERRINJECT;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	ERRINJECT1args *args = ph->ph_args;
+
+	*args = *req;
+	/* The args are xdr_free'd with the call; own the buffers. */
+	args->eia_client_addr =
+		strdup(req->eia_client_addr ? req->eia_client_addr : "");
+	args->eia_ops.eia_ops_val = NULL;
+	if (req->eia_ops.eia_ops_len) {
+		args->eia_ops.eia_ops_val =
+			calloc(req->eia_ops.eia_ops_len, sizeof(uint32_t));
+		if (args->eia_ops.eia_ops_val)
+			memcpy(args->eia_ops.eia_ops_val,
+			       req->eia_ops.eia_ops_val,
+			       req->eia_ops.eia_ops_len * sizeof(uint32_t));
+	}
+	if (!args->eia_client_addr ||
+	    (req->eia_ops.eia_ops_len && !args->eia_ops.eia_ops_val)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	rt->rt_cb = errinject_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+static int errinject_status_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	ERRINJECT_STATUS1res *res = ph->ph_res;
+	ERRINJECT_STATUS1resok *ok = &res->ERRINJECT_STATUS1res_u.eisr_resok;
+	char armed[48], fired[48], addr[INET_ADDRSTRLEN] = "any";
+	const char *st = nfs4_err_name(ok->eis_status);
+	const char *fop = nfs4_op_name(ok->eis_fired_op);
+
+	if (res->eisr_status) {
+		LOG("errinject-status error = %d", res->eisr_status);
+		io_handler_stop();
+		return 0;
+	}
+	if (ok->eis_client_addr) {
+		struct in_addr in = { .s_addr = ok->eis_client_addr };
+
+		inet_ntop(AF_INET, &in, addr, sizeof(addr));
+	}
+	errinject_time(ok->eis_armed_ns, armed, sizeof(armed));
+	errinject_time(ok->eis_fired_ns, fired, sizeof(fired));
+	printf("id=%u state=%s clientid=0x%016" PRIx64 " addr=%s sb=%" PRIu64
+	       " ino=%" PRIu64 " status=%s(%u) ops=",
+	       ok->eis_id, errinject_state_name(ok->eis_state),
+	       (uint64_t)ok->eis_clientid, addr, (uint64_t)ok->eis_sb_id,
+	       (uint64_t)ok->eis_ino, st ? st : "?", ok->eis_status);
+	if (!ok->eis_ops.eis_ops_len)
+		printf("any");
+	for (u_int i = 0; i < ok->eis_ops.eis_ops_len; i++) {
+		const char *n = nfs4_op_name(ok->eis_ops.eis_ops_val[i]);
+
+		printf("%s%s", i ? "," : "", n ? n : "?");
+	}
+	printf(" skipped=%u\narmed=%s\n", ok->eis_skipped, armed);
+	if (ok->eis_state == PROBE1_ERRINJECT_FIRED)
+		printf("fired=%s op=%s(%u) opidx=%u xid=0x%08x"
+		       " clientid=0x%016" PRIx64 "\n",
+		       fired, fop ? fop : "?", ok->eis_fired_op,
+		       ok->eis_fired_opidx, ok->eis_fired_xid,
+		       (uint64_t)ok->eis_fired_clientid);
+	io_handler_stop();
+	return 0;
+}
+
+static struct rpc_trans *errinject_void_call(uint32_t proc,
+					     int (*cb)(struct rpc_trans *))
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = proc;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	rt->rt_cb = cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+struct rpc_trans *probe1_client_op_errinject_status(void)
+{
+	return errinject_void_call(PROBEPROC1_ERRINJECT_STATUS,
+				   errinject_status_cb);
+}
+
+static int errinject_disarm_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	probe_stat1 *res = ph->ph_res;
+
+	if (*res)
+		LOG("errinject-disarm error = %d", *res);
+	else
+		printf("OK\n");
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_errinject_disarm(void)
+{
+	return errinject_void_call(PROBEPROC1_ERRINJECT_DISARM,
+				   errinject_disarm_cb);
 }

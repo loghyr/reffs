@@ -74,6 +74,9 @@ static void usage(const char *prog)
 	printf("                                     layoutrecall - Start a CB_LAYOUTRECALL with DELAY resend\n");
 	printf("                                     layoutrecall-status - Show a recall's send/reply log\n");
 	printf("                                     layoutrecall-cancel - Stop resending a recall\n");
+	printf("                                     errinject - Arm a one-shot NFSv4 error on one file\n");
+	printf("                                     errinject-status - Show whether/where it fired\n");
+	printf("                                     errinject-disarm - Clear an armed injection\n");
 	printf("  -I  --sb-id=ID               Superblock ID for sb-* operations\n");
 	printf("  -P  --sb-path=PATH           Path for sb-create/sb-mount\n");
 	printf("  -T  --storage-type=TYPE      Storage type (0=ram, 1=posix)\n");
@@ -113,6 +116,10 @@ static void usage(const char *prog)
 	printf("      --recall-id N            layoutrecall-status/-cancel\n");
 	printf("                               (default: most recent)\n");
 	printf("      (layoutrecall uses -I sb-id for FSID/FILE, -N inum for FILE)\n");
+	printf("      --errinject-ops OP[,OP]  ops to fail (getattr,close,...;\n");
+	printf("                               default: any but SEQUENCE/PUTFH/...)\n");
+	printf("      --errinject-status ST    status (default badhandle)\n");
+	printf("      (errinject uses -I sb-id, -N inum, --client-id/--client-addr)\n");
 }
 
 static struct option long_opts[] = {
@@ -148,6 +155,8 @@ static struct option long_opts[] = {
 	{ "limit-ms", required_argument, 0, 267 },
 	{ "limit-count", required_argument, 0, 268 },
 	{ "recall-id", required_argument, 0, 269 },
+	{ "errinject-ops", required_argument, 0, 270 },
+	{ "errinject-status", required_argument, 0, 271 },
 	{ NULL, 0, NULL, 0 },
 };
 
@@ -175,6 +184,9 @@ LAYOUTRECALL1args cli_recall = {
 	.lra_changed = true,
 };
 uint32_t cli_recall_id = 0;
+uint32_t cli_errinject_ops[PROBE1_ERRINJECT_MAX_OPS];
+uint32_t cli_errinject_nops = 0;
+uint32_t cli_errinject_status = 0;
 
 /*
  * Parsed --default-coding spec.  cli_coding_set means the user
@@ -469,6 +481,37 @@ int main(int argc, char *argv[])
 		case 269:
 			cli_recall_id = (uint32_t)strtoul(optarg, NULL, 0);
 			break;
+		case 270: {
+			char *save = NULL;
+
+			for (char *tok = strtok_r(optarg, ",", &save); tok;
+			     tok = strtok_r(NULL, ",", &save)) {
+				if (cli_errinject_nops ==
+				    PROBE1_ERRINJECT_MAX_OPS) {
+					LOG("--errinject-ops: at most %d ops",
+					    PROBE1_ERRINJECT_MAX_OPS);
+					return 1;
+				}
+				if (probe1_parse_nfs4_op(
+					    tok,
+					    &cli_errinject_ops
+						    [cli_errinject_nops])) {
+					LOG("--errinject-ops: unknown op %s",
+					    tok);
+					return 1;
+				}
+				cli_errinject_nops++;
+			}
+			break;
+		}
+		case 271:
+			if (probe1_parse_nfs4_status(optarg,
+						     &cli_errinject_status)) {
+				LOG("--errinject-status: unknown status %s",
+				    optarg);
+				return 1;
+			}
+			break;
 		}
 	}
 
@@ -610,6 +653,26 @@ int main(int argc, char *argv[])
 		rt = probe1_client_op_layoutrecall_status(cli_recall_id);
 	} else if (!strcmp(op, "layoutrecall-cancel")) {
 		rt = probe1_client_op_layoutrecall_cancel(cli_recall_id);
+	} else if (!strcmp(op, "errinject")) {
+		ERRINJECT1args ei = {
+			.eia_clientid = cli_recall.lra_clientid,
+			.eia_client_addr = cli_recall.lra_client_addr,
+			.eia_sb_id = sb_id,
+			.eia_ino = cli_inum,
+			.eia_status = cli_errinject_status,
+			.eia_ops.eia_ops_len = cli_errinject_nops,
+			.eia_ops.eia_ops_val = cli_errinject_ops,
+		};
+
+		if (!sb_id || !cli_inum) {
+			LOG("errinject requires -I sb-id and -N inum");
+			goto done;
+		}
+		rt = probe1_client_op_errinject(&ei);
+	} else if (!strcmp(op, "errinject-status")) {
+		rt = probe1_client_op_errinject_status();
+	} else if (!strcmp(op, "errinject-disarm")) {
+		rt = probe1_client_op_errinject_disarm();
 	} else {
 		LOG("op = \"%s\" is not supported", op);
 	}
