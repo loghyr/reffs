@@ -46,6 +46,7 @@
 #include "nfs4/migration_record.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
+#include "nfs4/layout_recall.h"
 #include "ps_inode.h"
 #include "ps_proxy_ops.h"
 #include "ps_sb.h"
@@ -2428,6 +2429,16 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	}
 
 	/*
+	 * RFC 8881 sec 12.5.5.2.1.5: no LAYOUTGET inside the scope of a
+	 * recall still outstanding to this client.
+	 */
+	if (layout_clientid && layout_recall_layoutget_conflict(
+				       layout_clientid, compound->c_inode)) {
+		*status = NFS4ERR_RECALLCONFLICT;
+		return 0;
+	}
+
+	/*
 	 * Proxy-SB fast path: forward LAYOUTGET to upstream
 	 * MDS, return the layout body verbatim.  ec_demo then dials the
 	 * upstream DSes directly using the deviceids in the layout.
@@ -3748,6 +3759,28 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	}
 
 	/*
+	 * RFC 8881 sec 12.5.5.2.1.5: while a bulk recall is outstanding,
+	 * a FILE return in its scope or a return of another type is a
+	 * RECALLCONFLICT.
+	 */
+	clientid4 return_clientid = compound->c_nfs4_client ?
+					    (clientid4)nfs4_client_to_client(
+						    compound->c_nfs4_client)
+						    ->c_id :
+					    0;
+
+	if (return_clientid) {
+		nfsstat4 conflict = layout_recall_layoutreturn_check(
+			return_clientid, args->lora_layoutreturn.lr_returntype,
+			compound->c_inode);
+
+		if (conflict) {
+			*status = conflict;
+			return 0;
+		}
+	}
+
+	/*
 			 * Proxy-SB fast path: forward LAYOUTRETURN to the
 	 * upstream MDS so it can free the layout state it issued via
 	 * the forwarded LAYOUTGET.  Foundation stub returns -ENOSYS ->
@@ -3837,6 +3870,11 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 		TRACE("LAYOUTRETURN: bulk type=%d sb=%" PRIu64
 		      " iomode=%d freed=%u",
 		      rt_type, sb_id, args->lora_iomode, freed);
+		if (return_clientid)
+			layout_recall_layoutreturn_done(return_clientid,
+							rt_type,
+							args->lora_iomode,
+							compound->c_inode);
 		res->LAYOUTRETURN4res_u.lorr_stateid.lrs_present = false;
 		return 0;
 	}
@@ -4022,6 +4060,12 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	      (unsigned long)remaining);
 
 	stateid_put(stid); /* find ref */
+
+	if (return_clientid)
+		layout_recall_layoutreturn_done(return_clientid,
+						LAYOUTRETURN4_FILE,
+						args->lora_iomode,
+						compound->c_inode);
 
 	/*
 	 * If this was a write layout return, we need fresh attrs

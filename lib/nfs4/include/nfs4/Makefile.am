@@ -11,5 +11,6 @@ reffsinclude_HEADERS = \
 	client_persist.h \
 	compound.h \
 	errors.h \
+	layout_recall.h \
 	ops.h \
 	stateid.h

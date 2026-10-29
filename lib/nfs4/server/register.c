@@ -42,6 +42,7 @@
 #include "reffs/nfs4.h"
 #include "reffs/persist_ops.h"
 #include "nfs4/trace/nfs4.h"
+#include "nfs4/layout_recall.h"
 #include "nfs4/attr.h"
 #include "nfs4/compound.h"
 #include "nfs4/cb.h"
@@ -99,6 +100,7 @@ int nfs4_protocol_register(void)
 	}
 
 	cb_timeout_init();
+	layout_recall_init();
 	lease_reaper_init();
 	trust_stateid_init();
 	migration_record_init();
@@ -116,6 +118,7 @@ int nfs4_protocol_deregister(void)
 	migration_record_fini();
 	trust_stateid_fini();
 	lease_reaper_fini();
+	layout_recall_fini();
 	cb_timeout_fini();
 
 	rpc_program_handler_put(nfs4_handler);
