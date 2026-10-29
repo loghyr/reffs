@@ -10,6 +10,7 @@ reffsinclude_HEADERS = \
 	client.h \
 	client_persist.h \
 	compound.h \
+	error_inject.h \
 	errors.h \
 	layout_recall.h \
 	ops.h \

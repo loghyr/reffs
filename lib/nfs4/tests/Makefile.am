@@ -203,6 +203,7 @@ TESTS = \
 	compound_async \
 	default_coding_dispatch_test \
 	delegation_lifecycle \
+	error_inject_test \
 	errors \
 	file_ops \
 	getdeviceinfo_notify_test \

@@ -44,6 +44,7 @@
 #include "nfs4/errors.h"
 #include "nfs4/ops.h"
 #include "nfs4/compound.h"
+#include "nfs4/error_inject.h"
 #include "nfsv42_names.h"
 
 typedef uint32_t (*nfs4_op_cb)(struct compound *compound);
@@ -412,6 +413,18 @@ bool dispatch_compound(struct compound *compound)
 					NFS4ERR_NOTSUPP;
 				RECORD_OP_STATS(resop);
 				res->status = NFS4ERR_NOTSUPP;
+				res->resarray.resarray_len =
+					compound->c_curr_op + 1;
+				return false;
+			}
+
+			nfsstat4 inject =
+				error_inject_check(compound, argop->argop);
+
+			if (inject) {
+				resop->nfs_resop4_u.opillegal.status = inject;
+				RECORD_OP_STATS(resop);
+				res->status = inject;
 				res->resarray.resarray_len =
 					compound->c_curr_op + 1;
 				return false;

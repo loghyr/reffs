@@ -24,6 +24,7 @@ libreffs_nfs4_server_la_SOURCES = \
 	delegation.c \
 	dir.c \
 	dispatch.c \
+	error_inject.c \
 	errors.c \
 	file.c \
 	filehandle.c \
