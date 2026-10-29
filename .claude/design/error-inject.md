@@ -79,3 +79,17 @@ never match in "any op" mode; disarm; re-arm replaces; arm validation.
 - No PUTFH-argument matching (BADHANDLE on the PUTFH that names the
   file); the client handles a failed GETATTR/CLOSE the same way.
 - One slot, not a list; no count > 1; not persisted.
+
+## As built
+
+- Commits: engine + dispatch hook + tests, probe XDR (44-46), probe
+  handlers, C CLI, Python CLI.
+- `build/scripts/reffs/probe_client.py` and `build/scripts/reffs-probe.py`
+  are made by `config.status`, not by `make`; after pulling, run
+  `cd build && ./config.status scripts/reffs/probe_client.py
+  scripts/reffs-probe.py`.
+- Wire-checked against a throwaway reffsd (ports 24049/24490) driven by
+  `tools/ec_demo put`: with "any op" it fired on GETFH in the OPEN
+  compound; with `--ops getattr,close --client-addr 127.0.0.1` the
+  OPEN compound passed (skipped=2: GETFH, LAYOUTGET) and CLOSE got
+  BADHANDLE; the next OPEN succeeded.
