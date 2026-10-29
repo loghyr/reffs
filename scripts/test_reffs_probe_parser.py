@@ -194,7 +194,8 @@ SUBCOMMANDS = _subcommands(PARSER)
 # then changes visibly in the diff rather than silently.
 EXPECTED_SUBCOMMANDS = frozenset((
     'context', 'dstore-drain', 'dstore-instance-count', 'dstore-list',
-    'dstore-undrain', 'fd-infos-list', 'fs-usage', 'graceful-cleanup',
+    'dstore-undrain', 'errinject', 'errinject-disarm',
+    'errinject-status', 'fd-infos-list', 'fs-usage', 'graceful-cleanup',
     'heartbeat', 'identity-domain-list', 'identity-map-list',
     'identity-map-remove', 'inode-layout-list', 'io-contexts-list',
     'layout-errors', 'layoutrecall', 'layoutrecall-cancel',

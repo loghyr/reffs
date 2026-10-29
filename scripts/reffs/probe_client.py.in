@@ -381,6 +381,34 @@ class Probe1Client(ProtocolClient):
         return self.proc(PROBEPROC1_LAYOUTRECALL_CANCEL, args,
                          response_type='probe_stat1')
 
+    # One-shot NFSv4 error injection test trigger.
+    def errinject(self, sb_id, ino, ops=(), status=0, clientid=0,
+                  client_addr=''):
+        """Arm a one-shot NFSv4 error (status 0: NFS4ERR_BADHANDLE) on
+        the next op whose current filehandle is (sb_id, ino).  ops is
+        a list of NFSv4 op numbers (empty: any op except SEQUENCE and
+        the filehandle setters).  The client is clientid, else
+        client_addr (IPv4), else any.  Returns the arm id."""
+        args = ERRINJECT1args(
+            eia_clientid=clientid,
+            eia_client_addr=(client_addr.encode()
+                             if isinstance(client_addr, str)
+                             else client_addr),
+            eia_sb_id=sb_id, eia_ino=ino, eia_status=status,
+            eia_ops=list(ops))
+        return self.proc(PROBEPROC1_ERRINJECT, args,
+                         response_type='ERRINJECT1res')
+
+    def errinject_status(self):
+        """The current or last injection, and where it fired."""
+        return self.proc(PROBEPROC1_ERRINJECT_STATUS,
+                         response_type='ERRINJECT_STATUS1res')
+
+    def errinject_disarm(self):
+        """Clear an armed injection."""
+        return self.proc(PROBEPROC1_ERRINJECT_DISARM,
+                         response_type='probe_stat1')
+
     # Dstore lifecycle.
     def dstore_list(self):
         """Operator dashboard for the dstore pool.  Returns
