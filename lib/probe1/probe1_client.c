@@ -24,6 +24,7 @@
 #include <errno.h>
 
 #include "probe1_xdr.h"
+#include "nfsv42_names.h"
 
 #include "reffs/test.h"
 
@@ -1621,5 +1622,231 @@ struct rpc_trans *probe1_client_op_null(void)
 		rt = NULL;
 	}
 
+	return rt;
+}
+
+static const char *layoutrecall_status_name(int32_t st, char *buf, size_t len)
+{
+	if (st < 0) {
+		snprintf(buf, len, "errno%d", st);
+		return buf;
+	}
+	if (st == 0)
+		return "NFS4_OK";
+	const char *name = nfs4_err_name((uint32_t)st);
+
+	if (!name) {
+		snprintf(buf, len, "%d", st);
+		return buf;
+	}
+	return name;
+}
+
+static const char *layoutrecall_type_name(probe_layoutrecall_type1 t)
+{
+	switch (t) {
+	case PROBE1_LAYOUTRECALL_FILE:
+		return "FILE";
+	case PROBE1_LAYOUTRECALL_FSID:
+		return "FSID";
+	case PROBE1_LAYOUTRECALL_ALL:
+		return "ALL";
+	}
+	return "?";
+}
+
+static const char *layoutrecall_state_name(probe_layoutrecall_state1 s)
+{
+	static const char *const names[] = {
+		[PROBE1_LAYOUTRECALL_SENDING] = "SENDING",
+		[PROBE1_LAYOUTRECALL_WAIT_RESEND] = "WAIT_RESEND",
+		[PROBE1_LAYOUTRECALL_ACKED] = "ACKED",
+		[PROBE1_LAYOUTRECALL_DONE] = "DONE",
+		[PROBE1_LAYOUTRECALL_EXPIRED] = "EXPIRED",
+		[PROBE1_LAYOUTRECALL_FAILED] = "FAILED",
+		[PROBE1_LAYOUTRECALL_CANCELLED] = "CANCELLED",
+	};
+
+	if ((unsigned int)s < sizeof(names) / sizeof(names[0]) && names[s])
+		return names[s];
+	return "?";
+}
+
+static const char *layoutrecall_event_name(probe_layoutrecall_event1 e)
+{
+	static const char *const names[] = {
+		[PROBE1_LRE_SEND] = "SEND",
+		[PROBE1_LRE_REPLY] = "REPLY",
+		[PROBE1_LRE_TIMEOUT] = "TIMEOUT",
+		[PROBE1_LRE_RETURN] = "RETURN",
+		[PROBE1_LRE_DONE] = "DONE",
+		[PROBE1_LRE_EXPIRED] = "EXPIRED",
+		[PROBE1_LRE_FAILED] = "FAILED",
+		[PROBE1_LRE_CANCELLED] = "CANCELLED",
+	};
+
+	if ((unsigned int)e < sizeof(names) / sizeof(names[0]) && names[e])
+		return names[e];
+	return "?";
+}
+
+static int layoutrecall_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	LAYOUTRECALL1res *res = ph->ph_res;
+
+	if (res->lrr_status)
+		LOG("layoutrecall error = %d", res->lrr_status);
+	else
+		printf("id=%u clientid=0x%016" PRIx64 "\n",
+		       res->LAYOUTRECALL1res_u.lrr_resok.lrr_id,
+		       (uint64_t)res->LAYOUTRECALL1res_u.lrr_resok.lrr_clientid);
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_layoutrecall(const LAYOUTRECALL1args *req)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_LAYOUTRECALL;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	LAYOUTRECALL1args *args = ph->ph_args;
+
+	*args = *req;
+	/* The args are xdr_free'd with the call; own the string. */
+	args->lra_client_addr =
+		strdup(req->lra_client_addr ? req->lra_client_addr : "");
+	if (!args->lra_client_addr) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	rt->rt_cb = layoutrecall_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+static int layoutrecall_status_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	LAYOUTRECALL_STATUS1res *res = ph->ph_res;
+	LAYOUTRECALL_STATUS1resok *ok =
+		&res->LAYOUTRECALL_STATUS1res_u.lrsr_resok;
+	char b1[24], b2[24];
+
+	if (res->lrsr_status) {
+		LOG("layoutrecall-status error = %d", res->lrsr_status);
+		io_handler_stop();
+		return 0;
+	}
+	printf("id=%u state=%s clientid=0x%016" PRIx64 " type=%s sb=%" PRIu64
+	       " ino=%" PRIu64 " iomode=%u changed=%d interval_ms=%u"
+	       " limit_ms=%u limit_count=%u sends=%u events_lost=%u\n",
+	       ok->lrs_id, layoutrecall_state_name(ok->lrs_state),
+	       (uint64_t)ok->lrs_clientid, layoutrecall_type_name(ok->lrs_type),
+	       (uint64_t)ok->lrs_sb_id, (uint64_t)ok->lrs_ino, ok->lrs_iomode,
+	       ok->lrs_changed, ok->lrs_interval_ms, ok->lrs_limit_ms,
+	       ok->lrs_limit_count, ok->lrs_sends, ok->lrs_events_lost);
+	for (u_int i = 0; i < ok->lrs_events.lrs_events_len; i++) {
+		probe_layoutrecall_ev1 *e = &ok->lrs_events.lrs_events_val[i];
+		time_t sec = (time_t)(e->plre_time_ns / 1000000000ULL);
+		struct tm tm;
+		char when[32];
+
+		gmtime_r(&sec, &tm);
+		strftime(when, sizeof(when), "%Y-%m-%dT%H:%M:%S", &tm);
+		printf("%s.%09" PRIu64 "Z %-9s n=%u cb=%s op=%s dropped=%u\n",
+		       when, (uint64_t)(e->plre_time_ns % 1000000000ULL),
+		       layoutrecall_event_name(e->plre_kind), e->plre_send,
+		       layoutrecall_status_name(e->plre_cb_status, b1,
+						sizeof(b1)),
+		       layoutrecall_status_name(e->plre_op_status, b2,
+						sizeof(b2)),
+		       e->plre_dropped);
+	}
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_layoutrecall_status(uint32_t id)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_LAYOUTRECALL_STATUS;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	LAYOUTRECALL_STATUS1args *args = ph->ph_args;
+
+	args->lrsa_id = id;
+	rt->rt_cb = layoutrecall_status_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+static int layoutrecall_cancel_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	probe_stat1 *res = ph->ph_res;
+
+	if (*res)
+		LOG("layoutrecall-cancel error = %d", *res);
+	else
+		printf("OK\n");
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_layoutrecall_cancel(uint32_t id)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_LAYOUTRECALL_CANCEL;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	LAYOUTRECALL_CANCEL1args *args = ph->ph_args;
+
+	args->lrca_id = id;
+	rt->rt_cb = layoutrecall_cancel_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
 	return rt;
 }

@@ -71,6 +71,9 @@ static void usage(const char *prog)
 	printf("                                     ps-listener-list - List PS upstream listeners + reconnect state\n");
 	printf("                                     ps-write-buffer-stats - Per-listener Phase 4a write-buffer counters\n");
 	printf("                                     trust-stateid-stats - Tight-coupling trust-table counters\n");
+	printf("                                     layoutrecall - Start a CB_LAYOUTRECALL with DELAY resend\n");
+	printf("                                     layoutrecall-status - Show a recall's send/reply log\n");
+	printf("                                     layoutrecall-cancel - Stop resending a recall\n");
 	printf("  -I  --sb-id=ID               Superblock ID for sb-* operations\n");
 	printf("  -P  --sb-path=PATH           Path for sb-create/sb-mount\n");
 	printf("  -T  --storage-type=TYPE      Storage type (0=ram, 1=posix)\n");
@@ -97,6 +100,19 @@ static void usage(const char *prog)
 	printf("                               (op notify-deviceid, with -S)\n");
 	printf("      --immediate true|false   ndc_immediate for CHANGE\n");
 	printf("      --layout-type ff|ffv2    layout type (default ff)\n");
+	printf("      --recall-type file|fsid|all  layoutrecall type\n");
+	printf("      --client-id ID           target clientid (hex ok)\n");
+	printf("      --client-addr A.B.C.D    target client by IPv4 address\n");
+	printf("                               (neither: the only client)\n");
+	printf("      --iomode read|rw|any     clora_iomode (default any)\n");
+	printf("      --changed true|false     clora_changed (default true)\n");
+	printf("      --offset N --length N    FILE byte range (default all)\n");
+	printf("      --interval-ms N          resend interval (default 1000)\n");
+	printf("      --limit-ms N             stop resending after N ms\n");
+	printf("      --limit-count N          stop after N sends\n");
+	printf("      --recall-id N            layoutrecall-status/-cancel\n");
+	printf("                               (default: most recent)\n");
+	printf("      (layoutrecall uses -I sb-id for FSID/FILE, -N inum for FILE)\n");
 }
 
 static struct option long_opts[] = {
@@ -121,6 +137,17 @@ static struct option long_opts[] = {
 	{ "notify-type", required_argument, 0, 256 },
 	{ "immediate", required_argument, 0, 257 },
 	{ "layout-type", required_argument, 0, 258 },
+	{ "recall-type", required_argument, 0, 259 },
+	{ "client-id", required_argument, 0, 260 },
+	{ "client-addr", required_argument, 0, 261 },
+	{ "iomode", required_argument, 0, 262 },
+	{ "changed", required_argument, 0, 263 },
+	{ "offset", required_argument, 0, 264 },
+	{ "length", required_argument, 0, 265 },
+	{ "interval-ms", required_argument, 0, 266 },
+	{ "limit-ms", required_argument, 0, 267 },
+	{ "limit-count", required_argument, 0, 268 },
+	{ "recall-id", required_argument, 0, 269 },
 	{ NULL, 0, NULL, 0 },
 };
 
@@ -143,6 +170,11 @@ uint32_t cli_dstore_id = 0;
 probe_notify_deviceid_type1 cli_notify_type = 0;
 bool cli_notify_immediate = false;
 uint32_t cli_notify_layout_type = 0;
+LAYOUTRECALL1args cli_recall = {
+	.lra_iomode = LAYOUTIOMODE4_ANY,
+	.lra_changed = true,
+};
+uint32_t cli_recall_id = 0;
 
 /*
  * Parsed --default-coding spec.  cli_coding_set means the user
@@ -382,6 +414,61 @@ int main(int argc, char *argv[])
 				return 1;
 			}
 			break;
+		case 259:
+			if (!strcmp(optarg, "file"))
+				cli_recall.lra_type = PROBE1_LAYOUTRECALL_FILE;
+			else if (!strcmp(optarg, "fsid"))
+				cli_recall.lra_type = PROBE1_LAYOUTRECALL_FSID;
+			else if (!strcmp(optarg, "all"))
+				cli_recall.lra_type = PROBE1_LAYOUTRECALL_ALL;
+			else {
+				LOG("--recall-type must be file|fsid|all");
+				return 1;
+			}
+			break;
+		case 260:
+			cli_recall.lra_clientid = strtoull(optarg, NULL, 0);
+			break;
+		case 261:
+			cli_recall.lra_client_addr = optarg;
+			break;
+		case 262:
+			if (!strcmp(optarg, "read"))
+				cli_recall.lra_iomode = LAYOUTIOMODE4_READ;
+			else if (!strcmp(optarg, "rw"))
+				cli_recall.lra_iomode = LAYOUTIOMODE4_RW;
+			else if (!strcmp(optarg, "any"))
+				cli_recall.lra_iomode = LAYOUTIOMODE4_ANY;
+			else {
+				LOG("--iomode must be read|rw|any");
+				return 1;
+			}
+			break;
+		case 263:
+			cli_recall.lra_changed = !strcmp(optarg, "true") ||
+						 !strcmp(optarg, "1");
+			break;
+		case 264:
+			cli_recall.lra_offset = strtoull(optarg, NULL, 0);
+			break;
+		case 265:
+			cli_recall.lra_length = strtoull(optarg, NULL, 0);
+			break;
+		case 266:
+			cli_recall.lra_interval_ms =
+				(uint32_t)strtoul(optarg, NULL, 0);
+			break;
+		case 267:
+			cli_recall.lra_limit_ms =
+				(uint32_t)strtoul(optarg, NULL, 0);
+			break;
+		case 268:
+			cli_recall.lra_limit_count =
+				(uint32_t)strtoul(optarg, NULL, 0);
+			break;
+		case 269:
+			cli_recall_id = (uint32_t)strtoul(optarg, NULL, 0);
+			break;
 		}
 	}
 
@@ -510,6 +597,19 @@ int main(int argc, char *argv[])
 						      cli_notify_type,
 						      cli_notify_immediate,
 						      cli_notify_layout_type);
+	} else if (!strcmp(op, "layoutrecall")) {
+		if (!cli_recall.lra_type) {
+			LOG("layoutrecall requires --recall-type file|fsid|all");
+			goto done;
+		}
+		cli_recall.lra_sb_id = sb_id;
+		cli_recall.lra_ino = cli_inum;
+		cli_recall.lra_layout_type = cli_notify_layout_type;
+		rt = probe1_client_op_layoutrecall(&cli_recall);
+	} else if (!strcmp(op, "layoutrecall-status")) {
+		rt = probe1_client_op_layoutrecall_status(cli_recall_id);
+	} else if (!strcmp(op, "layoutrecall-cancel")) {
+		rt = probe1_client_op_layoutrecall_cancel(cli_recall_id);
 	} else {
 		LOG("op = \"%s\" is not supported", op);
 	}

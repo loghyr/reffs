@@ -81,4 +81,11 @@ struct rpc_trans *probe1_client_op_notify_deviceid(uint32_t dstore_id,
 						   bool immediate,
 						   uint32_t layout_type);
 
+/* On-demand CB_LAYOUTRECALL test trigger (ops 41-43). */
+struct LAYOUTRECALL1args;
+struct rpc_trans *
+probe1_client_op_layoutrecall(const struct LAYOUTRECALL1args *req);
+struct rpc_trans *probe1_client_op_layoutrecall_status(uint32_t id);
+struct rpc_trans *probe1_client_op_layoutrecall_cancel(uint32_t id);
+
 #endif
