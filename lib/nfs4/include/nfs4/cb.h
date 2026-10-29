@@ -60,6 +60,13 @@ struct cb_pending {
 	/* Optional transport submission seam for deterministic callback tests. */
 	int (*cp_submit)(struct rpc_trans *rt);
 	uint32_t (*cp_resume_action)(struct compound *compound);
+	/*
+	 * Completion hook for a callback with no paused task (cp_task
+	 * NULL), e.g. a probe-driven recall.  Called in place of
+	 * task_resume(); must not block or take cb_timeout's mutex.
+	 */
+	void (*cp_complete)(struct cb_pending *cp);
+	void *cp_complete_arg;
 	struct inode *cp_barrier_inode;
 	uint64_t cp_dirty_epoch;
 	clientid4 cp_recall_clientid;

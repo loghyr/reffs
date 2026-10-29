@@ -196,6 +196,14 @@ void cb_pending_get(struct cb_pending *cp)
 	atomic_fetch_add_explicit(&cp->cp_refs, 1, memory_order_relaxed);
 }
 
+static void cb_pending_wake(struct cb_pending *cp)
+{
+	if (cp->cp_complete)
+		cp->cp_complete(cp);
+	else
+		task_resume(cp->cp_task);
+}
+
 /* Submission holds an rt ref; a completer must wait for its last deref. */
 void cb_pending_resume(struct cb_pending *cp)
 {
@@ -209,7 +217,7 @@ void cb_pending_resume(struct cb_pending *cp)
 			return;
 	}
 	if (state == 0)
-		task_resume(cp->cp_task);
+		cb_pending_wake(cp);
 }
 
 static void cb_submit_done(struct cb_pending *cp)
@@ -218,7 +226,7 @@ static void cb_submit_done(struct cb_pending *cp)
 					     memory_order_acq_rel);
 
 	if (state == 2)
-		task_resume(cp->cp_task);
+		cb_pending_wake(cp);
 }
 
 /* ------------------------------------------------------------------ */
