@@ -81,4 +81,21 @@ struct rpc_trans *probe1_client_op_notify_deviceid(uint32_t dstore_id,
 						   bool immediate,
 						   uint32_t layout_type);
 
+/* On-demand CB_LAYOUTRECALL test trigger (ops 41-43). */
+struct LAYOUTRECALL1args;
+struct rpc_trans *
+probe1_client_op_layoutrecall(const struct LAYOUTRECALL1args *req);
+struct rpc_trans *probe1_client_op_layoutrecall_status(uint32_t id);
+struct rpc_trans *probe1_client_op_layoutrecall_cancel(uint32_t id);
+
+/* One-shot NFSv4 error injection (ops 44-46). */
+struct ERRINJECT1args;
+struct rpc_trans *probe1_client_op_errinject(const struct ERRINJECT1args *req);
+struct rpc_trans *probe1_client_op_errinject_status(void);
+struct rpc_trans *probe1_client_op_errinject_disarm(void);
+/* Name ("getattr", "OP_GETATTR") or number; 0 or -EINVAL. */
+int probe1_parse_nfs4_op(const char *s, uint32_t *op);
+/* Name ("badhandle", "NFS4ERR_BADHANDLE") or number; 0 or -EINVAL. */
+int probe1_parse_nfs4_status(const char *s, uint32_t *st);
+
 #endif

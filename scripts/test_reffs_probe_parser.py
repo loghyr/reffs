@@ -194,10 +194,12 @@ SUBCOMMANDS = _subcommands(PARSER)
 # then changes visibly in the diff rather than silently.
 EXPECTED_SUBCOMMANDS = frozenset((
     'context', 'dstore-drain', 'dstore-instance-count', 'dstore-list',
-    'dstore-undrain', 'fd-infos-list', 'fs-usage', 'graceful-cleanup',
+    'dstore-undrain', 'errinject', 'errinject-disarm',
+    'errinject-status', 'fd-infos-list', 'fs-usage', 'graceful-cleanup',
     'heartbeat', 'identity-domain-list', 'identity-map-list',
     'identity-map-remove', 'inode-layout-list', 'io-contexts-list',
-    'layout-errors', 'nfs4-op-stats', 'null', 'ps-listener-list',
+    'layout-errors', 'layoutrecall', 'layoutrecall-cancel',
+    'layoutrecall-status', 'nfs4-op-stats', 'null', 'ps-listener-list',
     'ps-write-buffer-stats', 'rpc-dump', 'sb-create', 'sb-destroy',
     'sb-get', 'sb-get-client-rules', 'sb-get-default-coding',
     'sb-lint-flavors', 'sb-list', 'sb-mount',

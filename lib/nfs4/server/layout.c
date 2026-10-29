@@ -46,6 +46,7 @@
 #include "nfs4/migration_record.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
+#include "nfs4/layout_recall.h"
 #include "ps_inode.h"
 #include "ps_proxy_ops.h"
 #include "ps_sb.h"
@@ -1377,6 +1378,85 @@ bool inode_has_write_layout(struct inode *inode)
 	return false;
 }
 
+static bool layout_stid_in_scope(const struct stateid *stid, uint64_t sb_id,
+				 uint64_t ino)
+{
+	const struct inode *inode = stid->s_inode;
+
+	if (stid->s_tag != Layout_Stateid || !inode)
+		return false;
+	if (sb_id && (!inode->i_sb || inode->i_sb->sb_id != sb_id))
+		return false;
+	return !ino || inode->i_ino == ino;
+}
+
+unsigned int nfs4_layout_drop_client_scope(struct client *client,
+					   uint64_t sb_id, uint64_t ino,
+					   layoutiomode4 iomode)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	struct stateid **arr;
+	uint32_t cap = 0, n = 0;
+	unsigned int freed = 0;
+	uint64_t clear_bit =
+		iomode == LAYOUTIOMODE4_RW ?
+			LAYOUT_STATEID_IOMODE_RW :
+		iomode == LAYOUTIOMODE4_READ ?
+			LAYOUT_STATEID_IOMODE_READ :
+			(LAYOUT_STATEID_IOMODE_READ | LAYOUT_STATEID_IOMODE_RW);
+
+	if (!client || !client->c_stateids)
+		return 0;
+
+	/* Size outside the read-side section; no allocation under RCU. */
+	rcu_read_lock();
+	cds_lfht_for_each(client->c_stateids, &iter, node)
+	{
+		struct stateid *stid =
+			caa_container_of(node, struct stateid, s_client_node);
+
+		if (layout_stid_in_scope(stid, sb_id, ino))
+			cap++;
+	}
+	rcu_read_unlock();
+	if (!cap)
+		return 0;
+	arr = calloc(cap, sizeof(*arr));
+	if (!arr)
+		return 0;
+
+	rcu_read_lock();
+	cds_lfht_for_each(client->c_stateids, &iter, node)
+	{
+		struct stateid *stid =
+			caa_container_of(node, struct stateid, s_client_node);
+
+		if (n == cap)
+			break;
+		if (!layout_stid_in_scope(stid, sb_id, ino))
+			continue;
+		if (stateid_get(stid))
+			arr[n++] = stid;
+	}
+	rcu_read_unlock();
+
+	for (uint32_t i = 0; i < n; i++) {
+		struct layout_stateid *ls = stid_to_layout(arr[i]);
+		uint64_t remaining = __atomic_and_fetch(
+			&ls->ls_state, ~clear_bit, __ATOMIC_ACQ_REL);
+
+		if (remaining == 0 && stateid_inode_unhash(arr[i])) {
+			stateid_client_unhash(arr[i]);
+			stateid_put(arr[i]); /* state ref */
+			freed++;
+		}
+		stateid_put(arr[i]); /* find ref */
+	}
+	free(arr);
+	return freed;
+}
+
 /* ------------------------------------------------------------------ */
 /* Layout stateid helpers                                              */
 /* ------------------------------------------------------------------ */
@@ -2345,6 +2425,16 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 
 	if (!compound->c_inode) {
 		*status = NFS4ERR_NOFILEHANDLE;
+		return 0;
+	}
+
+	/*
+	 * RFC 8881 sec 12.5.5.2.1.5: no LAYOUTGET inside the scope of a
+	 * recall still outstanding to this client.
+	 */
+	if (layout_clientid && layout_recall_layoutget_conflict(
+				       layout_clientid, compound->c_inode)) {
+		*status = NFS4ERR_RECALLCONFLICT;
 		return 0;
 	}
 
@@ -3414,8 +3504,8 @@ nfs4_layout_implicit_return_rw(struct compound *compound,
 	TRACE("implicit LAYOUTRETURN(RW): ino=%" PRIu64 " remaining=0x%lx",
 	      inode->i_ino, (unsigned long)remaining);
 
-	if (remaining == 0) {
-		stateid_inode_unhash(ls_stid);
+	/* Only the caller that unhashes owns the state ref. */
+	if (remaining == 0 && stateid_inode_unhash(ls_stid)) {
 		stateid_client_unhash(ls_stid);
 		stateid_put(ls_stid); /* state ref --> freed via RCU */
 	}
@@ -3669,6 +3759,28 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	}
 
 	/*
+	 * RFC 8881 sec 12.5.5.2.1.5: while a bulk recall is outstanding,
+	 * a FILE return in its scope or a return of another type is a
+	 * RECALLCONFLICT.
+	 */
+	clientid4 return_clientid = compound->c_nfs4_client ?
+					    (clientid4)nfs4_client_to_client(
+						    compound->c_nfs4_client)
+						    ->c_id :
+					    0;
+
+	if (return_clientid) {
+		nfsstat4 conflict = layout_recall_layoutreturn_check(
+			return_clientid, args->lora_layoutreturn.lr_returntype,
+			compound->c_inode);
+
+		if (conflict) {
+			*status = conflict;
+			return 0;
+		}
+	}
+
+	/*
 			 * Proxy-SB fast path: forward LAYOUTRETURN to the
 	 * upstream MDS so it can free the layout state it issued via
 	 * the forwarded LAYOUTGET.  Foundation stub returns -ENOSYS ->
@@ -3729,12 +3841,40 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	}
 
 	/*
-	 * LAYOUTRETURN4_FSID and LAYOUTRETURN4_ALL: bulk returns.
-	 * For now, just acknowledge them without stateid tracking.
+	 * LAYOUTRETURN4_FSID and LAYOUTRETURN4_ALL (RFC 8881 sec
+	 * 18.44.3): free every layout this client holds on the current
+	 * filehandle's fsid, or on all fsids.  An empty set is not an
+	 * error.  Bulk returns carry no stateid, so none is returned.
 	 */
 	if (args->lora_layoutreturn.lr_returntype != LAYOUTRETURN4_FILE) {
-		TRACE("LAYOUTRETURN: non-FILE return type %d",
-		      args->lora_layoutreturn.lr_returntype);
+		layoutreturn_type4 rt_type =
+			args->lora_layoutreturn.lr_returntype;
+		uint64_t sb_id = 0;
+		unsigned int freed = 0;
+
+		if (rt_type == LAYOUTRETURN4_FSID) {
+			if (network_file_handle_empty(&compound->c_curr_nfh) ||
+			    !compound->c_inode || !compound->c_inode->i_sb) {
+				*status = NFS4ERR_NOFILEHANDLE;
+				return 0;
+			}
+			sb_id = compound->c_inode->i_sb->sb_id;
+		} else if (rt_type != LAYOUTRETURN4_ALL) {
+			*status = NFS4ERR_INVAL;
+			return 0;
+		}
+		if (compound->c_nfs4_client)
+			freed = nfs4_layout_drop_client_scope(
+				nfs4_client_to_client(compound->c_nfs4_client),
+				sb_id, 0, args->lora_iomode);
+		TRACE("LAYOUTRETURN: bulk type=%d sb=%" PRIu64
+		      " iomode=%d freed=%u",
+		      rt_type, sb_id, args->lora_iomode, freed);
+		if (return_clientid)
+			layout_recall_layoutreturn_done(return_clientid,
+							rt_type,
+							args->lora_iomode,
+							compound->c_inode);
 		res->LAYOUTRETURN4res_u.lorr_stateid.lrs_present = false;
 		return 0;
 	}
@@ -3894,10 +4034,15 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	}
 
 	if (remaining == 0) {
-		/* No layouts left -- free the stateid. */
-		stateid_inode_unhash(stid);
-		stateid_client_unhash(stid);
-		stateid_put(stid); /* state ref --> freed */
+		/*
+		 * No layouts left -- free the stateid.  A concurrent
+		 * return may also see zero; only the unhasher owns the
+		 * state ref.
+		 */
+		if (stateid_inode_unhash(stid)) {
+			stateid_client_unhash(stid);
+			stateid_put(stid); /* state ref --> freed */
+		}
 
 		/* Return no stateid (layout fully returned). */
 		res->LAYOUTRETURN4res_u.lorr_stateid.lrs_present = false;
@@ -3915,6 +4060,12 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	      (unsigned long)remaining);
 
 	stateid_put(stid); /* find ref */
+
+	if (return_clientid)
+		layout_recall_layoutreturn_done(return_clientid,
+						LAYOUTRETURN4_FILE,
+						args->lora_iomode,
+						compound->c_inode);
 
 	/*
 	 * If this was a write layout return, we need fresh attrs

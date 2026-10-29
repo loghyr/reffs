@@ -60,6 +60,13 @@ struct cb_pending {
 	/* Optional transport submission seam for deterministic callback tests. */
 	int (*cp_submit)(struct rpc_trans *rt);
 	uint32_t (*cp_resume_action)(struct compound *compound);
+	/*
+	 * Completion hook for a callback with no paused task (cp_task
+	 * NULL), e.g. a probe-driven recall.  Called in place of
+	 * task_resume(); must not block or take cb_timeout's mutex.
+	 */
+	void (*cp_complete)(struct cb_pending *cp);
+	void *cp_complete_arg;
 	struct inode *cp_barrier_inode;
 	uint64_t cp_dirty_epoch;
 	clientid4 cp_recall_clientid;
@@ -183,6 +190,18 @@ int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
 			      int changed, const nfs_fh4 *fh, uint64_t offset,
 			      uint64_t length, const stateid4 *lo_stateid,
 			      struct cb_pending *cp);
+
+/*
+ * nfs4_cb_layoutrecall_send_recall -- as nfs4_cb_layoutrecall_send,
+ * but the caller supplies the whole layoutrecall4 body, so FSID and
+ * ALL recalls (RFC 8881 sec 20.3) can be sent.  The body is copied
+ * during XDR encode; it need not outlive the call.
+ */
+int nfs4_cb_layoutrecall_send_recall(struct nfs4_session *session,
+				     layouttype4 layout_type,
+				     layoutiomode4 iomode, int changed,
+				     const layoutrecall4 *recall,
+				     struct cb_pending *cp);
 
 /*
  * nfs4_cb_layoutrecall_fnf -- fire-and-forget variant of

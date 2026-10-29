@@ -203,10 +203,12 @@ TESTS = \
 	compound_async \
 	default_coding_dispatch_test \
 	delegation_lifecycle \
+	error_inject_test \
 	errors \
 	file_ops \
 	getdeviceinfo_notify_test \
 	layout_conflict_scan_test \
+	layout_recall_test \
 	layout_shard_size_test \
 	lock_test \
 	nfs4_client_persist \

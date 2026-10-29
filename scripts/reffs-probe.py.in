@@ -982,6 +982,227 @@ def ps_write_buffer_stats_cmd(client, args):
               f"{p.ppwbs_shortcircuit_total:<10}")
 
 
+LAYOUTRECALL_TYPES = {'file': PROBE1_LAYOUTRECALL_FILE,
+                      'fsid': PROBE1_LAYOUTRECALL_FSID,
+                      'all': PROBE1_LAYOUTRECALL_ALL}
+LAYOUTRECALL_IOMODES = {'read': 1, 'rw': 2, 'any': 3}
+# layouttype4 values (lib/xdr/nfsv42_xdr.x), not the SB_LAYOUT_* masks.
+LAYOUTRECALL_LAYOUT_TYPES = {'file': 1, 'ffv1': 4, 'ffv2': 6}
+LAYOUTRECALL_STATES = {PROBE1_LAYOUTRECALL_SENDING: 'SENDING',
+                       PROBE1_LAYOUTRECALL_WAIT_RESEND: 'WAIT_RESEND',
+                       PROBE1_LAYOUTRECALL_ACKED: 'ACKED',
+                       PROBE1_LAYOUTRECALL_DONE: 'DONE',
+                       PROBE1_LAYOUTRECALL_EXPIRED: 'EXPIRED',
+                       PROBE1_LAYOUTRECALL_FAILED: 'FAILED',
+                       PROBE1_LAYOUTRECALL_CANCELLED: 'CANCELLED'}
+LAYOUTRECALL_EVENTS = {PROBE1_LRE_SEND: 'SEND', PROBE1_LRE_REPLY: 'REPLY',
+                       PROBE1_LRE_TIMEOUT: 'TIMEOUT',
+                       PROBE1_LRE_RETURN: 'RETURN', PROBE1_LRE_DONE: 'DONE',
+                       PROBE1_LRE_EXPIRED: 'EXPIRED',
+                       PROBE1_LRE_FAILED: 'FAILED',
+                       PROBE1_LRE_CANCELLED: 'CANCELLED'}
+# The nfsstat4 values a recall reply is likely to carry (RFC 8881 sec 15).
+NFS4_STATUS_NAMES = {0: 'NFS4_OK', 10008: 'NFS4ERR_DELAY',
+                     10001: 'NFS4ERR_BADHANDLE', 70: 'NFS4ERR_STALE',
+                     10036: 'NFS4ERR_BADXDR', 10025: 'NFS4ERR_BAD_STATEID',
+                     10052: 'NFS4ERR_BADSESSION', 10053: 'NFS4ERR_BADSLOT',
+                     10060: 'NFS4ERR_NOMATCHING_LAYOUT',
+                     10061: 'NFS4ERR_RECALLCONFLICT',
+                     10063: 'NFS4ERR_SEQ_MISORDERED',
+                     10087: 'NFS4ERR_DELEG_REVOKED'}
+
+
+def nfs4_status_name(st):
+    if st < 0:
+        return f'errno{st}'
+    return NFS4_STATUS_NAMES.get(st, str(st))
+
+
+def layoutrecall_event_line(e):
+    sec, nsec = divmod(e.plre_time_ns, 1000000000)
+    when = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(sec))
+    kind = LAYOUTRECALL_EVENTS.get(e.plre_kind, str(e.plre_kind))
+    return (f"{when}.{nsec:09d}Z {kind:<9} n={e.plre_send} "
+            f"cb={nfs4_status_name(e.plre_cb_status)} "
+            f"op={nfs4_status_name(e.plre_op_status)} "
+            f"dropped={e.plre_dropped}")
+
+
+def layoutrecall_cmd(client, args):
+    """Start an on-demand CB_LAYOUTRECALL with DELAY resend."""
+    res = client.layoutrecall(
+        LAYOUTRECALL_TYPES[args.type], clientid=args.client_id,
+        client_addr=args.client_addr or '',
+        layout_type=LAYOUTRECALL_LAYOUT_TYPES.get(args.layout_type, 0),
+        iomode=LAYOUTRECALL_IOMODES[args.iomode],
+        changed=args.changed == 'true', sb_id=args.sb_id, ino=args.ino,
+        offset=args.offset, length=args.length,
+        interval_ms=args.interval_ms, limit_ms=args.limit_ms,
+        limit_count=args.limit_count)
+    probe_error_handler(res.lrr_status)
+    ok = res.lrr_resok
+    if args.json:
+        json_output({'id': ok.lrr_id, 'clientid': ok.lrr_clientid})
+    else:
+        print(f"id={ok.lrr_id} clientid=0x{ok.lrr_clientid:016x}")
+    if args.wait:
+        layoutrecall_wait(client, ok.lrr_id, 0.25)
+
+
+def layoutrecall_wait(client, recall_id, period):
+    """Print events as they arrive until the recall leaves the
+    outstanding states."""
+    seen = 0
+    while True:
+        res = client.layoutrecall_status(recall_id)
+        probe_error_handler(res.lrsr_status)
+        ok = res.lrsr_resok
+        events = ok.lrs_events or []
+        for e in events[max(0, seen - ok.lrs_events_lost):]:
+            print(layoutrecall_event_line(e), flush=True)
+        seen = ok.lrs_events_lost + len(events)
+        if ok.lrs_state not in (PROBE1_LAYOUTRECALL_SENDING,
+                                PROBE1_LAYOUTRECALL_WAIT_RESEND,
+                                PROBE1_LAYOUTRECALL_ACKED):
+            print(f"state={LAYOUTRECALL_STATES.get(ok.lrs_state)}")
+            return
+        time.sleep(period)
+
+
+def layoutrecall_status_cmd(client, args):
+    """Show one recall's parameters, state and send/reply log."""
+    if args.wait:
+        layoutrecall_wait(client, args.id, 0.25)
+        return
+    res = client.layoutrecall_status(args.id)
+    probe_error_handler(res.lrsr_status)
+    ok = res.lrsr_resok
+    if args.json:
+        json_output(ok)
+        return
+    types = {v: k.upper() for k, v in LAYOUTRECALL_TYPES.items()}
+    print(f"id={ok.lrs_id} state={LAYOUTRECALL_STATES.get(ok.lrs_state)} "
+          f"clientid=0x{ok.lrs_clientid:016x} "
+          f"type={types.get(ok.lrs_type)} sb={ok.lrs_sb_id} "
+          f"ino={ok.lrs_ino} iomode={ok.lrs_iomode} "
+          f"changed={int(ok.lrs_changed)} "
+          f"interval_ms={ok.lrs_interval_ms} limit_ms={ok.lrs_limit_ms} "
+          f"limit_count={ok.lrs_limit_count} sends={ok.lrs_sends} "
+          f"events_lost={ok.lrs_events_lost}")
+    for e in ok.lrs_events or []:
+        print(layoutrecall_event_line(e))
+
+
+def layoutrecall_cancel_cmd(client, args):
+    """Stop resending a recall."""
+    probe_error_handler(client.layoutrecall_cancel(args.id))
+    print("OK")
+
+
+# NFSv4 op numbers (RFC 8881 sec 16.2, RFC 7862 sec 15.1) a client is
+# likely to send on an open file.  Numbers are accepted too.
+NFS4_OPS = {'access': 3, 'close': 4, 'commit': 5, 'delegreturn': 8,
+            'getattr': 9, 'getfh': 10, 'lock': 12, 'lockt': 13,
+            'locku': 14, 'nverify': 17, 'open': 18,
+            'open_downgrade': 21, 'putfh': 22, 'read': 25,
+            'restorefh': 31, 'savefh': 32, 'setattr': 34, 'verify': 37,
+            'write': 38, 'free_stateid': 45, 'layoutcommit': 49,
+            'layoutget': 50, 'layoutreturn': 51, 'sequence': 53,
+            'test_stateid': 55, 'allocate': 59, 'copy': 60,
+            'deallocate': 62, 'layouterror': 64, 'layoutstats': 65,
+            'read_plus': 68, 'seek': 69, 'clone': 71}
+NFS4_OP_NAMES = {v: k.upper() for k, v in NFS4_OPS.items()}
+ERRINJECT_STATUSES = {'badhandle': 10001, 'stale': 70, 'delay': 10008,
+                      'io': 5, 'bad_stateid': 10025,
+                      'serverfault': 10006}
+ERRINJECT_STATES = {PROBE1_ERRINJECT_ARMED: 'ARMED',
+                    PROBE1_ERRINJECT_FIRED: 'FIRED',
+                    PROBE1_ERRINJECT_DISARMED: 'DISARMED'}
+
+
+def nfs4_op_arg(v):
+    v = v.lower()
+    if v.startswith('op_'):
+        v = v[3:]
+    if v in NFS4_OPS:
+        return NFS4_OPS[v]
+    try:
+        return int(v, 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f'unknown NFSv4 op {v!r}')
+
+
+def errinject_status_arg(v):
+    v = v.lower()
+    if v.startswith('nfs4err_'):
+        v = v[8:]
+    if v in ERRINJECT_STATUSES:
+        return ERRINJECT_STATUSES[v]
+    try:
+        return int(v, 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f'unknown status {v!r}')
+
+
+def realtime_str(ns):
+    if not ns:
+        return '-'
+    sec, nsec = divmod(ns, 1000000000)
+    return (time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(sec)) +
+            f'.{nsec:09d}Z')
+
+
+def errinject_cmd(client, args):
+    """Arm a one-shot NFSv4 error on one file."""
+    ops = [nfs4_op_arg(o) for o in args.ops.split(',')] if args.ops else []
+    res = client.errinject(args.sb_id, args.ino, ops=ops,
+                           status=args.status, clientid=args.client_id,
+                           client_addr=args.client_addr or '')
+    probe_error_handler(res.eir_status)
+    if args.json:
+        json_output({'id': res.eir_resok.eir_id})
+    else:
+        print(f"id={res.eir_resok.eir_id} ARMED")
+
+
+def errinject_status_cmd(client, args):
+    """Show the current or last injection and where it fired."""
+    while True:
+        res = client.errinject_status()
+        probe_error_handler(res.eisr_status)
+        ok = res.eisr_resok
+        if not args.wait or ok.eis_state != PROBE1_ERRINJECT_ARMED:
+            break
+        time.sleep(0.1)
+    if args.json:
+        json_output(ok)
+        return
+    addr = 'any'
+    if ok.eis_client_addr:
+        addr = str(ipaddress.IPv4Address(
+            struct.pack('=I', ok.eis_client_addr)))
+    ops = ','.join(NFS4_OP_NAMES.get(o, str(o))
+                   for o in (ok.eis_ops or [])) or 'any'
+    print(f"id={ok.eis_id} state={ERRINJECT_STATES.get(ok.eis_state)} "
+          f"clientid=0x{ok.eis_clientid:016x} addr={addr} "
+          f"sb={ok.eis_sb_id} ino={ok.eis_ino} "
+          f"status={nfs4_status_name(ok.eis_status)} ops={ops} "
+          f"skipped={ok.eis_skipped}")
+    print(f"armed={realtime_str(ok.eis_armed_ns)}")
+    if ok.eis_state == PROBE1_ERRINJECT_FIRED:
+        print(f"fired={realtime_str(ok.eis_fired_ns)} "
+              f"op={NFS4_OP_NAMES.get(ok.eis_fired_op, ok.eis_fired_op)}"
+              f"({ok.eis_fired_op}) opidx={ok.eis_fired_opidx} "
+              f"xid=0x{ok.eis_fired_xid:08x} "
+              f"clientid=0x{ok.eis_fired_clientid:016x}")
+
+
+def errinject_disarm_cmd(client, args):
+    """Clear an armed injection."""
+    probe_error_handler(client.errinject_disarm())
+    print("OK")
+
+
 def trust_stateid_stats_cmd(client, args):
     """Tight-coupling trust-table counters.  The registration and
     validation paths are silent on success, so this is how you tell a
@@ -1451,6 +1672,95 @@ def parse_args():
         'trust-stateid-stats',
         help='Tight-coupling trust-table counters and validation outcomes')
     p_trust_stateid_stats.set_defaults(func=trust_stateid_stats_cmd)
+
+    p_lr = subparsers.add_parser(
+        'layoutrecall',
+        help='Send a CB_LAYOUTRECALL to one client; resend on DELAY')
+    p_lr.add_argument('--type', required=True,
+                      choices=sorted(LAYOUTRECALL_TYPES),
+                      help='Recall type')
+    p_lr.add_argument('--client-id', dest='client_id', default=0,
+                      type=lambda v: int(v, 0),
+                      help='Target clientid (hex ok)')
+    p_lr.add_argument('--client-addr', dest='client_addr', default='',
+                      help='Target client IPv4 address (default: the '
+                           'only client with a callback channel)')
+    p_lr.add_argument('--sb-id', dest='sb_id', type=int, default=0,
+                      help='fsid (superblock id) for fsid/file recalls')
+    p_lr.add_argument('--ino', type=int, default=0,
+                      help='File inode number for file recalls '
+                           '(stat -c %%i on the client)')
+    p_lr.add_argument('--layout-type', dest='layout_type', default=None,
+                      choices=sorted(LAYOUTRECALL_LAYOUT_TYPES),
+                      help='clora_type (default: ffv1)')
+    p_lr.add_argument('--iomode', default='any',
+                      choices=sorted(LAYOUTRECALL_IOMODES),
+                      help='clora_iomode (default: any)')
+    p_lr.add_argument('--changed', default='true',
+                      choices=['true', 'false'],
+                      help='clora_changed (default: true)')
+    p_lr.add_argument('--offset', type=int, default=0,
+                      help='FILE recall offset')
+    p_lr.add_argument('--length', type=int, default=0,
+                      help='FILE recall length (default: to EOF)')
+    p_lr.add_argument('--interval-ms', dest='interval_ms', type=int,
+                      default=1000, help='Resend interval after DELAY')
+    p_lr.add_argument('--limit-ms', dest='limit_ms', type=int, default=0,
+                      help='Stop resending after this long (0: no limit)')
+    p_lr.add_argument('--limit-count', dest='limit_count', type=int,
+                      default=0, help='Stop after this many sends')
+    p_lr.add_argument('--wait', action='store_true',
+                      help='Print events until the recall finishes')
+    p_lr.set_defaults(func=layoutrecall_cmd)
+
+    p_lrs = subparsers.add_parser(
+        'layoutrecall-status',
+        help='Show a recall and its send/reply log')
+    p_lrs.add_argument('--id', type=int, default=0,
+                       help='Recall id (default: most recent)')
+    p_lrs.add_argument('--wait', action='store_true',
+                       help='Print events until the recall finishes')
+    p_lrs.set_defaults(func=layoutrecall_status_cmd)
+
+    p_lrc = subparsers.add_parser('layoutrecall-cancel',
+                                  help='Stop resending a recall')
+    p_lrc.add_argument('--id', type=int, default=0,
+                       help='Recall id (default: most recent)')
+    p_lrc.set_defaults(func=layoutrecall_cancel_cmd)
+
+    p_ei = subparsers.add_parser(
+        'errinject',
+        help='Fail the next NFSv4 op on one file once (default '
+             'NFS4ERR_BADHANDLE)')
+    p_ei.add_argument('--sb-id', dest='sb_id', type=int, required=True,
+                      help='fsid (superblock id) of the file')
+    p_ei.add_argument('--ino', type=int, required=True,
+                      help='File inode number (stat -c %%i on the client)')
+    p_ei.add_argument('--ops', default='',
+                      help='Comma-separated ops to fail, by name or '
+                           'number (default: any op except SEQUENCE, '
+                           'PUTFH, PUTPUBFH, PUTROOTFH, SAVEFH, '
+                           'RESTOREFH)')
+    p_ei.add_argument('--status', type=errinject_status_arg, default=0,
+                      help='nfsstat4 by name or number (default: '
+                           'badhandle)')
+    p_ei.add_argument('--client-id', dest='client_id', default=0,
+                      type=lambda v: int(v, 0),
+                      help='Only this clientid (hex ok)')
+    p_ei.add_argument('--client-addr', dest='client_addr', default='',
+                      help='Only this client IPv4 address (default: any)')
+    p_ei.set_defaults(func=errinject_cmd)
+
+    p_eis = subparsers.add_parser(
+        'errinject-status',
+        help='Show the error injection and where it fired')
+    p_eis.add_argument('--wait', action='store_true',
+                       help='Poll until it is no longer ARMED')
+    p_eis.set_defaults(func=errinject_status_cmd)
+
+    p_eid = subparsers.add_parser('errinject-disarm',
+                                  help='Clear an armed error injection')
+    p_eid.set_defaults(func=errinject_disarm_cmd)
 
     p_dstore_list = subparsers.add_parser(
         'dstore-list',

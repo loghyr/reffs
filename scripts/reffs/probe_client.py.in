@@ -8,6 +8,12 @@ from .probe1_xdr_const import *
 from .probe1_xdr_pack import PROBE1_XDRPacker, PROBE1_XDRUnpacker
 from .protocol_client import ProtocolClient
 
+# layoutiomode4 values (RFC 8881); LAYOUTRECALL1args carries them raw.
+LAYOUTIOMODE4_READ_PROBE = 1
+LAYOUTIOMODE4_RW_PROBE = 2
+LAYOUTIOMODE4_ANY_PROBE = 3
+
+
 class Probe1Client(ProtocolClient):
     """
     Client implementation for Probe1.
@@ -339,6 +345,69 @@ class Probe1Client(ProtocolClient):
         signature of tight coupling not engaging."""
         return self.proc(PROBEPROC1_TRUST_STATEID_STATS,
                          response_type='TRUST_STATEID_STATS1res')
+
+    # On-demand CB_LAYOUTRECALL test trigger.
+    def layoutrecall(self, recall_type, clientid=0, client_addr='',
+                     layout_type=0, iomode=LAYOUTIOMODE4_ANY_PROBE,
+                     changed=True, sb_id=0, ino=0, offset=0, length=0,
+                     interval_ms=0, limit_ms=0, limit_count=0):
+        """Start a FILE/FSID/ALL CB_LAYOUTRECALL to one client, resent
+        every interval_ms while the client answers NFS4ERR_DELAY, until
+        NOMATCHING_LAYOUT, a covering LAYOUTRETURN, or the limit.  The
+        client is clientid, else client_addr (IPv4), else the only
+        client with a callback channel.  Returns the recall id."""
+        args = LAYOUTRECALL1args(
+            lra_clientid=clientid,
+            lra_client_addr=(client_addr.encode()
+                             if isinstance(client_addr, str)
+                             else client_addr),
+            lra_type=recall_type, lra_layout_type=layout_type,
+            lra_iomode=iomode, lra_changed=changed, lra_sb_id=sb_id,
+            lra_ino=ino, lra_offset=offset, lra_length=length,
+            lra_interval_ms=interval_ms, lra_limit_ms=limit_ms,
+            lra_limit_count=limit_count)
+        return self.proc(PROBEPROC1_LAYOUTRECALL, args,
+                         response_type='LAYOUTRECALL1res')
+
+    def layoutrecall_status(self, recall_id=0):
+        """State and send/reply log of a recall (0: most recent)."""
+        args = LAYOUTRECALL_STATUS1args(lrsa_id=recall_id)
+        return self.proc(PROBEPROC1_LAYOUTRECALL_STATUS, args,
+                         response_type='LAYOUTRECALL_STATUS1res')
+
+    def layoutrecall_cancel(self, recall_id=0):
+        """Stop resending a recall (0: most recent)."""
+        args = LAYOUTRECALL_CANCEL1args(lrca_id=recall_id)
+        return self.proc(PROBEPROC1_LAYOUTRECALL_CANCEL, args,
+                         response_type='probe_stat1')
+
+    # One-shot NFSv4 error injection test trigger.
+    def errinject(self, sb_id, ino, ops=(), status=0, clientid=0,
+                  client_addr=''):
+        """Arm a one-shot NFSv4 error (status 0: NFS4ERR_BADHANDLE) on
+        the next op whose current filehandle is (sb_id, ino).  ops is
+        a list of NFSv4 op numbers (empty: any op except SEQUENCE and
+        the filehandle setters).  The client is clientid, else
+        client_addr (IPv4), else any.  Returns the arm id."""
+        args = ERRINJECT1args(
+            eia_clientid=clientid,
+            eia_client_addr=(client_addr.encode()
+                             if isinstance(client_addr, str)
+                             else client_addr),
+            eia_sb_id=sb_id, eia_ino=ino, eia_status=status,
+            eia_ops=list(ops))
+        return self.proc(PROBEPROC1_ERRINJECT, args,
+                         response_type='ERRINJECT1res')
+
+    def errinject_status(self):
+        """The current or last injection, and where it fired."""
+        return self.proc(PROBEPROC1_ERRINJECT_STATUS,
+                         response_type='ERRINJECT_STATUS1res')
+
+    def errinject_disarm(self):
+        """Clear an armed injection."""
+        return self.proc(PROBEPROC1_ERRINJECT_DISARM,
+                         response_type='probe_stat1')
 
     # Dstore lifecycle.
     def dstore_list(self):

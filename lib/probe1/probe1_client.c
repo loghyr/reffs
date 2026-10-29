@@ -22,8 +22,10 @@
 #include <rpc/clnt.h>
 #include <rpc/rpc_msg.h>
 #include <errno.h>
+#include <arpa/inet.h>
 
 #include "probe1_xdr.h"
+#include "nfsv42_names.h"
 
 #include "reffs/test.h"
 
@@ -1622,4 +1624,463 @@ struct rpc_trans *probe1_client_op_null(void)
 	}
 
 	return rt;
+}
+
+static const char *layoutrecall_status_name(int32_t st, char *buf, size_t len)
+{
+	if (st < 0) {
+		snprintf(buf, len, "errno%d", st);
+		return buf;
+	}
+	if (st == 0)
+		return "NFS4_OK";
+	const char *name = nfs4_err_name((uint32_t)st);
+
+	if (!name) {
+		snprintf(buf, len, "%d", st);
+		return buf;
+	}
+	return name;
+}
+
+static const char *layoutrecall_type_name(probe_layoutrecall_type1 t)
+{
+	switch (t) {
+	case PROBE1_LAYOUTRECALL_FILE:
+		return "FILE";
+	case PROBE1_LAYOUTRECALL_FSID:
+		return "FSID";
+	case PROBE1_LAYOUTRECALL_ALL:
+		return "ALL";
+	}
+	return "?";
+}
+
+static const char *layoutrecall_state_name(probe_layoutrecall_state1 s)
+{
+	static const char *const names[] = {
+		[PROBE1_LAYOUTRECALL_SENDING] = "SENDING",
+		[PROBE1_LAYOUTRECALL_WAIT_RESEND] = "WAIT_RESEND",
+		[PROBE1_LAYOUTRECALL_ACKED] = "ACKED",
+		[PROBE1_LAYOUTRECALL_DONE] = "DONE",
+		[PROBE1_LAYOUTRECALL_EXPIRED] = "EXPIRED",
+		[PROBE1_LAYOUTRECALL_FAILED] = "FAILED",
+		[PROBE1_LAYOUTRECALL_CANCELLED] = "CANCELLED",
+	};
+
+	if ((unsigned int)s < sizeof(names) / sizeof(names[0]) && names[s])
+		return names[s];
+	return "?";
+}
+
+static const char *layoutrecall_event_name(probe_layoutrecall_event1 e)
+{
+	static const char *const names[] = {
+		[PROBE1_LRE_SEND] = "SEND",
+		[PROBE1_LRE_REPLY] = "REPLY",
+		[PROBE1_LRE_TIMEOUT] = "TIMEOUT",
+		[PROBE1_LRE_RETURN] = "RETURN",
+		[PROBE1_LRE_DONE] = "DONE",
+		[PROBE1_LRE_EXPIRED] = "EXPIRED",
+		[PROBE1_LRE_FAILED] = "FAILED",
+		[PROBE1_LRE_CANCELLED] = "CANCELLED",
+	};
+
+	if ((unsigned int)e < sizeof(names) / sizeof(names[0]) && names[e])
+		return names[e];
+	return "?";
+}
+
+static int layoutrecall_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	LAYOUTRECALL1res *res = ph->ph_res;
+
+	if (res->lrr_status)
+		LOG("layoutrecall error = %d", res->lrr_status);
+	else
+		printf("id=%u clientid=0x%016" PRIx64 "\n",
+		       res->LAYOUTRECALL1res_u.lrr_resok.lrr_id,
+		       (uint64_t)res->LAYOUTRECALL1res_u.lrr_resok.lrr_clientid);
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_layoutrecall(const LAYOUTRECALL1args *req)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_LAYOUTRECALL;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	LAYOUTRECALL1args *args = ph->ph_args;
+
+	*args = *req;
+	/* The args are xdr_free'd with the call; own the string. */
+	args->lra_client_addr =
+		strdup(req->lra_client_addr ? req->lra_client_addr : "");
+	if (!args->lra_client_addr) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	rt->rt_cb = layoutrecall_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+static int layoutrecall_status_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	LAYOUTRECALL_STATUS1res *res = ph->ph_res;
+	LAYOUTRECALL_STATUS1resok *ok =
+		&res->LAYOUTRECALL_STATUS1res_u.lrsr_resok;
+	char b1[24], b2[24];
+
+	if (res->lrsr_status) {
+		LOG("layoutrecall-status error = %d", res->lrsr_status);
+		io_handler_stop();
+		return 0;
+	}
+	printf("id=%u state=%s clientid=0x%016" PRIx64 " type=%s sb=%" PRIu64
+	       " ino=%" PRIu64 " iomode=%u changed=%d interval_ms=%u"
+	       " limit_ms=%u limit_count=%u sends=%u events_lost=%u\n",
+	       ok->lrs_id, layoutrecall_state_name(ok->lrs_state),
+	       (uint64_t)ok->lrs_clientid, layoutrecall_type_name(ok->lrs_type),
+	       (uint64_t)ok->lrs_sb_id, (uint64_t)ok->lrs_ino, ok->lrs_iomode,
+	       ok->lrs_changed, ok->lrs_interval_ms, ok->lrs_limit_ms,
+	       ok->lrs_limit_count, ok->lrs_sends, ok->lrs_events_lost);
+	for (u_int i = 0; i < ok->lrs_events.lrs_events_len; i++) {
+		probe_layoutrecall_ev1 *e = &ok->lrs_events.lrs_events_val[i];
+		time_t sec = (time_t)(e->plre_time_ns / 1000000000ULL);
+		struct tm tm;
+		char when[32];
+
+		gmtime_r(&sec, &tm);
+		strftime(when, sizeof(when), "%Y-%m-%dT%H:%M:%S", &tm);
+		printf("%s.%09" PRIu64 "Z %-9s n=%u cb=%s op=%s dropped=%u\n",
+		       when, (uint64_t)(e->plre_time_ns % 1000000000ULL),
+		       layoutrecall_event_name(e->plre_kind), e->plre_send,
+		       layoutrecall_status_name(e->plre_cb_status, b1,
+						sizeof(b1)),
+		       layoutrecall_status_name(e->plre_op_status, b2,
+						sizeof(b2)),
+		       e->plre_dropped);
+	}
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_layoutrecall_status(uint32_t id)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_LAYOUTRECALL_STATUS;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	LAYOUTRECALL_STATUS1args *args = ph->ph_args;
+
+	args->lrsa_id = id;
+	rt->rt_cb = layoutrecall_status_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+static int layoutrecall_cancel_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	probe_stat1 *res = ph->ph_res;
+
+	if (*res)
+		LOG("layoutrecall-cancel error = %d", *res);
+	else
+		printf("OK\n");
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_layoutrecall_cancel(uint32_t id)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_LAYOUTRECALL_CANCEL;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	LAYOUTRECALL_CANCEL1args *args = ph->ph_args;
+
+	args->lrca_id = id;
+	rt->rt_cb = layoutrecall_cancel_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+static bool errinject_name_eq(const char *full, const char *prefix,
+			      const char *want)
+{
+	size_t plen = strlen(prefix);
+
+	if (!full)
+		return false;
+	if (!strcasecmp(full, want))
+		return true;
+	return !strncmp(full, prefix, plen) && !strcasecmp(full + plen, want);
+}
+
+int probe1_parse_nfs4_op(const char *s, uint32_t *op)
+{
+	char *end;
+	unsigned long v = strtoul(s, &end, 0);
+
+	if (*s && !*end) {
+		if (v >= OP_MAX)
+			return -EINVAL;
+		*op = (uint32_t)v;
+		return 0;
+	}
+	for (uint32_t i = 0; i < OP_MAX; i++) {
+		if (errinject_name_eq(nfs4_op_name(i), "OP_", s)) {
+			*op = i;
+			return 0;
+		}
+	}
+	return -EINVAL;
+}
+
+int probe1_parse_nfs4_status(const char *s, uint32_t *st)
+{
+	static const uint32_t ranges[][2] = { { 1, 100 }, { 10001, 10200 } };
+	char *end;
+	unsigned long v = strtoul(s, &end, 0);
+
+	if (*s && !*end) {
+		*st = (uint32_t)v;
+		return 0;
+	}
+	for (size_t r = 0; r < sizeof(ranges) / sizeof(ranges[0]); r++)
+		for (uint32_t i = ranges[r][0]; i <= ranges[r][1]; i++)
+			if (errinject_name_eq(nfs4_err_name(i), "NFS4ERR_",
+					      s)) {
+				*st = i;
+				return 0;
+			}
+	return -EINVAL;
+}
+
+static const char *errinject_state_name(probe_errinject_state1 s)
+{
+	switch (s) {
+	case PROBE1_ERRINJECT_ARMED:
+		return "ARMED";
+	case PROBE1_ERRINJECT_FIRED:
+		return "FIRED";
+	case PROBE1_ERRINJECT_DISARMED:
+		return "DISARMED";
+	}
+	return "?";
+}
+
+static void errinject_time(uint64_t ns, char *buf, size_t len)
+{
+	time_t sec = (time_t)(ns / 1000000000ULL);
+	struct tm tm;
+	char when[32];
+
+	if (!ns) {
+		snprintf(buf, len, "-");
+		return;
+	}
+	gmtime_r(&sec, &tm);
+	strftime(when, sizeof(when), "%Y-%m-%dT%H:%M:%S", &tm);
+	snprintf(buf, len, "%s.%09" PRIu64 "Z", when,
+		 (uint64_t)(ns % 1000000000ULL));
+}
+
+static int errinject_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	ERRINJECT1res *res = ph->ph_res;
+
+	if (res->eir_status)
+		LOG("errinject error = %d", res->eir_status);
+	else
+		printf("id=%u ARMED\n", res->ERRINJECT1res_u.eir_resok.eir_id);
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_errinject(const struct ERRINJECT1args *req)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_ERRINJECT;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	ERRINJECT1args *args = ph->ph_args;
+
+	*args = *req;
+	/* The args are xdr_free'd with the call; own the buffers. */
+	args->eia_client_addr =
+		strdup(req->eia_client_addr ? req->eia_client_addr : "");
+	args->eia_ops.eia_ops_val = NULL;
+	if (req->eia_ops.eia_ops_len) {
+		args->eia_ops.eia_ops_val =
+			calloc(req->eia_ops.eia_ops_len, sizeof(uint32_t));
+		if (args->eia_ops.eia_ops_val)
+			memcpy(args->eia_ops.eia_ops_val,
+			       req->eia_ops.eia_ops_val,
+			       req->eia_ops.eia_ops_len * sizeof(uint32_t));
+	}
+	if (!args->eia_client_addr ||
+	    (req->eia_ops.eia_ops_len && !args->eia_ops.eia_ops_val)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	rt->rt_cb = errinject_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+static int errinject_status_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	ERRINJECT_STATUS1res *res = ph->ph_res;
+	ERRINJECT_STATUS1resok *ok = &res->ERRINJECT_STATUS1res_u.eisr_resok;
+	char armed[48], fired[48], addr[INET_ADDRSTRLEN] = "any";
+	const char *st = nfs4_err_name(ok->eis_status);
+	const char *fop = nfs4_op_name(ok->eis_fired_op);
+
+	if (res->eisr_status) {
+		LOG("errinject-status error = %d", res->eisr_status);
+		io_handler_stop();
+		return 0;
+	}
+	if (ok->eis_client_addr) {
+		struct in_addr in = { .s_addr = ok->eis_client_addr };
+
+		inet_ntop(AF_INET, &in, addr, sizeof(addr));
+	}
+	errinject_time(ok->eis_armed_ns, armed, sizeof(armed));
+	errinject_time(ok->eis_fired_ns, fired, sizeof(fired));
+	printf("id=%u state=%s clientid=0x%016" PRIx64 " addr=%s sb=%" PRIu64
+	       " ino=%" PRIu64 " status=%s(%u) ops=",
+	       ok->eis_id, errinject_state_name(ok->eis_state),
+	       (uint64_t)ok->eis_clientid, addr, (uint64_t)ok->eis_sb_id,
+	       (uint64_t)ok->eis_ino, st ? st : "?", ok->eis_status);
+	if (!ok->eis_ops.eis_ops_len)
+		printf("any");
+	for (u_int i = 0; i < ok->eis_ops.eis_ops_len; i++) {
+		const char *n = nfs4_op_name(ok->eis_ops.eis_ops_val[i]);
+
+		printf("%s%s", i ? "," : "", n ? n : "?");
+	}
+	printf(" skipped=%u\narmed=%s\n", ok->eis_skipped, armed);
+	if (ok->eis_state == PROBE1_ERRINJECT_FIRED)
+		printf("fired=%s op=%s(%u) opidx=%u xid=0x%08x"
+		       " clientid=0x%016" PRIx64 "\n",
+		       fired, fop ? fop : "?", ok->eis_fired_op,
+		       ok->eis_fired_opidx, ok->eis_fired_xid,
+		       (uint64_t)ok->eis_fired_clientid);
+	io_handler_stop();
+	return 0;
+}
+
+static struct rpc_trans *errinject_void_call(uint32_t proc,
+					     int (*cb)(struct rpc_trans *))
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = proc;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	rt->rt_cb = cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+struct rpc_trans *probe1_client_op_errinject_status(void)
+{
+	return errinject_void_call(PROBEPROC1_ERRINJECT_STATUS,
+				   errinject_status_cb);
+}
+
+static int errinject_disarm_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	probe_stat1 *res = ph->ph_res;
+
+	if (*res)
+		LOG("errinject-disarm error = %d", *res);
+	else
+		printf("OK\n");
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_errinject_disarm(void)
+{
+	return errinject_void_call(PROBEPROC1_ERRINJECT_DISARM,
+				   errinject_disarm_cb);
 }
