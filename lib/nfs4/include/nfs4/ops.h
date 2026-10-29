@@ -146,6 +146,18 @@ nfsstat4 nfs4_apply_createattrs(fattr4 *fattr, struct inode *inode,
 bool inode_has_write_layout(struct inode *inode);
 
 /*
+ * nfs4_layout_drop_client_scope - return every layout `client` holds
+ * in a scope, as a bulk LAYOUTRETURN would (RFC 8881 sec 18.44.3).
+ * sb_id 0 selects every fsid; ino 0 selects every file in the fsid.
+ * iomode READ or RW clears only that mode; ANY clears both.  Returns
+ * the number of layout stateids freed.
+ */
+struct client;
+unsigned int nfs4_layout_drop_client_scope(struct client *client,
+					   uint64_t sb_id, uint64_t ino,
+					   layoutiomode4 iomode);
+
+/*
  * nfs4_layout_implicit_return_rw - implicitly return the write layout for
  * this client on compound->c_inode (called from CLOSE and DELEGRETURN).
  * Returns NFS4_OP_FLAG_ASYNC if a reflected GETATTR fan-out was launched.
