@@ -1152,6 +1152,76 @@ struct LAYOUTRECALL_CANCEL1args {
 	unsigned int			lrca_id;	/* 0: most recent */
 };
 
+/*
+ * ERRINJECT (op 44) -- one-shot NFSv4 error injection, a test trigger.
+ * The next NFSv4 op whose current filehandle is (eia_sb_id, eia_ino)
+ * fails with eia_status, and the injection disarms.  Zero selects a
+ * default: eia_status NFS4ERR_BADHANDLE; eia_ops empty means any op
+ * except SEQUENCE, PUTFH, PUTPUBFH, PUTROOTFH, SAVEFH and RESTOREFH.
+ * Client: eia_clientid, else eia_client_addr (dotted IPv4), else any.
+ * Arming replaces an earlier injection.  ERRINJECT_STATUS (op 45)
+ * reports whether and where it fired; ERRINJECT_DISARM (op 46) clears.
+ */
+const PROBE1_ERRINJECT_MAX_OPS = 16;
+
+struct ERRINJECT1args {
+	unsigned hyper			eia_clientid;
+	string				eia_client_addr<PROBE1_MAX_ADDR>;
+	unsigned hyper			eia_sb_id;
+	unsigned hyper			eia_ino;
+	unsigned int			eia_status;
+	unsigned int			eia_ops<PROBE1_ERRINJECT_MAX_OPS>;
+};
+
+struct ERRINJECT1resok {
+	unsigned int			eir_id;
+};
+
+union ERRINJECT1res switch (probe_stat1 eir_status) {
+	case PROBE1_OK:
+		ERRINJECT1resok		eir_resok;
+	default:
+		void;
+};
+
+/* Values mirror enum error_inject_state. */
+enum probe_errinject_state1 {
+	PROBE1_ERRINJECT_ARMED = 1,
+	PROBE1_ERRINJECT_FIRED = 2,
+	PROBE1_ERRINJECT_DISARMED = 3
+};
+
+/*
+ * Times are CLOCK_REALTIME ns.  eis_fired_* are zero until FIRED;
+ * eis_fired_opidx is the op's index in its COMPOUND.  eis_skipped
+ * counts ops on the file, from the matching client, that eia_ops
+ * excluded.
+ */
+struct ERRINJECT_STATUS1resok {
+	unsigned int			eis_id;
+	probe_errinject_state1		eis_state;
+	unsigned hyper			eis_clientid;
+	unsigned int			eis_client_addr;	/* network order */
+	unsigned hyper			eis_sb_id;
+	unsigned hyper			eis_ino;
+	unsigned int			eis_status;
+	unsigned int			eis_ops<PROBE1_ERRINJECT_MAX_OPS>;
+	unsigned hyper			eis_armed_ns;
+	unsigned hyper			eis_fired_ns;
+	unsigned int			eis_fired_op;
+	unsigned int			eis_fired_opidx;
+	unsigned int			eis_fired_xid;
+	unsigned hyper			eis_fired_clientid;
+	unsigned int			eis_skipped;
+};
+
+union ERRINJECT_STATUS1res switch (probe_stat1 eisr_status) {
+	case PROBE1_OK:
+		ERRINJECT_STATUS1resok	eisr_resok;
+	default:
+		void;
+};
+
 const PROBE_PORT = 20490;
 
 /*
@@ -1244,5 +1314,13 @@ program PROBE_PROGRAM {
 		PROBEPROC1_LAYOUTRECALL_STATUS(LAYOUTRECALL_STATUS1args) = 42;
 		probe_stat1
 		PROBEPROC1_LAYOUTRECALL_CANCEL(LAYOUTRECALL_CANCEL1args) = 43;
+
+		/* One-shot NFSv4 error injection test trigger */
+		ERRINJECT1res
+		PROBEPROC1_ERRINJECT(ERRINJECT1args) = 44;
+		ERRINJECT_STATUS1res
+		PROBEPROC1_ERRINJECT_STATUS(void) = 45;
+		probe_stat1
+		PROBEPROC1_ERRINJECT_DISARM(void) = 46;
 	} = 1;
 } = 211768;
