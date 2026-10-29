@@ -41,6 +41,7 @@
 #include "reffs/identity_map.h"
 #include "reffs/probe1.h"
 #include "nfs4/cb.h"
+#include "nfs4/error_inject.h"
 #include "nfs4/layout_recall.h"
 #include "nfs4/trust_stateid.h"
 #include "reffs/server.h"
@@ -2643,6 +2644,103 @@ static int probe1_op_layoutrecall_cancel(struct rpc_trans *rt)
 	return *res;
 }
 
+/*
+ * ERRINJECT -- arm a one-shot NFSv4 error on one file; the next
+ * matching op in dispatch_compound() fails and disarms it.
+ */
+static int probe1_op_errinject(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	ERRINJECT1args *args = ph->ph_args;
+	ERRINJECT1res *res = ph->ph_res;
+	struct error_inject_params p = {
+		.eip_clientid = (clientid4)args->eia_clientid,
+		.eip_sb_id = args->eia_sb_id,
+		.eip_ino = args->eia_ino,
+		.eip_status = (nfsstat4)args->eia_status,
+		.eip_nops = args->eia_ops.eia_ops_len,
+	};
+	uint32_t id = 0;
+	int ret;
+
+	if (p.eip_nops > ERROR_INJECT_MAX_OPS) {
+		res->eir_status = PROBE1ERR_INVAL;
+		return res->eir_status;
+	}
+	for (uint32_t i = 0; i < p.eip_nops; i++)
+		p.eip_ops[i] = args->eia_ops.eia_ops_val[i];
+	if (!p.eip_clientid && args->eia_client_addr &&
+	    args->eia_client_addr[0]) {
+		struct in_addr in;
+
+		if (inet_pton(AF_INET, args->eia_client_addr, &in) != 1) {
+			res->eir_status = PROBE1ERR_INVAL;
+			return res->eir_status;
+		}
+		p.eip_addr = in.s_addr;
+	}
+
+	ret = error_inject_arm(&p, &id);
+	if (ret) {
+		res->eir_status = ret == -EINVAL ? PROBE1ERR_INVAL :
+						   PROBE1ERR_SERVERFAULT;
+		return res->eir_status;
+	}
+	res->ERRINJECT1res_u.eir_resok.eir_id = id;
+	res->eir_status = PROBE1_OK;
+	return 0;
+}
+
+static int probe1_op_errinject_status(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	ERRINJECT_STATUS1res *res = ph->ph_res;
+	ERRINJECT_STATUS1resok *ok = &res->ERRINJECT_STATUS1res_u.eisr_resok;
+	struct error_inject_info info;
+	const struct error_inject_params *p = &info.eii_params;
+
+	if (error_inject_status(&info)) {
+		res->eisr_status = PROBE1ERR_NOENT;
+		return res->eisr_status;
+	}
+	ok->eis_id = info.eii_id;
+	ok->eis_state = (probe_errinject_state1)info.eii_state;
+	ok->eis_clientid = p->eip_clientid;
+	ok->eis_client_addr = p->eip_addr;
+	ok->eis_sb_id = p->eip_sb_id;
+	ok->eis_ino = p->eip_ino;
+	ok->eis_status = p->eip_status;
+	if (p->eip_nops) {
+		ok->eis_ops.eis_ops_val =
+			calloc(p->eip_nops, sizeof(*ok->eis_ops.eis_ops_val));
+		if (!ok->eis_ops.eis_ops_val) {
+			res->eisr_status = PROBE1ERR_NOMEM;
+			return res->eisr_status;
+		}
+		ok->eis_ops.eis_ops_len = p->eip_nops;
+		for (uint32_t i = 0; i < p->eip_nops; i++)
+			ok->eis_ops.eis_ops_val[i] = p->eip_ops[i];
+	}
+	ok->eis_armed_ns = info.eii_armed_ns;
+	ok->eis_fired_ns = info.eii_fired_ns;
+	ok->eis_fired_op = info.eii_fired_op;
+	ok->eis_fired_opidx = info.eii_fired_opidx;
+	ok->eis_fired_xid = info.eii_fired_xid;
+	ok->eis_fired_clientid = info.eii_fired_clientid;
+	ok->eis_skipped = info.eii_skipped;
+	res->eisr_status = PROBE1_OK;
+	return 0;
+}
+
+static int probe1_op_errinject_disarm(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	probe_stat1 *res = ph->ph_res;
+
+	*res = error_inject_disarm() ? PROBE1ERR_NOENT : PROBE1_OK;
+	return *res;
+}
+
 struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, NULL, NULL, NULL, NULL, NULL,
 			   probe1_op_null),
@@ -2789,6 +2887,15 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 			   xdr_LAYOUTRECALL_CANCEL1args,
 			   LAYOUTRECALL_CANCEL1args, xdr_probe_stat1,
 			   probe_stat1, probe1_op_layoutrecall_cancel),
+	RPC_OPERATION_INIT(PROBEPROC1, ERRINJECT, xdr_ERRINJECT1args,
+			   ERRINJECT1args, xdr_ERRINJECT1res, ERRINJECT1res,
+			   probe1_op_errinject),
+	RPC_OPERATION_INIT(PROBEPROC1, ERRINJECT_STATUS, NULL, NULL,
+			   xdr_ERRINJECT_STATUS1res, ERRINJECT_STATUS1res,
+			   probe1_op_errinject_status),
+	RPC_OPERATION_INIT(PROBEPROC1, ERRINJECT_DISARM, NULL, NULL,
+			   xdr_probe_stat1, probe_stat1,
+			   probe1_op_errinject_disarm),
 };
 
 static struct rpc_program_handler *probe1_handler;
@@ -2876,6 +2983,14 @@ int probe1_protocol_register(void)
 			      (int)PROBE1_LRE_CANCELLED ==
 				      (int)LAYOUT_RECALL_EV_CANCELLED,
 		      "layoutrecall event out of sync");
+	static_assert((int)PROBE1_ERRINJECT_ARMED == (int)ERROR_INJECT_ARMED &&
+			      (int)PROBE1_ERRINJECT_FIRED ==
+				      (int)ERROR_INJECT_FIRED &&
+			      (int)PROBE1_ERRINJECT_DISARMED ==
+				      (int)ERROR_INJECT_DISARMED,
+		      "errinject state out of sync");
+	static_assert(PROBE1_ERRINJECT_MAX_OPS == ERROR_INJECT_MAX_OPS,
+		      "errinject op count out of sync");
 
 	probev1_registered = 1;
 
